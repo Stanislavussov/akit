@@ -252,6 +252,29 @@ akit kb index [--rebuild] [--json] [--base PATH|WORLD]
                                                    # bring the search index up to the files
 akit kb lint [--json] [--base PATH|WORLD]          # check the base: {base, findings: [{rule, severity,
                                                    # file, element, link, message, fix}], counts}
+akit kb inbox [--json] [--base PATH|WORLD]         # the proposals waiting for the user: {base,
+                                                   # proposals: [{id, kind, target, reason, created,
+                                                   # checks: [{name, status, message}]}]}
+```
+
+You never edit the base: you propose, and the user accepts or rejects in AKit. Propose when
+you learn a fact a note lacks, find a system the base doesn't have, or see a relation no map
+shows. Name the note as AREA/NAME (`kb context`'s focus or `kb areas` picks the area); for a
+system unrelated to every area, propose a new area (`--note support/helpdesk`) rather than
+mixing it into one. Say in `--reason` where the fact comes from.
+
+```
+akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--reason T] [--json]
+                                                   # existing note: the text is ## Heading blocks
+                                                   # (each replaces that section or is added); new
+                                                   # note: its whole text. --set: properties
+                                                   # (kind=service, owner=team-a). Writes only
+                                                   # inbox/<id>.md; refused for a secret, a broken
+                                                   # [[link]], a path outside areas/.
+                                                   # --json: {id, path, kind, target, checks}
+akit kb propose --arrow "A -kind-> B" [--map MAP] [--reason T] [--json]
+                                                   # a relation between two notes (kind = what
+                                                   # flows); the user draws it on the map
 ```
 
 Run `kb lint` before you trust a note's `repo:`/`files:` or a map's blocks, and after you
@@ -279,9 +302,9 @@ list: read `akit kb kinds` before you name a kind or a field. On maps, a block s
 note its link names, and an arrow's label says what flows (`kb relations orders-api`).
 
 Commands marked "for a person only" in `akit kb --help` change the base: run them only when
-the user asked for that action in this session; otherwise propose (`akit kb propose`, coming
-soon) or ask. Never accept or reject a proposal on your own. They commit at once, one commit
-per command:
+the user asked for that action in this session; otherwise propose (`akit kb propose`) or ask.
+Never accept or reject a proposal on your own: the user decides. They commit at once, one
+commit per command:
 
 ```
 akit kb init [--world NAME]                        # create a base
@@ -306,6 +329,11 @@ akit kb rename NOTE|MAP NEW [--yes] [--json]      # rename a note or map and eve
                                                    # all or nothing, one commit; without --yes it
                                                    # only shows the plan (refused with its diff when
                                                    # another link would change its target)
+akit kb accept ID [--yes] [--json]                 # accept a proposal: shows the diff; --yes backs
+                                                   # the note up, writes it and commits it with the
+                                                   # proposal's removal; an arrow: exit 2, drawn
+                                                   # in the app
+akit kb reject ID [--yes] [--json]                 # a proposal to the Trash
 akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
                                                    # commit; without --yes it only shows what goes
 akit kb pi-template [--yes] [--json]               # the core layer's section about the base, for Pi

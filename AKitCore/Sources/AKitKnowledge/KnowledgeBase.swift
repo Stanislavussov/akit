@@ -102,7 +102,8 @@ public struct KnowledgeBase: Sendable, Hashable {
         return KnowledgeBase(root: base.root, world: world)
     }
 
-    /// Creates a base at `root`: `areas/`, `inbox/`, `.gitignore`, `kb.yaml` with the default kinds,
+    /// Creates a base at `root`: `areas/`, `inbox/` (tracked through `inbox/.gitkeep`), `.gitignore`,
+    /// `kb.yaml` with the default kinds,
     /// `git init` with no remote, a git
     /// identity (P5: the user's git config when it has a name and an email, else the base's own
     /// `AKit <akit@localhost>`) and a first commit. `root` may be missing, empty, an Obsidian vault
@@ -130,6 +131,10 @@ public struct KnowledgeBase: Sendable, Hashable {
         do {
             try fm.createDirectory(at: base.areasFolder, withIntermediateDirectories: true)
             try fm.createDirectory(at: base.inboxFolder, withIntermediateDirectories: true)
+            // P3: inbox/ is tracked, so git status names each untracked proposal file.
+            if !fm.fileExists(atPath: root.appending(path: KnowledgeInbox.keepFile).path) {
+                try Data().write(to: root.appending(path: KnowledgeInbox.keepFile))
+            }
             let ignore = root.appending(path: ".gitignore")
             if let existing = try? String(contentsOf: ignore, encoding: .utf8) {
                 let missing = gitignore.split(separator: "\n").filter { line in !existing.split(separator: "\n").contains(line) }
@@ -158,7 +163,7 @@ public struct KnowledgeBase: Sendable, Hashable {
                 try await git.run(["config", "--local", "user.name", "AKit"])
                 try await git.run(["config", "--local", "user.email", "akit@localhost"])
             }
-            try await git.commit(paths: [".gitignore", KnowledgeKinds.fileName], message: createMessage)
+            try await git.commit(paths: [".gitignore", KnowledgeKinds.fileName, KnowledgeInbox.keepFile], message: createMessage)
         } catch {
             throw Failure(message: "The knowledge base folder was created, but git failed: \(error.message)")
         }

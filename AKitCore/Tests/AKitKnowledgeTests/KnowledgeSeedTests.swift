@@ -157,6 +157,17 @@ struct KnowledgeSeedTests {
             ]
         }),
         ("the rest of the seed has no findings", { base in try lint(base).allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } }),
+        // Proposals (5.1): untracked files in inbox/, every check passed.
+        ("a note proposal (a section and a property) and an arrow proposal wait in inbox/", { base in
+            let entries = base.proposals()
+            return entries.map(\.id) == ["2026-10-24-arrow-billing-warehouse", "2026-10-24-payments-billing"]
+                && entries.map(\.kind) == [.arrow, .note] && entries.allSatisfy { $0.checks.allSatisfy { $0.status == .passed } }
+                && entries[1].set == [.init(key: "sla", value: "next day")]
+        }),
+        ("the note proposal applies: billing gets ## Refunds and sla", { base in
+            let plan = try base.planAccept(try base.proposal("2026-10-24-payments-billing"))
+            return plan.planned.contains("## Refunds") && plan.planned.contains("sla: next day") && !plan.newArea
+        }),
     ]
 
     /// The seed's findings with orders-api (holding src/events/order-created.ts), billing,
@@ -188,8 +199,11 @@ struct KnowledgeSeedTests {
         let marker = try #require(KnowledgeSeed.marker(of: outcome.base))
         #expect(marker == KnowledgeSeed.Marker(seedVersion: KnowledgeSeed.version, files: KnowledgeSeed.files.map(\.path)))
         #expect(try await git("log", "--format=%s", in: outcome.base.root) == "Seed: sample base v\(KnowledgeSeed.version)\nCreate the knowledge base")
-        #expect(try await git("status", "--porcelain", in: outcome.base.root).isEmpty)
+        // Only the seed's proposals are untracked (P3), and the marker doesn't list them.
+        #expect(try await git("status", "--porcelain", in: outcome.base.root)
+            == KnowledgeSeed.proposals.map { "?? \($0.path)" }.sorted().joined(separator: "\n"))
         #expect(try await git("ls-files", "--", ".akit-seed.json", in: outcome.base.root) == ".akit-seed.json")
+        #expect(try await git("ls-files", "inbox", in: outcome.base.root) == KnowledgeInbox.keepFile)
         #expect(KnowledgeSeed.bases(home: home) == [outcome.base])
     }
 
@@ -216,7 +230,7 @@ struct KnowledgeSeedTests {
         #expect(!Self.fileExists(base.root.appending(path: stale)))
         #expect(KnowledgeSeed.isCurrent(base))
         #expect(KnowledgeSeed.marker(of: base)?.seedVersion == KnowledgeSeed.version)
-        #expect(try await git("status", "--porcelain", in: base.root).isEmpty)
+        #expect(try await git("status", "--porcelain", in: base.root).split(separator: "\n").allSatisfy { $0.hasPrefix("?? inbox/") })
 
         // A commit of the user: refused, nothing written.
         try await base.newNote(area: "payments", name: "mine", kind: nil, env: env)
@@ -267,7 +281,7 @@ struct KnowledgeSeedTests {
             try await base.moveToTrash(try base.item(name), env: env, trash: fakeTrash)
             #expect(!Self.fileExists(base.root.appending(path: path)), "\(name)")
             #expect(Int(try await git("rev-list", "--count", "HEAD", in: base.root)) == Int(before)! + 1, "\(name)")
-            #expect(try await git("status", "--porcelain", in: base.root).isEmpty, "\(name)")
+            #expect(try await git("status", "--porcelain", in: base.root).split(separator: "\n").allSatisfy { $0.hasPrefix("?? inbox/") }, "\(name)")
         }
         #expect(base.areas().map(\.name) == ["lint-examples", "payments"])
     }

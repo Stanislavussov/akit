@@ -139,7 +139,7 @@ struct WatchFilterTests {
         try write(base.root, note, text + "Edited in Obsidian.\n")
         let first = WatchFilter.batch([note], own: [:]) { KnowledgeWrite.hash(of: base.root.appending(path: $0)) }
         #expect(queue.enqueue(first.enqueue) == .queued(refused: []))
-        // …when an agent's proposal lands in inbox/ (written by hand here: propose comes in 5.1).
+        // …when an agent's proposal lands in inbox/ (written by hand here, as any file in inbox/).
         try write(base.root, "inbox/2026-10-24-orders-api.md", "# Proposal\n\nAdd the refund flow.\n")
         let second = WatchFilter.batch(["inbox/2026-10-24-orders-api.md", note], own: [:]) {
             KnowledgeWrite.hash(of: base.root.appending(path: $0))
@@ -149,7 +149,8 @@ struct WatchFilterTests {
         #expect(queue.enqueue(second.enqueue) == .queued(refused: []))
         #expect(queue.pending() == [note])
         #expect(await queue.flush() == .committed([note]))
-        #expect(try await git("status", "--porcelain", in: base.root) == "?? inbox/")
+        // inbox/ is tracked (inbox/.gitkeep, P3), so git names the proposal file itself.
+        #expect(try await git("status", "--porcelain", in: base.root) == "?? inbox/2026-10-24-orders-api.md")
         #expect(try await git("status", "--porcelain", "--untracked-files=all", in: base.root) == "?? inbox/2026-10-24-orders-api.md")
         #expect(WatchFilter.inboxCount(base.root) == 1)
     }

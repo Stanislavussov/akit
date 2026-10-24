@@ -64,6 +64,26 @@ extension AKitCLI {
                                         ~/ paths that don't exist; hints for a kind not in kb.yaml
                                         and a block of an unrelated area. --json: {base, findings:
                                         [{rule, severity, file, element, link, message, fix}], counts}
+      akit kb inbox [--json] [--base PATH|WORLD]
+                                        The proposals waiting in inbox/ for the person: id, kind
+                                        (note or arrow), target, reason, created, author, and the
+                                        checks run now (secret, target, links, arrow: passed,
+                                        warning or failed)
+
+    Propose (agents: the only way an agent changes the base; the person accepts or rejects):
+      akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--reason T]
+                      [--author NAME] [--json] [--base PATH|WORLD]
+                                        Propose a change of a note, written only to
+                                        inbox/<date>-<slug>.md (never committed). For an existing
+                                        note the text is ## Heading blocks: each replaces that
+                                        section or is added at the end. A note that doesn't exist
+                                        yet gets the whole text, in a new area too (created on
+                                        Accept). --set changes frontmatter properties. Refused:
+                                        a path outside areas/, a secret, a broken [[link]].
+                                        --json: {id, path, kind, target, checks}
+      akit kb propose --arrow "A -kind-> B" [--map MAP] [--reason T] [--author NAME] [--json]
+                                        Propose an arrow between two notes (on the map MAP): the
+                                        person draws it on the map in the app
 
     Write (for a person only: an agent runs these only when the user asked for that action in
     this session; otherwise it proposes or asks):
@@ -111,6 +131,16 @@ extension AKitCLI {
                                         would change its target or a map wouldn't parse. Pending
                                         edits are committed first, then the rename in one commit.
                                         Without --yes it only shows the plan
+      akit kb accept ID [--yes] [--json] [--base PATH|WORLD]
+                                        For a person only. Accept a proposal of inbox/: shows the
+                                        diff; with --yes commits the pending edits, backs the note
+                                        up (~/.akit/local/backups/knowledge/), writes it and
+                                        commits it in one commit that also removes the proposal.
+                                        An arrow proposal is drawn in the app: it writes nothing,
+                                        says so and exits 2
+      akit kb reject ID [--yes] [--json] [--base PATH|WORLD]
+                                        For a person only. Move a proposal to the Trash. Without
+                                        --yes it only shows what would go
       akit kb rm NOTE|MAP|AREA [--yes] [--json] [--base PATH|WORLD]
                                         For a person only. Move a note, a map or a whole area to
                                         the Trash and commit the removal at once. Without --yes it
@@ -141,7 +171,8 @@ extension AKitCLI {
     """
 
     static func knowledge(_ arguments: [String], env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
-                          out: (String) -> Void, trash: (URL) throws -> URL? = Trash.move) async throws -> Int32 {
+                          out: (String) -> Void, trash: (URL) throws -> URL? = Trash.move,
+                          input: () -> Data = { Data() }) async throws -> Int32 {
         var args = Arguments(arguments)
         if args.flag("--help") || args.flag("-h") || args.isEmpty {
             out(knowledgeUsage)
@@ -329,6 +360,8 @@ extension AKitCLI {
                 out("Would write \(path) to the core layer for Pi only and commit it in the brain. Run again with --yes to do it:\n\(edit.diff)")
             }
             return 0
+        case "propose", "inbox", "accept", "reject":
+            return try await knowledgeInbox(command!, &args, json: json, base: chosen, cwd: cwd, env: env, out: out, trash: trash, input: input)
         case "seed":
             return try await knowledgeSeed(&args, json: json, baseOption: baseOption, base: chosen, env: env, out: out, trash: trash)
         default:
@@ -688,6 +721,188 @@ extension AKitCLI {
                 : "Would move the sample base \(path) (the whole folder) to the Trash. Run again with --yes to do it.")
         }
         return 0
+    }
+
+    /// `kb propose` (agents), `kb inbox` (read), `kb accept` and `kb reject` (person only) (K14, P3).
+    private static func knowledgeInbox(_ command: String, _ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
+                                       cwd: URL, env: HarnessEnvironment, out: (String) -> Void, trash: (URL) throws -> URL?,
+                                       input: () -> Data) async throws -> Int32 {
+        let home = env.homeDirectory
+        switch command {
+        case "propose":
+            let note = args.value("--note"), arrow = args.value("--arrow"), map = args.value("--map")
+            let file = args.value("--file"), stdin = args.flag("--stdin")
+            let reason = args.value("--reason"), author = args.value("--author")
+            let sets = args.values("--set")
+            try args.finish()
+            let usage = "Use: akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--reason T] [--json], or akit kb propose --arrow \"A -kind-> B\" [--map MAP] [--reason T] [--json]"
+            guard (note == nil) != (arrow == nil) else { throw Failure(message: usage) }
+            if file != nil, stdin { throw Failure(message: "Use --file F or --stdin, not both.") }
+            let change: KnowledgeInbox.Draft.Change
+            if let arrow {
+                if file != nil || stdin || !sets.isEmpty { throw Failure(message: "An arrow proposal has no text or properties. \(usage)") }
+                change = .arrow(arrow, map: map)
+            } else {
+                if map != nil { throw Failure(message: "--map goes with --arrow.") }
+                var body = ""
+                if let file {
+                    let url = resolve(file, cwd: cwd, env: env)
+                    guard let data = try? Data(contentsOf: url) else { throw Failure(message: "Can't read \(url.path).") }
+                    guard let text = String(data: data, encoding: .utf8) else { throw Failure(message: "\(url.path) isn't UTF-8 text.") }
+                    body = text
+                } else if stdin {
+                    guard let text = String(data: input(), encoding: .utf8) else { throw Failure(message: "The text on stdin isn't UTF-8.") }
+                    body = text
+                }
+                var settings: [KnowledgeProposal.Setting] = []
+                for pair in sets {
+                    guard let equals = pair.firstIndex(of: "="), equals != pair.startIndex,
+                          !pair[pair.index(after: equals)...].trimmingCharacters(in: .whitespaces).isEmpty else {
+                        throw Failure(message: "--set \(pair) is not KEY=VALUE (like owner=team-a, or files=[a.ts, b.ts]).")
+                    }
+                    settings.append(.init(key: String(pair[..<equals]).trimmingCharacters(in: .whitespaces),
+                                          value: String(pair[pair.index(after: equals)...]).trimmingCharacters(in: .whitespaces)))
+                }
+                change = .note(note!, body: body, set: settings)
+            }
+            // The harness, when the agent didn't name itself: Claude Code sets CLAUDECODE.
+            let harness = author ?? (env.variables["CLAUDECODE"].map { $0.isEmpty ? nil : "claude" } ?? nil)
+            let base = try await writable(chosen)
+            let proposal: KnowledgeProposal, checks: [KnowledgeInbox.Check]
+            do { (proposal, checks) = try base.propose(.init(change, reason: reason, author: harness)) } catch { throw Failure(message: error.message) }
+            if json {
+                out(encode(ProposeAnswer(id: proposal.id, path: proposal.path, kind: proposal.kind.rawValue, target: proposal.target, checks: checks)))
+            } else {
+                let marks = checks.filter { $0.status != .passed || $0.message != nil }.map { "  \($0.name): \($0.message ?? $0.status.rawValue)" }
+                out(([proposal.id, "Proposed in \(proposal.path), for the person to accept or reject (not committed)."] + marks).joined(separator: "\n"))
+            }
+            return 0
+        case "inbox":
+            try args.finish()
+            guard let base = try await chosen() else {
+                out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
+                return 0
+            }
+            let entries = base.proposals()
+            if json {
+                out(encode(InboxAnswer(base: base.root.path, proposals: entries)))
+            } else if entries.isEmpty {
+                out("No proposals in \(FileWalk.tilde(base.inboxFolder, home: home)).")
+            } else {
+                out(entries.map { entry in
+                    let what = entry.arrow.map { "arrow \($0.text)" + ($0.map.map { " on \($0)" } ?? "") }
+                        ?? "\(entry.kind?.rawValue ?? "unknown") \(entry.target ?? "-")"
+                    let marks = entry.checks.filter { $0.status != .passed }.map { "\n    \($0.status.rawValue) \($0.name): \($0.message ?? "")" }
+                    return "\(entry.id)  \(what)" + (entry.reason.map { "\n    \($0)" } ?? "") + marks.joined()
+                }.joined(separator: "\n"))
+            }
+            return 0
+        default:
+            let yes = args.flag("--yes")
+            guard let id = args.positional() else { throw Failure(message: "Use: akit kb \(command) ID [--yes] [--json] [--base PATH|WORLD]") }
+            try args.finish()
+            let base = try await writable(chosen)
+            let proposal: KnowledgeProposal
+            do { proposal = try base.proposal(id) } catch { throw Failure(message: error.message) }
+            if command == "reject" {
+                if yes {
+                    do { try await base.reject(proposal, env: env, trash: trash) } catch { throw Failure(message: error.message) }
+                }
+                if json {
+                    out(encode(RejectAnswer(base: base.root.path, id: proposal.id, path: proposal.path, rejected: yes)))
+                } else {
+                    out(yes ? "Moved the proposal \(proposal.id) (\(proposal.path)) to the Trash."
+                        : "Would move the proposal \(proposal.id) (\(proposal.path)) to the Trash. Run again with --yes to do it.")
+                }
+                return 0
+            }
+            guard proposal.kind == .note else {
+                let message = KnowledgeInbox.arrowMessage(proposal)
+                out(json ? encode(AcceptAnswer(base: base.root.path, id: proposal.id, kind: proposal.kind.rawValue, note: nil, path: nil,
+                                               newArea: false, accepted: false, backup: nil, diff: nil, message: message)) : message)
+                return 2
+            }
+            let plan: KnowledgeInbox.Plan
+            var backup: URL?
+            do {
+                plan = try base.planAccept(proposal)
+                if yes { backup = try await base.accept(plan, env: env).backup }
+            } catch {
+                throw Failure(message: error.message)
+            }
+            if json {
+                out(encode(AcceptAnswer(base: base.root.path, id: proposal.id, kind: proposal.kind.rawValue, note: plan.note, path: plan.notePath,
+                                        newArea: plan.newArea, accepted: yes, backup: backup?.path, diff: plan.diff, message: nil)))
+            } else if yes {
+                out("Accepted \(proposal.id): wrote \(plan.notePath)" + (plan.newArea ? " (a new area)" : "")
+                    + ", committed; the proposal is removed." + (backup.map { " Backup: \(FileWalk.tilde($0, home: home))." } ?? "") + "\n" + plan.diff)
+            } else {
+                out("Would write \(plan.notePath)" + (plan.newArea ? " (a new area)" : "")
+                    + " and commit it, removing the proposal \(proposal.id). Run again with --yes to do it:\n" + plan.diff)
+            }
+            return 0
+        }
+    }
+
+    struct ProposeAnswer: Encodable {
+        let id: String
+        let path: String
+        let kind: String
+        let target: String?
+        let checks: [KnowledgeInbox.Check]
+
+        private enum CodingKeys: String, CodingKey { case id, path, kind, target, checks }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(path, forKey: .path)
+            try container.encode(kind, forKey: .kind)
+            try container.encode(target, forKey: .target) // null for an arrow on no named map
+            try container.encode(checks, forKey: .checks)
+        }
+    }
+
+    struct InboxAnswer: Encodable {
+        let base: String
+        let proposals: [KnowledgeInbox.Entry]
+    }
+
+    struct AcceptAnswer: Encodable {
+        let base: String
+        let id: String
+        let kind: String
+        let note: String?
+        let path: String?
+        let newArea: Bool
+        /// false without --yes, and for an arrow (drawn in the app).
+        let accepted: Bool
+        let backup: String?
+        let diff: String?
+        let message: String?
+
+        private enum CodingKeys: String, CodingKey { case base, id, kind, note, path, newArea, accepted, backup, diff, message }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(base, forKey: .base)
+            try container.encode(id, forKey: .id)
+            try container.encode(kind, forKey: .kind)
+            try container.encode(note, forKey: .note)
+            try container.encode(path, forKey: .path)
+            try container.encode(newArea, forKey: .newArea)
+            try container.encode(accepted, forKey: .accepted)
+            try container.encode(backup, forKey: .backup)
+            try container.encode(diff, forKey: .diff)
+            try container.encode(message, forKey: .message)
+        }
+    }
+
+    struct RejectAnswer: Encodable {
+        let base: String
+        let id: String
+        let path: String
+        let rejected: Bool
     }
 
     /// `kb kinds` and its person-only changes `add`, `fields`, `remove`, `rename`.

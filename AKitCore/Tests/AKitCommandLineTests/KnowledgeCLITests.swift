@@ -25,10 +25,11 @@ struct KnowledgeCLITests {
 
     func akit(_ arguments: String...) async -> (code: Int32, out: String, err: String) { await akit(arguments) }
 
-    func akit(_ arguments: [String]) async -> (code: Int32, out: String, err: String) {
+    func akit(_ arguments: [String], stdin: String = "") async -> (code: Int32, out: String, err: String) {
         var out: [String] = [], err: [String] = []
         let code = await AKitCLI.run(arguments, env: env, cwd: home, projectsRoot: home.appending(path: "Projects"),
-                                     hostName: "TestMac.local", out: { out.append($0) }, err: { err.append($0) }, trash: fakeTrash)
+                                     hostName: "TestMac.local", out: { out.append($0) }, err: { err.append($0) }, trash: fakeTrash,
+                                     input: { Data(stdin.utf8) })
         return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
     }
 
@@ -55,12 +56,13 @@ struct KnowledgeCLITests {
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
         for command in ["akit kb init", "akit kb new-note", "akit kb new-map", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
-                        "akit kb rm", "akit kb rename", "akit kb pi-template", "akit kb seed [", "akit kb seed --remove", "akit kb focus [FOLDER] --set"] {
+                        "akit kb rm", "akit kb rename", "akit kb accept", "akit kb reject", "akit kb pi-template", "akit kb seed [", "akit kb seed --remove", "akit kb focus [FOLDER] --set"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
         for command in ["akit kb areas", "akit kb notes", "akit kb maps", "akit kb relations", "akit kb kinds [--json]", "akit kb area AREA [--json]",
-                        "akit kb search", "akit kb show", "akit kb index", "akit kb neighbors", "akit kb context", "akit kb focus [FOLDER] [--json]", "akit kb lint"] {
+                        "akit kb search", "akit kb show", "akit kb index", "akit kb neighbors", "akit kb context", "akit kb focus [FOLDER] [--json]", "akit kb lint",
+                        "akit kb inbox", "akit kb propose --note", "akit kb propose --arrow"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(!lines[index...].prefix(3).contains { $0.contains("person only") }, "\(command) is a read command")
         }
@@ -74,7 +76,7 @@ struct KnowledgeCLITests {
         #expect(areas.out == "{\n  \"base\" : null,\n  \"reason\" : \"no base\"\n}")
         let notes = await akit("kb", "notes")
         #expect(notes.code == 0 && notes.out.contains("No knowledge base on this Mac"))
-        for command in [["search", "retry"], ["show", "orders-api"], ["index"], ["neighbors", "orders-api"], ["context"], ["focus"], ["lint"]] {
+        for command in [["search", "retry"], ["show", "orders-api"], ["index"], ["neighbors", "orders-api"], ["context"], ["focus"], ["lint"], ["inbox"]] {
             let answer = await akit(["kb"] + command + ["--json"])
             #expect(answer.code == 0 && answer.out == areas.out, "\(command)")
         }
@@ -491,6 +493,69 @@ struct KnowledgeCLITests {
         #expect(gone["removed"] as? Bool == true && gone["world"] as? String == "sample")
         #expect(!fm.fileExists(atPath: sample.path))
         #expect(try fm.contentsOfDirectory(atPath: home.appending(path: "Trash").path).count == 3)
+    }
+
+    /// 5.1: propose (stdin, a file, --set, an arrow) writes only inbox/; inbox lists with checks;
+    /// accept shows the diff, then commits once and leaves git clean; an arrow exits 2; reject
+    /// goes to the Trash.
+    @Test func proposeInboxAcceptAndReject() async throws {
+        #expect(await akit("kb", "init", "--world", "work").code == 0)
+        #expect(await akit("kb", "new-note", "payments", "billing", "--kind", "service").code == 0)
+        #expect(await akit("kb", "new-note", "payments", "orders-api").code == 0)
+
+        let proposed = await akit(["kb", "propose", "--note", "payments/billing", "--stdin", "--reason", "from the code", "--json"],
+                                  stdin: "## Retries\nThree tries with backoff.\n")
+        #expect(proposed.code == 0, "\(proposed.err)")
+        let answer = try json(proposed.out)
+        #expect(Set(answer.keys) == ["id", "path", "kind", "target", "checks"])
+        let id = try #require(answer["id"] as? String)
+        #expect(answer["path"] as? String == "inbox/\(id).md" && answer["kind"] as? String == "note" && answer["target"] as? String == "payments/billing")
+        #expect((answer["checks"] as? [[String: Any]])?.map { $0["name"] as? String } == ["secret", "target", "links"])
+        #expect(try await git("status", "--porcelain") == "?? inbox/\(id).md")
+        #expect((try json(await akit("kb", "search", "three tries", "--json").out)["results"] as? [Any])?.isEmpty == true)
+
+        // Refused: a secret, a broken link; nothing more in inbox/.
+        let secret = await akit(["kb", "propose", "--note", "payments/billing", "--stdin"], stdin: "## Keys\nghp_abcdefghijklmnopqrstuvwxyz0123456789\n")
+        #expect(secret.code == 2 && secret.err.contains("secret"))
+        #expect(await akit(["kb", "propose", "--note", "payments/billing", "--stdin"], stdin: "## L\n[[nowhere]]\n").err.contains("Broken link"))
+        #expect(await akit(["kb", "propose", "--note", "../x", "--stdin"], stdin: "x").code == 2)
+        // A new area from a file, with a property.
+        let file = home.appending(path: "helpdesk.md")
+        try Data("Tickets by email.\n".utf8).write(to: file)
+        let area = await akit("kb", "propose", "--note", "support/helpdesk", "--file", file.path, "--set", "kind=service", "--author", "pi")
+        #expect(area.code == 0 && area.out.contains("new area support"), "\(area.err)")
+        let arrow = await akit("kb", "propose", "--arrow", "orders-api -events-> billing", "--json")
+        #expect(arrow.code == 0, "\(arrow.err)")
+        let arrowID = try #require(try json(arrow.out)["id"] as? String)
+
+        let inbox = try json(await akit("kb", "inbox", "--json").out)
+        let entries = try #require(inbox["proposals"] as? [[String: Any]])
+        #expect(entries.count == 3)
+        #expect(Set(entries[0].keys) == ["id", "path", "kind", "target", "reason", "created", "author", "set", "arrow", "checks"])
+        #expect(entries.first { $0["id"] as? String == id }?["reason"] as? String == "from the code")
+        #expect(await akit("kb", "inbox").out.contains("\(arrowID)  arrow payments/orders-api -events-> payments/billing"))
+
+        // accept: the diff without --yes, then one commit; the arrow writes nothing and exits 2.
+        let asked = await akit("kb", "accept", id)
+        #expect(asked.code == 0 && asked.out.contains("Run again with --yes to do it:") && asked.out.contains("+ Three tries with backoff."))
+        let commits = try await git("rev-list", "--count", "HEAD")
+        let accepted = try json(await akit("kb", "accept", id, "--yes", "--json").out)
+        #expect(accepted["accepted"] as? Bool == true && accepted["path"] as? String == "areas/payments/billing.md")
+        #expect((accepted["backup"] as? String)?.hasPrefix(home.appending(path: ".akit/local/backups/knowledge/work/").path) == true)
+        #expect(Int(try await git("rev-list", "--count", "HEAD")) == Int(commits)! + 1)
+        #expect(try String(contentsOf: base.appending(path: "areas/payments/billing.md"), encoding: .utf8).contains("Three tries with backoff."))
+        let drawn = await akit("kb", "accept", arrowID, "--yes")
+        #expect(drawn.code == 2 && drawn.out == "Add the arrow payments/orders-api -events-> payments/billing on a map of payments in the app (Knowledge → Inbox).")
+        #expect(fm.fileExists(atPath: base.appending(path: "inbox/\(arrowID).md").path))
+
+        // reject: only shown without --yes; then to the Trash, no commit.
+        #expect(await akit("kb", "reject", arrowID).out.hasSuffix("Run again with --yes to do it."))
+        let rejected = try json(await akit("kb", "reject", arrowID, "--yes", "--json").out)
+        #expect(rejected["rejected"] as? Bool == true)
+        #expect(!fm.fileExists(atPath: base.appending(path: "inbox/\(arrowID).md").path))
+        #expect(Int(try await git("rev-list", "--count", "HEAD")) == Int(commits)! + 1)
+        #expect(try await git("status", "--porcelain").hasPrefix("?? inbox/"))
+        #expect(await akit("kb", "accept", "nope").err.contains("No proposal nope"))
     }
 
     /// K16 / D0: the core layer's Pi-only section reaches Pi's AGENTS.md through apply --home and

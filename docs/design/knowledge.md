@@ -16,7 +16,9 @@ saves of Excalidraw's own bytes, Changed on disk, maps in the commit queue, New 
 search field, the index line with Reindex, watching the base folder, a note Changed on disk, Focus… and Preview
 Agent Context…) built 2026-10-24. 3.4 (the Pi template: `templates/kb-pi.md` in the core layer for Pi only,
 `akit kb pi-template`, Knowledge → Pi Template…) built 2026-10-25: step 3 is done. 4.1 (lint: `KnowledgeLint`, `akit kb lint`, the Lint tab, Checks and grey links
-in the note panel; seed v4 with the area `lint-examples`) built 2026-10-24: step 4 is done. Steps in [Steps](#steps).
+in the note panel; seed v4 with the area `lint-examples`) built 2026-10-24: step 4 is done. 5.1 (proposals: `akit kb
+propose`, `inbox`, `accept`, `reject`; `KnowledgeInbox`; seed v5 with two proposals) built 2026-10-25, see
+[Proposals](#proposals). Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
 ## Goal
@@ -72,7 +74,8 @@ describe the system once, by hand, and let the agent read it.
 │   │   ├── flows/order-to-billing.md   note of an arrow
 │   │   └── maps/overview.excalidraw    a tab of the "payments" space
 │   └── logistics/ …
-├── inbox/                               agent proposals waiting for Accept / Reject
+├── inbox/                               agent proposals waiting for Accept / Reject (untracked;
+│   └── .gitkeep                         only this file is committed, so inbox/ is tracked, P3)
 └── .akit-index.sqlite                   index, rebuildable, git-ignored
 ```
 
@@ -92,6 +95,57 @@ files: [src/events/order-created.ts]
 Free text…
 ```
 
+## Proposals
+
+Built in 5.1 (K14, K23, K24, P3). An agent changes the base only by a proposal: `akit kb propose`
+writes one file `inbox/<yyyy-MM-dd>-<slug>.md` (UTC day; `-2`, `-3` … when taken) and nothing
+else. It is never committed, queued or indexed; `git status` shows it as `?? inbox/<id>.md`.
+
+The file (`KnowledgeProposal.text`, read back by `parse`):
+
+```markdown
+---
+id: "2026-10-25-payments-billing"
+kind: note                        # note | arrow; 5.4 adds map
+target: "payments/billing"        # note: the note id; arrow: the map id, or none
+reason: "Retries were missing"    # --reason, optional
+created: "2026-10-25T09:12:00Z"
+author: "pi"                      # --author, else "claude" under Claude Code, else none
+set:                              # --set KEY=VALUE, note only (K24)
+  "owner": "team-a"
+arrow:                            # arrow only: note ids, the label, the map
+  from: "payments/orders-api"
+  kind: "events"
+  to: "payments/billing"
+  map: "payments/maps/overview"
+---
+## Retries
+Three tries with backoff.
+```
+
+| Kind | Body | Accept (person only) |
+|---|---|---|
+| note, target exists | `## Heading` blocks only (no frontmatter, no `# title`, no loose text before the first block) | each block replaces the section with that heading (the blank line after the heading kept) or is appended; then each `set` key through `KnowledgeNote.setting` |
+| note, new target `AREA/NAME` | the whole note; `# NAME` is added when it has no title and no frontmatter | the file is created; a new area's folder too (K23, no `area.yaml`); then `set` |
+| arrow | empty | writes nothing: "Add the arrow A -kind-> B on map M in the app (Knowledge → Inbox)", exit 2, the proposal stays |
+| map (5.4) | the draft beside it, `inbox/<id>.excalidraw` | in the app only |
+
+Checks without a model block `propose` at once, and are run again by `kb inbox` and before
+Accept (the base may have changed): `secret` (body, reason, `set`, arrow: `SecretFilter.masked`
+changes the text, or `PRIVATE KEY`), `target` (no `..`, no absolute or `~` path, no hidden part,
+not `inbox/`, not a `maps/` folder, a new note names its area, the file stays inside `areas/`),
+`links` (every `[[link]]` / `akit:` link of the body resolves, the proposed note itself counts;
+ambiguous is a warning), `arrow` (both ends are notes, the map exists). The model's marks (5.2)
+come on top and never block.
+
+Accept (`kb accept ID [--yes]`, `planAccept` + `accept`): without `--yes` it prints the diff and
+exits 0. With it: the commit queue is flushed (U2), the note is backed up to
+`~/.akit/local/backups/knowledge/<world>/<yyyy-MM-dd'T'HHmmss.SSS>/areas/…` (0600), written,
+the proposal file is deleted, and one commit holds the note (`Edit NOTE (accept proposal ID)` or
+`Add note NOTE (…)`; plus `inbox/.gitkeep` for a base made before 5.1). A note changed since the
+plan is refused; a failed commit puts the note and the proposal back. Reject (`kb reject ID
+[--yes]`) moves the file to the Trash; there is nothing to commit.
+
 ## Screen
 
 Knowledge (sidebar): spaces on the left, tabs of maps in the middle (Excalidraw), the note
@@ -105,7 +159,7 @@ panel on the right with **Open in Obsidian**; **Inbox** and **Lint** as tabs of 
 | 2 | Excalidraw in the app, offline: map tabs, block ↔ `[[note]]`, jump to another map, relations from arrows | 2026-10-24: the bundle and `MapCanvasView` (2.0), `ExcalidrawFile`, `MapGraph`, `akit kb maps/relations/new-map` (2.1), the map view (2.2a), Edit with checked saves and Changed on disk (2.2b), map tabs, drag a note onto a map, Relations, `KnowledgeRename` and `akit kb rename` (2.3) |
 | 3 | SQLite index (FTS + graph); `akit kb search / show / neighbors / context --json`; the Pi template in the core layer; the `/akit` skill | 2026-10-24/25, done (3.2a, 3.2b, 3.3, 3.4): (3.2a) `KnowledgeIndex` (`<base>/.akit-index.sqlite`: files, notes, nodes, edges, chunks + FTS5; schema version with "Update akit"; incremental refresh under `.akit-index.lock`, `stale` when busy), `Budget` (tokens ≈ bytes / 4), `.akit-misses.log`, `akit kb search / show / index`; (3.2b) focus of a folder (`focus.json` override, then the first area whose `area.yaml` `projects:` names its remote, `~/` path or glob, then the area of a note whose `repo:` is its remote or `~/` path; remotes through `ProjectRecords.normalizedRemote`), `akit kb neighbors NOTE [--depth 1; (3.4, K16) the Pi template: `templates/kb-pi.md` in the core layer, listed as `{template: kb-pi.md, to: AGENTS.md, when: target == pi}` through `LayerEditor.addingFile` (read-back verify, one brain commit), so `akit apply --home` writes it only into Pi's AGENTS.md, never `~/.claude/CLAUDE.md`; `akit kb pi-template [--yes] [--json]` (person only; commits the base's pending edits first; a second run says "already set") and Knowledge → Pi Template… with its own preview, then Update Home Folder… |2]`, `akit kb context [FOLDER]` (the focus area's notes with title and one line, the arrows touching them, their neighbours in other areas; ≤ 4000 tokens, `truncated`), `akit kb focus [FOLDER] [--set AREA \| --clear]` (person only); (3.3) the search field in Knowledge (hits by section, a click opens the note at that section), the index line (notes, sections, stale) with Reindex, `KnowledgeWatcher` + `WatchFilter` (outside edits reindexed within about a second and joined to the batch commit; inbox/ only counted; an open note or map changed outside asks Reload / Keep Mine), Focus… and Preview Agent Context… (exactly `akit kb context`, with its tokens) |
 | 4 | Lint: block without a note, unbound arrow, broken repo/file references | 2026-10-24 (4.1): `KnowledgeLint` with errors (broken link, map that doesn't parse), warnings (ambiguous link, block without a note, unbound arrow, `repo:` not a known project, `files:` path missing in the local copy, `~/` path missing) and hints (kind not in `kb.yaml`, K24; a block of an unrelated area, R-SEP: no map of one area jumps to one of the other). Known projects: `origin` remotes of the repos in the projects root (and one folder below), the project stores' ids, the areas' `area.yaml` remotes, all through `normalizedRemote`. `akit kb lint [--json]` (`{base, findings, counts}`), the Lint tab (Open, Create Note…, Check Again), Checks and grey links in the note panel; the seed's area `lint-examples` has one finding per rule |
-| 5 | `akit kb propose`, Inbox, the light-model check, Accept / Reject with a commit | — |
+| 5 | `akit kb propose`, Inbox, the light-model check, Accept / Reject with a commit | 2026-10-25 (5.1): `KnowledgeInbox` (`KnowledgeProposal` file format, checks without a model, `planAccept`/`accept` with a backup and one commit, `reject` to the Trash), `inbox/.gitkeep` in new bases, `akit kb propose / inbox / accept / reject`, seed v5 with a note and an arrow proposal; see [Proposals](#proposals). The checker model (5.2), the Inbox tab (5.3) and map drafts (5.4) follow |
 | 6 | AKit Review reads the base (K18) | — |
 | 7 | Embeddings with a local model, if FTS misses (K17) | — |
 

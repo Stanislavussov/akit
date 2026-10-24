@@ -11,12 +11,15 @@ import Foundation
 /// `version`, and extends the seed test.
 ///
 /// `.akit-seed.json` at the base root (committed) marks a base as a sample one: the seed version
-/// and the files the seed wrote. Only such a base is updated or removed here.
+/// and the files the seed wrote. Only such a base is updated or removed here. The seed's
+/// proposals (`proposals`, 5.1) are written into `inbox/` after the commit and stay untracked, as
+/// an agent's proposals do (P3): they are not in the marker, and a seed run writes only the
+/// missing ones.
 public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 4
+    public static let version = 5
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -115,8 +118,30 @@ public enum KnowledgeSeed {
         } catch {
             throw Failure(message: "Couldn't write the sample base in \(base.root.path): \(error.localizedDescription)")
         }
-        try await base.commit(paths + stale, message: "\(commitPrefix) sample base v\(version)", env: env)
+        // A base made before inbox/ was tracked gets its .gitkeep with the seed (P3).
+        let keep = base.root.appending(path: KnowledgeInbox.keepFile)
+        let addsKeep = !fm.fileExists(atPath: keep.path)
+        if addsKeep {
+            do {
+                try fm.createDirectory(at: base.inboxFolder, withIntermediateDirectories: true)
+                try Data().write(to: keep)
+            } catch {
+                throw Failure(message: "Couldn't write \(KnowledgeInbox.keepFile) in \(base.root.path): \(error.localizedDescription)")
+            }
+        }
+        try await base.commit(paths + stale + (addsKeep ? [KnowledgeInbox.keepFile] : []), message: "\(commitPrefix) sample base v\(version)", env: env)
+        writeProposals(base)
         return Outcome(base: base, status: status, files: paths)
+    }
+
+    /// Writes each seed proposal that isn't in `inbox/` yet, untracked (never committed).
+    static func writeProposals(_ base: KnowledgeBase) {
+        for proposal in proposals {
+            let url = base.root.appending(path: proposal.path)
+            guard !FileManager.default.fileExists(atPath: url.path) else { continue }
+            try? FileManager.default.createDirectory(at: base.inboxFolder, withIntermediateDirectories: true)
+            try? Data(proposal.text.utf8).write(to: url, options: .withoutOverwriting)
+        }
     }
 
     /// Every seed file is on disk with the seed's text.
@@ -138,7 +163,9 @@ public enum KnowledgeSeed {
             throw Failure(message: error.message)
         }
         let own = subjects.filter { !$0.hasPrefix(commitPrefix) && $0 != KnowledgeBase.createMessage }
-        if !own.isEmpty || !status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // Proposals waiting in inbox/ are untracked by design (P3), not changes of the user.
+        let changed = status.split(separator: "\n").filter { !$0.hasPrefix("?? inbox/") }
+        if !own.isEmpty || !changed.isEmpty {
             throw Failure(message: "The sample base \(FileWalk.tilde(base.root, home: home)) has changes of yours (\(own.isEmpty ? "not committed yet" : "\(own.count) commit\(own.count == 1 ? "" : "s")")), so AKit doesn't overwrite it. Remove it first: akit kb seed --remove.")
         }
     }
@@ -435,6 +462,22 @@ public enum KnowledgeSeed {
             {"type": "excalidraw", "version": 2, "elements": [
 
             """),
+    ]
+
+    /// The proposals waiting in the sample base's `inbox/` (5.1): a note proposal that adds a
+    /// section to billing and sets a property, and an arrow proposal for the logistics map.
+    public static let proposals: [KnowledgeProposal] = [
+        KnowledgeProposal(id: "2026-10-24-payments-billing", kind: .note, target: "payments/billing",
+                          reason: "Refunds were missing from the billing note.", created: "2026-10-24T09:00:00Z", author: "pi",
+                          set: [.init(key: "sla", value: "next day")], body: """
+            ## Refunds
+
+            A refund makes a credit note for its invoice; the order stays as it was (see [[order-to-billing]]).
+
+            """),
+        KnowledgeProposal(id: "2026-10-24-arrow-billing-warehouse", kind: .arrow, target: "logistics/maps/routes",
+                          reason: "The warehouse ships only paid orders.", created: "2026-10-24T09:05:00Z", author: "pi",
+                          arrow: .init(from: "payments/billing", kind: "paid orders", to: "logistics/warehouse", map: "logistics/maps/routes")),
     ]
 
     /// payments/maps/overview: orders-api → billing "events" (flow order-to-billing), and a block
