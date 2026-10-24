@@ -1,6 +1,7 @@
 # MCP check: does the server connect, and what to do when it doesn't
 
-Status: designed 2026-10-24 (grilling with the user), not built. Steps in [Steps](#steps).
+Status: designed 2026-10-24 (grilling with the user); step 1 built 2026-10-24 (`AKitMCP/MCPCheck.swift`,
+`AKitFoundation/LoginShell.swift`, `akit mcp check`). Steps in [Steps](#steps).
 
 ## Goal
 
@@ -49,6 +50,10 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
   (`MCPServer.variables`) with that environment and names the missing ones (Missing
   Variables). Only the JSON or the status lines are read from the output, so text that a
   `.zshrc` prints doesn't matter. Secrets in the `keychainLookup` mode work either way.
+- **Only the status is read.** `claude mcp get` also prints the server's `Environment:` with
+  its values, and `pi mcp list` its command line, so AKit reads only `Status:` / `Issue:`
+  (Claude) or `state`, `error`, `tools` and `exposure` (Pi), and masks the error text.
+  Both exit 0 or 1 regardless of the server, so the exit status is not used.
 - **Timeout** 90 s per check. On timeout: "Timed out after 90 s; the first run of npx may
   download the package", and Check Again.
 - **States.** Connected, Failed (with the error), Needs Sign-In, Pending Approval (Claude,
@@ -78,7 +83,7 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
 
 | # | Step | Status |
 |---|---|---|
-| 1 | The check core (both harnesses, folder, login shell, missing variables, timeout, saved results) and `akit mcp check` | — |
+| 1 | The check core (both harnesses, folder, login shell, missing variables, timeout, saved results in `~/.akit/mcp-checks.json`) and `akit mcp check` | built 2026-10-24 |
 | 2 | UI: Check Connection, Check All, the check after Apply, the result with Edit Again and Undo | — |
 | 3 | Sign In…, Set Variable…, Approve… (verify Claude's approval key first) | — |
 | 4 | Copy to Pi… / Copy to Claude Code… | — |

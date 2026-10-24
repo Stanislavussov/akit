@@ -78,6 +78,12 @@ public enum AKitCLI {
                                           ~/.claude/settings.json
                                           Each shows the change (only the changed entries); --yes writes
                                           it after a backup and refuses if those entries changed meanwhile.
+          akit mcp check [NAME] [--harness claude|pi] [--project PATH]
+                                          Does the server connect? Asks the harness (claude mcp get / list,
+                                          pi mcp list --json) with your login shell's environment, in the
+                                          server's project, or for a global server in --project or the
+                                          home folder. Names missing variables; Pi also lists the tools.
+                                          Exit 1 when a checked server doesn't connect (Off is fine)
                                           Plugin servers have no switch: turn the plugin off with /plugin
 
         Worktrees (a local-only project's AKit files, linked into its other git worktrees):
@@ -384,7 +390,7 @@ public enum AKitCLI {
                 var checked = options
                 checked.includeUnmanaged = false
                 try refuseProjectOptions(checked, command: "mcp")
-                return try mcp(&args, yes: options.yes, includeUnmanaged: options.includeUnmanaged, env: env, cwd: cwd,
+                return try await mcp(&args, yes: options.yes, includeUnmanaged: options.includeUnmanaged, env: env, cwd: cwd,
                                projectsRoot: projectsRoot, out: out, err: err)
             }
             if command == "move" {

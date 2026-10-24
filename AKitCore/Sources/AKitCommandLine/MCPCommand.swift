@@ -10,10 +10,10 @@ import Foundation
 /// in each harness's own setting (docs/design/harness-support.md, "MCP switches").
 extension AKitCLI {
     static let mcpUsage = "Use: akit mcp state [NAME] | akit mcp set NAME --harness claude|pi (--off everywhere | --off project --project PATH... | --on [--project PATH...]) [--yes]"
-        + " | akit mcp connectors on|off [--yes]"
+        + " | akit mcp connectors on|off [--yes] | akit mcp check [NAME] [--harness claude|pi] [--project PATH]"
 
     static func mcp(_ args: inout Arguments, yes: Bool, includeUnmanaged: Bool, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
-                    out: (String) -> Void, err: (String) -> Void) throws -> Int32 {
+                    out: (String) -> Void, err: (String) -> Void) async throws -> Int32 {
         let subcommand = args.positional()
         let harnessName = args.value("--harness"), offMode = args.value("--off"), turnOn = args.flag("--on")
         let projectPaths = args.values("--project")
@@ -39,6 +39,10 @@ extension AKitCLI {
             let plan: MCPSwitches.Plan
             do { plan = try MCPSwitches.connectorsPlan(off: name == "off", in: env) } catch { throw Failure(message: error.message) }
             return try runMCPPlan(plan, yes: yes, env: env, out: out)
+        case "check":
+            if offMode != nil || turnOn || yes || includeUnmanaged || projectPaths.count > 1 { throw Failure(message: mcpUsage) }
+            return try await mcpCheck(name, harnessName: harnessName, context: projectPaths.first.map { resolve($0, cwd: cwd, env: env) },
+                                      servers: servers, env: env, out: out)
         case "set":
             break
         default:
@@ -91,6 +95,44 @@ extension AKitCLI {
             throw Failure(message: error.message)
         }
         return try runMCPPlan(plan, yes: yes, env: env, out: out)
+    }
+
+    /// `akit mcp check`: asks Claude Code and Pi whether the servers connect, prints one line
+    /// per server and harness, saves the results for the app.
+    static func mcpCheck(_ name: String?, harnessName: String?, context: URL?, servers: [MCPServer], env: HarnessEnvironment,
+                         out: (String) -> Void) async throws -> Int32 {
+        let harness: HarnessID?
+        switch harnessName {
+        case nil: harness = nil
+        case "claude", "claude-code": harness = .claudeCode
+        case "pi": harness = .pi
+        default: throw Failure(message: "--harness is claude or pi.")
+        }
+        let chosen = servers.filter { name == nil || $0.name == name }
+        let requests = MCPCheck.requests(for: chosen, harness: harness, context: context, home: env.homeDirectory)
+        if let name, requests.isEmpty {
+            throw Failure(message: "No MCP server named \(name) that \(harness?.displayName ?? "Claude Code or Pi") uses.")
+        }
+        let asked = Set(requests.flatMap { request in request.names.map { MCPCheckResult.key(harness: request.harness.rawValue, name: $0,
+                                                                                               folder: request.folder.standardizedFileURL.path) } })
+        let results = await MCPCheck.run(requests, in: env)
+        try? MCPCheckStore.save(results, home: env.homeDirectory)
+        let shown = results.filter { asked.contains($0.id) }
+        out(mcpCheckText(shown, home: env.homeDirectory))
+        return shown.contains { $0.state.isProblem } ? 1 : 0
+    }
+
+    static func mcpCheckText(_ results: [MCPCheckResult], home: URL) -> String {
+        var lines: [String] = []
+        for result in results.sorted(by: { ($0.name, $0.harness, $0.folder) < ($1.name, $1.harness, $1.folder) }) {
+            let folder = result.folder == home.standardizedFileURL.path ? "~" : FileWalk.tilde(URL(filePath: result.folder), home: home)
+            var line = "\(result.name)  \(result.harnessID.displayName): \(result.state.title)  (in \(folder))"
+            if !result.missingVariables.isEmpty { line += "  missing: \(result.missingVariables.joined(separator: ", "))" }
+            if let tools = result.tools, result.state == .connected { line += "  \(tools.count) tool\(tools.count == 1 ? "" : "s")" }
+            lines.append(line)
+            for detail in (result.detail ?? "").split(separator: "\n") { lines.append("  " + detail) }
+        }
+        return lines.isEmpty ? "No servers to check." : lines.joined(separator: "\n")
     }
 
     /// Prints the plan's changes; with `--yes` writes them.
