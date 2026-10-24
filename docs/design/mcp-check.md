@@ -1,6 +1,6 @@
 # MCP check: does the server connect, and what to do when it doesn't
 
-Status: designed 2026-10-24 (grilling with the user); steps 1–4 built 2026-10-24 (`AKitMCP/MCPCheck.swift`,
+Status: designed 2026-10-24 (grilling with the user); steps 1–5 built 2026-10-24 (`AKitMCP/MCPCheck.swift`,
 `AKitFoundation/LoginShell.swift`, `akit mcp check`, `MCPWriter.undoPlan`, `AKit/MCPCheckViews.swift`, `AKitMCP/MCPApprove.swift`). Steps in [Steps](#steps).
 
 ## Goal
@@ -82,9 +82,11 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
   or the stdio wrapper, Pi's `!security` lookups); a secret written in the source file goes
   into the Keychain, never into the new file; `${VAR}` stays as it is. Offered when a harness
   of the two doesn't read the server yet and has a place to write; not for plugin servers.
-- **Tools are only shown.** The tools of a Pi server from its last check, with their
-  exposure and whether Insights saw them used. No switches for single tools now (Pi
-  `toolExposure`, Claude `mcp__server__tool` deny rules stay read-only).
+- **Tools are only shown.** The tools of a Pi server from its last check, with the
+  server's exposure and each tool whose own exposure differs (`MCPToolList`). No switches
+  for single tools now (Pi `toolExposure`, Claude `mcp__server__tool` deny rules stay
+  read-only). Built without the Insights use of each tool: the app model doesn't hold tool
+  stats (only the Insights screen loads them); see Later.
 - **CLI.** `akit mcp check [NAME] [--harness claude|pi] [--project P]`, the same states and
   error text, exit 1 when a checked server isn't Connected.
 
@@ -96,9 +98,10 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
 | 2 | UI: Check Connection, Check All, the check after Apply, the result with Edit Again and Undo | built 2026-10-24 |
 | 3 | Sign In…, Set Variable…, Approve… and `akit mcp approve` (`AKitMCP/MCPApprove.swift`) | built 2026-10-24 |
 | 4 | Copy to Pi… / Copy to Claude Code… | built 2026-10-24 |
-| 5 | The tools of a Pi server | — |
+| 5 | The tools of a Pi server | built 2026-10-24 |
 
 ## Later
 
 - Switches for single tools (Pi `toolExposure`, Claude deny rules).
 - Codex and OpenCode.
+- Next to each listed tool, whether Insights saw it called (needs the tool stats in the app model).

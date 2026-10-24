@@ -120,6 +120,10 @@ struct MCPView: View {
         .onChange(of: model.mcpFilter) { keepSelectionVisible() }
         .onChange(of: model.mcpServers) {
             keepSelectionVisible()
+            // Snapshot mode: `--select NAME` shows that server.
+            if let name = DebugSnapshot.options?.select, let server = filtered.first(where: { $0.name == name }) {
+                selection = server.id
+            }
             // Snapshot mode: `--tab edit` / `--tab delete` opens the editor on the first listed server.
             if let tab = DebugSnapshot.options?.tab, editor == nil, let server = filtered.first {
                 if tab == "edit" { editor = EditorRequest(mode: .edit(server)) }

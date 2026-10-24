@@ -250,9 +250,7 @@ struct MCPCheckRow: View {
                     Text(result.checkedAt.formatted(.relative(presentation: .named)))
                         .foregroundStyle(.secondary)
                         .help(result.checkedAt.formatted(date: .abbreviated, time: .standard))
-                    if let tools = result.tools, result.state == .connected {
-                        Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")").foregroundStyle(.secondary)
-                    }
+
                 } else {
                     Text("Not checked yet").foregroundStyle(.secondary)
                 }
@@ -266,6 +264,9 @@ struct MCPCheckRow: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+                if let tools = result.tools, !tools.isEmpty, result.state == .connected {
+                    MCPToolList(tools: tools, exposure: result.exposure, toolExposure: result.toolExposure ?? [:])
+                }
                 if let fixError {
                     Text(fixError).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
                 }
@@ -278,5 +279,46 @@ struct MCPCheckRow: View {
                 }
             }
         }
+    }
+}
+
+/// Pi's answer about a connected server: its tools and how each reaches the model
+/// (`exposure` of the server, `toolExposure` where a tool differs). Only shown, never changed.
+struct MCPToolList: View {
+    let tools: [String]
+    let exposure: String?
+    let toolExposure: [String: String]
+    /// A short list is open from the start.
+    @State private var expanded: Bool
+
+    init(tools: [String], exposure: String?, toolExposure: [String: String]) {
+        self.tools = tools
+        self.exposure = exposure
+        self.toolExposure = toolExposure
+        _expanded = State(initialValue: tools.count <= 5)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(tools, id: \.self) { tool in
+                    HStack(spacing: 6) {
+                        Text(tool).font(.caption.monospaced()).textSelection(.enabled)
+                        if let own = toolExposure[tool] {
+                            Text(own)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.orange)
+                                .help("This tool's exposure differs from the server's (\(exposure ?? "codemode"))")
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 2)
+        } label: {
+            Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")" + (exposure.map { " · \($0)" } ?? ""))
+        }
+        .font(.caption)
+        .help("The tools Pi listed at the last check. Exposure: codemode (scripts find them), deferred (tool_search loads them), direct (always declared), hidden")
     }
 }

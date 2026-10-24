@@ -1299,7 +1299,7 @@ akit remove skill ИМЯ --everywhere
 - «Добавил сервер, а агент его не видит» → в карточке сервера блок **Connection**, кнопка **Check Connection**.
 - «Сервер есть в Claude Code, хочу его и в Pi» → кнопка **Copy to Pi…** в шапке карточки.
 
-![Экран MCP Servers: слева группа Global с серверами context7, github и playwright и значками агентов Codex и Claude, у github значок ключа от последней проверки; справа карточка сервера github с предупреждением Needs GITHUB_TOKEN, блоками Used by, Connection (Claude · Missing Variables · 5 minutes ago, строки Not set in your shell: GITHUB_TOKEN и Failed to connect: HTTP 401: Unauthorized, кнопки Set Variable… и Check Connection), Switches (состояние On, меню Change), Headers и Needs variables с кнопками Set in Keychain… и Copy Line; в шапке кнопки Copy to Pi…, Edit…, Delete…, открыть в редакторе, Show in Finder; в панели инструментов All Servers, All Harnesses, Refresh, облако claude.ai Connectors, Check All, Catalog…, Add Server…](images/mcp.png)
+![Экран MCP Servers: слева группа Global с серверами context7, docs, github и playwright и значками агентов Codex, Pi и Claude, у github значок ключа от последней проверки; справа карточка сервера github с предупреждением Needs GITHUB_TOKEN, блоками Used by, Connection (Claude · Missing Variables · 5 minutes ago, строки Not set in your shell: GITHUB_TOKEN и Failed to connect: HTTP 401: Unauthorized, кнопки Set Variable… и Check Connection), Switches (состояние On, меню Change), Headers и Needs variables с кнопками Set in Keychain… и Copy Line; в шапке кнопки Copy to Pi…, Edit…, Delete…, открыть в редакторе, Show in Finder; в панели инструментов All Servers, All Harnesses, Refresh, облако claude.ai Connectors, Check All, Catalog…, Add Server…](images/mcp.png)
 
 #### Что на экране
 <!-- section: mcp-screen -->
@@ -1372,7 +1372,7 @@ akit remove skill ИМЯ --everywhere
 
 Состояния:
 
-- **Connected**: агент подключился. Для Pi рядом число инструментов, например «12 tools».
+- **Connected**: агент подключился. Для Pi под строкой список инструментов сервера, например «3 tools · codemode» (подробнее ниже).
 - **Failed**: агент не подключился. Ниже текст ошибки от агента.
 - **Missing Variables**: сервер не подключился, и в терминале нет переменной, которая ему нужна. Строка «Not set in your shell: …» называет её. Справа кнопка **Set Variable…**: выберите переменную, вставьте значение и нажмите **Save**, потом **Done**. AKit сохранит значение в Keychain и проверит сервер снова.
 - **Needs Sign-In**: серверу нужен вход через браузер (OAuth). Справа кнопка **Sign In…**: AKit запускает `claude mcp login имя` или `pi mcp login имя`, агент открывает браузер. После входа AKit проверяет сервер снова. Агент ждёт вход до 5 минут.
@@ -1381,6 +1381,15 @@ akit remove skill ИМЯ --everywhere
 - **Off**: сервер выключен переключателем или в настройках агента.
 - **Timed Out**: агент не ответил за 90 секунд. Нажмите **Check Connection** ещё раз.
 - **Not Found**: агент не видит сервер в этой папке.
+
+Инструменты сервера Pi:
+
+- Под строкой **Connected** у Pi есть список «N tools · способ». Короткий список (до 5) открыт сразу, длинный открывается стрелкой.
+- Способ (exposure) показывает, как инструменты доходят до модели: **codemode** — скрипты модели находят их сами, **deferred** — их загружает `tool_search`, **direct** — они всегда в запросе, **hidden** — модель их не видит.
+- Оранжевая метка у инструмента, например **direct**, значит, что у него свой способ, не как у сервера.
+- Список только для чтения. Он такой, каким его дал Pi при последней проверке.
+
+![Карточка сервера docs агента Pi: блок Used by (Pi global, Active), блок Connection со строкой Pi · Connected · 5 minutes ago и открытым списком 3 tools · codemode: search_docs с оранжевой меткой direct, read_page, list_sources; в шапке кнопки Copy to Claude Code…, Edit…, Delete…](images/mcp-tools.png)
 
 > **Важно:** AKit читает только состояние и текст ошибки. Значения переменных из ответа агента AKit не показывает и не сохраняет. Итог последней проверки лежит в `~/.akit/mcp-checks.json`.
 
