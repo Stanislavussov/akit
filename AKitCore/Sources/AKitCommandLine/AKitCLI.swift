@@ -73,6 +73,12 @@ public enum AKitCLI {
                                           Back on: in those projects, or everywhere and in every folder.
                                           Removes only what AKit added; --include-unmanaged also removes
                                           entries made outside AKit (by /mcp or by hand)
+          akit mcp set NAME --harness pi --exposure direct|deferred|codemode|hidden [--project PATH] [--yes]
+                                          How Pi's model reaches the server's tools (mcp.md): direct is
+                                          declared in every request, deferred only after tool_search
+                                          finds a tool, codemode (the default) only from codemode
+                                          scripts, hidden never. Written on the entry in
+                                          ~/.pi/agent/mcp.json (or the project's own .pi/mcp.json)
           akit mcp connectors on|off [--yes]
                                           All claude.ai connectors: disableClaudeAiConnectors in
                                           ~/.claude/settings.json
@@ -89,6 +95,21 @@ public enum AKitCLI {
                                           the name in enabledMcpjsonServers of .claude/settings.local.json
                                           (only that key is shown; --yes writes it after a backup)
                                           Plugin servers have no switch: turn the plugin off with /plugin
+          akit mcp login NAME --harness claude|pi [--project PATH] [--yes]
+                                          The harness's OAuth sign-in for a server (the same as MCP
+                                          Servers → Connection → Sign In…): shows the command; --yes
+                                          runs claude/pi mcp login NAME in the folder (default ~) with
+                                          your login shell's environment; the harness opens the browser
+                                          and keeps the credentials, AKit never reads them
+
+        Pi packages (Pi installs and removes them; AKit shows the pi command first, --yes runs it):
+          akit pi packages [--json]       Every package in Pi's settings (global and projects), installed or not
+          akit pi packages install [SOURCE] [--project PATH] [--yes]
+                                          Without SOURCE: every missing one (pi update --extensions).
+                                          SOURCE (npm:…, git:…, a path): pi install SOURCE, which also adds
+                                          it to the settings (--project: the project's .pi/settings.json)
+          akit pi packages remove SOURCE [--project PATH] [--yes]
+                                          pi remove SOURCE: the package and its entry in the settings
 
         Worktrees (a local-only project's AKit files, linked into its other git worktrees):
           akit worktrees [PROJECT]        Each worktree of the repository and the links it lacks
@@ -253,6 +274,11 @@ public enum AKitCLI {
                                           output. akit translate --help lists the rest
 
         Instructions (AGENTS.md, CLAUDE.md; only reads):
+          akit instructions remove FILE (--line N | --section HEADING) [--yes]
+                                          Take one section out of an instruction file (Remove This
+                                          Copy… on the Instructions screen): shows the diff; --yes
+                                          writes it after a backup, refused if the file changed.
+                                          Never AKit's core block or a file AKit renders
           akit instructions [FOLDER] [--harness claude|pi|codex|opencode] [--global]
                                           The instruction files each harness loads for a session in
                                           FOLDER (default: here), in the order the model gets them,
@@ -263,6 +289,12 @@ public enum AKitCLI {
           akit doctor                     What AKit sees on this Mac and what is wrong (lines with !,
                                           each with what to do). Only reads, never shows a secret.
                                           Run it first when AKit doesn't behave
+          akit doctor pi [--live] [--json]
+                                          Pi's setup, like claude doctor: install, settings,
+                                          environment, MCP servers, packages and extensions,
+                                          skills, context size, keybindings (exit 1 on a problem).
+                                          --live also connects to the MCP servers (pi mcp list)
+                                          and checks the default provider's sign-in
           akit machine                    Show whether this is a personal or a work Mac
           akit machine work [--name NAME] Work Mac: answers and locks of projects stay in
                                           ~/.akit/local/projects, nothing about them reaches the
@@ -367,13 +399,42 @@ public enum AKitCLI {
                                            runner: runner, out: out, err: err)
             }
             if command == "doctor" {
-                try refuseProjectOptions(options, command: "doctor")
+                var checked = options
+                checked.json = false
+                try refuseProjectOptions(checked, command: "doctor")
+                if args.peek == "pi" {
+                    _ = args.positional()
+                    let live = args.flag("--live")
+                    try args.finish()
+                    let report = await PiDoctor.check(env: env, live: live)
+                    if options.json {
+                        let encoder = JSONEncoder()
+                        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+                        out(SecretFilter.masked(String(decoding: try encoder.encode(report), as: UTF8.self)))
+                    } else {
+                        out(report.text)
+                    }
+                    return report.problems > 0 ? 1 : 0
+                }
+                if options.json { throw Failure(message: "--json goes only with akit doctor pi.") }
                 try args.finish()
                 out(await Doctor.report(.init(env: env, brainRoot: brainRoot(options, cwd: cwd, env: env), projectRoots: [projectsRoot])))
                 return 0
             }
+            if command == "pi" {
+                try refuseProjectOptions(options, command: "pi")
+                return try await pi(&args, yes: options.yes, json: options.json, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
+            }
             if command == "instructions" {
                 try refuseProjectOptions(options, command: "instructions")
+                if args.peek == "remove" {
+                    _ = args.positional()
+                    // Files AKit rendered from the brain change there, not here (InstructionEdit).
+                    let context = await skillContext(brainRoot: brainRoot(options, cwd: cwd, env: env), env: env, projectsRoot: projectsRoot,
+                                                     hostName: hostName, installedTargets: installedTargets)
+                    let rendered = InstructionEdit.renderedFiles(projects: context.projectFolders, store: context.store)
+                    return try instructionsRemove(&args, yes: options.yes, rendered: rendered, env: env, cwd: cwd, out: out)
+                }
                 return try instructions(&args, env: env, cwd: cwd, out: out)
             }
             if command == "worktrees" {
@@ -395,7 +456,7 @@ public enum AKitCLI {
                 checked.includeUnmanaged = false
                 try refuseProjectOptions(checked, command: "mcp")
                 return try await mcp(&args, yes: options.yes, includeUnmanaged: options.includeUnmanaged, env: env, cwd: cwd,
-                               projectsRoot: projectsRoot, out: out, err: err)
+                                     projectsRoot: projectsRoot, out: out, err: err)
             }
             if command == "move" {
                 var checked = options

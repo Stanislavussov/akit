@@ -143,6 +143,13 @@ successful write (they may hold tokens).
 Pi's own MCP (0.99+): fixed 2026-10-10, see the "MCP: read" row; servers in `~/.pi/agent/mcp.json`
 and `.pi/mcp.json` are no longer marked "Needs the pi-mcp-adapter package" on such a Pi.
 
+Pi exposure (2026-10-24, for Pi doctor): `exposure` on the server's entry in the Pi `mcp.json` that
+defines it (`direct`, `deferred`, `codemode` = the default and removes the key, `hidden`; mcp.md
+"Control tool exposure"), through `SettingsFile` like the switches (`MCPSwitches.exposurePlan`,
+`akit mcp set NAME --harness pi --exposure …`, Switches → Exposure → Change). Not written as a
+project override of a user server. `akit mcp login NAME --harness claude|pi` is the CLI of
+`MCPApprove.signIn` (`mcp-check.md`).
+
 ## Layers (`layers.md`)
 
 | Feature | Claude Code | Pi | Note |

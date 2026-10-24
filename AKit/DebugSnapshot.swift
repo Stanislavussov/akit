@@ -8,6 +8,8 @@ import SwiftUI
 ///     [--harness pi] [--project akit] [--capture] [--tab prompt] [--add]   (Sessions: harness and project filters, session tab;
 ///     --add opens Review in Terminal…)
 ///
+/// Overview: `--tab pi-doctor` opens the Pi card's Check Pi… sheet (`--capture` also runs Check Servers and Sign-In).
+///
 /// `--query` fills the search field of the section (skills.sh selects the first result;
 /// Usage takes it as the period: week, month, quarter, year, all);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`

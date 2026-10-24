@@ -13,6 +13,8 @@ struct MCPSwitchRequest: Identifiable {
         /// Back on everywhere and in every folder where it is off.
         case allOn
         case connectors
+        /// Pi's `exposure` for the server (mcp.md).
+        case exposure(String)
     }
 
     let id = UUID()
@@ -63,6 +65,23 @@ struct MCPSwitchControls: View {
                                 .fixedSize()
                                 .disabled(status.unknown != nil)
                                 .help("\(options.everywhereHelp.map { "Off Everywhere: " + $0 + " " } ?? "")Off in Project: \(options.projectHelp)")
+                            }
+                        }
+                        if harness == .pi, let exposure = MCPSwitches.piExposure(of: server, in: .current) {
+                            GridRow {
+                                Text("Exposure").foregroundStyle(.secondary)
+                                Text(exposure).help(MCPSwitches.exposureHelp(exposure))
+                                Menu("Change") {
+                                    ForEach(MCPSwitches.piExposures, id: \.self) { value in
+                                        Button("\(value.capitalized)…") {
+                                            model.mcpSwitchRequest = MCPSwitchRequest(server: server, harness: .pi, off: false, kind: .exposure(value))
+                                        }
+                                        .disabled(value == exposure)
+                                        .help(MCPSwitches.exposureHelp(value))
+                                    }
+                                }
+                                .fixedSize()
+                                .help("How Pi's model reaches this server's tools (exposure in its mcp.json)")
                             }
                         }
                     }
@@ -200,6 +219,7 @@ struct MCPSwitchSheet: View {
         case .chooseProjects: "Turn \(name) \(request.off ? "Off" : "On") in Projects in \(request.harness.displayName)"
         case .allOn: "Turn \(name) On in \(request.harness.displayName)"
         case .connectors: "Turn claude.ai Connectors \(request.off ? "Off" : "On")"
+        case .exposure(let value): "Set \(name)'s Exposure to \(value) in Pi"
         }
     }
 
@@ -280,6 +300,9 @@ struct MCPSwitchSheet: View {
                 do {
                     if request.kind == .connectors { return .success(try MCPSwitches.connectorsPlan(off: request.off, in: env)) }
                     guard let server = request.server else { throw MCPSwitches.Failure("No server.") }
+                    if case .exposure(let value) = request.kind {
+                        return .success(try MCPSwitches.exposurePlan(server, exposure: value, in: env))
+                    }
                     let target: MCPProjectSwitch.Target
                     switch request.kind {
                     case .everywhere: target = .everywhere

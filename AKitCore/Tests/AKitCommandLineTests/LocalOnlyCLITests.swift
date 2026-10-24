@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import AKitBrain
+import AKitDoctor
 import AKitFoundation
 @testable import AKitCommandLine
 
@@ -136,5 +137,39 @@ struct LocalOnlyCLITests {
         #expect(!doctor.out.contains("clidoctorsecret"))
         #expect(await akit("doctor", "extra").code == 2)
         #expect(AKitCLI.usage.contains("akit doctor") && AKitCLI.usage.contains("akit worktrees sync [PROJECT]"))
+    }
+
+    @Test func doctorPiExitsOneOnAProblemAndSpeaksJSON() async throws {
+        try write(".pi/agent/settings.json", #"{"defaultThinkingLevel": "huge"}"#)
+        let text = await akit("doctor", "pi")
+        #expect(text.code == 1, "\(text.err)")
+        #expect(text.out.hasPrefix("Pi doctor"))
+        #expect(text.out.contains("! ~/.pi/agent/settings.json: defaultThinkingLevel has a value Pi doesn't know"))
+        let json = await akit("doctor", "pi", "--json")
+        #expect(json.code == 1)
+        let decoded = try JSONDecoder().decode(PiDoctor.Report.self, from: Data(json.out.utf8))
+        #expect(decoded.problems >= 1 && !decoded.live)
+        #expect(await akit("doctor", "--json").code == 2)
+        #expect(AKitCLI.usage.contains("akit doctor pi [--live] [--json]"))
+    }
+
+    @Test func instructionsRemoveShowsTheDiffAndWritesOnlyWithYes() async throws {
+        let original = "# Rules\n\n## Style\nShort sentences.\n\n## Build\nmake build\n"
+        try write(".pi/agent/AGENTS.md", original)
+        let file = home.appending(path: ".pi/agent/AGENTS.md")
+        let plan = await akit("instructions", "remove", "~/.pi/agent/AGENTS.md", "--section", "style")
+        #expect(plan.code == 0, "\(plan.err)")
+        #expect(plan.out.contains("Remove ## Style (line 3) from ~/.pi/agent/AGENTS.md:"))
+        #expect(plan.out.contains("- Short sentences.") && plan.out.hasSuffix("Run again with --yes to do it."))
+        #expect(try String(contentsOf: file, encoding: .utf8) == original)
+
+        let done = await akit("instructions", "remove", "~/.pi/agent/AGENTS.md", "--line", "3", "--yes")
+        #expect(done.code == 0, "\(done.err)")
+        #expect(done.out.contains("Done. A backup is in ~/"))
+        #expect(try String(contentsOf: file, encoding: .utf8) == "# Rules\n\n## Build\nmake build\n")
+
+        #expect(await akit("instructions", "remove", "~/.pi/agent/AGENTS.md", "--line", "9").code == 2)
+        #expect(await akit("instructions", "remove", "~/.pi/agent/AGENTS.md").code == 2)
+        #expect(AKitCLI.usage.contains("akit instructions remove FILE (--line N | --section HEADING) [--yes]"))
     }
 }

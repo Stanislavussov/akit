@@ -1,3 +1,4 @@
+import AKitDoctor
 import AKitFoundation
 import AKitHarnesses
 import AKitMCP
@@ -10,12 +11,15 @@ import Foundation
 /// in each harness's own setting (docs/design/harness-support.md, "MCP switches").
 extension AKitCLI {
     static let mcpUsage = "Use: akit mcp state [NAME] | akit mcp set NAME --harness claude|pi (--off everywhere | --off project --project PATH... | --on [--project PATH...]) [--yes]"
+        + " | akit mcp set NAME --harness pi --exposure direct|deferred|codemode|hidden [--project PATH] [--yes]"
+        + " | akit mcp login NAME --harness claude|pi [--project PATH] [--yes]"
         + " | akit mcp connectors on|off [--yes] | akit mcp check [NAME] [--harness claude|pi] [--project PATH] | akit mcp approve NAME --project PATH [--yes]"
 
     static func mcp(_ args: inout Arguments, yes: Bool, includeUnmanaged: Bool, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
                     out: (String) -> Void, err: (String) -> Void) async throws -> Int32 {
         let subcommand = args.positional()
         let harnessName = args.value("--harness"), offMode = args.value("--off"), turnOn = args.flag("--on")
+        let exposure = args.value("--exposure")
         let projectPaths = args.values("--project")
         let name = args.positional()
         try args.finish()
@@ -25,7 +29,37 @@ extension AKitCLI {
         let servers = MCPScanner.scan(installations: installations, projects: projects, in: env).servers
             .filter { server in MCPSwitches.harnesses.contains { server.usedBy.contains($0) } }
 
+        if exposure != nil, subcommand != "set" { throw Failure(message: mcpUsage) }
         switch subcommand {
+        case "login":
+            // The harness's own OAuth sign-in (`MCPApprove.signIn`, the same as MCP Servers →
+            // Connection → Sign In…): it opens the browser and keeps the credentials.
+            guard let name, let harnessName, offMode == nil, !turnOn, projectPaths.count <= 1, !includeUnmanaged else {
+                throw Failure(message: "Use: akit mcp login NAME --harness claude|pi [--project PATH] [--yes]")
+            }
+            let harness: HarnessID
+            switch harnessName {
+            case "claude", "claude-code": harness = .claudeCode
+            case "pi": harness = .pi
+            default: throw Failure(message: "--harness is claude or pi.")
+            }
+            guard servers.contains(where: { $0.name == name && $0.usedBy.contains(harness) }) else {
+                throw Failure(message: "No MCP server named \(name) that \(harness.displayName) uses.")
+            }
+            let folder = projectPaths.first.map { resolve($0, cwd: cwd, env: env) } ?? env.homeDirectory
+            let program = harness == .pi ? "pi" : "claude"
+            let shown = "\(program) mcp login \(name)" + (harness == .pi ? " --timeout 300" : "")
+                + " (in \(folder.standardizedFileURL.path == env.homeDirectory.standardizedFileURL.path ? "~" : FileWalk.tilde(folder, home: env.homeDirectory)))"
+            guard yes else {
+                out("Runs: \(shown)\nRun again with --yes to do it.")
+                return 0
+            }
+            if let failure = await MCPApprove.signIn(name, harness: harness, folder: folder, in: env, timeout: 300) {
+                out("Ran: \(shown)\n\(failure)")
+                return 1
+            }
+            out("Ran: \(shown)\nSigned in. akit mcp check \(name) --harness \(harnessName) checks the connection.")
+            return 0
         case "state":
             if harnessName != nil || offMode != nil || turnOn || !projectPaths.isEmpty || yes || includeUnmanaged { throw Failure(message: mcpUsage) }
             let shown = name.map { name in servers.filter { $0.name == name } } ?? servers
@@ -54,6 +88,21 @@ extension AKitCLI {
             throw Failure(message: mcpUsage)
         }
 
+        if let exposure {
+            guard let name, harnessName == "pi", offMode == nil, !turnOn, !includeUnmanaged, projectPaths.count <= 1 else {
+                throw Failure(message: "Use: akit mcp set NAME --harness pi --exposure direct|deferred|codemode|hidden [--project PATH] [--yes]")
+            }
+            // The entry in the project's own .pi/mcp.json with --project, else the global one.
+            let project = projectPaths.first.map { MCPSwitches.piProject(resolve($0, cwd: cwd, env: env)).standardizedFileURL.path }
+            let global = HarnessCatalog.configRoot(of: .pi, in: env)?.appending(path: "mcp.json").standardizedFileURL.path
+            guard let server = servers.first(where: { $0.name == name && $0.usedBy.contains(.pi)
+                && $0.file.standardizedFileURL.path == (project ?? global) }) else {
+                throw Failure(message: "No MCP server named \(name) in \(project.map { FileWalk.tilde(URL(filePath: $0), home: env.homeDirectory) } ?? "~/.pi/agent/mcp.json").")
+            }
+            let plan: MCPSwitches.Plan
+            do { plan = try MCPSwitches.exposurePlan(server, exposure: exposure, in: env) } catch { throw Failure(message: error.message) }
+            return try runMCPPlan(plan, yes: yes, env: env, out: out)
+        }
         guard let name, let harnessName, (offMode != nil) != turnOn else { throw Failure(message: mcpUsage) }
         let harness: HarnessID
         switch harnessName {
@@ -100,6 +149,18 @@ extension AKitCLI {
             throw Failure(message: error.message)
         }
         return try runMCPPlan(plan, yes: yes, env: env, out: out)
+    }
+
+    /// What `pi` will run; with `--yes` runs it and reports how it ended (exit 1 when it failed).
+    static func runPiAction(_ action: PiCommands.Action, yes: Bool, env: HarnessEnvironment, out: (String) -> Void) async -> Int32 {
+        let shown = action.shown(home: env.homeDirectory)
+        guard yes else {
+            out("Runs: \(shown)\nRun again with --yes to do it.")
+            return 0
+        }
+        let outcome = await PiCommands.run(action, env: env)
+        out("Ran: \(shown)\n" + (outcome.output.isEmpty ? "" : outcome.output + "\n") + (outcome.succeeded ? "Done." : "Pi reported a failure."))
+        return outcome.succeeded ? 0 : 1
     }
 
     /// `akit mcp check`: asks Claude Code and Pi whether the servers connect, prints one line

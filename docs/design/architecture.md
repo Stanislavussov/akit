@@ -158,7 +158,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Instructions (the core block markers), Brain, Render, Insights, MCP (MCP switches' project files) |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
-| `AKitDoctor` | Foundation, Model, Harnesses, Skills, Brain, ProjectSetup |
+| `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
 | `AKitReview` | Foundation, Model, Harnesses (Pi's packages, for Pi steps), Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Yams |
 | `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review |

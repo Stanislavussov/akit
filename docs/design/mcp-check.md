@@ -103,7 +103,7 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
 |---|---|---|
 | 1 | The check core (both harnesses, folder, login shell, missing variables, timeout, saved results in `~/.akit/mcp-checks.json`) and `akit mcp check` | built 2026-10-24 |
 | 2 | UI: Check Connection, Check All, the check after Apply, the result with Edit Again and Undo | built 2026-10-24 |
-| 3 | Sign In…, Set Variable…, Approve… and `akit mcp approve` (`AKitMCP/MCPApprove.swift`) | built 2026-10-24 |
+| 3 | Sign In…, Set Variable…, Approve… and `akit mcp approve` (`AKitMCP/MCPApprove.swift`) | built 2026-10-24; `akit mcp login NAME --harness claude\|pi` (Sign In… from the command line) and Pi doctor's live check and Sign In… use the same code (branch `pi-doctor`) |
 | 4 | Copy to Pi… / Copy to Claude Code… | built 2026-10-24 |
 | 5 | The tools of a Pi server | built 2026-10-24 |
 

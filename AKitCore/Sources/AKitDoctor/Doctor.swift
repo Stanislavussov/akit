@@ -113,6 +113,11 @@ public enum Doctor {
         }
         let missing = adapters.filter { adapter in !installations.contains { $0.id == adapter.id } }.map(\.displayName)
         if !missing.isEmpty { lines.append("  not found: \(missing.joined(separator: ", "))") }
+        if installations.contains(where: { $0.id == .pi }) {
+            let pi = await PiDoctor.check(env: env, sessions: false)
+            lines.append(pi.problems == 0 ? "  Pi setup: \(pi.summary) (akit doctor pi)"
+                         : "! Pi setup: \(pi.summary); run akit doctor pi for what to do.")
+        }
         let piDir = env.variables["PI_CODING_AGENT_DIR"].flatMap { $0.isEmpty ? nil : $0 }
         lines.append("  PI_CODING_AGENT_DIR: \(piDir ?? "not set")")
         // Claude Code's skill listing budget in characters; it beats skillListingBudgetFraction (only a shell's sessions see it).

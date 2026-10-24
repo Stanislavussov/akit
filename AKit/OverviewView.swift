@@ -1,3 +1,5 @@
+import AKitDoctor
+import AKitFoundation
 import AKitHarnesses
 import AKitModel
 import AppKit
@@ -113,6 +115,8 @@ private struct HarnessCard: View {
     let onEdit: (() -> Void)?
     @State private var confirmRemove = false
     @State private var removeError: String?
+    /// Check Pi… (snapshot: `--section overview --tab pi-doctor`, `--capture` also runs the live part).
+    @State private var checkingPi = DebugSnapshot.options?.tab == "pi-doctor"
 
     var body: some View {
         GroupBox {
@@ -150,6 +154,12 @@ private struct HarnessCard: View {
                 if let version {
                     Text(version).font(.callout).foregroundStyle(.secondary)
                 }
+                if installation.id == .pi {
+                    Spacer()
+                    Button("Check Pi…") { checkingPi = true }
+                        .controlSize(.small)
+                        .help("What is wrong in Pi's setup, like claude doctor (the same as akit doctor pi)")
+                }
                 if let onEdit {
                     Text("Custom").font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -164,6 +174,9 @@ private struct HarnessCard: View {
             "Config: \(installation.configRoot.tildePath)",
             installation.isCustom ? "Described by the user (Custom)" : "",
         ])
+        .sheet(isPresented: Binding(get: { checkingPi && installation.id == .pi }, set: { checkingPi = $0 })) {
+            PiDoctorSheet()
+        }
         .confirmationDialog("Remove “\(installation.displayName)” from AKit?", isPresented: $confirmRemove,
                             titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
@@ -186,11 +199,21 @@ private struct HarnessCard: View {
     }
 }
 
-/// One package from Pi's settings and what Pi loads from it. Read-only: files open in Quick Look.
+/// One package from Pi's settings and what Pi loads from it. Files open in Quick Look; Install…
+/// and Remove… run `pi install` / `pi remove` after a yes (the same as `akit pi packages`).
 private struct PiPackageRow: View {
+    @Environment(AppModel.self) private var model
     let package: PiPackage
     @State private var expanded = false
     @State private var preview: URL?
+    @State private var pending: PiCommands.Action?
+    @State private var running = false
+    @State private var outcome: PiCommands.Outcome?
+
+    private var project: String? {
+        if case .project(let url) = package.scope { return url.path }
+        return nil
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -248,6 +271,23 @@ private struct PiPackageRow: View {
 
             Spacer()
 
+            if running {
+                ProgressView().controlSize(.small)
+            } else if !package.isInstalled, package.kind != .local {
+                Button("Install…") { pending = .installPackage(source: package.source, project: project) }
+                    .controlSize(.small)
+                    .help("Pi installs it (pi install); AKit shows the command first")
+            }
+            Menu {
+                Button("Remove…") { pending = .removePackage(source: package.source, project: project) }
+                    .help("Pi removes the package and its entry in the settings (pi remove)")
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(running)
+
             Button {
                 if let folder = package.folder { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
             } label: {
@@ -259,6 +299,25 @@ private struct PiPackageRow: View {
         }
         .opacity(package.isInstalled ? 1 : 0.6)
         .quickLookPreview($preview)
+        .confirmationDialog(pending?.title.replacingOccurrences(of: "…", with: "") ?? "", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+                            titleVisibility: .visible, presenting: pending) { action in
+            Button("Run") {
+                running = true
+                Task {
+                    let env = HarnessEnvironment.current
+                    outcome = await Task.detached { await PiCommands.run(action, env: env) }.value
+                    running = false
+                    await model.refresh()
+                }
+            }
+        } message: { action in
+            Text("AKit runs: \(action.shown(home: HarnessEnvironment.current.homeDirectory))\n\nThe same as \(action.akitCommand) --yes.")
+        }
+        .alert(outcome?.succeeded == true ? "Done" : "Pi reported a failure", isPresented: Binding(get: { outcome != nil }, set: { if !$0 { outcome = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(String((outcome?.output ?? "").suffix(1500)))
+        }
     }
 
     /// "1 extension · 2 skills · 6 prompt templates".

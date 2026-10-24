@@ -27,6 +27,11 @@ akit layers [--json]            # what exists: fields, skills, files per layer
 akit skills                     # skills in the brain
 akit sync                       # pull other Macs' brain commits, push this one's
 akit doctor                     # when AKit doesn't behave, run this first: what it sees, what's wrong
+akit doctor pi [--live] [--json] # when Pi misbehaves: install, settings, env, MCP, packages, skills, context
+                                # (exit 1 on a problem); --live also connects MCP servers, checks sign-in;
+                                # + lines: what recent Pi sessions say is extra, each with its akit command
+akit instructions remove FILE (--line N | --section HEADING) [--yes]  # drop one section (a repeated one)
+akit pi packages [install [SOURCE] | remove SOURCE] [--yes]  # Pi's packages; pi does the install
 akit answers [PROJECT]          # saved answers of a project
 akit plan  [PROJECT] [ANSWERS]  # every change with a diff; never writes
 akit apply [PROJECT] [ANSWERS] [--include PATH]
@@ -193,13 +198,18 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
 
 - Missing Variables: the user stores the value (MCP Servers → Set Variable… in the app);
   never ask for or print the token.
-- Needs Sign-In: the user runs `claude mcp login NAME` or `pi mcp login NAME` (a browser).
+- Needs Sign-In: `akit mcp login NAME --harness claude|pi [--project PATH]` shows what it
+  runs; after a yes, `--yes` starts the harness's own sign-in (a browser; the harness keeps
+  the credentials, akit never reads them).
 - Pending Approval (a project's `.mcp.json` server in Claude Code):
   `akit mcp approve NAME --project PATH` shows the one key it adds
   (`enabledMcpjsonServers` of `.claude/settings.local.json`); after a yes, `--yes` writes it
   with a backup. Never show or read the rest of that file.
 - Off without deleting: `akit mcp state [NAME]`, `akit mcp set NAME --harness claude|pi
   --off everywhere | --off project --project PATH | --on` (shows the change; `--yes` writes).
+- Pi's tools cost too much context: `akit mcp set NAME --harness pi --exposure deferred`
+  (also `direct`, `codemode` = Pi's default, `hidden`; shows the change; `--yes` writes).
+  `akit doctor pi` suggests it for a direct server Pi rarely calls.
 
 ## Rules
 

@@ -95,14 +95,16 @@ public enum ToolStats {
 
     /// The report of `days` up to `now`, for `project` (nil: every session on this Mac). `importNotes`
     /// (what the import before it said) come first in its notes.
+    /// `harness`: only that harness's sessions (`pi` for Pi doctor); nil: all.
     public static func report(_ database: IndexDatabase, days: Int = InsightsStats.defaultDays, project: String? = nil,
-                              bindings: BindingSet = .default, importNotes: [String] = [], now: Date = Date()) throws -> ToolsReport {
+                              bindings: BindingSet = .default, harness: String? = nil, importNotes: [String] = [],
+                              now: Date = Date()) throws -> ToolsReport {
         let from = now.addingTimeInterval(-Double(days) * 86_400)
-        let scope = InsightsStats.Scope(project: project, bindings: bindings, from: from, to: now)
+        let scope = InsightsStats.Scope(project: project, bindings: bindings, from: from, to: now, harness: harness)
         let (scoped, values) = scope.cte
         // The last call also looks before the window: "unused for 30 days, last called 52 days ago".
-        let (ever, everValues) = InsightsStats.Scope(project: project, bindings: bindings, from: .distantPast, to: now)
-            .cte(as: "ever")
+        let (ever, everValues) = InsightsStats.Scope(project: project, bindings: bindings, from: .distantPast, to: now,
+                                                     harness: harness).cte(as: "ever")
 
         let fullList = """
             EXISTS(SELECT 1 FROM tool_listings f WHERE f.harness = l.harness AND f.session_key = l.session_key \
