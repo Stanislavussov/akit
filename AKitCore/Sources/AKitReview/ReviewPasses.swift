@@ -500,6 +500,8 @@ public enum ReviewPasses {
             try mergeGaps(folder: folder, codeOnly: spec.workItems.isEmpty)
             // The change map (R40) is for the user only: a failure never fails the run.
             do {
+                // A map of an earlier run never stays when this one fails.
+                try? FileManager.default.removeItem(at: folder.appending(path: "map.json"))
                 try ReviewMap.make(folder: folder).save(in: folder)
             } catch {
                 options.progress("The change map failed: \(error.localizedDescription)")

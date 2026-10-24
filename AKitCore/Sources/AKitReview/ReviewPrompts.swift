@@ -156,8 +156,10 @@ public enum ReviewPrompts {
         Before you answer, call akit_submit_boundaries once with every boundary the changed files provide or use across the \
         repository's edge: an HTTP or GraphQL endpoint, an exposed or remote micro-frontend module, a published package, an \
         event, topic or queue, a database schema, infrastructure (Helm, Terraform, Kubernetes, Docker), a shared CI template \
-        or job, a config key, environment variable or feature flag. For each: the name other repositories would search for, \
-        the changed file, the line and the exact code line as the quote. An empty list is a valid answer.
+        or job, a config key, environment variable or feature flag. Removed or renamed ones count too: they break their users \
+        most often. For each: the name other repositories would search for, the changed file, the line and the exact code \
+        line as the quote, with `side: "old"` and the line of the old file when the line is removed (in a deleted file too). \
+        An empty list is a valid answer.
         """
     }
 
@@ -169,24 +171,30 @@ public enum ReviewPrompts {
         let group = parts.first ?? project
         let namespace = parts.dropLast().joined(separator: "/")
         let list = boundaries.map { boundary in
-            "- `\(boundary.id)` \(boundary.direction.rawValue) \(boundary.kind.rawValue): `\(boundary.name)` (\(boundary.file)"
-                + (boundary.line.map { ":\($0)" } ?? "") + ")" + (boundary.note.isEmpty ? "" : ": \(boundary.note)")
+            "- `\(boundary.id)` \(boundary.isRemoved ? "REMOVED " : "")\(boundary.direction.rawValue) \(boundary.kind.rawValue): "
+                + "`\(boundary.name)` (\(boundary.file)" + (boundary.line.map { ":\($0)" } ?? "") + (boundary.isRemoved ? ", old line" : "") + ")"
+                + (boundary.note.isEmpty ? "" : ": \(boundary.note)")
         }.joined(separator: "\n")
+        let removed = boundaries.contains(where: \.isRemoved)
+            ? "\n\nA REMOVED boundary is gone after this change: every use of it you find breaks (`breaks: true`), unless the use has "
+                + "its own fallback. Search for it like the others."
+            : ""
         let what = boundaries.isEmpty
             ? """
             The brief found no boundary. Find them yourself first: read `context/diff.patch` (and the changed files) for what the \
             change provides or uses across the repository's edge: an HTTP or GraphQL endpoint, an exposed or remote \
             micro-frontend module, a published package, an event, topic or queue, a database schema, infrastructure, a shared CI \
-            template or job, a config key, environment variable or feature flag. Call `akit_submit_boundaries` once with them \
-            (the name to search for, the changed file, the line, the exact code line as the quote), then search for each and \
+            template or job, a config key, environment variable or feature flag; removed ones too (their uses break). Call \
+            `akit_submit_boundaries` once with them (the name to search for, the changed file, the line, the exact code line as \
+            the quote, `side: "old"` for a removed line), then search for each and \
             name it by its name in `boundary` when you submit its uses.
             """
             : """
-            The boundaries of this change, kept by AKit (their quotes are in the changed files):
+            The boundaries of this change, kept by AKit (their quotes are in the changed files or on the diff's removed lines):
 
             \(list)
 
-            Name each use's boundary by its id (`b1`, …) in `boundary`.
+            Name each use's boundary by its id (`b1`, …) in `boundary`.\(removed)
             """
         return """
         Next pass: other repositories (impact). Don't submit findings in this pass, and don't review the code yet.

@@ -3,7 +3,7 @@ import Foundation
 
 /// What a change provides or uses across the repository's edge (R41, `<run>/boundaries.json`).
 /// The brief names it with `akit_submit_boundaries`; AKit keeps it only when its quote is in a
-/// file the change touches, at the reviewed commit.
+/// file the change touches, at the reviewed commit, or on the diff's removed lines.
 public struct ReviewBoundary: Codable, Sendable, Hashable, Identifiable {
     public enum Kind: String, Codable, Sendable, CaseIterable {
         case httpAPI = "http-api", graphql, mfe, sharedLib = "shared-lib", event, dbSchema = "db-schema", infra, ci, config
@@ -18,12 +18,16 @@ public struct ReviewBoundary: Codable, Sendable, Hashable, Identifiable {
     /// What to search for in other repositories (at most 120 characters).
     public var name: String
     public var file: String
-    /// Moved to the quote's line when the brief's line doesn't hold it.
+    /// Moved to the quote's line when the brief's line doesn't hold it. A line of the old file
+    /// for a removed boundary.
     public var line: Int?
     public var quote: String
     public var note: String
+    /// `old`: the change removes it (its quote is on the diff's removed lines). nil is `new`.
+    public var side: ReviewFinding.Side?
 
-    public init(id: String, kind: Kind, direction: Direction, name: String, file: String, line: Int?, quote: String, note: String = "") {
+    public init(id: String, kind: Kind, direction: Direction, name: String, file: String, line: Int?, quote: String, note: String = "",
+                side: ReviewFinding.Side? = nil) {
         self.id = id
         self.kind = kind
         self.direction = direction
@@ -32,7 +36,11 @@ public struct ReviewBoundary: Codable, Sendable, Hashable, Identifiable {
         self.line = line
         self.quote = quote
         self.note = note
+        self.side = side == .old ? .old : nil
     }
+
+    /// The change removes it: its users are the ones that break.
+    public var isRemoved: Bool { side == .old }
 }
 
 /// One use of a boundary in another repository (R43, `<run>/consumers.json`), written by the
@@ -73,34 +81,71 @@ public struct ReviewConsumer: Codable, Sendable, Hashable {
 /// AKit's check of the brief's boundaries (`<run>/passes/boundaries.json` → `boundaries.json`).
 public enum ReviewBoundaries {
     static let maxName = 120
+    static let maxKept = 50
+    static let maxQuote = 500
+    static let maxNote = 300
+    /// A piece of a quote shorter than this counts only when it is a whole line.
+    static let minPiece = 12
 
-    /// The submitted boundaries whose file the change touches and whose quote is in that file at
-    /// the reviewed commit. Model text is masked. Without a worktree nothing can be checked, so
-    /// nothing is kept.
+    /// The submitted boundaries the change touches: a quote in the changed file at the reviewed
+    /// commit (side `new`, needs the worktree), or on the diff's removed lines (side `old`, and
+    /// every boundary of a deleted file). Model text is masked.
     static func check(folder: URL, worktree: URL?) -> [ReviewBoundary] {
         guard let object = FileWalk.jsonObject(folder.appending(path: "passes/boundaries.json")) else { return [] }
-        let changed = Set((ReviewJSON.read(ReviewSnapshot.self, from: folder.appending(path: "gitlab/snapshot.json"))?.diffs ?? [])
-            .filter { !$0.deletedFile }.map(\.newPath))
-        return check(object["boundaries"] as? [[String: Any]] ?? [], changed: changed, worktree: worktree)
+        let diffs = ReviewJSON.read(ReviewSnapshot.self, from: folder.appending(path: "gitlab/snapshot.json"))?.diffs ?? []
+        return check(object["boundaries"] as? [[String: Any]] ?? [], diffs: diffs, worktree: worktree)
     }
 
-    static func check(_ raw: [[String: Any]], changed: Set<String>, worktree: URL?) -> [ReviewBoundary] {
+    static func check(_ raw: [[String: Any]], diffs: [GitLabFileDiff], worktree: URL?) -> [ReviewBoundary] {
         var result: [ReviewBoundary] = []
-        for item in raw {
+        for item in raw where result.count < maxKept {
             guard let kind = (item["kind"] as? String).flatMap(ReviewBoundary.Kind.init),
                   let direction = (item["direction"] as? String).flatMap(ReviewBoundary.Direction.init),
                   let rawFile = item["file"] as? String, let rawQuote = item["quote"] as? String else { continue }
             let file = rawFile.hasPrefix("./") ? String(rawFile.dropFirst(2)) : rawFile
             let name = String(SecretFilter.masked(item["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxName))
             let quote = SecretFilter.masked(rawQuote)
-            guard !name.isEmpty, changed.contains(file), let lines = ReviewCandidates.fileLines(file, worktree: worktree),
-                  let hits = ReviewCandidates.quoteHits(ReviewNotes.defused(quote), in: lines), let first = hits.first else { continue }
+            guard !name.isEmpty, let diff = diffs.first(where: { $0.newPath == file }) ?? diffs.first(where: { $0.deletedFile && $0.oldPath == file })
+            else { continue }
+            // A deleted file has only removed lines.
+            let side: ReviewFinding.Side = diff.deletedFile || (item["side"] as? String) == "old" ? .old : .new
+            // The lines to look in and their numbers: the file at the reviewed commit, or the removed lines with their old numbers.
+            let lines: [(number: Int, text: String)]
+            if side == .old {
+                lines = DiffPositions.removedLines(diff.diff).map { ($0.line, SecretFilter.masked($0.text)) }
+            } else {
+                guard let file = ReviewCandidates.fileLines(file, worktree: worktree) else { continue }
+                lines = file.enumerated().map { ($0.offset + 1, $0.element) }
+            }
+            guard let hits = ReviewCandidates.quoteHits(ReviewNotes.defused(quote), in: lines.map(\.text), minimum: minPiece),
+                  !hits.isEmpty else { continue }
+            // The name belongs to the quote: it, or its last segment, is within 3 lines of a hit.
+            let numbers = hits.map { lines[$0].number }
+            let near = lines.filter { line in numbers.contains { abs($0 - line.number) <= 3 } }.map { $0.text.lowercased() }
+            guard searchTerms(name).contains(where: { term in near.contains { $0.contains(term) } }) else { continue }
             var line = (item["line"] as? NSNumber).flatMap { $0.intValue >= 1 ? $0.intValue : nil }
-            if line.map({ given in !hits.contains { abs($0 + 1 - given) <= 3 } }) ?? true { line = first + 1 }
+            if line.map({ given in !numbers.contains { abs($0 - given) <= 3 } }) ?? true { line = numbers[0] }
+            let note = SecretFilter.masked(item["note"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             result.append(ReviewBoundary(id: "b\(result.count + 1)", kind: kind, direction: direction, name: name, file: file, line: line,
-                                         quote: quote, note: SecretFilter.masked(item["note"] as? String ?? "")))
+                                         quote: String(quote.prefix(maxQuote)), note: String(note.prefix(maxNote)), side: side))
         }
         return result
+    }
+
+    /// What of a boundary's name its code line must hold, lowercased: the name, its last path
+    /// segment (`/api/orders/:id` → `orders`, `@acme/ui` → `ui`) and that segment's last identifier.
+    static func searchTerms(_ name: String) -> [String] {
+        let lower = name.lowercased()
+        var terms = [lower]
+        let word = lower.split(whereSeparator: \.isWhitespace).last.map(String.init) ?? lower
+        let segments = word.split(separator: "/").filter { !$0.isEmpty && !":{<*".contains($0.first!) }
+        if let segment = segments.last {
+            let identifiers = segment.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_" || $0 == "$") })
+            terms.append(String(segment))
+            if let last = identifiers.last { terms.append(String(last)) }
+        }
+        var seen = Set<String>()
+        return terms.filter { $0.count >= 2 && seen.insert($0).inserted }
     }
 }
 
@@ -138,7 +183,7 @@ public struct ReviewMap: Codable, Sendable, Hashable {
         public var removed: Int?
         /// `added`, `deleted`, `renamed` or `modified`, for a changed file.
         public var status: String?
-        /// The worst final severity of the node's findings (not rejected, merged or older than the change).
+        /// The worst final severity of the node's problems the plan can post (confirmed, evidence found, not older than the change).
         public var severity: ReviewSeverity?
         /// The ids of those findings.
         public var findings: [String]?
@@ -227,7 +272,7 @@ public struct ReviewMap: Codable, Sendable, Hashable {
             var module = Node(id: "module:\(name)", kind: .module, lane: .change, label: name == "." ? "(root)" : name + "/", path: name)
             var fileNodes: [Node] = []
             for diff in files {
-                let counts = lineCounts(diff)
+                let counts = DiffPositions.lineCounts(diff.diff)
                 var node = Node(id: "file:\(diff.newPath)", kind: .file, lane: .change,
                                 label: name == "." ? diff.newPath : String(diff.newPath.dropFirst(name.count + 1)), path: diff.newPath, parent: module.id)
                 node.added = counts.added
@@ -271,7 +316,8 @@ public struct ReviewMap: Codable, Sendable, Hashable {
         let fileIDs = Set(map.nodes.map(\.id))
         for boundary in boundaries {
             var node = Node(id: "boundary:\(boundary.id)", kind: .boundary, lane: .boundaries,
-                            label: "\(boundary.direction.rawValue) \(boundary.kind.rawValue): \(boundary.name)", path: boundary.file)
+                            label: "\(boundary.isRemoved ? "removed " : "")\(boundary.direction.rawValue) \(boundary.kind.rawValue): \(boundary.name)",
+                            path: boundary.file)
             node.boundary = boundary
             map.nodes.append(node)
             if fileIDs.contains("file:\(boundary.file)") {
@@ -304,13 +350,14 @@ public struct ReviewMap: Codable, Sendable, Hashable {
         return map
     }
 
-    /// Per file: the worst final severity of its findings and their ids. Findings the verifier
-    /// rejected or merged, and those already there before the change, don't count.
+    /// Per file: the worst final severity of its findings and their ids. Only what the plan could
+    /// post as a problem counts: a finding (not a question or an AC row) the verifier confirmed,
+    /// whose evidence wasn't missing, that the change brought.
     static func worstSeverities(_ findings: [ReviewFinding]) -> [String: (severity: ReviewSeverity, ids: [String])] {
         var result: [String: (severity: ReviewSeverity, ids: [String])] = [:]
-        for finding in findings where finding.kind != .ac && !finding.isPreExisting {
+        for finding in findings where finding.kind == .finding && finding.verifier?.verdict == .confirmed
+            && finding.evidenceFound != false && !finding.isPreExisting {
             guard let file = finding.file else { continue }
-            if let verdict = finding.verifier?.verdict, verdict == .rejected || verdict == .merged { continue }
             if let known = result[file] {
                 result[file] = (max(known.severity, finding.finalSeverity), known.ids + [finding.id])
             } else {
@@ -320,10 +367,6 @@ public struct ReviewMap: Codable, Sendable, Hashable {
         return result
     }
 
-    static func lineCounts(_ diff: GitLabFileDiff) -> (added: Int, removed: Int) {
-        let lines = diff.diff.split(separator: "\n", omittingEmptySubsequences: false)
-        return (lines.filter { $0.hasPrefix("+") && !$0.hasPrefix("+++") }.count, lines.filter { $0.hasPrefix("-") && !$0.hasPrefix("---") }.count)
-    }
 
     /// The nearest folder of `path` with a `package.json` in the worktree, else its top folder
     /// (`.` for a file at the top). String paths and a bound: never a walk past the top.
@@ -343,14 +386,26 @@ public struct ReviewMap: Codable, Sendable, Hashable {
 
     // MARK: - Files
 
-    /// `<run>/map.json`; when it is missing and the run has a worktree, the map is built and
-    /// saved now. nil: no map and nothing to build one from.
+    /// `<run>/map.json`; when it is missing, or older than the findings, boundaries or uses it
+    /// shows (Discuss in Pi changes the findings), and the run has a worktree, the map is built
+    /// and saved now. nil: no map and nothing to build one from.
     public static func load(folder: URL) -> ReviewMap? {
-        if let map = ReviewJSON.read(ReviewMap.self, from: folder.appending(path: "map.json")) { return map }
-        guard FileManager.default.fileExists(atPath: folder.appending(path: "worktree/.git").path),
-              let map = try? make(folder: folder) else { return nil }
+        let file = folder.appending(path: "map.json")
+        let saved = ReviewJSON.read(ReviewMap.self, from: file)
+        let hasWorktree = FileManager.default.fileExists(atPath: folder.appending(path: "worktree/.git").path)
+        if let saved, !(hasWorktree && isStale(folder: folder)) { return saved }
+        guard hasWorktree, let map = try? make(folder: folder) else { return saved }
         try? map.save(in: folder)
         return map
+    }
+
+    /// Whether `findings.json`, `boundaries.json` or `consumers.json` changed after `map.json`.
+    static func isStale(folder: URL) -> Bool {
+        func modified(_ name: String) -> Date? {
+            (try? FileManager.default.attributesOfItem(atPath: folder.appending(path: name).path))?[.modificationDate] as? Date
+        }
+        guard let map = modified("map.json") else { return true }
+        return ["findings.json", "boundaries.json", "consumers.json"].contains { modified($0).map { $0 > map } ?? false }
     }
 
     public func save(in folder: URL) throws {
@@ -404,10 +459,15 @@ public struct ReviewMap: Codable, Sendable, Hashable {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    /// A Mermaid label: no character that ends the label or starts markup.
+    /// A Mermaid label: no character that ends the label or starts markup; control characters
+    /// and line or paragraph separators are spaces.
     static func escaped(_ text: String) -> String {
         var result = ""
-        for character in text.replacingOccurrences(of: "\n", with: " ") {
+        for character in text {
+            if character.unicodeScalars.contains(where: { [.control, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory) }) {
+                result += " "
+                continue
+            }
             switch character {
             case "#": result += "#35;"
             case "\"": result += "#quot;"
@@ -452,8 +512,8 @@ public struct ReviewMap: Codable, Sendable, Hashable {
         if boundaries.isEmpty { lines.append("  none found") }
         for node in boundaries {
             guard let boundary = node.boundary else { continue }
-            lines.append("  \(boundary.id) \(boundary.direction.rawValue) \(boundary.kind.rawValue): \(boundary.name)  "
-                         + "(\(boundary.file)\(boundary.line.map { ":\($0)" } ?? ""))")
+            lines.append("  \(boundary.id) \(boundary.isRemoved ? "removed " : "")\(boundary.direction.rawValue) \(boundary.kind.rawValue): "
+                         + "\(boundary.name)  (\(boundary.file)\(boundary.line.map { ":\($0)" } ?? "")\(boundary.isRemoved ? ", old line" : ""))")
             if !boundary.note.isEmpty { lines.append("     \(boundary.note)") }
         }
         lines.append("")
@@ -478,9 +538,10 @@ public struct ReviewMap: Codable, Sendable, Hashable {
 }
 
 /// The imports of a worktree's TS/JS files, read by AKit (`import … from`, `export … from`,
-/// `require()`, `import()`): relative paths and the workspace's own package names.
+/// `require()`, `import()`): relative paths and the workspace's own package names. `exports`
+/// maps and tsconfig `paths` aliases aren't resolved: such imports are missing edges.
 enum ReviewImports {
-    static let extensions = ["ts", "tsx", "js", "jsx", "mjs", "cjs"]
+    static let extensions = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"]
     static let skipped: Set<String> = ["node_modules", "dist", "build", ".git"]
 
     struct Limits: Sendable {
@@ -511,7 +572,7 @@ enum ReviewImports {
     static func scan(worktree: URL, changed: Set<String>, limits: Limits) -> Graph {
         var graph = Graph()
         var code: [String] = []
-        var packages: [String: Package] = [:]
+        var named: [String: [Package]] = [:]
         var entries = 0
         let root = worktree.standardizedFileURL.path
         let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
@@ -534,10 +595,20 @@ enum ReviewImports {
                 let path = String(full.dropFirst(root.count + 1))
                 if ReviewExtension.isBlocked(path) { continue }
                 if name == "package.json", let package = package(url, folder: (path as NSString).deletingLastPathComponent, limit: limits.bytes) {
-                    packages[package.name] = package.package
+                    named[package.name, default: []].append(package.package)
                 } else if isCode(path), (values?.fileSize ?? 0) <= limits.bytes {
                     code.append(path)
                 }
+            }
+        }
+        // Two packages of one name: the shortest folder, then the first by name, and a note.
+        var packages: [String: Package] = [:]
+        for name in named.keys.sorted() {
+            let found = named[name, default: []].sorted { ($0.folder.count, $0.folder) < ($1.folder.count, $1.folder) }
+            packages[name] = found[0]
+            if found.count > 1 {
+                graph.notes.append("\(found.count) workspace packages are named \(name) (\(found.map { $0.folder.isEmpty ? "." : $0.folder }.joined(separator: ", "))); "
+                                   + "the map resolves it to \(found[0].folder.isEmpty ? "." : found[0].folder).")
             }
         }
         let known = Set(code).union(changed)
@@ -569,20 +640,59 @@ enum ReviewImports {
         #"\bimport\s*\(\s*['"]([^'"\n]+)['"]\s*\)"#,
     ].compactMap { try? NSRegularExpression(pattern: $0) }
 
-    /// Every module specifier the file names, in order, once each.
+    /// Every module specifier the file names, in order, once each. Comments and the insides of
+    /// strings don't count: the patterns run on the code with them blanked, and the specifier
+    /// is read from the original text at the same place.
     static func specifiers(in text: String) -> [String] {
         guard text.contains("import") || text.contains("require") || text.contains("export") else { return [] }
-        let range = NSRange(text.startIndex..., in: text)
+        let code = blanked(text)
+        let original = text as NSString
+        let range = NSRange(location: 0, length: original.length)
         var seen = Set<String>()
         var result: [(Int, String)] = []
         for pattern in patterns {
-            for match in pattern.matches(in: text, range: range) {
-                guard let found = Range(match.range(at: 1), in: text) else { continue }
-                let specifier = String(text[found])
+            for match in pattern.matches(in: code, range: range) {
+                let specifier = original.substring(with: match.range(at: 1))
                 if seen.insert(specifier).inserted { result.append((match.range.location, specifier)) }
             }
         }
         return result.sorted { $0.0 < $1.0 }.map(\.1)
+    }
+
+    /// The text with `//` and `/* */` comments and the insides of `'…'`, `"…"` and `` `…` ``
+    /// strings turned into spaces (line breaks kept), UTF-16 offsets unchanged. `//` inside a
+    /// string is not a comment.
+    static func blanked(_ text: String) -> String {
+        let slash = UInt16(UInt8(ascii: "/")), star = UInt16(UInt8(ascii: "*")), backslash = UInt16(UInt8(ascii: "\\"))
+        let newline = UInt16(UInt8(ascii: "\n")), space = UInt16(UInt8(ascii: " "))
+        let backtick = UInt16(UInt8(ascii: "`"))
+        let quotes: Set<UInt16> = [UInt16(UInt8(ascii: "'")), UInt16(UInt8(ascii: "\"")), backtick]
+        var units = Array(text.utf16)
+        func blank(_ index: Int) { if units[index] != newline { units[index] = space } }
+        var index = 0
+        while index < units.count {
+            let unit = units[index]
+            let next = index + 1 < units.count ? units[index + 1] : 0
+            if unit == slash, next == slash {
+                while index < units.count, units[index] != newline { blank(index); index += 1 }
+            } else if unit == slash, next == star {
+                blank(index); blank(index + 1); index += 2
+                while index < units.count, !(units[index] == star && index + 1 < units.count && units[index + 1] == slash) { blank(index); index += 1 }
+                if index < units.count { blank(index); blank(index + 1); index += 2 }
+            } else if quotes.contains(unit) {
+                // The quotes stay, the inside is blanked; a '…' or "…" string ends at the line's end.
+                index += 1
+                while index < units.count, units[index] != unit, unit == backtick || units[index] != newline {
+                    if units[index] == backslash, index + 1 < units.count { blank(index); index += 1 }
+                    blank(index)
+                    index += 1
+                }
+                index += 1
+            } else {
+                index += 1
+            }
+        }
+        return String(decoding: units, as: UTF16.self)
     }
 
     /// The repository path a specifier names, when it is one of `known`: a relative path, or a
@@ -608,13 +718,17 @@ enum ReviewImports {
         return file(base, known: known) ?? normalized(prefix + "src/" + subpath).flatMap { file($0, known: known) }
     }
 
-    /// `base` itself, with a code extension, `base.js` written for `base.ts`, or `base/index.*`.
+    /// `base` itself, with a code extension, the emitted name written for the source (`x.js` for
+    /// `x.ts` or `x.tsx`, `x.jsx` for `x.tsx`, `x.mjs` for `x.mts`, `x.cjs` for `x.cts`), or `base/index.*`.
     static func file(_ base: String, known: Set<String>) -> String? {
         var candidates = [base]
-        let ext = (base as NSString).pathExtension.lowercased()
-        if ["js", "jsx", "mjs", "cjs"].contains(ext) {
-            let stem = (base as NSString).deletingPathExtension
-            candidates += ext == "jsx" ? [stem + ".tsx"] : [stem + ".ts", stem + ".tsx"]
+        let stem = (base as NSString).deletingPathExtension
+        switch (base as NSString).pathExtension.lowercased() {
+        case "js": candidates += [stem + ".ts", stem + ".tsx"]
+        case "jsx": candidates += [stem + ".tsx"]
+        case "mjs": candidates += [stem + ".mts"]
+        case "cjs": candidates += [stem + ".cts"]
+        default: break
         }
         candidates += extensions.map { "\(base).\($0)" } + extensions.map { "\(base)/index.\($0)" }
         return candidates.first(where: known.contains)

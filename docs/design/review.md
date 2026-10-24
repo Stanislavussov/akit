@@ -404,15 +404,35 @@ or adds to the table:
 
 - A boundary is kept only with a worktree (the quote can't be checked without one), in a file
   the change adds or modifies (not a deleted one); its line moves to the quote's line when the
-  brief's line is more than 3 lines off. Model text is masked.
+  brief's line is more than 3 lines off. Model text is masked. Since the review of part (a): a
+  removed boundary (`side: old`, and every boundary of a deleted file) is checked against the
+  diff's removed lines with old line numbers, needs no worktree, and the map and the impact
+  prompt mark it (its uses are the ones that break); the name, its last path segment or last
+  identifier must be within 3 lines of the quote's hit, and a quote's piece counts only with 12
+  characters or as a whole line (uses in other repositories too; findings keep 4); at most 50
+  boundaries, quotes of 500 and notes of 300 characters.
 - The import scan skips `node_modules`, `dist`, `build` and hidden folders, links and secret
   files; it reads at most 20,000 TS/JS files (200,000 entries) of up to 1 MB each and says so
   in the map's notes when it stops early. TS imports of `x.js` find `x.ts`. A workspace
   package resolves through its `source`, `module`, `main` or `types`, else `index.*` or
-  `src/index.*`; a subpath also under `src/`. At most 200 dependents are shown.
+  `src/index.*`; a subpath also under `src/`. At most 200 dependents are shown. Comments and
+  the insides of strings don't count as imports; `.mts`/`.cts` are read (`x.mjs` finds `x.mts`,
+  `x.cjs` finds `x.cts`). Two workspace packages of one name: the shortest folder, then the
+  first by name, and a note on the map. `exports` maps and tsconfig `paths` aliases aren't
+  resolved: such imports are only missing edges.
+- A file's lines added and removed count every `+`/`-` line after the first `@@` (GitLab's
+  diff text has no file headers); `changes.md` counted the same wrong way and is fixed too.
+- A node's severity is only what the plan could post as a problem: a finding the verifier
+  confirmed, whose evidence was found, that the change brought, at its final severity.
 - A run made before the map gets one the first time `akit review map` (or `ReviewMap.load`)
-  asks, when its worktree is still there. Apply (Discuss in Pi…) doesn't build the map again,
-  so its severities are those of the passes' findings until the next run.
+  asks, when its worktree is still there. When `findings.json`, `boundaries.json` or
+  `consumers.json` is newer than `map.json` (Discuss in Pi changed the findings), `load` builds
+  it again too. The passes delete the old `map.json` before they build a new one.
+
+Review of part (a) (2026-10-24): removed boundaries, the name tied to the quote, stricter quote
+pieces, line counts, the map's severity, imports in comments and strings, `.mts`/`.cts`,
+duplicate package names, size caps, a non-list tool argument is an error (not "Saved 0"), no
+stale `map.json`, Mermaid control characters, and the map follows Discuss in Pi.
 
 Built: part (b) (2026-10-24): R42–R44, the `impact` pass (`ReviewPasses.impact`,
 `ReviewConsumers.swift`, `ReviewPrompts.impact`). `impact: auto | off | always` in review.yaml

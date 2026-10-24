@@ -127,11 +127,12 @@ public enum ReviewConsumers {
             .filter { !$0.isEmpty }
     }
 
-    /// Whether every piece of the quote (each line, split at `...`) is in one line of the answers.
+    /// Whether every piece of the quote (each line, split at `...`) is in one line of the answers:
+    /// at least 12 characters of it, or the whole line.
     static func quoted(_ quote: String, in lines: [String]) -> Bool {
         let pieces = quote.split(whereSeparator: \.isNewline).flatMap { ReviewCandidates.evidencePieces(String($0)) }
         guard !pieces.isEmpty else { return false }
-        return pieces.allSatisfy { piece in lines.contains { $0.contains(piece) } }
+        return pieces.allSatisfy { piece in lines.contains { ReviewCandidates.pieceMatches(piece, $0, minimum: ReviewBoundaries.minPiece) } }
     }
 
     /// The pass's searches and file reads: the saved answers by tool (calls from a codemode
@@ -168,7 +169,7 @@ public enum ReviewConsumers {
             let uses = consumers.filter { $0.boundary == boundary.id }
             guard !uses.isEmpty else { continue }
             lines += ["", "## \(boundary.id) \(boundary.direction.rawValue) \(boundary.kind.rawValue): \(boundary.name)", "",
-                      "Changed in `\(boundary.file)\(boundary.line.map { ":\($0)" } ?? "")`: `\(boundary.quote)`"]
+                      "\(boundary.isRemoved ? "Removed from" : "Changed in") `\(boundary.file)\(boundary.line.map { ":\($0)" } ?? "")`: `\(boundary.quote)`"]
             for project in Set(uses.map(\.project)).sorted() {
                 lines += ["", "### \(project)", ""]
                 for use in uses.filter({ $0.project == project }).sorted(by: { ($0.file, $0.line ?? 0) < ($1.file, $1.line ?? 0) }) {

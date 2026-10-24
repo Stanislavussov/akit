@@ -77,12 +77,17 @@ public enum ReviewCandidates {
 
     /// The lines (0-based) of a file, masked, that hold a piece of the quote; nil when the quote has
     /// no piece worth looking for. The quote went through the same masking and defusing as the
-    /// file's lines.
-    static func quoteHits(_ quote: String, in lines: [String]) -> [Int]? {
+    /// file's lines. With a `minimum`, a shorter piece counts only when it is the whole line.
+    static func quoteHits(_ quote: String, in lines: [String], minimum: Int = 0) -> [Int]? {
         let quoted = quote.split(whereSeparator: \.isNewline).flatMap { evidencePieces(String($0)) }
         guard !quoted.isEmpty else { return nil }
         let file = lines.map { collapsed(ReviewNotes.defused($0)) }
-        return file.indices.filter { index in quoted.contains { file[index].contains($0) } }
+        return file.indices.filter { index in quoted.contains { pieceMatches($0, file[index], minimum: minimum) } }
+    }
+
+    /// A piece of a quote in a collapsed line: at least `minimum` characters, or the whole line.
+    static func pieceMatches(_ piece: String, _ line: String, minimum: Int) -> Bool {
+        line.contains(piece) && (piece.count >= minimum || line == piece)
     }
 
     /// The parts of a quoted line worth looking for: no diff marker or line number, split at

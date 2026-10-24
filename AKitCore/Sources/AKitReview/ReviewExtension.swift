@@ -22,7 +22,7 @@ import Foundation
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 9
+    public static let version = 10
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -36,7 +36,7 @@ public enum ReviewExtension {
     }
 
     public static let source = #"""
-    // akit-review.ts v9: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v10: written by AKit for one review run. Do not edit: AKit writes it again.
     import * as fs from "node:fs";
     import * as path from "node:path";
 
@@ -339,8 +339,16 @@ public enum ReviewExtension {
       return out;
     }
 
+    // A key that is there must hold a list: a string or an object is a mistake, not an empty answer.
+    function listOf(params: any, key: string): { list: any[]; wrong: string[] } {
+      const value = params?.[key];
+      if (value === undefined || value === null) return { list: [], wrong: [] };
+      return Array.isArray(value) ? { list: value, wrong: [] } : { list: [], wrong: [`${key} must be a list`] };
+    }
+
     function boundaryProblems(list: any[]): string[] {
       const out: string[] = [];
+      if (list.length > 50) out.push("at most 50 boundaries; send the ones other repositories most likely use");
       list.forEach((b, i) => {
         const at = `boundaries[${i}]`;
         if (typeof b !== "object" || b === null) { out.push(`${at} is not an object`); return; }
@@ -349,8 +357,9 @@ public enum ReviewExtension {
         if (typeof b.name !== "string" || b.name.trim() === "" || b.name.length > 120) out.push(`${at}.name must be 1–120 characters`);
         if (typeof b.file !== "string" || b.file.trim() === "") out.push(`${at}.file is missing`);
         if (b.line !== undefined && b.line !== null && (!Number.isInteger(b.line) || b.line < 1)) out.push(`${at}.line must be a line number from 1`);
-        if (typeof b.quote !== "string" || b.quote.trim() === "") out.push(`${at}.quote must quote the code`);
-        if (b.note !== undefined && typeof b.note !== "string") out.push(`${at}.note must be text`);
+        if (typeof b.quote !== "string" || b.quote.trim() === "" || b.quote.length > 500) out.push(`${at}.quote must quote the code (at most 500 characters)`);
+        if (b.side !== undefined && b.side !== "new" && b.side !== "old") out.push(`${at}.side must be new or old`);
+        if (b.note !== undefined && (typeof b.note !== "string" || b.note.length > 300)) out.push(`${at}.note must be text of at most 300 characters`);
       });
       return out;
     }
@@ -426,9 +435,11 @@ public enum ReviewExtension {
             },
           },
           async execute(_id: string, params: any) {
-            const findings = Array.isArray(params?.findings) ? params.findings : [];
-            const verdictList = Array.isArray(params?.verdicts) ? params.verdicts : [];
-            const wrong = problems(findings, verdictList);
+            const given = listOf(params, "findings");
+            const givenVerdicts = listOf(params, "verdicts");
+            const findings = given.list;
+            const verdictList = givenVerdicts.list;
+            const wrong = [...given.wrong, ...givenVerdicts.wrong, ...problems(findings, verdictList)];
             if (wrong.length > 0) {
               return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
             }
@@ -445,7 +456,8 @@ public enum ReviewExtension {
           label: "Submit boundaries",
           description: "Hand AKit what the change provides or uses across the repository's edge: an HTTP or GraphQL API, a micro-frontend "
             + "module, a published package, an event or queue, a database schema, infrastructure, a shared CI template, a config key. "
-            + "Call it once; an empty list is a valid answer. AKit keeps a boundary only when its quote is in the changed file.",
+            + "Removed ones count too (side old). Call it once with at most 50; an empty list is a valid answer. AKit keeps a boundary only "
+            + "when its quote is in the changed file or on the diff's removed lines, with its name near it.",
           parameters: {
             type: "object",
             properties: {
@@ -456,11 +468,12 @@ public enum ReviewExtension {
                   properties: {
                     kind: { type: "string", enum: boundaryKinds },
                     direction: { type: "string", enum: ["provides", "uses"] },
-                    name: { type: "string", maxLength: 120, description: "What to search for in other repositories: an endpoint path, a package, module, topic or variable name" },
+                    name: { type: "string", maxLength: 120, description: "What to search for in other repositories: an endpoint path, a package, module, topic or variable name; it must be on the quoted line or near it" },
                     file: { type: "string", description: "The changed file in the repository" },
-                    line: { type: ["integer", "null"] },
-                    quote: { type: "string", description: "The exact code line that declares or uses it, copied from the file; never a secret's value" },
-                    note: { type: "string", description: "One short sentence: what changes for its users" },
+                    side: { type: "string", enum: ["new", "old"], description: "new: a line of the changed file; old: a removed line (a boundary the change removes, a deleted file)" },
+                    line: { type: ["integer", "null"], description: "The line in the changed file, or in the old file for side old" },
+                    quote: { type: "string", maxLength: 500, description: "The exact code line that declares or uses it, copied from the file or the removed line; never a secret's value" },
+                    note: { type: "string", maxLength: 300, description: "One short sentence: what changes for its users" },
                   },
                   required: ["kind", "direction", "name", "file", "quote"],
                 },
@@ -468,8 +481,8 @@ public enum ReviewExtension {
             },
           },
           async execute(_id: string, params: any) {
-            const list = Array.isArray(params?.boundaries) ? params.boundaries : [];
-            const wrong = boundaryProblems(list);
+            const { list, wrong: notList } = listOf(params, "boundaries");
+            const wrong = [...notList, ...boundaryProblems(list)];
             if (wrong.length > 0) {
               return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
             }
@@ -510,8 +523,8 @@ public enum ReviewExtension {
             },
           },
           async execute(_id: string, params: any) {
-            const list = Array.isArray(params?.consumers) ? params.consumers : [];
-            const wrong = consumerProblems(list);
+            const { list, wrong: notList } = listOf(params, "consumers");
+            const wrong = [...notList, ...consumerProblems(list)];
             if (wrong.length > 0) {
               return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
             }

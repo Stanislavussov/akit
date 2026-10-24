@@ -665,10 +665,8 @@ public enum ReviewGather {
             else if diff.renamedFile { tags.append("renamed from \(diff.oldPath)") } else { tags.append("modified") }
             if diff.tooLarge { tags.append("over GitLab's diff limits: no diff, no inline comments") }
             if isIgnored(diff.newPath) { tags.append("ignored by the project's path instructions") }
-            let lines = diff.diff.split(separator: "\n", omittingEmptySubsequences: false)
-            let added = lines.filter { $0.hasPrefix("+") && !$0.hasPrefix("+++") }.count
-            let removed = lines.filter { $0.hasPrefix("-") && !$0.hasPrefix("---") }.count
-            text += "- `\(diff.newPath)` (\(tags.joined(separator: "; ")); +\(added) −\(removed))\n"
+            let counts = DiffPositions.lineCounts(diff.diff)
+            text += "- `\(diff.newPath)` (\(tags.joined(separator: "; ")); +\(counts.added) −\(counts.removed))\n"
         }
         return text
     }
