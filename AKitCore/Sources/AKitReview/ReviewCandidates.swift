@@ -109,8 +109,9 @@ public enum ReviewCandidates {
 
     /// The fingerprint, and the one the first rule gave (with the title) when it differs.
     static func fingerprints(_ finding: ReviewFinding, worktree: URL?) -> (current: String, previous: String?) {
-        let path = finding.file ?? ""
-        if finding.kind != .ac, finding.side == .new, let line = finding.line, let lines = fileLines(path, worktree: worktree),
+        let file = finding.file ?? ""
+        let path = ReviewLinked.repoPath(file, worktree: worktree)
+        if finding.kind != .ac, finding.side == .new, let line = finding.line, let lines = fileLines(file, worktree: worktree),
            let around = ReviewFingerprint.snippet(lines, line: line) {
             return (ReviewFingerprint.make(path: path, snippet: around, title: nil),
                     ReviewFingerprint.make(path: path, snippet: around, title: finding.title))
@@ -121,7 +122,16 @@ public enum ReviewCandidates {
     /// A file of the worktree, its lines masked. A merge request can add a symlink that points out
     /// of the worktree, so the real path must stay inside it; secret files are never read.
     static func fileLines(_ path: String, worktree: URL?) -> [String]? {
-        guard let worktree, !path.contains(".."), !path.hasPrefix("/"), !ReviewExtension.isBlocked(path) else { return nil }
+        guard var worktree, !path.contains(".."), !path.hasPrefix("/"), !ReviewExtension.isBlocked(path) else { return nil }
+        var path = path
+        // `@key/…`: a file of a linked merge request, in its worktree beside the run's.
+        if let linked = ReviewLinked.split(path), linked.key.range(of: "^[a-z0-9-]+$", options: .regularExpression) != nil {
+            let tree = ReviewLinked.worktree(worktree.deletingLastPathComponent(), key: linked.key)
+            if FileManager.default.fileExists(atPath: tree.appending(path: ".git").path) {
+                worktree = tree
+                path = linked.path
+            }
+        }
         let root = worktree.resolvingSymlinksInPath().path
         let file = worktree.appending(path: path).resolvingSymlinksInPath()
         guard file.path.hasPrefix(root + "/"), !ReviewExtension.isBlocked(file.path),

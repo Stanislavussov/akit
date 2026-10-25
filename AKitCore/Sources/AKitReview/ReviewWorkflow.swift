@@ -29,6 +29,8 @@ public enum ReviewWorkflow {
         public var plan: ReviewPlanFile?
         public var snapshot: ReviewSnapshot?
         public var missed: [ReviewMissed]
+        /// The snapshot of each linked merge request that Gather read, by key.
+        public var linked: [String: ReviewSnapshot] = [:]
 
         public var id: String { spec.id }
         public var worktree: URL? {
@@ -51,13 +53,17 @@ public enum ReviewWorkflow {
         guard let spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")) else {
             throw Failure(message: "\(folder.lastPathComponent) has no readable run.json.")
         }
+        var linked: [String: ReviewSnapshot] = [:]
+        for change in spec.linked ?? [] {
+            if let snapshot = ReviewJSON.read(ReviewSnapshot.self, from: ReviewLinked.snapshotFile(folder, key: change.key)) { linked[change.key] = snapshot }
+        }
         return Run(folder: folder, spec: spec, status: ReviewJSON.read(ReviewRunStatus.self, from: folder.appending(path: "status.json")),
                    passes: ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json")),
                    findings: ReviewJSON.read(ReviewFindingsFile.self, from: folder.appending(path: "findings.json")),
                    gaps: ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json")) ?? [],
                    plan: ReviewJSON.read(ReviewPlanFile.self, from: folder.appending(path: "requests.json")),
                    snapshot: ReviewJSON.read(ReviewSnapshot.self, from: folder.appending(path: "gitlab/snapshot.json")),
-                   missed: ReviewJSON.read([ReviewMissed].self, from: folder.appending(path: "missed.json")) ?? [])
+                   missed: ReviewJSON.read([ReviewMissed].self, from: folder.appending(path: "missed.json")) ?? [], linked: linked)
     }
 
     /// Plans the requests from the findings, against the drafts and threads the run's fetch pass
@@ -69,15 +75,32 @@ public enum ReviewWorkflow {
         guard let findings = run.findings else { throw Failure(message: "\(run.id) has no findings yet; run the passes first.") }
         guard let snapshot = run.snapshot, let refs = snapshot.refs else { throw Failure(message: "\(run.id) has no GitLab snapshot.") }
         let forced = Set(ReviewJSON.read([String].self, from: folder.appending(path: "forced-inline.json")) ?? [])
-        var plan = ReviewPlanner.plan(.init(spec: run.spec, findings: findings.findings, gaps: run.gaps, diffs: snapshot.diffs, refs: refs,
+        let scrub = LabSettings.load(env: env).scrub
+        // Each merge request gets its own plan: its findings, positions, drafts and summary.
+        let own = findings.findings.filter { ReviewLinked.key(of: $0.file, spec: run.spec) == nil }
+        var plan = ReviewPlanner.plan(.init(spec: run.spec, findings: own, gaps: run.gaps, diffs: snapshot.diffs, refs: refs,
                                             drafts: snapshot.drafts, discussions: snapshot.discussions, user: snapshot.user,
-                                            scrub: LabSettings.load(env: env).scrub, forcedInline: forced,
+                                            scrub: scrub, forcedInline: forced,
                                             keptFingerprints: Set(ReviewJSON.read([String].self, from: folder.appending(path: "rerun-kept.json")) ?? [])),
                                       findingsVersion: findings.version)
+        for change in run.spec.linked ?? [] {
+            guard change.headSHA != nil, let linked = run.linked[change.key], let linkedRefs = linked.refs else { continue }
+            var part = ReviewPlanner.plan(.init(spec: linkedSpec(run.spec, change), findings: linkedFindings(findings.findings, key: change.key),
+                                                gaps: [], diffs: linked.diffs, refs: linkedRefs, drafts: linked.drafts,
+                                                discussions: linked.discussions, user: linked.user, scrub: scrub, forcedInline: forced),
+                                          findingsVersion: findings.version)
+            for index in part.requests.indices {
+                part.requests[index].mergeRequest = change.mergeRequest
+                part.requests[index].file = part.requests[index].file.map { ReviewLinked.path(change.key, $0) }
+            }
+            plan.requests += part.requests
+            plan.placements += part.placements
+        }
         if let old = run.plan {
             for index in plan.requests.indices {
                 let new = plan.requests[index]
                 guard let previous = old.requests.first(where: { $0.kind == new.kind && $0.fingerprint == new.fingerprint
+                    && $0.mergeRequest == new.mergeRequest
                     && $0.draftID == new.draftID && $0.discussionID == new.discussionID && !$0.isSent }) else { continue }
                 plan.requests[index].decision = previous.decision
                 plan.requests[index].reason = previous.reason
@@ -99,6 +122,30 @@ public enum ReviewWorkflow {
                                       head: refs.headSHA, user: snapshot.user, home: env.homeDirectory, checked: snapshot.gathered)
         }
         return plan
+    }
+
+    /// The spec a linked merge request is planned with: its own merge request, head and commit
+    /// range; no rerun (a rerun follows the first merge request) and no path rules of the first's project.
+    static func linkedSpec(_ spec: ReviewRunSpec, _ change: ReviewLinkedChange) -> ReviewRunSpec {
+        var sub = spec
+        sub.mergeRequest = change.mergeRequest
+        sub.headSHA = change.headSHA
+        sub.rerun = nil
+        sub.since = change.since
+        sub.fromCommit = change.fromCommit
+        sub.linked = nil
+        sub.pathInstructions = []
+        return sub
+    }
+
+    /// The findings of one linked merge request, with their paths in its own repository.
+    static func linkedFindings(_ findings: [ReviewFinding], key: String) -> [ReviewFinding] {
+        findings.compactMap { finding in
+            guard let split = ReviewLinked.split(finding.file), split.key == key else { return nil }
+            var finding = finding
+            finding.file = split.path
+            return finding
+        }
     }
 
     /// Approve or reject one request, with the edited text and the reason (a rejected
@@ -158,12 +205,15 @@ public enum ReviewWorkflow {
         let run = try load(folder)
         guard run.spec.local == nil else { throw Failure(message: "\(run.id) is a local review: its findings stay in AKit, nothing goes to GitLab.") }
         guard let plan = run.plan else { throw Failure(message: "\(run.id) has no requests; plan it first.") }
-        let snapshot = run.snapshot
         var report = SendReport()
         var approved: [JSONObject] = []
-        // The merge request every write must name: the project by path or GitLab's number.
-        let projects: [Any] = [run.spec.mergeRequest.projectPath] + (snapshot?.mergeRequest.projectID.map { [$0] } ?? [])
-        let mr: JSONObject = ["projects": projects, "iid": run.spec.mergeRequest.iid]
+        /// The merge request a request goes to, its key (nil: the first) and what its fetch read.
+        func target(_ request: ReviewRequest) -> (ref: MergeRequestRef, key: String?, snapshot: ReviewSnapshot?)? {
+            guard let ref = request.mergeRequest, ref != run.spec.mergeRequest else { return (run.spec.mergeRequest, nil, run.snapshot) }
+            guard let change = run.spec.linked?.first(where: { $0.mergeRequest == ref }) else { return nil }
+            return (ref, change.key, run.linked[change.key])
+        }
+        var used: [MergeRequestRef] = []
         var bodies: [String: (body: String, request: ReviewRequest)] = [:]
         func fail(_ id: String, _ message: String) throws {
             report.failed.append((id, message))
@@ -180,6 +230,14 @@ public enum ReviewWorkflow {
                 try fail(request.id, "Not in Czech: AKit sends only Czech comments to GitLab. Edit it into Czech, then send it again.")
                 continue
             }
+            guard let goal = target(request) else {
+                try fail(request.id, "Its merge request \(request.mergeRequest?.label ?? "?") isn't part of this run.")
+                continue
+            }
+            let snapshot = goal.snapshot
+            // The merge request every write must name: the project by path or GitLab's number.
+            let projects: [Any] = [goal.ref.projectPath] + (snapshot?.mergeRequest.projectID.map { [$0] } ?? [])
+            let mr: JSONObject = ["projects": projects, "iid": goal.ref.iid]
             let finding = run.finding(request.findingID)
             let meta: String = switch request.kind {
             case .summary: ReviewNotes.meta(fingerprint: "summary", role: "summary", severity: nil, run: run.id, kind: "summary",
@@ -229,6 +287,7 @@ public enum ReviewWorkflow {
                 entry["line"] = position.newLine ?? position.oldLine
             }
             entry["mr"] = mr
+            if !used.contains(goal.ref) { used.append(goal.ref) }
             approved.append(entry)
             bodies[request.id] = (body, request)
         }
@@ -241,7 +300,7 @@ public enum ReviewWorkflow {
         let before = ((try? Data(contentsOf: logFile)) ?? Data()).split(separator: 0x0A).count
         var passError: String?
         do {
-            try await ReviewPasses.send(folder: folder, spec: run.spec, count: approved.count, env: env, options: options)
+            try await ReviewPasses.send(folder: folder, spec: run.spec, count: approved.count, mergeRequests: used, env: env, options: options)
         } catch {
             passError = error.localizedDescription
         }
@@ -261,21 +320,27 @@ public enum ReviewWorkflow {
                 outcome[id] = (nil, "GitLab: " + SecretFilter.masked(String(text.prefix(300))))
             }
         }
-        var drafts = snapshot?.drafts ?? []
+        // Drafts by merge request: nil key = the first.
+        var drafts: [String?: [GitLabDraft]] = [nil: run.snapshot?.drafts ?? []]
+        for (key, snapshot) in run.linked { drafts[key] = snapshot.drafts }
+        var changed = Set<String?>()
         for entry in approved {
             guard let id = entry["id"] as? String, let (body, request) = bodies[id] else { continue }
+            let key = target(request)?.key
             var sent = ReviewRequest.Sent(date: .now, draftID: request.draftID, error: nil)
             if let result = outcome[id], result.error == nil {
                 if let draftID = result.draftID { sent.draftID = draftID }
                 report.sent.append(id)
                 // The snapshot learns the drafts just sent, so a later plan (Move Inline, a
                 // discussion) doesn't propose them again.
+                changed.insert(key)
                 switch entry["action"] as? String {
-                case "delete": drafts.removeAll { $0.id == request.draftID }
+                case "delete": drafts[key, default: []].removeAll { $0.id == request.draftID }
                 default:
                     if let draftID = sent.draftID {
-                        drafts.removeAll { $0.id == draftID }
-                        drafts.append(GitLabDraft(id: draftID, note: body, position: request.position, discussionID: request.discussionID))
+                        drafts[key, default: []].removeAll { $0.id == draftID }
+                        drafts[key, default: []].append(GitLabDraft(id: draftID, note: body, position: request.position,
+                                                                    discussionID: request.discussionID))
                     }
                 }
             } else {
@@ -286,9 +351,15 @@ public enum ReviewWorkflow {
                 if let index = file.requests.firstIndex(where: { $0.id == id }) { file.requests[index].sent = sent }
             }
         }
-        if !report.sent.isEmpty, var snapshot {
-            snapshot.drafts = drafts
-            try? ReviewJSON.write(snapshot, to: folder.appending(path: "gitlab/snapshot.json"))
+        for key in changed {
+            if let key {
+                guard var snapshot = run.linked[key] else { continue }
+                snapshot.drafts = drafts[key] ?? []
+                try? ReviewJSON.write(snapshot, to: ReviewLinked.snapshotFile(folder, key: key))
+            } else if var snapshot = run.snapshot {
+                snapshot.drafts = drafts[nil] ?? []
+                try? ReviewJSON.write(snapshot, to: folder.appending(path: "gitlab/snapshot.json"))
+            }
         }
         return report
     }

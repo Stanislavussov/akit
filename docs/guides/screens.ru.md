@@ -3933,6 +3933,8 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Выполнены ли критерии приёмки задачи?» → роль `requirements` заполнит матрицу в сводке.
 - «Автор сделал push после моих комментариев» → новое ревью того же MR обновит или удалит старые черновики.
 - «Какая роль чаще ошибается?» → страница **Quality**.
+- «Изменение в двух репозиториях: фронтенд и API» → **New Review…**, оба адреса в поле **Merge requests**, по одному на строку: [несколько связанных MR](review#run-linked).
+- «Хочу посмотреть только последние коммиты MR» → в поле **Merge requests** после адреса напишите коммит: `… 3f9c2ab`.
 - «Хочу ревью своей ветки до push» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree.
 
 ![Экран Review, страница Runs: слева ревью shop/orders-service!42 с меткой Ready; справа заголовок Stop logging the Authorization header (AB#4512), строка 62.1 of 150 credits, метки проходов от fetch до verifier, блок Requests с карточкой New comment src/Auth/AuthMiddleware.cs:8 и меткой Approved; внизу кнопки Add Missed…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)

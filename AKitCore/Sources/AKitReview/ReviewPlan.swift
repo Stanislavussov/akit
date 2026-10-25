@@ -73,6 +73,8 @@ public struct ReviewRequest: Codable, Sendable, Hashable, Identifiable {
     /// The user moved an "only in AKit" finding inline (label `missed-by-filter`).
     public var movedByUser = false
     public var sent: Sent?
+    /// The linked merge request it goes to (`ReviewRunSpec.linked`); nil = the run's first one.
+    public var mergeRequest: MergeRequestRef?
 
     public var text: String { edited ?? proposed }
     public var isSent: Bool { sent != nil && sent?.error == nil }
@@ -204,6 +206,13 @@ public enum ReviewPlanner {
                       + "what the push changed. Move it inline to post it anyway.")
                 continue
             }
+            // From a commit: the developer asked about the lines after it only.
+            if let since = spec.since, finding.carriedFrom == nil, finding.role != ReviewScan.role, !input.forcedInline.contains(finding.id),
+               finding.verifier?.note != ReviewDiscuss.addedNote, !since.touches(file: finding.file, line: finding.line) {
+                place(.onlyInAKit, "Not on a line changed after \(since.asked): you asked to review only what came after it. "
+                      + "Move it inline to post it anyway.")
+                continue
+            }
             if finding.kind == .question || verdict == .question {
                 questions.append(finding)
                 place(.question, "Not enough context: a question to the author.")
@@ -318,7 +327,15 @@ public enum ReviewPlanner {
             }
             add(request)
         }
-        for (fp, draft) in ourDrafts.sorted(by: { $0.value.id < $1.value.id }) where !kept.contains(fp) {
+        // From a commit: AKit's drafts and threads off the reviewed lines weren't looked at, so they
+        // are neither gone nor fixed.
+        func unreviewed(_ position: GitLabPosition?) -> Bool {
+            guard let since = spec.since else { return false }
+            guard let position else { return true }
+            return position.newLine != nil ? !since.touches(file: position.newPath, line: position.newLine)
+                : !since.touches(file: position.oldPath, line: nil)
+        }
+        for (fp, draft) in ourDrafts.sorted(by: { $0.value.id < $1.value.id }) where !kept.contains(fp) && !unreviewed(draft.position) {
             let meta = ReviewNotes.parseMeta(draft.note) ?? [:]
             add(ReviewRequest(id: "", kind: .delete, fingerprint: fp, role: meta["role"], file: draft.position?.newPath,
                               line: draft.position?.newLine ?? draft.position?.oldLine, position: draft.position,
@@ -328,7 +345,8 @@ public enum ReviewPlanner {
         // is still there. A thread that has AKit's reply already gets no second one.
         // An earlier finding the verifier checked again and rejected (R28) is fixed: gone too.
         let current = Set(input.findings.filter { !$0.isFixed(on: spec.rerun) }.flatMap(\.fingerprints)).union(input.keptFingerprints)
-        for (fp, discussion) in published.sorted(by: { $0.key < $1.key }) where !discussion.isResolved && !current.contains(fp) {
+        for (fp, discussion) in published.sorted(by: { $0.key < $1.key }) where !discussion.isResolved && !current.contains(fp)
+            && !unreviewed(discussion.notes.first { !$0.system }?.position) {
             let replied = discussion.notes.contains { $0.author == input.user && ReviewNotes.parseMeta($0.body)?["kind"] == "reply" }
             if replied { continue }
             let first = discussion.notes.first { !$0.system }

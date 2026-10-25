@@ -49,8 +49,10 @@ public enum ReviewGather {
     static let maxKnowledgeCharacters = 300_000
     static let maxHistoryFiles = 40
 
+    /// `linkedProfiles`: the project profile of each linked merge request, by its key.
     public static func run(spec: ReviewRunSpec, profile: ReviewProfile?, roles: [ReviewRole], folder: URL, scrub: Scrubber.OwnPatterns,
-                           env: HarnessEnvironment, options: ReviewPasses.Options = .init()) async throws -> Result {
+                           env: HarnessEnvironment, options: ReviewPasses.Options = .init(),
+                           linkedProfiles: [String: ReviewProfile] = [:]) async throws -> Result {
         // Nothing is spent before the run can be finished (R25).
         if let problem = spec.verifierProblem { throw Failure(message: problem) }
         var spec = spec
@@ -283,8 +285,41 @@ public enum ReviewGather {
                     how: "Fetch the merge request's earlier commits into the checkout.")
             }
         }
+        // From a commit: the same diff and positions, but findings only on the lines after it.
+        if let asked = spec.fromCommit {
+            if hasWorktree {
+                let resolved = await ReviewLinked.resolve(asked, head: head, base: refs.baseSHA, worktree: worktree, env: env)
+                if let commit = resolved.commit, let changed = await ReviewRerun.changedLines(from: commit, to: head, worktree: worktree, env: env) {
+                    let since = ReviewSince(asked: asked, commit: commit, changed: changed.ranges.filter { !isIgnored($0.key) })
+                    spec.since = since
+                    files.append(("since-commit.md", "What changed after the commit the developer asked to review from: the only lines to report on",
+                                  ReviewLinked.sinceText(since, label: ref.label, patch: changed.patch)))
+                } else {
+                    gap("repository", "The changes after \(asked)", resolved.problem ?? "git couldn't compare \(asked) with the head.",
+                        effect: "This run reports on the whole merge request.")
+                }
+            } else {
+                gap("repository", "The changes after \(asked)", "Reviewing from a commit needs the project's checkout.",
+                    how: "Add checkout: <path of your clone> to the profile.", effect: "This run reports on the whole merge request.")
+            }
+        }
+        // Linked merge requests: one fetch pass, worktree and diff each; the roles read them all.
+        var allDiffs = diffs
+        var allSecretFiles = secretFiles
+        if var linked = spec.linked, !linked.isEmpty, local == nil {
+            for index in linked.indices {
+                let got = await gatherLinked(linked[index], spec: spec, profile: linkedProfiles[linked[index].key], folder: folder, env: env,
+                                             options: options)
+                linked[index] = got.change
+                files += got.files
+                allDiffs += got.diffs
+                allSecretFiles += got.secretFiles
+                for item in got.gaps { gap(item.system, item.needed, item.why, how: item.how, effect: item.effect) }
+            }
+            spec.linked = linked
+        }
         // AKit's own checks of the diff: its size and the secrets in added lines (positions and masked lines only).
-        try ReviewJSON.write(ReviewScan.make(diffs: diffs, secretFiles: secretFiles, isIgnored: isIgnored), to: folder.appending(path: "scan.json"))
+        try ReviewJSON.write(ReviewScan.make(diffs: allDiffs, secretFiles: allSecretFiles, isIgnored: isIgnored), to: folder.appending(path: "scan.json"))
         for diff in diffs where diff.tooLarge {
             gap("gitlab", "The diff of \(diff.newPath)", "It is over GitLab's diff limits, so GitLab sent no diff and can't keep a comment on it.",
                 how: hasWorktree ? "Read the file in the worktree." : "", effect: "Its findings go to the summary only.")
@@ -296,7 +331,7 @@ public enum ReviewGather {
                           workItemsText(workItems, named: ids)))
         }
         // Built-in rules of the languages the change touches (R21), with the profile's own.
-        let languages = ReviewLanguageRules.sets(for: diffs.filter { !$0.deletedFile && !isIgnored($0.newPath) }.map(\.newPath))
+        let languages = ReviewLanguageRules.sets(for: allDiffs.filter { !$0.deletedFile && !isIgnored($0.newPath) }.map(\.newPath))
         if !spec.constraints.isEmpty || !spec.pathInstructions.isEmpty || !languages.isEmpty {
             files.append(("project-rules.md", "The project's constraints and path instructions, and AKit's rules for the change's languages",
                           rulesText(spec) + ReviewLanguageRules.text(languages)))

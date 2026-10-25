@@ -255,20 +255,27 @@ public enum ReviewPasses {
     /// and the work items through the user's MCP servers. The extension saves every answer in
     /// `<run>/mcp/calls/`; AKit reads them there. Its own session, so the review session
     /// starts clean.
-    static func fetch(folder: URL, spec: ReviewRunSpec, env: HarnessEnvironment, options: Options) async throws {
+    /// `name`: `fetch`, or `fetch-<key>` for a linked merge request (its answers are filed under it).
+    static func fetch(folder: URL, spec: ReviewRunSpec, env: HarnessEnvironment, options: Options, name: String = "fetch") async throws {
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         let gate = try await gate(model: spec.passes.value.model, env: env)
         var log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
             ?? ReviewPassLog(mainSession: UUID().uuidString.lowercased())
-        log.passes.removeAll { $0.name == "fetch" }
-        try? FileManager.default.removeItem(at: folder.appending(path: "mcp/calls"))
-        try? FileManager.default.removeItem(at: folder.appending(path: "mcp/blocked.jsonl"))
+        log.passes.removeAll { $0.name == name }
+        if name == "fetch" {
+            try? FileManager.default.removeItem(at: folder.appending(path: "mcp/calls"))
+            try? FileManager.default.removeItem(at: folder.appending(path: "mcp/blocked.jsonl"))
+        } else {
+            for file in FileWalk.children(of: folder.appending(path: "mcp/calls")) {
+                if ReviewJSON.read(ReviewMCPCall.self, from: file)?.pass == name { try? FileManager.default.removeItem(at: file) }
+            }
+        }
         let cwd = folder.appending(path: "fetch", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
         // A local review's fetch pass reads only the links: there is no merge request.
         var tools = spec.local == nil ? "akit_submit_context,akit_report_context_gap" : "akit_report_context_gap"
         if !(spec.links ?? []).isEmpty { tools += ",akit_reading_link" }
-        let setup = PassSetup(name: "fetch", mode: "fetch", role: nil, prompt: ReviewPrompts.fetch(spec: spec), model: spec.passes.value,
+        let setup = PassSetup(name: name, mode: "fetch", role: nil, prompt: ReviewPrompts.fetch(spec: spec), model: spec.passes.value,
                               gate: gate, session: ["--session-id", UUID().uuidString.lowercased()], skills: [],
                               tools: tools, mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
         _ = try await runPass(setup, spec: spec, folder: folder, log: &log, cap: Double(spec.capCredits.value), env: env, options: options, pi: pi)
@@ -300,14 +307,16 @@ public enum ReviewPasses {
     /// `<run>/send/approved.json` as draft notes through the user's GitLab MCP server. The
     /// extension lets through only calls that carry an approved request word for word and logs
     /// each in `<run>/send/log.jsonl`.
-    static func send(folder: URL, spec: ReviewRunSpec, count: Int, env: HarnessEnvironment, options: Options) async throws {
+    static func send(folder: URL, spec: ReviewRunSpec, count: Int, mergeRequests: [MergeRequestRef]? = nil, env: HarnessEnvironment,
+                     options: Options) async throws {
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         let gate = try await gate(model: spec.passes.value.model, env: env)
         var log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
             ?? ReviewPassLog(mainSession: UUID().uuidString.lowercased())
         let cwd = folder.appending(path: "send", directoryHint: .isDirectory)
         let name = "send-\(log.passes.filter { $0.name.hasPrefix("send") }.count + 1)"
-        let setup = PassSetup(name: name, mode: "send", role: nil, prompt: ReviewPrompts.send(spec: spec, count: count), model: spec.passes.value,
+        let setup = PassSetup(name: name, mode: "send", role: nil, prompt: ReviewPrompts.send(spec: spec, count: count, mergeRequests: mergeRequests),
+                              model: spec.passes.value,
                               gate: gate, session: ["--session-id", UUID().uuidString.lowercased()], skills: [],
                               tools: "akit_approved_requests", mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
         // Sending is never stopped by the run's credit cap: the user asked for it.
@@ -417,7 +426,10 @@ public enum ReviewPasses {
         try ReviewJSON.write(log, to: logFile)
         try ReviewRuns.setStatus(.passes, folder: folder)
         var skills = roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
-        let roots = readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)
+        let linkedTrees = ReviewLinked.worktrees(folder, spec: spec)
+        let roots = ([readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)] + linkedTrees.map(\.path)).joined(separator: ":")
+        // Where findings' files are read: the worktree, and `@key/…` in the linked worktrees beside it.
+        let readable: URL? = hasWorktree || !linkedTrees.isEmpty ? worktree : nil
 
         // A subagent step with its own model goes where that model goes: the policy checks it too.
         var stepGates: [String: SendGate] = [:]
@@ -486,13 +498,17 @@ public enum ReviewPasses {
                 _ = try await pass("step-\(step.id)", role: step.role, prompt: ReviewPrompts.step(step, spec: spec), model: step.model,
                                    gate: stepGates[step.model.model] ?? passesGate, session: main)
             }
-            var candidates = ReviewCandidates.collect(folder: folder, spec: spec, worktree: hasWorktree ? worktree : nil)
+            var candidates = ReviewCandidates.collect(folder: folder, spec: spec, worktree: readable)
             // A rerun (R28): the earlier findings on unchanged lines carry over; those whose code
             // changed go to the verifier again, which says whether they are fixed.
             var carried: [ReviewFinding] = []
             var earlierIDs: [String: String] = [:]
             if let rerun = spec.rerun, let previous = previousFindings {
-                let split = ReviewRerun.split(previous.findings, rerun: rerun, candidates: candidates, worktree: hasWorktree ? worktree : nil)
+                let earlierSpec = ReviewJSON.read(ReviewRunSpec.self, from: ReviewPaths(home: env.homeDirectory).run(rerun.previousRun)
+                    .appending(path: "run.json"))
+                let split = ReviewRerun.split(previous.findings.filter { finding in
+                    ReviewLinked.key(of: finding.file, spec: earlierSpec ?? spec) == nil }, rerun: rerun, candidates: candidates,
+                                              worktree: readable)
                 // A role that found an earlier problem again: it is the earlier finding, with all its fingerprints.
                 for (index, prints) in split.refound {
                     candidates[index].carriedFrom = rerun.previousRun
@@ -512,7 +528,7 @@ public enum ReviewPasses {
             }
             try ReviewJSON.write(candidates, to: folder.appending(path: "candidates.json"))
             if !candidates.isEmpty {
-                let input = ReviewCandidates.verifierInput(candidates, worktree: hasWorktree ? worktree : nil)
+                let input = ReviewCandidates.verifierInput(candidates, worktree: readable)
                 try write(input, to: folder.appending(path: "prompts/candidates.md"))
                 // A session of its own: the verifier doesn't inherit the roles' reasoning.
                 let verified = try await pass("verifier", role: nil, prompt: ReviewPrompts.verifier(candidates: input, brief: log.brief, spec: spec),
@@ -539,7 +555,7 @@ public enum ReviewPasses {
                 }
             }
             if let scan, !scan.secrets.isEmpty {
-                candidates = ReviewScan.addSecrets(scan, to: candidates, worktree: hasWorktree ? worktree : nil)
+                candidates = ReviewScan.addSecrets(scan, to: candidates, worktree: readable)
             }
             let findings = ReviewFindingsFile(version: 1, findings: candidates, source: "passes")
             try ReviewJSON.write(findings, to: folder.appending(path: "findings.json"))

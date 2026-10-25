@@ -242,6 +242,14 @@ range at another branch or commit than HEAD (without the uncommitted changes), e
 `--base v1.4.0 --head v1.5.0` for what a release added. In the app: New Review… → Local
 Workspace → Find… next to Base and Head.
 
+`akit review MR-URL MR-URL… [flags]` reviews several linked merge requests (a frontend and its
+API in other repositories) as one change: the roles read every diff and check that the sides still
+fit, the first sets the profile, scenario and roles, each finding goes to drafts in its own merge
+request, and files of the others are named `@<project>/<path>`. `MR-URL@COMMIT` reports only on
+lines changed after that commit of the merge request; without it the review starts at the merge
+base. Use it when the user's change spans repositories, or asks to look only at the last commits.
+In the app: New Review… → Merge requests, one address per line, a commit after an address.
+
 ## Knowledge base
 
 Notes and maps of the systems around a repository: which service sends what to whom, which

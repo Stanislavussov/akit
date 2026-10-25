@@ -111,7 +111,7 @@ public struct ReviewScan: Codable, Sendable, Hashable {
             let current = ReviewCandidates.fingerprints(finding, worktree: worktree)
             // Without the file's lines, two masked lines of one file look alike: the line tells them apart.
             finding.fingerprint = ReviewCandidates.fileLines(secret.file, worktree: worktree) == nil
-                ? ReviewFingerprint.make(path: secret.file, snippet: "\(secret.line ?? 0): \(secret.evidence)", title: nil) : current.current
+                ? ReviewFingerprint.make(path: ReviewLinked.repoPath(secret.file, worktree: worktree), snippet: "\(secret.line ?? 0): \(secret.evidence)", title: nil) : current.current
             finding.previousFingerprint = nil
             for index in result.indices where result[index].kind == .finding && result[index].role != role
                 && !Set(result[index].fingerprints).isDisjoint(with: [finding.fingerprint].compactMap { $0 }) {

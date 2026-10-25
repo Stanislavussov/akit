@@ -45,8 +45,11 @@ public enum ReviewConsumers {
             return servers.contains { $0.lowercased() == server.lowercased() }
         }
         let ownID = ReviewJSON.read(ReviewSnapshot.self, from: folder.appending(path: "gitlab/snapshot.json"))?.mergeRequest.projectID
+        // A linked merge request's project is part of this change, not another repository using it.
+        let linked = Set((spec.linked ?? []).map { $0.mergeRequest.projectPath.lowercased() })
         return check(object["consumers"] as? [[String: Any]] ?? [], boundaries: boundaries, answers: answers,
                      ownProject: spec.mergeRequest.projectPath, ownProjectID: ownID, host: spec.mergeRequest.host)
+            .filter { !linked.contains($0.project.lowercased()) }
     }
 
     static func check(_ raw: [[String: Any]], boundaries: [ReviewBoundary], answers: [ReviewMCPCall], ownProject: String,

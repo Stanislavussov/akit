@@ -189,6 +189,7 @@ shot review-map          1440x900 --section review --select 20261015-091500-orde
 # Open Larger on the Flow: a sheet of 90% of the screen, at Fit.
 shot review-flow-large   1440x900 --section review --select 20261015-091500-orders-service-42 --tab flow
 shot review-new          $MAIN --section review --query "$REVIEWMR" --add
+shot review-new-linked   $MAIN --section review --query "$REVIEWMR"$'\n'"https://gitlab.example.com/shop/web-mfe/-/merge_requests/17 3f9c2ab" --add
 shot review-settings     $MAIN --section review --tab settings --add
 shot review-roles        $MAIN --section review --tab roles --select security
 shot review-scenarios    $MAIN --section review --tab scenarios --select bugfix

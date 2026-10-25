@@ -277,6 +277,7 @@ final class ReviewModel {
         let checkout = spec?.local?.path ?? catalogProfile(for: spec)?.checkout
         Task {
             await ReviewGather.removeWorktree(run: folder, checkout: checkout, env: env)
+            await ReviewLinked.removeWorktrees(run: folder, env: env)
             attempt { _ = try Trash.move(folder) }
             if run?.id == id { run = nil }
             reload()

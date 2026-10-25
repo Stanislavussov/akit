@@ -160,7 +160,7 @@ struct ReviewView: View {
         List(model.runs, selection: Binding(get: { model.run?.id }, set: { model.open($0) })) { run in
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
-                    Text(run.spec.mergeRequest.label).fontWeight(.medium).lineLimit(1)
+                    Text(run.spec.label).fontWeight(.medium).lineLimit(1)
                     Spacer()
                     ReviewStageBadge(status: run.status)
                 }
@@ -396,7 +396,23 @@ struct ReviewRunDetail: View {
                     .font(.callout)
                 }
             } else if let url = URL(string: run.spec.mergeRequest.url) {
-                Link(run.spec.mergeRequest.label + (run.spec.headSHA.map { " at \($0.prefix(10))" } ?? ""), destination: url).font(.callout)
+                HStack(spacing: 6) {
+                    Link(run.spec.mergeRequest.label + (run.spec.headSHA.map { " at \($0.prefix(10))" } ?? ""), destination: url).font(.callout)
+                    if let since = run.spec.since {
+                        Text("from commit \(since.asked)").font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                ForEach(run.spec.linked ?? [], id: \.key) { change in
+                    HStack(spacing: 6) {
+                        Text("Linked").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        if let link = URL(string: change.mergeRequest.url) {
+                            Link(change.mergeRequest.label + (change.headSHA.map { " at \($0.prefix(10))" } ?? ""), destination: link).font(.callout)
+                        }
+                        Text(change.headSHA == nil ? "not read: see the gaps"
+                             : "files @\(change.key)/…" + (change.since.map { ", from commit \($0.asked)" } ?? ""))
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                }
             }
             HStack(spacing: 14) {
                 Label(run.spec.scenario.value.capitalized, systemImage: "list.bullet.rectangle")

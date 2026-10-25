@@ -298,23 +298,67 @@ default_scenario: bugfix
 <!-- section: run-new -->
 
 1. На экране **Review** нажмите **New Review…** (плюс).
-2. В поле **Merge request** вставьте адрес MR из GitLab. Пример: `https://gitlab.example.com/shop/orders-service/-/merge_requests/42`.
-3. Под полем проверьте строку **Project profile**. Пример: «Project profile: orders-service (orders-service.yaml)».
+2. В поле **Merge requests** вставьте адрес MR из GitLab. Пример: `https://gitlab.example.com/shop/orders-service/-/merge_requests/42`. Несколько связанных MR — по одному на строку (см. [несколько связанных MR](#run-linked)).
+3. Под полем проверьте строку MR. Пример: «shop/orders-service!42, from the merge base · profile orders-service.yaml».
 4. Если номер задачи не указан в MR, впишите его в **Work items**. Пример: `4512`.
 5. По желанию: в блоке **Context** напишите заметку в **Context for this review** и вставьте ссылки в **Links** (см. [контекст ревью](#context)).
 6. Выберите **Scenario**. Проверьте переключатели ролей.
 7. Нажмите **Start Review**.
 
-![Окно New Review…: поле Merge request с адресом MR !42, строка Project profile: orders-service (orders-service.yaml), поле Work items; блок Context с пустыми полями Context for this review и Links и подсказками под ними (What the change is for, what to focus on, decisions already made…; One https link per line: Figma frames, Azure DevOps wiki pages or work items, Confluence pages…); блок Scenario and roles: Scenario = Bugfix, переключатели domain (not in this scenario) выключен, requirements, tests и bug-hunter включены, upgrade-risk (not in this scenario) и security (optional) выключены, у каждой роли описание; внизу подпись Pi reads the merge request and its work items through its MCP servers, only with reading tools. Nothing is written to GitLab here. и кнопки Cancel и Start Review](images/review-new.png)
+![Окно New Review…: многострочное поле Merge requests с адресом MR !42, под ним строка shop/orders-service!42, from the merge base · profile orders-service.yaml и подсказка One per line. The first sets the profile, scenario and roles…, поле Work items; блок Context с пустыми полями Context for this review и Links и подсказками под ними (What the change is for, what to focus on, decisions already made…; One https link per line: Figma frames, Azure DevOps wiki pages or work items, Confluence pages…); блок Scenario and roles: Scenario = Bugfix, переключатели domain (not in this scenario) выключен, requirements, tests и bug-hunter включены, upgrade-risk (not in this scenario) и security (optional) выключены, у каждой роли описание; внизу подпись Pi reads the merge request and its work items through its MCP servers, only with reading tools. Nothing is written to GitLab here. и кнопки Cancel и Start Review](images/review-new.png)
 
-Что значат строки под адресом:
+Что значат строки под полем:
 
-- «Paste the merge request's address from GitLab.» — это не адрес MR.
-- «No project profile for … Review Settings… adds one.» — профиля нет. Ревью пойдёт без checkout, трекера и правил проекта, а Pi может звать любой включённый MCP-сервер.
+- «… is not a merge request address …» — в строке не адрес MR.
+- «from the merge base» — ревью смотрит весь MR: от merge base, точки, где ветка отошла от целевой ветки.
+- «no project profile: no checkout, tracker or rules (Review Settings… adds one)» — профиля нет. Ревью пойдёт без checkout, трекера и правил проекта, а Pi может звать любой включённый MCP-сервер.
 
-**Start Review** активна, как только в поле адрес MR. Работают ли серверы Pi, окно не проверяет: это делает **Check Servers** в **Review Settings…**.
+**Start Review** активна, как только в поле есть адрес MR. Работают ли серверы Pi, окно не проверяет: это делает **Check Servers** в **Review Settings…**.
 
 Нижняя строка окна говорит главное: Pi читает MR и его задачи через свои MCP-серверы, только инструментами чтения, и в этом окне в GitLab ничего не пишется.
+
+### Средне: несколько связанных MR и «с какого коммита»
+<!-- section: run-linked -->
+
+Одно изменение часто живёт в нескольких репозиториях: фронтенд и его API, сервис и общая библиотека. Тогда ревьюйте их одним ревью.
+
+1. В поле **Merge requests** вставьте адреса, по одному на строку. Пример:
+   ```
+   https://gitlab.example.com/shop/orders-service/-/merge_requests/42
+   https://gitlab.example.com/shop/web-mfe/-/merge_requests/17 3f9c2ab
+   ```
+2. Под полем у каждой строки своя подпись. У второй и следующих — «Linked: …».
+3. Нажмите **Start Review**.
+
+![Окно New Review… с двумя MR в поле Merge requests: shop/orders-service!42 и shop/web-mfe!17 с коммитом 3f9c2ab; под полем строки shop/orders-service!42, from the merge base · profile orders-service.yaml и Linked: shop/web-mfe!17, from commit 3f9c2ab · no project profile: no checkout, tracker or rules (Review Settings… adds one); ниже подсказка One per line. The first sets the profile, scenario and roles; the others are linked merge requests of the same change…](images/review-new-linked.png)
+
+Что происходит:
+
+| Что | Первый MR | Связанные MR |
+|---|---|---|
+| Профиль, сценарий, роли, модели | задаёт он | берутся у первого |
+| Проход чтения | `fetch` | свой у каждого: `fetch-web-mfe` |
+| Worktree | `worktree/` | `linked/web-mfe/worktree/` |
+| Имена файлов в находках | `src/orders.ts` | `@web-mfe/src/api/orders.ts` |
+| Черновики | в первом MR | в своём MR |
+| Сводка (summary) | своя | своя у каждого MR |
+
+Роли читают все MR сразу. Кроме ошибок каждого MR, они ищут, где одна сторона больше не подходит другой: API, DTO, события, маршруты, ключи конфигурации. Проход `impact` не считает проекты связанных MR «другими репозиториями»: они уже в ревью.
+
+**С какого коммита.** После адреса можно написать коммит, через пробел или через `@`: `…/merge_requests/17 3f9c2ab`. Тогда ревью сообщает только о строках, изменённых после этого коммита. Остальной MR остаётся контекстом. Без коммита ревью смотрит весь MR от merge base.
+
+- Коммит должен быть в истории ветки MR. Иначе ревью смотрит весь MR и пишет пробел в контексте: «The changes after …».
+- Нужен `checkout` в профиле: AKit сравнивает коммиты через git.
+- Находка не на этих строках остаётся только в AKit: «Not on a line changed after 3f9c2ab: you asked to review only what came after it.». **Move Inline** всё равно отправит её в GitLab.
+
+Тонкости:
+
+- Связанный MR без профиля читается только по diff: без worktree и без `checkout`.
+- Если связанный MR не прочитался, ревью идёт дальше без него. В контексте будет пробел «The linked merge request …».
+- В одном ревью не больше 6 MR. Один адрес дважды нельзя.
+- Повторное ревью после push сравнивает с прошлым ревью только первый MR. Связанные MR каждый раз смотрятся целиком. Черновики AKit в них не дублируются.
+
+В заголовке ревью первый MR — ссылка, связанные — строки **Linked** со ссылкой и подписью «files @web-mfe/…».
 
 ### Просто: следить за ревью
 <!-- section: run-progress -->
@@ -499,6 +543,7 @@ default_scenario: bugfix
 <!-- section: run-cli -->
 
 - `akit review MR-URL` — собрать пакет и пройти проходы. Ревью появится на экране.
+- `akit review MR-URL MR-URL…` — одно ревью нескольких связанных MR (см. [несколько связанных MR](#run-linked)). `MR-URL@COMMIT` — только то, что изменилось после коммита.
 - `--wi N` — номер задачи (можно несколько раз). `--scenario S` — сценарий. `--project P` — профиль.
 - `--role +ID` включает роль, `--role -ID` выключает.
 - `--passes-model M`, `--verifier-model M`, `--cap CREDITS` — модели и предел для этого ревью.
@@ -509,6 +554,8 @@ default_scenario: bugfix
 - `akit review runs` — все ревью на этом Mac.
 
 Пример: `akit review https://gitlab.example.com/shop/orders-service/-/merge_requests/42 --wi 4512 --scenario bugfix --role +security`.
+
+Пример связанных MR: `akit review https://gitlab.example.com/shop/orders-service/-/merge_requests/42 https://gitlab.example.com/shop/web-mfe/-/merge_requests/17@3f9c2ab`.
 
 ### Тонкости и редкие случаи
 <!-- section: run-details -->

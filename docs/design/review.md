@@ -16,6 +16,10 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
+Added 2026-10-25 (branch `review-linked-mrs`): R49–R52, one review of several linked merge
+requests (a frontend and its API in other repositories) and "from commit" (section "Linked
+merge requests and from commit").
+
 Added 2026-10-24 (branch `review-impact-map`): R40–R48, a map of the change for the user and its
 uses in other repositories, an overview with a flow diagram in the chosen language, the whole work item chain, found by the agent through GitLab's MCP server (section "Change map
 and impact on other repositories").
@@ -671,6 +675,50 @@ is the worst severity of its findings. **Copy as Mermaid** copies the map as a `
 - Whether the server offers `semantic_search` (Duo add-on) and the `orbit` toolset.
 - How long a search over the instance takes.
 
+
+## Linked merge requests and from commit (2026-10-25)
+
+Asked by the user on 2026-10-25: "a field where I give several merge requests that go
+together, from different repositories; when I don't say which commit to look from, take the
+merge base, where the branch's changes start". The user chose one review over all of them
+(not one run per merge request with the others as context) and a commit per merge request.
+
+- **R49. One run, the first merge request leads.** New Review… → **Merge requests** takes one
+  address per line; `akit review URL URL…`. The first sets the profile, scenario, roles,
+  models and rerun; it keeps every earlier path (`worktree/`, `gitlab/snapshot.json`, plain
+  file paths), so old runs and one-MR runs don't change. The others are `spec.linked`
+  (`ReviewLinkedChange`: key, ref, profile slug, from commit, head, since), at most 6, no
+  address twice.
+- **R50. Each linked merge request is read on its own.** A fetch pass `fetch-<key>` (its MCP
+  answers are filed under that pass, so the same iid in two projects never mixes), its
+  profile's checkout gives `linked/<key>/worktree`, its snapshot is
+  `linked/<key>/snapshot.json`, its pack is `context/linked/<key>/` (merge-request.md,
+  changes.md, diff.patch, threads.md, since-commit.md). The key is the project's last path
+  segment, never the first's, unique (`app-2`). One that can't be read is a gap; the run
+  goes on. Its files are `@<key>/<path>` in the diff and in findings; `fileLines` reads them
+  from the linked worktree, so anchors, quotes and fingerprints work unchanged. The passes may
+  read the linked worktrees (`AKIT_REVIEW_ROOTS`). The system prompt asks to check that each
+  side still fits the others. The scan and the language rules cover every diff; `impact`
+  skips the linked projects and drops uses found in them.
+- **R51. Each finding goes to its own merge request.** The plan runs once per merge request
+  with its findings (the prefix taken off), diffs, refs, drafts, threads and user: one
+  summary each. `ReviewRequest.mergeRequest` names a linked one (nil = the first); its file
+  keeps the `@key/` prefix for the screen. Send names each request's own `mr` (the extension
+  already checks it per request) and updates that merge request's snapshot. The inline caps
+  hold per merge request. The passes' own gaps go only into the first one's summary.
+- **R52. From commit.** `URL COMMIT` or `URL@COMMIT` (7–40 hex). Empty = the merge base:
+  GitLab's diff refs, as before. With a commit, the diff, the positions and the context stay
+  the whole merge request (GitLab's line numbers need `base_sha`); git resolves the commit in
+  the worktree, it must be an ancestor of the head, and `spec.since` (or the linked change's)
+  holds the new-side lines changed after it. `context/since-commit.md` lists them; the plan
+  keeps a finding off them only in AKit ("Not on a line changed after …"), like a rerun;
+  Move Inline still posts it. AKit's drafts and threads off those lines are neither deleted nor
+  "looks fixed": the run didn't look there. The commit must come after the merge base. No checkout or an unknown commit: a gap and the whole merge
+  request.
+
+Later: reruns, Sync Outcomes, outcomes and the eval set for linked merge requests (now only the
+first; a linked one is reviewed whole each time, its drafts matched by fingerprint so none
+repeat); the map and the overview of linked changes; the linked profile's path rules in the plan.
 
 ## One run
 

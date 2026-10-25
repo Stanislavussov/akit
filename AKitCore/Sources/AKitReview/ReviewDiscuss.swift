@@ -71,7 +71,8 @@ public enum ReviewDiscuss {
             ("AKIT_REVIEW_RUN", folder.path), ("AKIT_REVIEW_RUN_ID", run.id), ("AKIT_REVIEW_MODE", "review"), ("AKIT_REVIEW_PASS", "discuss"),
             ("AKIT_REVIEW_ROLE", "discuss"),
             ("AKIT_REVIEW_MCP", String(decoding: (try? JSONEncoder().encode(run.spec.access)) ?? Data("{}".utf8), as: UTF8.self)),
-            ("AKIT_REVIEW_MAX", "50"), ("AKIT_REVIEW_ROOTS", ReviewPasses.readRoots(folder: folder, worktree: worktree)),
+            ("AKIT_REVIEW_MAX", "50"), ("AKIT_REVIEW_ROOTS", ([ReviewPasses.readRoots(folder: folder, worktree: worktree)]
+                + ReviewLinked.worktrees(folder, spec: run.spec).map(\.path)).joined(separator: ":")),
             ("AKIT_REVIEW_SCENARIO", run.spec.scenario.value), ("AKIT_REVIEW_HEAD", run.spec.headSHA ?? ""),
         ] + knowledge.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
         let text = """
