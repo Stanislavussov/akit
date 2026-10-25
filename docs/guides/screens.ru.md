@@ -4039,10 +4039,10 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Вкладки и **+**. Правый щелчок по вкладке: **Rename…**, **Delete…**. Вкладку можно перетащить на другую.
 - Путь файла вкладки и кнопка **Show in Finder**.
 - Редактор: меню блоков по `/`, панель оформления при выделении, флажки задач, вставка картинок, ⌘-щелчок открывает ссылку.
-- Панель инструментов: **Today**, **New Tab…**, **Guide**. Если баз несколько — список **Base**.
+- Панель инструментов: **Today**, **Draw…** (рисунок Excalidraw во вкладке; двойной щелчок по рисунку меняет его), **New Tab…**, **Guide**. Если баз несколько — список **Base**.
 - Если базы нет: «No knowledge base» и кнопка **Open Knowledge**.
 
-Подробно: [писать](notebook#write), [задачи](notebook#tasks), [картинки и ссылки](notebook#images-links), [Today](notebook#today), [вкладки](notebook#tabs), [файлы и Obsidian](notebook#files), [агент](notebook#agents). Надписи: [словарь](terms#terms-notebook).
+Подробно: [писать](notebook#write), [задачи](notebook#tasks), [картинки и ссылки](notebook#images-links), [рисунки](notebook#drawings), [Today](notebook#today), [вкладки](notebook#tabs), [файлы и Obsidian](notebook#files), [агент](notebook#agents). Надписи: [словарь](terms#terms-notebook).
 
 ## Settings
 <!-- section: settings -->

@@ -177,10 +177,16 @@ public struct KnowledgeNotebook: Sendable {
     public func save(_ tab: String, bytes: Data, expectedHash: String?) throws(Failure) -> (path: String, outcome: KnowledgeWrite.Outcome) {
         let path = path(tab)
         let file = file(tab)
-        guard (try? Self.checkedName(tab)) == tab, KnowledgeGit.isInside(path) else { throw Failure(message: "“\(tab)” is no notebook tab.") }
+        // A file made outside (Obsidian) may have a name New Tab… refuses; it is still one file in notebook/.
+        let existing = !tab.isEmpty && !tab.contains("/") && !tab.hasPrefix(".") && FileWalk.isRegularFile(file)
+        guard existing || (try? Self.checkedName(tab)) == tab, KnowledgeGit.isInside(path) else {
+            throw Failure(message: "“\(tab)” is no notebook tab.")
+        }
         do {
             guard let expectedHash else {
                 if let disk = KnowledgeWrite.hash(of: file) { return (path, .conflict(diskHash: disk)) }
+                // Only the first tab of an empty notebook is made by a save; a deleted or renamed tab stays gone.
+                guard tab == Self.firstTab, tabs().isEmpty else { return (path, .conflict(diskHash: nil)) }
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 try bytes.write(to: file, options: .withoutOverwriting)
                 return (path, .saved(hash: KnowledgeWrite.hash(bytes)))
@@ -215,13 +221,83 @@ public struct KnowledgeNotebook: Sendable {
     }
 
     /// The file a tab's relative image link (`assets/…`) names, or nil when it leaves `notebook/`.
+    /// Only images and PDFs, and never through a symbolic link that leads out of the notebook.
     public func asset(_ link: String) -> URL? {
-        let link = link.removingPercentEncoding ?? link
         let parts = link.split(separator: "/", omittingEmptySubsequences: false)
         guard !link.hasPrefix("/"), !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return nil }
         let file = parts.reduce(folder) { $0.appending(path: String($1)) }.standardizedFileURL
-        guard file.path.hasPrefix(folder.standardizedFileURL.path + "/"), FileWalk.isRegularFile(file) else { return nil }
+        let ext = file.pathExtension.lowercased()
+        guard file.path.hasPrefix(folder.standardizedFileURL.path + "/"), FileWalk.isRegularFile(file),
+              Self.assetExtensions.contains(ext == "jpeg" ? "jpg" : ext),
+              file.resolvingSymlinksInPath().path.hasPrefix(folder.resolvingSymlinksInPath().path + "/")
+        else { return nil }
         return file
+    }
+
+    // MARK: - Drawings (NB10)
+
+    public static let drawingsName = "drawings"
+    /// A drawing's picture, the image its tab shows: `drawings/<name>.excalidraw.svg`.
+    public static let pictureSuffix = ".excalidraw.svg"
+
+    /// The drawing an image link of a tab shows (`drawings/<name>.excalidraw.svg` → `<name>`), or nil.
+    public static func drawing(ofLink link: String) -> String? {
+        let link = (link.removingPercentEncoding ?? link).split(separator: "?").first.map(String.init) ?? link
+        guard link.hasPrefix(drawingsName + "/"), link.hasSuffix(pictureSuffix) else { return nil }
+        let name = String(link.dropFirst(drawingsName.count + 1).dropLast(pictureSuffix.count))
+        guard !name.isEmpty, !name.contains("/"), !name.hasPrefix("."), name != ".." else { return nil }
+        return name
+    }
+
+    public var drawingsFolder: URL { folder.appending(path: Self.drawingsName, directoryHint: .isDirectory) }
+    /// The Excalidraw scene: `notebook/drawings/<name>.excalidraw`.
+    public func drawingFile(_ name: String) -> URL { drawingsFolder.appending(path: name + ".excalidraw") }
+    public func pictureFile(_ name: String) -> URL { drawingsFolder.appending(path: name + Self.pictureSuffix) }
+    public static func pictureLink(_ name: String) -> String { "\(drawingsName)/\(name)\(pictureSuffix)" }
+    func drawingPath(_ name: String) -> String { "\(Self.folderName)/\(Self.drawingsName)/\(name).excalidraw" }
+    func picturePath(_ name: String) -> String { "\(Self.folderName)/\(Self.pictureLink(name))" }
+
+    /// A name for a new drawing: `<date>-<6 hex>`, not taken yet.
+    public func newDrawingName(date: String) -> String {
+        while true {
+            let name = "\(date)-\(String(format: "%06x", Int.random(in: 0..<0x1000000)))"
+            if !FileManager.default.fileExists(atPath: drawingFile(name).path) { return name }
+        }
+    }
+
+    /// A drawing's scene as on disk ("" for a new one) and its hash (nil: new).
+    public func drawing(_ name: String) -> (text: String, hash: String?) {
+        guard let data = try? Data(contentsOf: drawingFile(name)) else { return ("", nil) }
+        return (String(decoding: data, as: UTF8.self), KnowledgeWrite.hash(data))
+    }
+
+    /// Done in the drawing editor: the scene (Excalidraw's own bytes) and its picture, the scene
+    /// written only when it is still the one AKit read (`expectedHash`; nil: a new drawing). Returns
+    /// the picture's link for the tab, the base-relative paths for the commit queue, and the outcome.
+    public func saveDrawing(_ name: String, scene: Data, svg: Data, expectedHash: String?) throws(Failure)
+        -> (link: String, paths: [String], outcome: KnowledgeWrite.Outcome) {
+        guard Self.drawing(ofLink: Self.pictureLink(name)) == name else { throw Failure(message: "“\(name)” can't name a drawing.") }
+        guard svg.starts(with: Data("<svg".utf8)) else { throw Failure(message: "The drawing's picture is not SVG; nothing was saved.") }
+        guard (try? JSONSerialization.jsonObject(with: scene)) is [String: Any] else {
+            throw Failure(message: "The drawing's scene is not Excalidraw's JSON; nothing was saved.")
+        }
+        let file = drawingFile(name)
+        let outcome: KnowledgeWrite.Outcome
+        do {
+            try FileManager.default.createDirectory(at: drawingsFolder, withIntermediateDirectories: true)
+            if let expectedHash {
+                outcome = try KnowledgeWrite.saveChecked(scene, to: file, expectedHash: expectedHash)
+            } else if let disk = KnowledgeWrite.hash(of: file) {
+                outcome = .conflict(diskHash: disk)
+            } else {
+                try scene.write(to: file, options: .withoutOverwriting)
+                outcome = .saved(hash: KnowledgeWrite.hash(scene))
+            }
+            if case .saved = outcome { try svg.write(to: pictureFile(name), options: .atomic) }
+        } catch {
+            throw Failure(message: "Couldn't save the drawing \(name): \(error.localizedDescription)")
+        }
+        return (Self.pictureLink(name), [drawingPath(name), picturePath(name)], outcome)
     }
 
     // MARK: - Agents (NB8)

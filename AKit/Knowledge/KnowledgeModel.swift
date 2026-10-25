@@ -420,7 +420,9 @@ final class KnowledgeModel {
     @discardableResult
     func forcePostDirty() async -> Bool {
         // The Inbox's map draft (5.4) is no map of the base: its canvas is never saved this way.
-        guard map != nil, let canvas = MapCanvasView.Coordinator.current, !canvas.scene.key.hasPrefix("inbox/") else { return true }
+        // Nor is a notebook drawing (NB10): its sheet saves it on Done.
+        guard map != nil, let canvas = MapCanvasView.Coordinator.current, !canvas.scene.key.hasPrefix("inbox/"),
+              !canvas.scene.key.hasPrefix(NotebookDrawingSheet.keyPrefix) else { return true }
         let save: (key: String, json: String)?
         do { save = try await canvas.takeUnsaved() } catch { return false }
         guard let save else { return mapConflict == nil }

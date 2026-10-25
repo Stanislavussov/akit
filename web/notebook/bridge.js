@@ -5,6 +5,7 @@
 //   ready      the page is loaded and akitLoad can be called
 //   loaded     akitLoad put a tab in the editor ({key})
 //   linkOpen   ⌘-click on a link or a [[link]] ({link}); the page never navigates, AKit decides
+//   drawingOpen  a double click on a drawing's picture ({link: "drawings/….excalidraw.svg"})
 //   problem    a script error or a Content-Security-Policy violation ({message})
 //   save       the tab changed ({key, text}): the editor's Markdown, posted 800 ms after the last
 //              change and only when it differs from the last one posted. AKit writes these bytes as
@@ -16,6 +17,8 @@
 //                         for its post is posted first
 //   akitTakeUnsaved()     a change still waiting for its post, now ({key, text}), or null
 //   akitToday(heading)    Today (NB7): the day's heading at the top, the cursor under it
+//   akitInsertImage(link) a new drawing's picture after the block with the cursor (saved like any change)
+//   akitRefreshImages(link)  the pictures of a drawing saved again load the new file
 //   akitPosts()           how many saves were handed to AKit
 //   akitDiagnostics()     what the page loaded, for snapshots and checks
 //   akitDebugTick(index)  snapshots: a click on the index-th check box
@@ -102,14 +105,19 @@
   window.akitLoad = function (text, newKey) {
     const before = unsaved();
     if (before) post({ type: "save", key: before.key, text: before.text });
+    // No save while the old editor goes and the new one comes: its text belongs to no tab.
+    key = null;
     loading = loading.then(async () => {
-      if (editor) await editor.destroy();
+      const old = editor;
+      editor = null;
+      if (old) await old.destroy();
       const root = document.getElementById("root");
       root.innerHTML = "";
       key = null;
       editor = await window.AKitEditor.create(root, text, {
         onChange: changed,
         onOpenLink: (link) => post({ type: "linkOpen", link }),
+        onOpenDrawing: (link) => post({ type: "drawingOpen", link }),
         upload,
         imageURL,
       });
@@ -128,6 +136,15 @@
     if (!editor) return false;
     const changedNow = editor.focusDay(heading);
     return changedNow;
+  };
+
+  window.akitInsertImage = async function (link) {
+    await loading;
+    if (editor) editor.insertImage(link);
+  };
+  window.akitRefreshImages = async function (link) {
+    await loading;
+    if (editor) editor.refreshImages(link);
   };
 
   window.akitDiagnostics = async function () {

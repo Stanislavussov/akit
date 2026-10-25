@@ -507,12 +507,29 @@ public enum KnowledgeSeed {
             - [ ] Split [[orders-api]] events by version
             - [ ] Ask logistics about the new warehouse
 
+            ![](drawings/2026-10-24-retry.excalidraw.svg)
+
             ## Later
 
             | What | Who |
             | --- | --- |
             | Faster refunds | billing |
             | Track parcels live | shipping |
+
+            """),
+        // A drawing (NB10): its Excalidraw scene and the picture the tab shows.
+        File(path: "notebook/drawings/2026-10-24-retry.excalidraw", text: retryDrawing),
+        File(path: "notebook/drawings/2026-10-24-retry.excalidraw.svg", text: """
+            <svg xmlns="http://www.w3.org/2000/svg" width="472" height="112" viewBox="0 0 472 112" font-family="Helvetica, Arial, sans-serif" font-size="16">
+              <rect width="472" height="112" fill="#ffffff"/>
+              <rect x="16" y="16" width="180" height="80" rx="4" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+              <text x="106" y="61" text-anchor="middle" fill="#1e1e1e">publish event</text>
+              <rect x="276" y="16" width="180" height="80" rx="4" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+              <text x="366" y="61" text-anchor="middle" fill="#1e1e1e">retry 3 times</text>
+              <line x1="197" y1="56" x2="268" y2="56" stroke="#1e1e1e" stroke-width="2"/>
+              <path d="M266 50 L276 56 L266 62" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+              <text x="236" y="46" text-anchor="middle" fill="#1e1e1e" font-size="13">fails</text>
+            </svg>
 
             """),
         File(path: "notebook/assets/2026-10-25-deploy.svg", text: """
@@ -528,6 +545,14 @@ public enum KnowledgeSeed {
 
             """),
     ]
+
+    /// The sample notebook's drawing: two blocks and an arrow, as AKit's canvas writes a scene.
+    static let retryDrawing: String = {
+        let publish = NewMap.Box(id: "publish", x: 0, y: 0), retry = NewMap.Box(id: "retry", x: 260, y: 0)
+        return NewMap.scene(elements: NewMap.block(publish, label: "publish event", link: nil, arrows: ["fails"])
+            + NewMap.block(retry, label: "retry 3 times", link: nil, arrows: ["fails"])
+            + NewMap.arrow("fails", from: publish, to: retry, label: "fails", link: nil))
+    }()
 
     /// The stored check of a seed proposal (5.2), as `kb check` would keep it.
     public static let checkMarks: [String: [KnowledgeCheck.Mark]] = [

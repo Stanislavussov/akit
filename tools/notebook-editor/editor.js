@@ -4,7 +4,8 @@
 // - `[[links]]` unescaped (remark writes `\[\[`), shown as links, ⌘-click opens them;
 // - frontmatter kept as it was, outside the editor (Crepe has no frontmatter node);
 // - an image's alt text is Crepe's size ratio (`![1.00](…)`): written as `![](…)`;
-// - an empty line (remark writes `<br />`) is left out.
+// - an empty line (remark writes `<br />`) is left out;
+// - a bare web link stays bare (remark writes `<https://…>`; GFM reads both the same).
 // Built by tools/build-notebook-editor.sh into web/notebook/vendor/editor.js, which defines
 // window.AKitEditor; web/notebook/bridge.js talks to AKit.
 import { CrepeBuilder } from "@milkdown/crepe/builder";
@@ -42,17 +43,33 @@ export function splitFrontmatter(text) {
   return match ? { front: match[0], body: text.slice(match[0].length) } : { front: "", body: text };
 }
 
-// What remark wrote, made back into what people write.
+// Fenced code blocks and inline code spans: kept as written by the fixes below.
+const CODE = /(^(?:```|~~~)[^\n]*\n[\s\S]*?^(?:```|~~~)[ \t]*$|`[^`\n]*`)/m;
+
+// What remark wrote, made back into what people write; code stays as it is.
 export function cleanMarkdown(markdown) {
   return markdown
-    .replace(/\\\[\\\[([^\[\]\n]*?)\]\]/g, "[[$1]]")
-    .replace(/!\[\d+(?:\.\d+)?\]\(/g, "![](")
-    .replace(/^<br \/>\n\n?/, "")
-    .replace(/\n<br \/>\n(?=\n|$)/g, "");
+    .split(new RegExp(CODE.source, "gm"))
+    .map((part, index) => (index % 2 === 1 ? part : part
+      .replace(/\\\[\\\[([^\[\]\n]*?)\]\]/g, "[[$1]]")
+      .replace(/!\[\d+\.\d+\]\(/g, "![](")
+      .replace(/<(https?:\/\/[^<>\s]*[^<>\s.,;:!?)])>/g, "$1")
+      .replace(/^<br \/>\n\n?/, "")
+      .replace(/\n<br \/>\n(?=\n|$)/g, "")))
+    .join("");
 }
 
-// [[links]] look like links; ⌘-click on one, or on a web link, asks AKit to open it.
-function linkPlugin(onOpenLink) {
+// The image link of a picture on the page: `akit-web://app/files/drawings/x.excalidraw.svg?v=2` →
+// `drawings/x.excalidraw.svg`.
+function linkOfImage(src) {
+  const prefix = "akit-web://app/files/";
+  if (!src || !src.startsWith(prefix)) return null;
+  return src.slice(prefix.length).split("?")[0].split("/").map(decodeURIComponent).join("/");
+}
+
+// [[links]] look like links; ⌘-click on one, or on a web link, asks AKit to open it. A double
+// click on a drawing's picture (`drawings/….excalidraw.svg`) asks AKit to open the drawing.
+function linkPlugin(onOpenLink, onOpenDrawing) {
   const key = new PluginKey("akit-links");
   function decorations(doc) {
     const found = [];
@@ -92,6 +109,16 @@ function linkPlugin(onOpenLink) {
       },
       // A plain click on a web link would navigate the page: AKit cancels that, ⌘-click opens it.
       handleDOMEvents: {
+        dblclick(view, event) {
+          const img = event.target.closest && event.target.closest("img");
+          const link = img && linkOfImage(img.getAttribute("src"));
+          if (link && /^drawings\/[^/]+\.excalidraw\.svg$/.test(link)) {
+            event.preventDefault();
+            onOpenDrawing(link);
+            return true;
+          }
+          return false;
+        },
         click(view, event) {
           if (event.target.closest && event.target.closest("a[href]")) event.preventDefault();
           return false;
@@ -104,10 +131,11 @@ function linkPlugin(onOpenLink) {
 // One editor on `root` with `markdown` (frontmatter included). Options:
 //   onChange()            the document changed (not on load)
 //   onOpenLink(link)      ⌘-click on a link or a [[link]]
+//   onOpenDrawing(link)   a double click on a drawing's picture (`drawings/….excalidraw.svg`)
 //   upload(file)          a pasted or dropped image → Promise of its link (`assets/…`)
 //   imageURL(link)        the URL that shows an image link
 //   placeholder           the empty line's hint
-// Returns { markdown(), destroy(), focusDay(heading), editor }.
+// Returns { markdown(), destroy(), focusDay(heading), insertImage(link), refreshImages(link), editor }.
 export async function create(root, markdown, options) {
   const { front, body } = splitFrontmatter(markdown);
   const builder = new CrepeBuilder({ root, defaultValue: body });
@@ -131,7 +159,7 @@ export async function create(root, markdown, options) {
     .addFeature(placeholder, { text: options.placeholder || "Type / for blocks, [ ] for a task", mode: "block" })
     .addFeature(table)
     .addFeature(codeMirror, { languages });
-  builder.editor.use(linkPlugin(options.onOpenLink));
+  builder.editor.use(linkPlugin(options.onOpenLink, options.onOpenDrawing || (() => {})));
   let ready = false;
   builder.on((listener) => {
     listener.markdownUpdated(() => {
@@ -145,6 +173,24 @@ export async function create(root, markdown, options) {
     markdown: () => front + cleanMarkdown(builder.getMarkdown()),
     setReadonly: (on) => builder.setReadonly(on),
     destroy: () => builder.destroy(),
+    // A new drawing's picture as an image block after the block with the cursor.
+    insertImage(link) {
+      const view = builder.editor.ctx.get(editorViewCtx);
+      const { state } = view;
+      const type = state.schema.nodes["image-block"];
+      const $from = state.selection.$from;
+      const at = $from.depth > 0 ? $from.after(1) : state.doc.content.size;
+      const tr = state.tr.insert(at, type.create({ src: link }));
+      view.dispatch(tr.scrollIntoView());
+    },
+    // A drawing saved again: its pictures load the new file.
+    refreshImages(link) {
+      for (const img of root.querySelectorAll("img")) {
+        if (linkOfImage(img.getAttribute("src")) === link) {
+          img.setAttribute("src", img.getAttribute("src").split("?")[0] + "?v=" + Date.now());
+        }
+      }
+    },
     // Today (NB7): the heading of the day at the top (after a first `# Title`), made when missing,
     // with an empty line under it for the cursor. true when the document changed.
     focusDay(text) {

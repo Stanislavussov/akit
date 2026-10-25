@@ -56,9 +56,14 @@ struct NotebookEditorView: NSViewRepresentable {
         }
     }
 
+    /// Leaving the screen (another section, a [[link]] to Knowledge): a change still waiting for its
+    /// 800 ms post is taken from the page and saved first; the web view lives until it answered.
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: "nb")
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: "nbUpload", contentWorld: .page)
+        Task { @MainActor in
+            if let unsaved = try? await coordinator.takeUnsaved(in: webView) { NotebookModel.current?.save(unsaved.key, text: unsaved.text) }
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: "nb")
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: "nbUpload", contentWorld: .page)
+        }
     }
 
     @MainActor
@@ -148,7 +153,8 @@ struct NotebookEditorView: NSViewRepresentable {
         }
 
         func load() async {
-            guard let webView else { return }
+            // No tab yet (the model is still reading the base): nothing to show or save.
+            guard let webView, !document.key.isEmpty else { return }
             loadedKey = nil
             do {
                 _ = try await webView.callAsyncJavaScript("await akitLoad(text, key)", arguments: ["text": document.text, "key": document.key],
@@ -160,8 +166,8 @@ struct NotebookEditorView: NSViewRepresentable {
 
         /// A change still waiting for its 800 ms post, handed over now; nil when the tab is as last
         /// posted. Throws when the page doesn't answer.
-        func takeUnsaved() async throws -> (key: String, text: String)? {
-            guard isReady, let webView else { return nil }
+        func takeUnsaved(in view: WKWebView? = nil) async throws -> (key: String, text: String)? {
+            guard isReady, let webView = view ?? webView else { return nil }
             guard let save = try await webView.callAsyncJavaScript("return akitTakeUnsaved()", contentWorld: .page) as? [String: Any],
                   let key = save["key"] as? String, let text = save["text"] as? String
             else { return nil }
@@ -173,6 +179,16 @@ struct NotebookEditorView: NSViewRepresentable {
         func today(_ date: String) async throws {
             webView?.window?.makeFirstResponder(webView)
             _ = try await webView?.callAsyncJavaScript("return await akitToday(heading)", arguments: ["heading": date], contentWorld: .page)
+        }
+
+        /// A new drawing's picture (NB10) after the block with the cursor; saved like any change.
+        func insertImage(_ link: String) async {
+            _ = try? await webView?.callAsyncJavaScript("await akitInsertImage(link)", arguments: ["link": link], contentWorld: .page)
+        }
+
+        /// A drawing saved again: its pictures in the tab load the new file.
+        func refreshImages(_ link: String) async {
+            _ = try? await webView?.callAsyncJavaScript("await akitRefreshImages(link)", arguments: ["link": link], contentWorld: .page)
         }
 
         /// Snapshots: waits (up to `timeout` seconds) until the tab `key` is in the editor.

@@ -34,6 +34,15 @@ final class NotebookModel {
     var newTabRequest = DebugSnapshot.options?.tab == "notebook-new"
     var renameRequest: String?
     var deleteRequest: String?
+    /// A drawing open in Excalidraw (NB10), until Done or Cancel.
+    struct DrawingRequest: Identifiable, Equatable {
+        var name: String
+        var text: String
+        /// The scene's hash as read; nil for a new drawing.
+        var hash: String?
+        var id: String { name }
+    }
+    var drawingRequest: DrawingRequest?
 
     /// Per document key: the hash of the tab's bytes as AKit last read or wrote them (the own-write
     /// rule). No entry: the tab's file doesn't exist yet (the first tab before its first save).
@@ -123,6 +132,11 @@ final class NotebookModel {
             conflict?.text = text
             return
         }
+        // A late save of a tab deleted or renamed since: dropped, the tab stays gone.
+        if hashes[key] == nil, !FileWalk.isRegularFile(notebook.file(tab)),
+           !(tab == KnowledgeNotebook.firstTab && notebook.tabs().isEmpty) {
+            return
+        }
         do {
             let (path, outcome) = try notebook.save(tab, bytes: Data(text.utf8), expectedHash: hashes[key])
             switch outcome {
@@ -197,10 +211,18 @@ final class NotebookModel {
         let key = key(tab: tab, in: notebook)
         guard KnowledgeWrite.hash(of: notebook.file(tab)) != hashes[key] else { return }
         Task {
-            let unsaved = try? await NotebookEditorView.Coordinator.current?.takeUnsaved()
+            let unsaved: (key: String, text: String)?
+            do { unsaved = try await NotebookEditorView.Coordinator.current?.takeUnsaved() } catch {
+                // The page didn't answer: its text may hold an edit, so it is not replaced.
+                notice = "\(tab) changed on disk; switch tabs to see that version."
+                return
+            }
             if let unsaved, unsaved.key == key {
                 conflict = Conflict(key: key, text: unsaved.text)
-            } else if conflict == nil {
+                return
+            }
+            if let unsaved { save(unsaved.key, text: unsaved.text) }
+            if conflict == nil, self.tab == tab {
                 open(tab)
                 notice = "\(tab) changed on disk; showing that version."
             }
@@ -221,15 +243,24 @@ final class NotebookModel {
     func show(_ tab: String) {
         guard tab != self.tab else { return }
         Task {
-            await forcePostDirty()
+            guard await forcePostDirty() else {
+                problem = "The tab's last change couldn't be saved, so AKit stayed on it."
+                return
+            }
             open(tab)
         }
     }
 
+    /// The last change is saved before a tab change; false (and a problem) when it couldn't be.
+    private func savedFirst() async -> Bool {
+        if await forcePostDirty() { return true }
+        problem = "Save the open tab first: its last change couldn't be saved, so nothing was changed."
+        return false
+    }
+
     /// New Tab…: committed at once; the new tab opens.
     func addTab(_ name: String) async -> Bool {
-        guard let notebook else { return false }
-        await forcePostDirty()
+        guard let notebook, await savedFirst() else { return false }
         do {
             // The first tab before its first save is written now, so it keeps its place.
             if notebook.tabs().isEmpty, (try? KnowledgeNotebook.checkedName(name)) != KnowledgeNotebook.firstTab {
@@ -248,8 +279,7 @@ final class NotebookModel {
 
     /// Rename…: one commit; the tab keeps its place.
     func rename(_ tab: String, to new: String) async -> Bool {
-        guard let notebook else { return false }
-        await forcePostDirty()
+        guard let notebook, await savedFirst() else { return false }
         do {
             let renamed = try await notebook.rename(tab: tab, to: new, env: env)
             hashes[key(tab: tab, in: notebook)] = nil
@@ -265,8 +295,7 @@ final class NotebookModel {
 
     /// Delete…: the tab's file goes to the Trash; one commit.
     func delete(_ tab: String) async {
-        guard let notebook else { return }
-        await forcePostDirty()
+        guard let notebook, await savedFirst() else { return }
         do {
             try await notebook.delete(tab: tab, env: env)
             hashes[key(tab: tab, in: notebook)] = nil
@@ -316,6 +345,53 @@ final class NotebookModel {
         assetHashes[saved.path] = KnowledgeWrite.hash(data)
         knowledge.enqueueEdit(saved.path, in: notebook.base)
         return saved.link
+    }
+
+    // MARK: - Drawings (NB10)
+
+    /// Draw…: an empty Excalidraw canvas for a new drawing; Done puts its picture at the cursor.
+    func newDrawing() {
+        guard let notebook else { return }
+        drawingRequest = DrawingRequest(name: notebook.newDrawingName(date: Self.dayFormatter.string(from: .now)), text: NewMap.scene(), hash: nil)
+    }
+
+    /// A double click on a drawing's picture: the drawing opens in Excalidraw.
+    func openDrawing(_ link: String) {
+        guard let notebook, let name = KnowledgeNotebook.drawing(ofLink: link) else { return }
+        let read = notebook.drawing(name)
+        guard read.hash != nil else {
+            notice = "The drawing \(name) is gone: notebook/drawings/\(name).excalidraw doesn't exist."
+            return
+        }
+        drawingRequest = DrawingRequest(name: name, text: read.text, hash: read.hash)
+    }
+
+    /// Done: the scene and its picture are saved and queued for the commit; a new drawing's picture
+    /// goes into the tab, an old one's pictures load again. false keeps the sheet open.
+    func saveDrawing(scene: String, svg: String) async -> Bool {
+        guard let notebook, let request = drawingRequest else { return false }
+        do {
+            let saved = try notebook.saveDrawing(request.name, scene: Data(scene.utf8), svg: Data(svg.utf8), expectedHash: request.hash)
+            guard case .saved(let hash) = saved.outcome else {
+                problem = "The drawing \(request.name) changed on disk while it was open; nothing was saved. Cancel and open it again."
+                return false
+            }
+            assetHashes[saved.paths[0]] = hash
+            assetHashes[saved.paths[1]] = KnowledgeWrite.hash(Data(svg.utf8))
+            for path in saved.paths { knowledge.enqueueEdit(path, in: notebook.base) }
+            drawingRequest = nil
+            if request.hash == nil {
+                await NotebookEditorView.Coordinator.current?.insertImage(saved.link)
+                notice = "Added the drawing \(request.name)."
+            } else {
+                await NotebookEditorView.Coordinator.current?.refreshImages(saved.link)
+                notice = "Saved the drawing \(request.name)."
+            }
+            return true
+        } catch {
+            problem = error.message
+            return false
+        }
     }
 
     /// The file an image link of the tab names (`assets/…`).

@@ -55,7 +55,8 @@ public struct KnowledgeGit: Sendable {
         if !aliases.isEmpty { return try await commitCaseRename(paths: paths, aliases: aliases, message: message) }
         // A path git doesn't know and that is gone has nothing to add.
         let present = paths.filter { FileManager.default.fileExists(atPath: base.appending(path: $0).path) }
-        let tracked = try await run(["ls-files", "--"] + paths).split(separator: "\n").map(String.init)
+        // -z: names outside ASCII come as they are, not quoted ("notebook/\320\237….md").
+        let tracked = try await run(["ls-files", "-z", "--"] + paths).split(separator: "\0").map(String.init)
         let staged = Array(Set(present + paths.filter { path in tracked.contains { $0 == path || $0.hasPrefix(path + "/") } })).sorted()
         guard !staged.isEmpty else { return false }
         _ = try await run(["add", "--all", "--"] + staged)

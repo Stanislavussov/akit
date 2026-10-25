@@ -45,6 +45,7 @@ Not a task manager: no due dates, reminders, assignees or sync with Jira or Thin
 | NB6 | Links | ⌘-click: `https://…` opens in the default browser; `[[note]]` resolves like a note's link (K-links) and opens the note on the Knowledge screen (a plain click places the cursor). Later: a broken one grey |
 | NB7 | Today | A **Today** button puts a `## 2026-10-25` heading at the top of the tab in view (once a day; the cursor goes under it). That is the "what I did today" log: one tab, newest day first, no file per day |
 | NB8 | Agents | `akit notebook` reads and appends, like the rest of AKit (everything through akit): `tabs`, `show TAB`, `add TAB TEXT [--task] [--today]` (a line, or `- [ ] TEXT`, at the top or under today's heading), `done TAB TEXT` (ticks the first open task that matches). Agents may run `tabs`, `show` and `add` only when the user asked in the session; nothing else writes. The `/akit` skill lists them |
+| NB10 | Drawings | Asked by the user while building: Draw… opens the maps' Excalidraw canvas in a sheet; Done writes `notebook/drawings/<date>-<6 hex>.excalidraw` and its picture `….excalidraw.svg` (Excalidraw's `exportToSvg`) and puts `![](drawings/….excalidraw.svg)` after the cursor's block. A plain image, so Obsidian and GitHub show it. A double click on the picture opens the drawing again (hash check on the scene). Nothing is written while drawing |
 | NB9 | Search | No: `kb search`, lint and `kb context` leave the notebook out; a card about systems shouldn't fill with to-dos. Agents read it with `akit notebook` |
 
 ## Screen

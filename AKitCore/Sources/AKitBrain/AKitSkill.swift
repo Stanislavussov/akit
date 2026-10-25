@@ -447,6 +447,9 @@ akit notebook add TAB TEXT [--task] [--today] [--json]
 akit notebook done TAB TEXT [--json]               # ticks the first open task containing TEXT
 ```
 
+Drawings (`![](drawings/NAME.excalidraw.svg)` in a tab) are made and changed in the app (Draw…, a
+double click); the scene is `notebook/drawings/NAME.excalidraw`. Don't edit them by hand.
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

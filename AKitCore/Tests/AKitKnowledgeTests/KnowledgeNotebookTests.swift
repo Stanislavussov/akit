@@ -166,3 +166,88 @@ final class KnowledgeNotebookTests {
         #expect(try await KnowledgeGit(base: book.base.root, env: env).changedPaths() == ["notebook/Plans.md"])
     }
 }
+
+/// Drawings (NB10): an Excalidraw scene and its SVG picture in `notebook/drawings/`.
+final class KnowledgeNotebookDrawingTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
+    let home: URL
+    init() throws { home = try FakeHome.make("akit-kb-drawing") }
+
+    @Test func aDrawingIsItsSceneAndItsPictureAndASaveNeedsTheSceneAsRead() async throws {
+        let book = KnowledgeNotebook(base: try await TemplateBase.base(home: home))
+        let name = book.newDrawingName(date: "2026-10-25")
+        #expect(name.hasPrefix("2026-10-25-") && name.count == "2026-10-25-".count + 6)
+        #expect(book.drawing(name).hash == nil)
+        let svg = Data("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".utf8)
+        let saved = try book.saveDrawing(name, scene: Data("{\"elements\":[1]}".utf8), svg: svg, expectedHash: nil)
+        #expect(saved.link == "drawings/\(name).excalidraw.svg")
+        #expect(saved.paths == ["notebook/drawings/\(name).excalidraw", "notebook/drawings/\(name).excalidraw.svg"])
+        #expect(KnowledgeNotebook.drawing(ofLink: saved.link) == name)
+        #expect(KnowledgeNotebook.drawing(ofLink: saved.link + "?v=2") == name)
+        #expect(book.asset(saved.link) != nil)
+        let read = book.drawing(name)
+        #expect(read.text == "{\"elements\":[1]}")
+        // Someone changed the scene since: refused, the picture stays.
+        try Data("{\"elements\":[2]}".utf8).write(to: book.drawingFile(name))
+        if case .conflict = try book.saveDrawing(name, scene: Data("{}".utf8), svg: svg, expectedHash: read.hash).outcome {} else {
+            Issue.record("no conflict")
+        }
+        #expect(throws: KnowledgeBase.Failure.self) { try book.saveDrawing(name, scene: Data(), svg: Data("<html>".utf8), expectedHash: nil) }
+        #expect(KnowledgeNotebook.drawing(ofLink: "assets/a.png") == nil)
+        #expect(KnowledgeNotebook.drawing(ofLink: "drawings/../x.excalidraw.svg") == nil)
+    }
+}
+
+/// Review round 1: names outside ASCII, late saves, what the editor's file route serves.
+final class KnowledgeNotebookReviewTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
+    let home: URL
+    init() throws { home = try FakeHome.make("akit-kb-notebook-review") }
+    var env: HarnessEnvironment { FakeHome.env(home) }
+
+    @Test func aCyrillicTabIsRenamedAndDeletedInItsCommits() async throws {
+        let book = KnowledgeNotebook(base: try await TemplateBase.base(home: home))
+        try await book.add(tab: "Планы", env: env)
+        try await book.rename(tab: "Планы", to: "Неделя", env: env)
+        try await book.delete(tab: "Неделя", env: env) { url in try FileManager.default.removeItem(at: url); return nil }
+        // Nothing of the notebook stays uncommitted.
+        #expect(try await KnowledgeGit(base: book.base.root, env: env).changedPaths().isEmpty)
+        #expect(try await FakeHome.git(["ls-files", "notebook"], in: book.base.root, env: env) == "notebook/.tabs.json")
+    }
+
+    @Test func aLateSaveNeverBringsBackADeletedTab() async throws {
+        let book = KnowledgeNotebook(base: try await TemplateBase.base(home: home))
+        try await book.add(tab: "Inbox", env: env)
+        try await book.add(tab: "Old", env: env)
+        try await book.delete(tab: "Old", env: env) { url in try FileManager.default.removeItem(at: url); return nil }
+        if case .conflict = try book.save("Old", bytes: Data("late".utf8), expectedHash: nil).outcome {} else { Issue.record("saved") }
+        #expect(!FileManager.default.fileExists(atPath: book.file("Old").path))
+    }
+
+    @Test func theFileRouteServesImagesOnlyAndNoLinkOut() async throws {
+        let book = KnowledgeNotebook(base: try await TemplateBase.base(home: home))
+        let secret = home.appending(path: "secret.png")
+        try Data("x".utf8).write(to: secret)
+        try FileManager.default.createDirectory(at: book.assetsFolder, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: book.assetsFolder.appending(path: "link.png"), withDestinationURL: secret)
+        try Data("alert(1)".utf8).write(to: book.assetsFolder.appending(path: "x.js"))
+        try Data("y".utf8).write(to: book.assetsFolder.appending(path: "ok.png"))
+        #expect(book.asset("assets/link.png") == nil)
+        #expect(book.asset("assets/x.js") == nil)
+        #expect(book.asset(".tabs.json") == nil)
+        #expect(book.asset("assets/ok.png") != nil)
+    }
+
+    @Test func aTabNamedInObsidianCanBeSavedAndADrawingNeedsItsJSON() async throws {
+        let book = KnowledgeNotebook(base: try await TemplateBase.base(home: home))
+        try FileManager.default.createDirectory(at: book.folder, withIntermediateDirectories: true)
+        try Data("a".utf8).write(to: book.file("Q4 #plans"))
+        let hash = try #require(KnowledgeWrite.hash(of: book.file("Q4 #plans")))
+        if case .saved = try book.save("Q4 #plans", bytes: Data("b".utf8), expectedHash: hash).outcome {} else { Issue.record("not saved") }
+        #expect(throws: KnowledgeBase.Failure.self) {
+            try book.saveDrawing("d", scene: Data(), svg: Data("<svg/>".utf8), expectedHash: nil)
+        }
+    }
+}

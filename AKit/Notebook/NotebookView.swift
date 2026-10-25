@@ -47,6 +47,8 @@ struct NotebookView: View {
                     switch message.type {
                     case "save":
                         if let key = message.body["key"] as? String, let text = message.body["text"] as? String { model.save(key, text: text) }
+                    case "drawingOpen":
+                        if let link = message.body["link"] as? String { model.openDrawing(link) }
                     case "linkOpen":
                         if let link = message.body["link"] as? String, model.openLink(link) { app.section = .knowledge }
                     case "problem":
@@ -62,6 +64,7 @@ struct NotebookView: View {
         .navigationSubtitle(knowledge.base.map { "\($0.name) · \($0.root.appending(path: KnowledgeNotebook.folderName).tildePath)" } ?? "")
         .toolbar { toolbar }
         .sheet(isPresented: $model.newTabRequest) { TabNameSheet(tab: nil) }
+        .sheet(item: $model.drawingRequest) { request in NotebookDrawingSheet(request: request) }
         .sheet(isPresented: Binding(get: { model.renameRequest != nil }, set: { if !$0 { model.renameRequest = nil } })) {
             if let tab = model.renameRequest { TabNameSheet(tab: tab) }
         }
@@ -130,6 +133,11 @@ struct NotebookView: View {
             Button("Today", systemImage: "calendar.badge.plus") { Task { await model.today() } }
                 .disabled(knowledge.base == nil || model.tab == nil)
                 .help("Put today's date as a heading at the top of this tab and the cursor under it: a log of what you did, newest day first")
+        }
+        ToolbarItem {
+            Button("Draw…", systemImage: "pencil.and.scribble") { model.newDrawing() }
+                .disabled(knowledge.base == nil || model.tab == nil)
+                .help("Draw with Excalidraw; Done puts the drawing into the tab as a picture. Double-click a drawing to change it")
         }
         ToolbarItem {
             Button("New Tab…", systemImage: "plus.square.on.square") { model.newTabRequest = true }
