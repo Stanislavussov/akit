@@ -106,6 +106,9 @@ extension AKitCLI {
       akit review log RUN [--json]      What the run did, for analysis: each pass's model, thinking,
                                         time, usage and credits, the MCP calls and blocked calls,
                                         and what each role's findings became
+      akit review kb-gaps RUN [--json]  What the review missed in the knowledge base: searches with
+                                        no answer, gaps reported with system knowledge, notes it used
+                                        without a description; each with the akit kb propose command
       akit review map RUN [--json | --mermaid]
                                         The change map: changed files by module with their lines
                                         and worst finding, unchanged files that import them, the
@@ -375,6 +378,28 @@ extension AKitCLI {
                 out(String(decoding: try encoder.encode(log), as: UTF8.self))
             } else {
                 out(log.markdown)
+            }
+            return 0
+        case "kb-gaps":
+            let json = args.flag("--json")
+            guard let id = args.positional() else { throw Failure(message: "Which run? akit review kb-gaps RUN.") }
+            try args.finish()
+            let folder = try runFolder(id, env: env)
+            let gaps = ReviewKnowledgeGaps.read(run: folder)
+            let base = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json"))?.knowledgeBasePath
+            if json {
+                out(String(decoding: try ReviewJSON.encoder.encode(gaps), as: UTF8.self))
+            } else if gaps.isEmpty {
+                out(base == nil ? "Run \(id) read no knowledge base." : "Run \(id) missed nothing in the knowledge base.")
+            } else {
+                for gap in gaps {
+                    let what = switch gap.kind {
+                    case .search: "No answer for the search \"\(gap.subject)\"" + (gap.area.map { " in \($0)" } ?? "")
+                    case .reported: "Needed: \(gap.subject)" + (gap.why.isEmpty ? "" : " (\(gap.why))")
+                    case .noDescription: "No description: \(gap.subject)"
+                    }
+                    out("\(gap.id)  \(what)  [\(gap.passes.joined(separator: ", "))]\n    \(ReviewKnowledgeGaps.proposeCommand(gap, run: id, base: base))")
+                }
             }
             return 0
         case "map":

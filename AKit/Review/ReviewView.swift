@@ -226,6 +226,8 @@ struct ReviewRunDetail: View {
     @State private var overview: ReviewOverview?
     @State private var map: ReviewMap?
     @State private var mapLoaded = false
+    /// What the review missed in the knowledge base, read with the overview.
+    @State private var knowledgeGaps: [ReviewKnowledgeGap] = []
 
     enum Tab: String, CaseIterable {
         case requests = "Requests", map = "Map"
@@ -276,6 +278,8 @@ struct ReviewRunDetail: View {
                         mapSection(proxy)
                     }
                     gaps
+                    ReviewKnowledgeGapsSection(gaps: knowledgeGaps, run: run.id,
+                                               base: run.spec.knowledgeBasePath.map { URL(filePath: $0, directoryHint: .isDirectory) })
                     missed
                 }
                 .padding(20)
@@ -299,9 +303,12 @@ struct ReviewRunDetail: View {
         .sheet(isPresented: $showMissed) { AddMissedSheet(files: run.snapshot?.diffs.map(\.newPath) ?? []) }
         .task(id: filesKey) {
             let folder = run.folder
-            let found = await Task.detached { (ReviewOverview.load(folder: folder), ReviewMap.load(folder: folder)) }.value
+            let found = await Task.detached {
+                (ReviewOverview.load(folder: folder), ReviewMap.load(folder: folder), ReviewKnowledgeGaps.read(run: folder))
+            }.value
             overview = found.0
             map = found.1
+            knowledgeGaps = found.2
             mapLoaded = true
         }
     }

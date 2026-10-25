@@ -237,6 +237,14 @@ is the Mac's preferred language, else English. GitLab text keeps `posting: langu
 review.yaml) sets how hard the verifier model thinks: off, minimal, low, medium,
 high, xhigh or max; alone it keeps the configured verifier model. The New Review sheet has the
 same menu (Verifier thinking).
+`akit review kb-gaps RUN [--json]` lists what a review missed in the knowledge base: searches
+with no answer, gaps a pass reported with `system: knowledge`, and notes it used without a
+`description:`; each line ends with the `akit kb propose …` command that fills it. Use it after a
+review when the user asks what the base lacks; propose notes only with the user's words, never
+invent facts. Every note needs `description:` (one line: agents read it first and open the note
+only when needed; `akit kb lint` reports `missing-description`), so pass `--set description=…`
+when you propose a note. The Review screen has the same list (Missing in the knowledge base,
+Propose Note… / Propose Description…).
 
 `akit review points [PATH] --find TEXT [--kind branches|tags|commits] [--json]` lists the branches, remote branches, tags and
 commits of a local workspace whose name, commit message, author or id start holds every word of

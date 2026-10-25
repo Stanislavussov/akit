@@ -1516,6 +1516,31 @@ AKit при сборе пишет пробел, когда:
 
 Если пробел повторяется от ревью к ревью, его стоит закрыть один раз в профиле.
 
+### Средне: чего нет в базе знаний
+<!-- section: kb-gaps -->
+
+**Что это:** если у ревью есть база знаний, роли сначала читают описания заметок: одну строку `description:` у каждой системы в карточке и короткие отрывки из поиска `akit_kb_search`. Заметку целиком (`akit_kb_show`) они открывают, только когда описание говорит, что в ней есть нужное, и лучше один раздел `##`. Каждая открытая заметка занимает контекст модели.
+
+Блок **Missing in the knowledge base (N)** под **Context gaps** показывает, чего ревью в базе не нашло:
+
+| Строка | Что значит |
+|---|---|
+| «No answer for "…"» | поиск с этими словами ничего не нашёл, и другой поиск с теми же словами тоже |
+| текст без кавычек | роль сообщила пробел с `system: knowledge`: чего не хватило и зачем |
+| «… has no description» | ревью использовало заметку без `description:` |
+
+Под строкой — пространство (если роль его назвала) и проходы, которые наткнулись на пробел.
+
+- **Propose Note…** открывает черновик новой заметки: **Area**, **Note name**, **Description** (все три обязательны) и текст. **Propose** кладёт предложение во **Inbox** базы. В базе ничего не меняется, пока вы не примете его там.
+- **Propose Description…** у заметки без описания предлагает только строку `description:`.
+- После предложения у строки появляется «In the Inbox».
+
+![Окно предложения заметки из ревью: строка No answer for "log retention", поля Area со списком Choose an area…, Note name с подсказкой e.g. refund-webhook и Description с подсказкой one line: what the note is about, все три с красной звёздочкой; раздел Text с черновиком # log retention и (What the team knows about it.); внизу «* Required.», подпись The proposal waits in the knowledge base's Inbox; nothing changes until you accept it there и кнопки Cancel и Propose](images/review-kb-propose.png)
+
+В терминале — `akit review kb-gaps RUN`: тот же список и у каждой строки готовая команда `akit kb propose …`. `--json` отдаёт список `[{id, kind, subject, why, area, passes}]`, где `kind` — `search`, `reported` или `no-description`.
+
+> **Совет:** заметка без описания видна и в **Lint** базы знаний как `missing-description`. Описание в одну строку экономит контекст каждого ревью.
+
 ## Discuss in Pi…: обсудить ревью и сделать новую версию
 <!-- section: discuss -->
 
