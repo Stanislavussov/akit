@@ -1193,6 +1193,7 @@ struct PiModelPicker<Label: View>: View {
     @Binding var selection: String
     let models: [String]
     let empty: String
+    var help = "Models Pi has credentials for (pi --list-models); Other… to type one"
     @ViewBuilder let label: () -> Label
     @State private var other = false
 
@@ -1211,7 +1212,7 @@ struct PiModelPicker<Label: View>: View {
         } label: {
             label()
         }
-        .help("Models Pi has credentials for (pi --list-models); Other… to type one")
+        .help(help)
         if other || (!selection.isEmpty && !models.contains(selection)) {
             TextField("Model", text: $selection, prompt: Text("provider/model"))
         }

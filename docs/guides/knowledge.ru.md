@@ -727,9 +727,23 @@ AKit проверяет предложение без модели, сразу:
 
 Пример: в примере базы у предложения `2026-10-24-payments-billing` уже есть пометка `duplicate`: заметка `order-to-billing` уже говорит, что происходит с заказом.
 
-**Какая модель.** Settings → **Knowledge check model**: **Model** — модель Pi в виде `provider/model` (по умолчанию `opencode-go/gpt-6-luna`), **Thinking** — сколько модель думает (по умолчанию `low`). **Reset to Default** возвращает модель по умолчанию. В терминале то же делает `akit kb check-model MODEL [THINKING]`, а `akit kb check ID --model provider/model` меняет модель на один раз.
+**Какая модель.** Settings → **Knowledge check model**:
 
-![Окно Settings, часть Knowledge check model: поле Model со списком моделей Pi и значением Default (opencode-go/gpt-6-luna), поле Thinking со значением low; ниже пояснение: akit kb check отправляет предложение и до 1500 токенов заметок и стрелок этой модели Pi, она только ставит пометки](images/knowledge-check-settings.png)
+| Поле | Что задаёт |
+|---|---|
+| **Harness** | Через какой харнес идёт проверка. В списке только харнесы, которые есть на этом Mac. По умолчанию **Pi**, можно выбрать **Claude Code** |
+| **Model** | Модель этого харнеса. Pi: `provider/model` из `pi --list-models`, по умолчанию `opencode-go/gpt-6-luna`. Claude Code: `haiku`, `sonnet`, `opus` |
+| **Thinking** (Pi) или **Effort** (Claude Code) | Сколько модель думает. По умолчанию `low` |
+
+Каждый харнес помнит свою модель: если переключить **Harness** на Claude Code и обратно на Pi, вернётся модель Pi. **Reset to Default** возвращает Pi с `opencode-go/gpt-6-luna` и забывает выбор для других харнесов.
+
+Любая модель Pi может получить предложение. Другой харнес должен быть в списке Settings → **Sending policy**, иначе проверка не отправится.
+
+В списке **Model** всегда первыми стоят две GPT-6 Luna: `opencode-go/gpt-6-luna` (через OpenCode Go) и `github-copilot/gpt-6-luna` (через GitHub Copilot). Выберите ту, к которой у Pi есть доступ. Если выбранной модели нет в списке Pi, а другая Luna есть, под полем появляется кнопка **Use github-copilot/gpt-6-luna** (или наоборот): она переключает модель одним нажатием.
+
+В терминале то же делает `akit kb check-model MODEL [THINKING]`, другой харнес — `akit kb check-model --harness claude-code [MODEL]`, а `akit kb check ID --model provider/model` меняет модель на один раз.
+
+![Окно Settings, часть Knowledge check model: поле Harness со значением Pi, поле Model со значением Default (opencode-go/gpt-6-luna), поле Thinking со значением low; ниже пояснение: akit kb check отправляет предложение и до 1500 токенов заметок и стрелок этой модели, она только ставит пометки](images/knowledge-check-settings.png)
 
 ### Средне: карты от агента
 <!-- section: inbox-map -->

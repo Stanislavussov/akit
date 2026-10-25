@@ -280,10 +280,13 @@ public struct LabSettings: Codable, Sendable, Hashable {
     public var translationAgent: LabAgent?
     /// The model `akit kb check` uses (Settings → Knowledge check model); nil = `KnowledgeCheckModel.defaultAgent`.
     public var knowledgeCheckAgent: LabAgent?
+    /// The last check model chosen for each harness (`LabHarness.rawValue`), so switching the
+    /// harness back brings its model back; empty = each harness's default.
+    public var knowledgeCheckModels: [String: LabAgent]
 
     public init(reportLanguage: LabLanguage = .english, allowedDestinations: [SendDestination] = [], piAccounts: [PiAccount] = [],
                 scrub: Scrubber.OwnPatterns = Scrubber.OwnPatterns(), monthlyLimit: Double? = nil, translationAgent: LabAgent? = nil,
-                knowledgeCheckAgent: LabAgent? = nil) {
+                knowledgeCheckAgent: LabAgent? = nil, knowledgeCheckModels: [String: LabAgent] = [:]) {
         self.reportLanguage = reportLanguage
         self.allowedDestinations = allowedDestinations
         self.piAccounts = piAccounts
@@ -291,6 +294,7 @@ public struct LabSettings: Codable, Sendable, Hashable {
         self.monthlyLimit = monthlyLimit
         self.translationAgent = translationAgent
         self.knowledgeCheckAgent = knowledgeCheckAgent
+        self.knowledgeCheckModels = knowledgeCheckModels
     }
 
     /// Fields missing in older files take their defaults; a broken field doesn't lose the others.
@@ -303,6 +307,7 @@ public struct LabSettings: Codable, Sendable, Hashable {
         monthlyLimit = try? container.decodeIfPresent(Double.self, forKey: .monthlyLimit)
         translationAgent = try? container.decodeIfPresent(LabAgent.self, forKey: .translationAgent)
         knowledgeCheckAgent = try? container.decodeIfPresent(LabAgent.self, forKey: .knowledgeCheckAgent)
+        knowledgeCheckModels = (try? container.decodeIfPresent([String: LabAgent].self, forKey: .knowledgeCheckModels)) ?? [:]
     }
 
     static func file(env: HarnessEnvironment) -> URL { LabPaths(env: env).folder.appending(path: "settings.json") }
@@ -390,6 +395,10 @@ public struct LabSettings: Codable, Sendable, Hashable {
         if new.monthlyLimit != old.monthlyLimit { monthlyLimit = new.monthlyLimit }
         if new.translationAgent != old.translationAgent { translationAgent = new.translationAgent }
         if new.knowledgeCheckAgent != old.knowledgeCheckAgent { knowledgeCheckAgent = new.knowledgeCheckAgent }
+        for harness in Set(new.knowledgeCheckModels.keys).union(old.knowledgeCheckModels.keys)
+        where new.knowledgeCheckModels[harness] != old.knowledgeCheckModels[harness] {
+            knowledgeCheckModels[harness] = new.knowledgeCheckModels[harness]
+        }
         if new.scrub.maskEmails != old.scrub.maskEmails { scrub.maskEmails = new.scrub.maskEmails }
         if new.scrub.hosts != old.scrub.hosts { scrub.hosts = new.scrub.hosts }
         if new.scrub.extra != old.scrub.extra { scrub.extra = new.scrub.extra }

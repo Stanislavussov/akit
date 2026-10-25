@@ -41,6 +41,38 @@ struct KnowledgeCheckModelTests {
         #expect(SendPolicy.decide(origin: .knowledgeBase, destination: claude, isWork: true, allowed: [claude]).allowed)
     }
 
+    @Test func bothLunasHeadTheChoicesAndTheMissingOneOffersTheOther() {
+        let copilotMac = ["github-copilot/gpt-6-luna", "zai/glm-5-air"]
+        #expect(KnowledgeCheckModel.choices(copilotMac) == ["opencode-go/gpt-6-luna", "github-copilot/gpt-6-luna", "zai/glm-5-air"])
+        #expect(KnowledgeCheckModel.choices([]) == KnowledgeCheckModel.lunaModels)
+        #expect(KnowledgeCheckModel.lunaSwitch(from: "opencode-go/gpt-6-luna", piModels: copilotMac) == "github-copilot/gpt-6-luna")
+        #expect(KnowledgeCheckModel.lunaSwitch(from: "github-copilot/gpt-6-luna", piModels: ["opencode-go/gpt-6-luna"]) == "opencode-go/gpt-6-luna")
+        // Pi has the chosen one, Pi's list failed, or Pi has no Luna at all: no switch.
+        #expect(KnowledgeCheckModel.lunaSwitch(from: "github-copilot/gpt-6-luna", piModels: copilotMac) == nil)
+        #expect(KnowledgeCheckModel.lunaSwitch(from: "opencode-go/gpt-6-luna", piModels: []) == nil)
+        #expect(KnowledgeCheckModel.lunaSwitch(from: "opencode-go/gpt-6-luna", piModels: ["zai/glm-5-air"]) == nil)
+    }
+
+    @Test func eachHarnessKeepsItsOwnModel() throws {
+        var settings = LabSettings()
+        #expect(KnowledgeCheckModel.agent(for: .claudeCode, settings: settings) == LabAgent(harness: .claudeCode, model: "haiku", effort: "low"))
+        let pi = LabAgent(harness: .pi, model: "github-copilot/gpt-6-luna", effort: "low")
+        KnowledgeCheckModel.choose(pi, in: &settings)
+        let claude = LabAgent(harness: .claudeCode, model: "sonnet", effort: "medium")
+        KnowledgeCheckModel.choose(claude, in: &settings)
+        #expect(KnowledgeCheckModel.agent(settings: settings) == claude)
+        #expect(KnowledgeCheckModel.agent(for: .pi, settings: settings) == pi)
+        KnowledgeCheckModel.choose(KnowledgeCheckModel.agent(for: .pi, settings: settings), in: &settings)
+        #expect(KnowledgeCheckModel.agent(for: .claudeCode, settings: settings) == claude)
+        // Defaults are stored as nothing; the memory survives the file.
+        KnowledgeCheckModel.choose(KnowledgeCheckModel.defaultAgent, in: &settings)
+        #expect(settings.knowledgeCheckAgent == nil && settings.knowledgeCheckModels.keys.sorted() == ["claude-code"])
+        try LabSettings.update(env: env) { $0 = settings }
+        #expect(LabSettings.load(env: env).knowledgeCheckModels == settings.knowledgeCheckModels)
+        #expect(KnowledgeCheckModel.isValid("haiku", for: .claudeCode) && !KnowledgeCheckModel.isValid("haiku", for: .pi))
+        #expect(KnowledgeCheckModel.choices(["opus", "sonnet", "haiku"], harness: .claudeCode) == ["opus", "sonnet", "haiku"])
+    }
+
     @Test func theModelSettingDefaultsToLunaThroughPiAndIsKept() throws {
         #expect(KnowledgeCheckModel.agent(settings: LabSettings()) == LabAgent(harness: .pi, model: "opencode-go/gpt-6-luna", effort: "low"))
         #expect(KnowledgeCheckModel.label(KnowledgeCheckModel.defaultAgent) == "Pi · opencode-go/gpt-6-luna · low")

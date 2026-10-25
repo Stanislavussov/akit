@@ -402,8 +402,11 @@ akit kb accept ID [--yes] [--json]                 # accept a proposal: shows th
                                                    # proposal's removal; an arrow or a map: exit 2,
                                                    # accepted in the app
 akit kb reject ID [--yes] [--json]                 # a proposal to the Trash
-akit kb check-model [MODEL [THINKING]]             # the check model of kb check: a Pi provider/model
-                                                   # (default opencode-go/gpt-6-luna, low)
+akit kb check-model [MODEL [THINKING]] [--harness pi|claude-code]
+                                                   # the check model of kb check: harness (default
+                                                   # pi; each keeps its own model) and model (Pi:
+                                                   # opencode-go/gpt-6-luna, low; with Copilot:
+                                                   # github-copilot/gpt-6-luna; Claude Code: haiku)
 akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
                                                    # commit; without --yes it only shows what goes
 akit kb pi-template [--yes] [--json]               # the core layer's section about the base, for Pi

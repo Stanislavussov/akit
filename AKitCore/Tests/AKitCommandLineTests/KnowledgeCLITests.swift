@@ -656,6 +656,13 @@ struct KnowledgeCLITests {
         #expect(await run("kb", "check-model", "zai/glm-5-air", "minimal").out == "Knowledge check model: Pi · zai/glm-5-air · minimal")
         #expect(LabSettings.load(env: piEnv).knowledgeCheckAgent == LabAgent(harness: .pi, model: "zai/glm-5-air", effort: "minimal"))
         #expect(await run("kb", "check-model", "glm").code == 2)
+        // Another harness keeps its own model; switching back brings Pi's back.
+        #expect(await run("kb", "check-model", "--harness", "claude-code").out == "Knowledge check model: Claude Code · haiku · low")
+        #expect(await run("kb", "check-model", "sonnet", "--harness", "claude-code").out == "Knowledge check model: Claude Code · sonnet · low")
+        #expect(await run("kb", "check-model", "--harness", "pi").out == "Knowledge check model: Pi · zai/glm-5-air · minimal")
+        #expect(await run("kb", "check-model", "--harness", "claude-code").out == "Knowledge check model: Claude Code · sonnet · low")
+        #expect(await run("kb", "check-model", "--harness", "codex").code == 2)
+        #expect(await run("kb", "check-model", "haiku", "minimal", "--harness", "claude-code").code == 2)
         #expect(await run("kb", "check", "nope").err.contains("No proposal nope"))
     }
 

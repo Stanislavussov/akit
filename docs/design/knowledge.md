@@ -175,7 +175,12 @@ destination is allowed, like `mergeRequest`; anything else needs the allowed lis
 `kb-check`, so the sending policy, the scrub, the monthly limit and the send log apply. The model
 is `LabSettings.knowledgeCheckAgent` (Settings → Knowledge check model, a `PiModelPicker`, or
 `akit kb check-model MODEL [THINKING]`); unset it is `opencode-go/gpt-6-luna` at thinking `low`
-(the user's choice, K15). `KnowledgeCheck` (core, no call, C1) builds the input: the proposal, then
+(the user's choice, K15). The harness is a choice too (2026-10-25, user's request): Pi (default) or Claude Code, only the
+ones installed, each remembering its last model (`LabSettings.knowledgeCheckModels`; Claude Code
+defaults to haiku; a non-Pi harness needs the Sending policy's list, as the origin allows only
+Pi). Draw Map always runs Pi, so it takes Pi's check model. Both Lunas (`KnowledgeCheckModel.lunaModels`: `opencode-go/…` at home,
+`github-copilot/…` on the work Mac) head the picker even when Pi does not list them, and when Pi
+lists only the other one, Settings offers a one-click **Use …** switch. `KnowledgeCheck` (core, no call, C1) builds the input: the proposal, then
 candidates of at most 1500 tokens: the best 5 sections of searches for the proposal's words
 (its target's name, headings and text; each cut to 800 characters) and the arrows touching its
 notes (1 hop), cut from the end. The answer `{"marks": [{kind, note, edge, link, message}]}` with

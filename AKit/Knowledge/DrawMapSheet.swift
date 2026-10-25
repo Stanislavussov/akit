@@ -25,7 +25,8 @@ struct DrawMapSheet: View {
     /// Neither excalidraw-cli nor npx is on the PATH: Run stays off.
     @State private var missingDrawer: String?
 
-    private var checkAgent: LabAgent { KnowledgeCheckModel.agent(settings: LabSettings.load(env: model.env)) }
+    /// Drawing always runs Pi: the check model when it is a Pi one, else Pi's own check model.
+    private var checkAgent: LabAgent { KnowledgeCheckModel.agent(for: .pi, settings: LabSettings.load(env: model.env)) }
     private var chosenArea: String { (area == Self.newAreaTag ? newArea : area).trimmingCharacters(in: .whitespaces) }
     private var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
 
@@ -62,7 +63,7 @@ struct DrawMapSheet: View {
                 }
                 TextField(text: $name, prompt: Text("order-flow")) { RequiredLabel("Map name") }
                     .help("The map's file name: areas/AREA/maps/NAME.excalidraw; an existing map is replaced only when you accept")
-                PiModelPicker(selection: $modelName, models: models, empty: "Knowledge check model (\(checkAgent.model))") {
+                PiModelPicker(selection: $modelName, models: KnowledgeCheckModel.choices(models), empty: "Knowledge check model (\(checkAgent.model))") {
                     Text("Model")
                 }
                 LabeledContent {

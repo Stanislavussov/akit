@@ -161,10 +161,12 @@ extension AKitCLI {
                                         An arrow proposal is drawn in the app, and a map proposal
                                         is accepted in the app: they write nothing, say so and
                                         exit 2
-      akit kb check-model [MODEL [THINKING]]
+      akit kb check-model [MODEL [THINKING]] [--harness pi|claude-code]
                                         For a person only. Show or set the check model of kb check:
-                                        a Pi model provider/model (default
-                                        opencode-go/gpt-6-luna) and its thinking (default low),
+                                        the harness (default pi; each keeps its own model), a model
+                                        (Pi: provider/model, default opencode-go/gpt-6-luna,
+                                        github-copilot/gpt-6-luna on a Mac with Copilot; Claude
+                                        Code: default haiku) and its thinking (default low),
                                         kept in ~/.akit/lab/settings.json; the same as Settings →
                                         Knowledge check model
       akit kb reject ID [--yes] [--json] [--base PATH|WORLD]
@@ -881,21 +883,39 @@ extension AKitCLI {
     private static func knowledgeCheck(_ command: String, _ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
                                        env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
         if command == "check-model" {
+            let harnessName = args.value("--harness")
             let model = args.positional(), thinking = args.positional()
             try args.finish()
-            guard let model else {
-                let agent = KnowledgeCheckModel.agent(settings: LabSettings.load(env: env))
-                out(json ? encode(CheckModelAnswer(agent)) : "Knowledge check model: \(KnowledgeCheckModel.label(agent))")
+            let settings = LabSettings.load(env: env)
+            let current = KnowledgeCheckModel.agent(settings: settings)
+            guard model != nil || harnessName != nil else {
+                out(json ? encode(CheckModelAnswer(current)) : "Knowledge check model: \(KnowledgeCheckModel.label(current))\n"
+                    + "GPT-6 Luna: " + KnowledgeCheckModel.lunaModels.map { "akit kb check-model \($0)" }.joined(separator: " | ")
+                    + "\nOther harness: akit kb check-model --harness claude-code [MODEL [EFFORT]]")
                 return 0
             }
-            guard model.contains("/") else { throw Failure(message: "MODEL is a Pi model provider/model, like \(KnowledgeCheckModel.defaultAgent.model).") }
-            let effort = thinking ?? KnowledgeCheckModel.defaultAgent.effort
-            guard LabHarness.pi.efforts.contains(effort) else {
-                throw Failure(message: "THINKING is one of \(LabHarness.pi.efforts.joined(separator: ", ")).")
+            var harness = current.harness
+            if let harnessName {
+                guard let chosen = LabHarness(rawValue: harnessName) else {
+                    throw Failure(message: "--harness is one of \(LabHarness.allCases.map(\.rawValue).joined(separator: ", ")).")
+                }
+                harness = chosen
             }
-            let agent = LabAgent(harness: .pi, model: model, effort: effort, mode: .call)
+            var agent = KnowledgeCheckModel.agent(for: harness, settings: settings)
+            if let model {
+                guard KnowledgeCheckModel.isValid(model, for: harness) else {
+                    throw Failure(message: harness == .pi
+                        ? "MODEL is a Pi model provider/model, like \(KnowledgeCheckModel.defaultAgent.model); for Claude Code add --harness claude-code."
+                        : "MODEL is a \(harness.title) model, like \(KnowledgeCheckModel.defaultAgent(for: harness).model).")
+                }
+                agent.model = model
+            }
+            if let thinking { agent.effort = thinking }
+            guard harness.efforts.contains(agent.effort) else {
+                throw Failure(message: "\(harness == .pi ? "THINKING" : "EFFORT") is one of \(harness.efforts.joined(separator: ", ")).")
+            }
             do {
-                try LabSettings.update(env: env) { $0.knowledgeCheckAgent = agent == KnowledgeCheckModel.defaultAgent ? nil : agent }
+                try LabSettings.update(env: env) { KnowledgeCheckModel.choose(agent, in: &$0) }
             } catch {
                 throw Failure(message: error.localizedDescription)
             }
@@ -910,8 +930,10 @@ extension AKitCLI {
         do { proposal = try base.proposal(id) } catch { throw Failure(message: error.message) }
         var agent = KnowledgeCheckModel.agent(settings: try LabSettings.loadForSending(env: env))
         if let modelOption {
-            guard modelOption.contains("/") else { throw Failure(message: "--model is a Pi model provider/model, like \(KnowledgeCheckModel.defaultAgent.model).") }
-            agent = LabAgent(harness: .pi, model: modelOption, effort: agent.effort, mode: .call)
+            guard KnowledgeCheckModel.isValid(modelOption, for: agent.harness) else {
+                throw Failure(message: "--model is a \(agent.harness.title) model of the check model's harness, like \(KnowledgeCheckModel.defaultAgent(for: agent.harness).model).")
+            }
+            agent.model = modelOption
         }
         let outcome: KnowledgeChecker.Outcome
         do { outcome = try await KnowledgeChecker.run(proposal, in: base, agent: agent, env: env) } catch { throw Failure(message: error.message) }
