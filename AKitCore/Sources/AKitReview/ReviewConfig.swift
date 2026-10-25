@@ -263,6 +263,10 @@ public struct ReviewProfile: Sendable, Hashable {
     public var mcp: ReviewMCPAccess
     public var defaultScenario: String?
     public var knowledge: [String]
+    /// `knowledge_base:`: a knowledge base (a world name or a path) Gather makes a card from (K18).
+    public var knowledgeBase: String?
+    /// `knowledge_budget:`: the card's size in tokens; nil = `ReviewKnowledgeCard.defaultBudget`.
+    public var knowledgeBudget: Int?
     public var gather: [GatherCommand]
     public var constraints: [String]
     public var pathInstructions: [PathInstruction]
@@ -348,6 +352,18 @@ public struct ReviewProfile: Sendable, Hashable {
                              rolesOff: ReviewYAML.strings(roles["off"]), rolesAdd: ReviewYAML.strings(roles["add"]),
                              settings: try ReviewSettingsPatch.parse(map["review"] as? [String: Any] ?? [:], where: where_), file: file)
         profile.pi = try ReviewPiExtras.parse(map["pi"], where: where_)
+        if let value = map["knowledge_base"], !(value is NSNull) {
+            guard let base = value as? String, !base.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw ReviewRole.Failure(message: "\(where_): knowledge_base is a world name or a folder path.")
+            }
+            profile.knowledgeBase = base.trimmingCharacters(in: .whitespaces)
+        }
+        if let value = map["knowledge_budget"], !(value is NSNull) {
+            guard let budget = value as? Int, budget > 0 else {
+                throw ReviewRole.Failure(message: "\(where_): knowledge_budget is a number of tokens above 0.")
+            }
+            profile.knowledgeBudget = budget
+        }
         return profile
     }
 }

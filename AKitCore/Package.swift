@@ -25,6 +25,7 @@ let package = Package(
         .library(name: "AKitDoctor", targets: ["AKitDoctor"]),
         .library(name: "AKitHelp", targets: ["AKitHelp"]),
         .library(name: "AKitReview", targets: ["AKitReview"]),
+        .library(name: "AKitKnowledge", targets: ["AKitKnowledge"]),
         // `akit` command for agents and terminals (install: make install-cli).
         .executable(name: "akit", targets: ["akit"]),
     ],
@@ -50,20 +51,25 @@ let package = Package(
         .target(name: "AKitRender", dependencies: ["AKitFoundation", "AKitBrain"]),
         // Lab: session metrics, runs in a terminal, replay tasks (docs/design/lab.md).
         // Lab → Brain for one thing: whether this Mac is a work Mac (the sending policy).
-        .target(name: "AKitLab", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitBrain"]),
+        // Lab → Knowledge: the knowledge base's check model call (KnowledgeChecker), for the CLI and the app.
+        .target(name: "AKitLab", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitBrain", "AKitKnowledge"]),
         // Error analysis: failure modes across many sessions (docs/design/error-analysis.md).
         // → Render: layer evals render a brain layer into a control cell (docs/design/layer-evals.md).
         .target(name: "AKitErrorAnalysis", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitLab", "AKitInsights", "AKitBrain", "AKitRender"]),
         // → MCP: Pi project files of MCP switches stay out of git (MCPProjectSwitch).
         .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "AKitInstructions", "AKitBrain", "AKitRender", "AKitInsights", "AKitMCP"]),
         // akit doctor and Help → Copy Diagnostics: a read-only report of this Mac (docs/design/machine-setup.md);
-        // akit doctor pi / Check Pi…: Pi's setup (→ Instructions: the global AGENTS.md Pi loads).
-        .target(name: "AKitDoctor", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup"]),
+        // akit doctor pi / Check Pi…: Pi's setup (→ Instructions: the global AGENTS.md Pi loads);
+        // → Knowledge: the knowledge base line (a remote is a problem).
+        .target(name: "AKitDoctor", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitKnowledge"]),
         // Ask AKit: questions about a screen, answered from the in-app guides (docs/design/ask-akit.md).
         .target(name: "AKitHelp", dependencies: ["AKitFoundation"]),
         // AI review of GitLab merge requests: AKit gathers, Pi reads, AKit posts drafts after approval (docs/design/review.md).
-        .target(name: "AKitReview", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSessions", "AKitLab", "AKitBrain", "Yams"]),
-        .target(name: "AKitCommandLine", dependencies: ["AKitReview", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
+        .target(name: "AKitReview", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSessions", "AKitLab", "AKitBrain", "AKitKnowledge", "Yams"]),
+        // Knowledge base: areas, notes, links and git of a base folder (docs/design/knowledge.md).
+        // → Brain: this Mac's kind (work or personal), the brain's root and project ids.
+        .target(name: "AKitKnowledge", dependencies: ["AKitFoundation", "AKitModel", "AKitBrain", "Yams"]),
+        .target(name: "AKitCommandLine", dependencies: ["AKitReview", "AKitKnowledge", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
         .executableTarget(name: "akit", dependencies: ["AKitCommandLine", "AKitInsights", "AKitHarnesses", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
         .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitModel", "AKitSkills"]),
@@ -78,11 +84,14 @@ let package = Package(
         .testTarget(name: "AKitInsightsTests", dependencies: ["AKitInsights", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitProjectSetup", "AKitCommandLine"]),
         .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitProjectSetupTests", dependencies: ["AKitProjectSetup", "AKitFoundation", "AKitBrain", "AKitRender", "AKitMCP", "AKitModel", "AKitHarnesses", "AKitSkills"]),
-        .testTarget(name: "AKitLabTests", dependencies: ["AKitLab", "AKitFoundation", "AKitModel", "AKitBrain"]),
+        .testTarget(name: "AKitLabTests", dependencies: ["AKitLab", "AKitFoundation", "AKitModel", "AKitBrain", "AKitKnowledge"]),
         .testTarget(name: "AKitErrorAnalysisTests", dependencies: ["AKitErrorAnalysis", "AKitHelp", "AKitLab", "AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights", "AKitBrain", "AKitRender"]),
-        .testTarget(name: "AKitDoctorTests", dependencies: ["AKitDoctor", "AKitInsights", "AKitMCP", "AKitFoundation", "AKitBrain", "AKitProjectSetup"]),
-        .testTarget(name: "AKitReviewTests", dependencies: ["AKitReview", "AKitFoundation", "AKitLab", "AKitBrain"]),
+        .testTarget(name: "AKitDoctorTests", dependencies: ["AKitDoctor", "AKitKnowledge", "AKitInsights", "AKitMCP", "AKitFoundation", "AKitBrain", "AKitProjectSetup"]),
+        .testTarget(name: "AKitReviewTests", dependencies: ["AKitReview", "AKitFoundation", "AKitLab", "AKitBrain", "AKitKnowledge"]),
         .testTarget(name: "AKitHelpTests", dependencies: ["AKitHelp", "AKitFoundation"]),
-        .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitDoctor", "AKitReview", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),
+        .testTarget(name: "AKitKnowledgeTests", dependencies: ["AKitKnowledge", "AKitFoundation", "AKitBrain"],
+                    // Read by path (#filePath): a base layout with Excalidraw 0.17.6 maps, not bundle resources.
+                    exclude: ["Fixtures"]),
+        .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitKnowledge", "AKitDoctor", "AKitReview", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),
     ]
 )

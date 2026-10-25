@@ -119,7 +119,7 @@ public enum RecordSession {
         if let pointer = small(gitdir + "/commondir")?.trimmingCharacters(in: .whitespacesAndNewlines), !pointer.isEmpty {
             common = ((pointer.hasPrefix("/") ? pointer : gitdir + "/" + pointer) as NSString).standardizingPath
         }
-        let remote = small(common + "/config").flatMap(originURL).flatMap(ProjectRecords.normalizedRemote)
+        let remote = small(common + "/config").flatMap(GitCheckout.originURL(inConfig:)).flatMap(ProjectRecords.normalizedRemote)
         let head = small(gitdir + "/HEAD", limit: 4096)?.trimmingCharacters(in: .whitespacesAndNewlines)
         var branch: String?
         if let head, head.hasPrefix("ref: refs/heads/") {
@@ -163,29 +163,7 @@ public enum RecordSession {
 
     /// `gitdir: <path>` of a worktree's `.git` file.
     private static func gitdirPointer(in file: String) -> String? {
-        small(file)?.split(whereSeparator: \.isNewline)
-            .first { $0.hasPrefix("gitdir:") }
-            .map { $0.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces) }
-            .flatMap { $0.isEmpty ? nil : $0 }
-    }
-
-    /// `url` of `[remote "origin"]` in a git config file.
-    static func originURL(_ config: String) -> String? {
-        var inOrigin = false
-        for raw in config.split(whereSeparator: \.isNewline) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("[") {
-                let header = line.filter { !$0.isWhitespace }
-                inOrigin = header.hasPrefix("[remote\"origin\"]")
-                continue
-            }
-            guard inOrigin, let equals = line.firstIndex(of: "=") else { continue }
-            guard line[..<equals].trimmingCharacters(in: .whitespaces).lowercased() == "url" else { continue }
-            var value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
-            if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") { value = String(value.dropFirst().dropLast()) }
-            return value.isEmpty ? nil : value
-        }
-        return nil
+        small(file).flatMap(GitCheckout.gitdirPointer)
     }
 
     /// A small text file (git metadata), or nil.

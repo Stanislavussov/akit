@@ -268,6 +268,12 @@ public enum AKitCLI {
                                           Gather the context, run the review passes, plan the drafts.
                                           akit review --help lists the rest
 
+        Knowledge base (notes and maps of your systems; a folder per world, git without a remote):
+          akit kb areas | notes [AREA] | maps [AREA] | relations NOTE | kinds | area AREA
+                | search QUERY | show NOTE | index | neighbors NOTE | context [FOLDER] [--json] [--base PATH|WORLD]
+                                          What the base holds, search in it, and the card of a project's focus area. akit kb --help lists the rest, with
+                                          the commands for a person only
+
         Translate (model-written output in another language; the original stays):
           akit translate --to LANG FILE|-|--notes SESSION|--lab-run ID|--review RUN
                                           One call with the translation model, cached next to the
@@ -353,6 +359,10 @@ public enum AKitCLI {
             }
             if arguments.first == "review" {
                 return try await self.review(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, input: input)
+            }
+            if arguments.first == "kb" {
+                return try await knowledge(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, trash: trash,
+                                            input: input)
             }
             if arguments.first == "translate" {
                 return try await translate(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, input: input)
@@ -1812,7 +1822,7 @@ public enum AKitCLI {
     }
 
     /// `3 sessions`, `1 day`.
-    private static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+    static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 
     /// An owner kind as the text output says it.
     private static func ownerLabel(_ kind: String) -> String {

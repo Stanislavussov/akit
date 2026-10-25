@@ -128,7 +128,7 @@ Help → **Copy Diagnostics** кладёт в буфер обмена отчёт
 - **Setup**: что у агентов должно быть, то есть ваш эталон настройки. Экран Brain.
 - **Activity**: как агенты работали. Экраны Sessions и Usage.
 - **Improve**: что в настройке лишнее, почему сессии шли плохо и помогло ли исправление. Экраны Insights, Lab и Error Analysis.
-- **Work**: агенты, которые помогают в ежедневной работе. Экран Review: ИИ-ревью merge request'ов GitLab.
+- **Work**: агенты, которые помогают в ежедневной работе. Экран Review: ИИ-ревью merge request'ов GitLab. Экран Knowledge: база знаний о ваших сервисах и потоках, которую читают агенты.
 
 Отдельно от меню есть **Settings** (⌘,): папки проектов, тип этого Mac, репозиторий brain и правила отправки данных моделям.
 
@@ -236,7 +236,7 @@ Help → **Copy Diagnostics** кладёт в буфер обмена отчёт
 - **Setup**: [Brain](#brain). Что у агентов должно быть.
 - **Activity**: [Sessions](#sessions), [Usage](#usage). Как агенты работали.
 - **Improve**: [Insights](#insights), [Lab](#lab), [Error Analysis](#analysis). Что лишнее, что ломается и помог ли фикс.
-- **Work**: [Review](#review). Агенты, которые помогают в ежедневной работе: ревью merge request'ов.
+- **Work**: [Review](#review), [Knowledge](#knowledge). Агенты, которые помогают в ежедневной работе: ревью merge request'ов и база знаний.
 
 Что ещё есть в боковом меню:
 
@@ -3903,9 +3903,10 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 ## Work: агенты для ежедневной работы
 <!-- section: work -->
 
-Экраны этой группы помогают в обычной работе разработчика, а не в настройке агентов. Пока здесь один экран.
+Экраны этой группы помогают в обычной работе разработчика, а не в настройке агентов.
 
 - **Review** — ИИ-ревью merge request'ов GitLab. Агент Pi читает MR и предлагает комментарии. Вы одобряете каждый, и только тогда он попадает в GitLab как ваш черновик.
+- **Knowledge** — база знаний: заметки о сервисах, потоках и командах по пространствам. Это файлы Markdown в локальном git-репозитории без remote. Агенты читают их командами `akit kb`.
 
 ### Review
 <!-- section: review -->
@@ -3971,6 +3972,51 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Общие роли и сценарии лежат в [Brain](#brain), в слое `review`.
 - Все надписи экрана: [словарь](terms#terms-review).
 
+### Knowledge
+<!-- section: knowledge -->
+
+**Что это:** база знаний этого Mac — папка мира (по умолчанию `~/.akit/local/knowledge/<мир>`, например `work`; другую задаёт [Settings](#settings) → **Knowledge**) с заметками Markdown по пространствам (`areas/payments`, `areas/logistics`). Это локальный git-репозиторий, у которого никогда нет remote. Агенты читают базу командами `akit kb areas` и `akit kb notes`. Вы пишете её здесь или в Obsidian.
+
+У этого экрана есть своё подробное руководство. Откройте его кнопкой **Guide** на этом экране или через Help → **Knowledge Base Guide**. Ниже — только вход.
+
+**Когда пригодится:**
+
+- «Агент каждый раз спрашивает, что делает `orders-api`» → **New Note…** в пространстве `payments`, вид `service`.
+- «Хочу поправить заметку» → откройте её и нажмите **Edit**: правка сразу сохраняется в файл.
+- «Удобнее писать в Obsidian» → **Open in Obsidian**.
+
+![Экран Knowledge: слева Spaces с lint-examples, logistics и payments, в середине карта overview и заметки billing, order-to-billing и orders-api, справа открытая заметка orders-api с кнопками Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…, частью Relations, таблицей полей kind, repo, files и разделами Events и Owners](images/knowledge.png)
+
+#### Что на экране
+<!-- section: knowledge-screen -->
+
+- **Spaces** — пространства базы и число заметок в каждом. Правый щелчок: **Area Settings…**, **Show in Finder** и **Delete…**. Под ними строка индекса поиска («Index: 17 notes, 28 sections», **Reindex**) и **Inbox** — число предложений агентов.
+- Список заметок пространства: заголовок, вид (`service`, `flow`) и путь. Над ним часть **Maps**, если у пространства есть карты.
+- Карта (вместо панели заметки, когда вы её открыли), во вкладке: **Edit**, **Show in Finder**, **Rename…**, **Delete…**, **Close Map**. В режиме просмотра нажатие на блок открывает его заметку рядом. Заметку из списка можно перетащить на карту: появится блок со ссылкой на неё.
+- В панели заметки часть **Relations** — стрелки к заметке и от неё на картах — и кнопка **Rename…**.
+- Панель заметки: вкладки открытых заметок, кнопки **Edit**, **Properties** (вид и поля заметки), **Copy**, **Paste**, **Open in Obsidian**, **Delete…** и текст.
+- Панель инструментов: поле поиска **Search notes** (находки — вместо списка заметок), **New Area…**, **New Note…**, **New Map…**, **Kinds…** (виды заметок и их поля), **Focus…** (с какого пространства агент начинает в проекте), **Preview Agent Context…** (что агент читает в начале задачи), **Pi Template…** (подсказка о базе для Pi в слое `core`), меню **Sample Base** (**Add Sample Base…**, **Remove Sample Base…**: пример базы с выдуманными заметками), **Guide**. Если баз несколько — список **Base**.
+- Если базы нет: «No knowledge base» и кнопки **Create Base…** и **Add Sample Base…**.
+- Переключатель вверху: **Notes** (всё, что выше), **Inbox (N)** — предложения агентов с проверками и пометками модели, кнопки **Accept…**, **Reject…** и **Check Again** (стрелку **Accept…** рисует на карте через **Add an arrow?**), и **Lint** — находки проверки базы: сломанные и неясные ссылки, блоки без заметки, непривязанные стрелки, неизвестные репозитории и несуществующие пути, с кнопками **Open** и **Create Note…**. Находки открытой заметки видны в её части **Checks**. То же делает `akit kb lint`.
+
+Подробно: [пространства и заметки](knowledge#spaces), [читать и править](knowledge#note), [карты](knowledge#maps), [переименовать](knowledge#rename), [виды и свойства](knowledge#kinds), [настройки пространства](knowledge#area-settings), [поиск](knowledge#search), [фокус](knowledge#focus), [что видит агент](knowledge#context), [проверка](knowledge#lint), [предложения агента](knowledge#inbox).
+
+#### Просто: первая заметка
+<!-- section: knowledge-first -->
+
+1. Нажмите **Create Base…** и **Create Base** (мир `work` или `personal`).
+2. **New Area…** → имя `payments` → **Add Area**.
+3. **New Note…** → **Name** `orders-api`, **Kind** `service` → **Add Note**.
+4. Нажмите **Edit** и напишите, что делает сервис.
+
+> **Важно:** кнопки Commit нет. AKit коммитит правки сам: когда вы закрываете вкладку, через 5 минут без правок и при выходе. Подробнее: [коммиты правок](knowledge#commits).
+
+#### Связи с другими экранами
+<!-- section: knowledge-links -->
+
+- Где лежит база, задаёт [Settings](#settings) → **Knowledge**, например папка в вашем vault Obsidian: [Папка базы и Obsidian](knowledge#folder).
+- Все надписи экрана: [словарь](terms#terms-knowledge).
+
 ## Settings
 <!-- section: settings -->
 
@@ -3982,6 +4028,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Это рабочий компьютер, данные о проектах не должны уйти в мой личный репозиторий» → выберите **Work** в **This Mac**.
 - «Мой brain лежит в другой папке» → укажите её в **Brain repo**.
 - «AKit пишет: The brain has no git email of its own» → заполните **Commit name** и **Commit email** в **Brain repo**.
+- «Хочу держать базу знаний в своём vault Obsidian» → **Choose…** в части **Knowledge**.
 - «Хочу разборы сессий на русском» → выберите **Russian** в **Review language**.
 - «Кнопка **Translate** переводит не той моделью» → выберите модель в **Translation model**.
 - «Боюсь потратить на разборы слишком много» → задайте **Monthly limit (US dollars)** в части **Cost**.
@@ -3994,11 +4041,12 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 ### Что в окне
 <!-- section: settings-window -->
 
-Окно — одна длинная форма из десяти частей (ссылка **How It Works** стоит в заголовке шестой). Прокручивайте её вниз.
+Окно — одна длинная форма из одиннадцати частей (ссылка **How It Works** стоит в заголовке седьмой). Прокручивайте её вниз.
 
 - **Project folders**: список папок, в которых AKit ищет проекты. У каждой папки справа кнопка с минусом в кружке: она убирает папку из списка. Кнопки **Add Folder…** и **Reset to Default**.
 - **This Mac**: переключатель **This Mac is** с двумя значениями, **Personal** и **Work**. На рабочем Mac появляется поле **Name of this Mac**. Под переключателем написано, что значит текущий выбор.
 - **Brain repo**: путь к вашему brain. Кнопки **Choose…** и **Reset to Default**. Если brain — git-репозиторий, ниже стоят поля **Commit name** и **Commit email** и кнопка **Save**.
+- **Knowledge**: папка базы знаний каждого мира, например `work`. У строки мира кнопки **Choose…**, **Move Base…**, **Show in Finder** и **Reset to Default**. Подробно: [Папка базы и Obsidian](knowledge#folder).
 - **Lab**: список **Review language**, язык новых разборов сессий.
 - **Translation model**: кем переводит кнопка **Translate**: **Harness**, **Model** с меню **Models** и **Effort** (у Pi — **Thinking**). Кнопка **Reset to Default** возвращает Claude Code · haiku. Подробно: [выбрать модель перевода](#settings-translation).
 - **Sending policy**: строка режима (Personal Mac или Work Mac), список разрешённых адресатов, кнопки **Add Destination…** и **Check Accounts**.

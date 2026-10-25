@@ -23,8 +23,9 @@ struct SettingsView: View {
             form
                 .task {
                     // Snapshots: `--tab lab` scrolls to the Lab and sending policy sections,
-                    // `--tab scrub` to the scrub patterns and the monthly limit.
-                    guard let tab = DebugSnapshot.options?.tab, ["lab", "scrub"].contains(tab) else {
+                    // `--tab scrub` to the scrub patterns and the monthly limit, `--tab knowledge`
+                    // to the knowledge base folders, `--tab knowledge-check` to the knowledge check model.
+                    guard let tab = DebugSnapshot.options?.tab, ["lab", "scrub", "knowledge", "knowledge-check"].contains(tab) else {
                         // The first text field takes the focus when the window opens and the form
                         // scrolls down to it: start at the top instead.
                         try? await Task.sleep(for: .milliseconds(100))
@@ -140,6 +141,8 @@ struct SettingsView: View {
             }
             // Not .task: it would run again when the section scrolls back into view and drop typed text.
             .onChange(of: model.brainIdentity, initial: true) { showBrainIdentity() }
+            KnowledgeSettingsSection(brainPath: model.brainPath)
+            KnowledgeCheckModelSection(lab: $lab)
             Section {
                 Picker("Review language", selection: $lab.reportLanguage) {
                     ForEach(LabLanguage.allCases, id: \.self) { Text($0.name).tag($0) }

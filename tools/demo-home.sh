@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds a made-up home folder for README screenshots: a brain with a few layers and skills,
-# two projects and some MCP servers. Nothing in it comes from a real machine.
+# two projects, some MCP servers and a knowledge base. Nothing in it comes from a real machine.
 #
 #   tools/demo-home.sh /tmp/akit-demo      (then: make screenshots)
 set -euo pipefail
@@ -202,9 +202,10 @@ EOF
 # Kept out of git, as a private skill is: a skill that git tracks can't leave the project from AKit.
 mkdir -p "$DEMO/Projects/notes-mac/.git/info" && echo ".agents/skills/note-templates/" >> "$DEMO/Projects/notes-mac/.git/info/exclude"
 
-# Stand-ins for the agents' commands, so the demo shows ~/.local/bin paths and made-up versions.
+# Stand-ins for the agents' commands, so the demo shows ~/.local/bin paths and made-up versions
+# (npx: Draw Map with Pi… runs excalidraw-cli through it).
 mkdir -p "$DEMO/.local/bin"
-for pair in "claude:2.1.0 (Claude Code)" "pi:0.40.0" "codex:codex-cli 0.150.0" "opencode:1.18.0"; do
+for pair in "claude:2.1.0 (Claude Code)" "pi:0.40.0" "codex:codex-cli 0.150.0" "opencode:1.18.0" "npx:11.6.0"; do
     printf '#!/bin/sh\necho "%s"\n' "${pair#*:}" > "$DEMO/.local/bin/${pair%%:*}"
     chmod +x "$DEMO/.local/bin/${pair%%:*}"
 done
@@ -1104,5 +1105,29 @@ git -C "$LOCAL" tag -a v1.4.0 -m "Release 1.4.0" main
 # Not committed yet: a changed controller and a new file.
 cat >> "$LOCAL/src/Orders/OrdersController.cs" <<<"// GET /orders.csv: OrderCsv.Write(store.All())"
 file "$LOCAL/docs/export.md" <<<"Orders export as CSV: id and total."
+
+# Knowledge base (Knowledge screen, guide knowledge.ru.md): the work world built from the sample
+# base's content (KnowledgeSeed.swift, one source of made-up notes): two spaces with their
+# settings, a note of every kind and maps, committed.
+"$AKIT" kb seed --world work >/dev/null
+
+# The repo that orders-api's note points at (repo: and files:), found under ~/Projects.
+ORDERS="$DEMO/Projects/orders-api"
+mkdir -p "$ORDERS" && git -C "$ORDERS" init -q
+git -C "$ORDERS" remote add origin "git@example.com:shop/orders-api.git"
+file "$ORDERS/src/events/order-created.ts" <<'EOF'
+export type OrderCreated = { orderId: string; total: number };
+EOF
+git -C "$ORDERS" add -A && git -C "$ORDERS" commit -qm "Add the order created event"
+echo "export const retries = 3;" >> "$ORDERS/src/events/order-created.ts"
+git -C "$ORDERS" add -A && git -C "$ORDERS" commit -qm "Retry a failed publish three times"
+
+# The other repos the notes name (repo:): billing and orders-db of payments, lint-examples of the
+# space's missing-file example (an empty copy), so akit kb lint finds only the findings the space
+# lint-examples has on purpose. No harness files: no screen lists them as projects.
+for name in billing orders-db lint-examples; do
+    mkdir -p "$DEMO/Projects/$name" && git -C "$DEMO/Projects/$name" init -q
+    git -C "$DEMO/Projects/$name" remote add origin "git@example.com:shop/$name.git"
+done
 
 echo "Demo home: $DEMO"

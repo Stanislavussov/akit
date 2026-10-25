@@ -35,11 +35,7 @@ public struct GitCheckout: Sendable, Hashable {
             gitDir = dotGit
         case S_IFREG:
             // "gitdir: <path>", relative to the checkout when not absolute.
-            guard let text = small(dotGit), let line = text.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix("gitdir:") }) else {
-                return nil
-            }
-            let pointer = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
-            guard !pointer.isEmpty else { return nil }
+            guard let pointer = small(dotGit).flatMap(gitdirPointer) else { return nil }
             gitDir = ((pointer.hasPrefix("/") ? pointer : (top as NSString).appendingPathComponent(pointer)) as NSString).standardizingPath
         default:
             return nil
@@ -70,6 +66,59 @@ public struct GitCheckout: Sendable, Hashable {
     /// not a linked worktree, else the first.
     public static func preferred(_ folders: [URL]) -> URL? {
         folders.first { at($0)?.isLinkedWorktree != true } ?? folders.first
+    }
+
+    /// The `url` of `[remote "origin"]` in the repository's config (the common git folder's, so
+    /// a linked worktree reads its main checkout's); nil without one.
+    public var originURL: String? { Self.small(commonDir.appending(path: "config").path).flatMap(Self.originURL(inConfig:)) }
+
+    /// The `origin` URL of the checkout whose top is `repo` (a worktree's or submodule's `.git`
+    /// file is followed); nil when it isn't a checkout or has no origin.
+    public static func originURL(of repo: URL) -> String? { at(repo)?.originURL }
+
+    /// `gitdir: <path>` of a worktree's or submodule's `.git` file, as written (maybe relative).
+    public static func gitdirPointer(_ text: String) -> String? {
+        text.split(whereSeparator: \.isNewline)
+            .first { $0.hasPrefix("gitdir:") }
+            .map { $0.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces) }
+            .flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// `url` of `[remote "origin"]` in the text of a git config file (a quoted value unquoted).
+    public static func originURL(inConfig config: String) -> String? {
+        var inOrigin = false
+        for raw in config.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                inOrigin = line.filter { !$0.isWhitespace }.hasPrefix("[remote\"origin\"]")
+                continue
+            }
+            guard inOrigin, let equals = line.firstIndex(of: "=") else { continue }
+            guard line[..<equals].trimmingCharacters(in: .whitespaces).lowercased() == "url" else { continue }
+            var value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+            if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") { value = String(value.dropFirst().dropLast()) }
+            return value.isEmpty ? nil : value
+        }
+        return nil
+    }
+
+    /// The remote names of a git config file's text (`[remote "NAME"]` sections), in file order.
+    /// nil when the file includes others (`[include]`, `[includeIf …]`): those may add remotes,
+    /// so the caller asks git instead.
+    public static func remoteNames(inConfig config: String) -> [String]? {
+        var names: [String] = []
+        for raw in config.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("[") else { continue }
+            let header = line.dropFirst().prefix { $0 != "]" }.trimmingCharacters(in: .whitespaces)
+            let lower = header.lowercased()
+            if lower == "include" || lower.hasPrefix("includeif") { return nil }
+            guard lower.hasPrefix("remote"), let open = header.firstIndex(of: "\""), let close = header.lastIndex(of: "\""), open < close
+            else { continue }
+            let name = String(header[header.index(after: open)..<close])
+            if !name.isEmpty, !names.contains(name) { names.append(name) }
+        }
+        return names
     }
 
     /// A small text file (git's pointer files), nil when missing or larger than 64 KB.

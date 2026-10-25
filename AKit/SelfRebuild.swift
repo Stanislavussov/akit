@@ -82,12 +82,17 @@ final class SelfRebuild {
             if Self.requestedAtLaunch { FileHandle.standardError.write(Data("rebuild: \(reason)\n\(output)\n".utf8)) }
             return
         }
+        // The new instance must not start while note and map edits wait for their commit (U2); an
+        // open map hands over its last change first (N5).
+        await KnowledgeModel.within(seconds: 5) { await KnowledgeModel.flushBeforeQuit() }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         do {
             let app = target == .install ? Self.installedApp : Self.builtApp(in: root)
             try await NSWorkspace.shared.openApplication(at: app, configuration: configuration)
-            NSApp.terminate(nil)
+            // From the run loop, not from this main-actor job: terminate waits in a nested event loop
+            // for the quit flush (AppDelegate), which needs the main actor; called here, it hangs.
+            NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
         } catch {
             state = .failed("Built, but the new version couldn't be started: \(error.localizedDescription)")
         }

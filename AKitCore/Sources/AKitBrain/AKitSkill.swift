@@ -242,6 +242,179 @@ range at another branch or commit than HEAD (without the uncommitted changes), e
 `--base v1.4.0 --head v1.5.0` for what a release added. In the app: New Review… → Local
 Workspace → Find… next to Base and Head.
 
+## Knowledge base
+
+Notes and maps of the systems around a repository: which service sends what to whom, which
+repo owns what. A base is a folder per world (by default `~/.akit/local/knowledge/<world>`, or
+the folder `akit kb path` sets, like one in an Obsidian vault; git without a remote);
+`areas/<area>/` holds the notes, one area per project, system or unrelated entity.
+Read it when a task is about systems. Start with the card of the project's focus area:
+
+```
+akit kb context [FOLDER] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                                   # run it at the start of a task about systems:
+                                                   # {base, focus, systems: [{note, title, line}],
+                                                   # relations: [{from, kind, to}], truncated};
+                                                   # FOLDER defaults to the current project
+akit kb neighbors NOTE [--depth 1|2] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                                   # the arrows to and from a note (depth 2: also
+                                                   # its neighbours'): {note, edges: [{from, kind,
+                                                   # to, flow, map}]}
+akit kb focus [FOLDER] [--json]                    # the focus area and why: override (the user's
+                                                   # choice), area.yaml or repo
+akit kb areas [--json] [--base PATH|WORLD]         # the areas: note and map counts, and their
+                                                   # settings (title, description, projects)
+akit kb notes [AREA] [--json] [--base PATH|WORLD]  # notes: id (payments/orders-api), kind, title
+akit kb kinds [--json] [--base PATH|WORLD]         # the kinds of notes and each kind's fields (kb.yaml)
+akit kb area AREA [--json] [--base PATH|WORLD]     # one area's settings: projects = git remotes,
+                                                   # ~/ paths or globs the area is about
+akit kb maps [AREA] [--json] [--base PATH|WORLD]   # the maps (.excalidraw): blocks (shapes linked to
+                                                   # a note), arrows, unbound arrows, jumps to maps
+akit kb relations NOTE [--json] [--base PATH|WORLD]
+                                                   # arrows to and from a note on every map:
+                                                   # {from, kind, to, flow, map}; kind = the label
+akit kb search QUERY [--area A] [--limit 10] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                                   # the best ## sections with every word:
+                                                   # {note, heading, score, snippet, neighbors};
+                                                   # score is BM25, lower is better
+akit kb show NOTE [--section H] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                                   # one note: title, kind, repo, files, sections
+akit kb index [--rebuild] [--json] [--base PATH|WORLD]
+                                                   # bring the search index up to the files
+akit kb lint [--json] [--base PATH|WORLD]          # check the base: {base, findings: [{rule, severity,
+                                                   # file, element, link, message, fix}], counts}
+akit kb inbox [--json] [--base PATH|WORLD]         # the proposals waiting for the user: {base,
+                                                   # proposals: [{id, kind, target, reason, created,
+                                                   # checks: [{name, status, message}], modelCheck:
+                                                   # {model, checked, stale, marks} or null}]}
+akit kb check ID [--json] [--base PATH|WORLD]      # ask the user's check model whether a proposal
+                                                   # repeats a note, contradicts a map arrow or has
+                                                   # a broken link: one model call through Pi under
+                                                   # the sending policy and the monthly limit (send
+                                                   # log: kb-check). It only marks: {id, model,
+                                                   # marks: [{kind, note, edge, link, message}]}
+```
+
+A review (`akit review MR-URL` or `akit review local …`) reads a base only as a card,
+`context/knowledge-card.md`: the systems the change touches (a note's `files:`), the rest of
+the repository's areas, their relations and neighbours, within a token budget. The project
+profile sets it (`knowledge_base: WORLD|PATH`, `knowledge_budget: N`, default 8000; Review
+Settings… → Knowledge base); for one run add `--knowledge-base WORLD|PATH` and
+`--knowledge-budget N` (`--gather-only` stops before the model passes).
+
+You never edit the base: you propose, and the user accepts or rejects in AKit. Propose when
+you learn a fact a note lacks, find a system the base doesn't have, or see a relation no map
+shows. Name the note as AREA/NAME (`kb context`'s focus or `kb areas` picks the area); for a
+system unrelated to every area, propose a new area (`--note support/helpdesk`) rather than
+mixing it into one. Say in `--reason` where the fact comes from. After a proposal, `kb check
+ID` may mark a duplicate or a contradiction: tell the user (and propose a better change if you
+have one); the marks never accept or reject anything.
+
+```
+akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--reason T] [--json]
+                                                   # existing note: the text is ## Heading blocks
+                                                   # (each replaces that section or is added); new
+                                                   # note: its whole text. --set: properties
+                                                   # (kind=service, owner=team-a). Writes only
+                                                   # inbox/<id>.md; refused for a secret, a broken
+                                                   # [[link]], a path outside areas/.
+                                                   # --json: {id, path, kind, target, checks}
+akit kb propose --arrow "A -kind-> B" [--map MAP] [--reason T] [--json]
+                                                   # a relation between two notes (kind = what
+                                                   # flows); the user draws it on the map
+akit kb propose --map AREA/NAME (--file F.excalidraw | --stdin) [--reason T] [--json]
+                                                   # a map you drew: the draft goes to
+                                                   # inbox/<id>.excalidraw; an existing map is
+                                                   # replaced only when the user accepts; a new
+                                                   # area is created then. Refused: a file that
+                                                   # isn't an Excalidraw scene, a secret in its text.
+                                                   # --json: {id, path, kind, target, checks, draft}
+```
+
+To draw a map, use excalidraw-cli (`npx --yes @swiftlysingh/excalidraw-cli` when
+`excalidraw-cli` isn't installed; it needs Node 20.19 or later). Label each block with a note's
+name exactly as `kb notes AREA` lists it, so AKit links the block to that note on Accept (a
+label that names no note, or more than one, stays plain); name each arrow by what flows:
+
+```
+excalidraw-cli create --inline '[orders-api] -> "events" -> [billing]' -o /tmp/x.excalidraw
+akit kb propose --map payments/order-flow --file /tmp/x.excalidraw --reason "orders-api sends its events to billing"
+```
+
+The user accepts or rejects the map in AKit (Knowledge → Inbox); `kb accept` of a map only
+says so (exit 2). AKit's Draw Map with Pi… does the same with Pi given no tools: Pi writes
+only the DSL, and AKit runs excalidraw-cli and proposes the draft itself.
+
+Run `kb lint` before you trust a note's `repo:`/`files:` or a map's blocks, and after you
+propose a change. Errors: a broken link, a map that doesn't parse. Warnings: an ambiguous link,
+a map block with no note, an unbound arrow (no relation), a `repo:` that is no known project,
+a `files:` or `~/` path that doesn't exist. Hints: a kind not in `kb.yaml`, a block for a note
+of an unrelated area. Tell the user or propose a fix; never edit the base to fix them.
+
+To find text, `kb search` first, then `kb show NOTE --section H` for the one section you
+need; both stay under `--max-tokens` (default 4000). Search reads `areas/` only, never the
+proposals in `inbox/`, and refreshes the index itself (`kb index` is rarely needed).
+`"stale": true` means another process is updating the index: the answer is from its last
+state.
+
+The focus is where to start, never a wall: follow a relation or a link into another area
+when the task needs it. `"focus": null` means no area names this project (its remote or
+folder): look at `kb areas`, and when you propose a note for a new system, propose a new area
+rather than mixing unrelated systems.
+
+`--base` picks a base (a world name or a folder); without it akit takes the project's choice,
+the only base, or the one named like this Mac's kind. No base: `{"base": null, "reason":
+"no base"}`, exit 0; then there is nothing to read. Reads also take `--base PATH` for a folder
+with `areas/` and no git. Kinds and fields are data in the base's `kb.yaml`, never a fixed
+list: read `akit kb kinds` before you name a kind or a field. On maps, a block stands for the
+note its link names, and an arrow's label says what flows (`kb relations orders-api`).
+
+Commands marked "for a person only" in `akit kb --help` change the base: run them only when
+the user asked for that action in this session; otherwise propose (`akit kb propose`) or ask.
+Never accept or reject a proposal on your own: the user decides. They commit at once, one
+commit per command:
+
+```
+akit kb init [--world NAME]                        # create a base
+akit kb new-note AREA NAME [--kind K]              # a new note
+akit kb new-map AREA NAME                          # a new, empty map areas/AREA/maps/NAME.excalidraw
+akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json]
+                                                   # note properties (kind=flow, owner=team-a,
+                                                   # files=[a.ts, b.ts]); one frontmatter line each
+akit kb kinds add NAME [--fields a,b] | fields NAME a,b | remove NAME | rename OLD NEW [--json]
+                                                   # rename rewrites kind: in every note, all or nothing
+akit kb area AREA [--title T] [--description D] [--project P]… [--remove-project P]… [--json]
+akit kb path [WORLD] [--set PATH | --move PATH | --reset] [--json]
+                                                   # where the world's base lives (this Mac only):
+                                                   # --set uses a folder (an Obsidian vault too),
+                                                   # --move commits pending edits and moves it,
+                                                   # --reset goes back to ~/.akit/local/knowledge
+akit kb focus [FOLDER] --set AREA | --clear [--json]
+                                                   # the area a project starts from, kept on this
+                                                   # Mac (~/.akit/local/knowledge/focus.json);
+                                                   # --clear goes back to area.yaml and repo:
+akit kb rename NOTE|MAP NEW [--yes] [--json]      # rename a note or map and every link to it,
+                                                   # all or nothing, one commit; without --yes it
+                                                   # only shows the plan (refused with its diff when
+                                                   # another link would change its target)
+akit kb accept ID [--yes] [--json]                 # accept a proposal: shows the diff; --yes backs
+                                                   # the note up, writes it and commits it with the
+                                                   # proposal's removal; an arrow or a map: exit 2,
+                                                   # accepted in the app
+akit kb reject ID [--yes] [--json]                 # a proposal to the Trash
+akit kb check-model [MODEL [THINKING]]             # the check model of kb check: a Pi provider/model
+                                                   # (default opencode-go/gpt-6-luna, low)
+akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
+                                                   # commit; without --yes it only shows what goes
+akit kb pi-template [--yes] [--json]               # the core layer's section about the base, for Pi
+                                                   # only (templates/kb-pi.md, a brain commit); then
+                                                   # akit apply --home; again: "already set"
+akit kb seed [--world NAME] [--json]               # the sample base (world sample): made-up notes
+                                                   # that show every feature, separate from yours
+akit kb seed --remove [--world NAME] [--yes] [--json]
+                                                   # the whole sample base to the Trash
+```
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

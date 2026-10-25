@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitKnowledge
 import AKitLab
 import AKitReview
 import AppKit
@@ -532,6 +533,10 @@ struct ReviewSettingsSheet: View {
     /// The profile's context servers as ticked here, saved with Save Extra Servers….
     @State private var extras: [String] = []
     @State private var save: ReviewConfigEditor.Save?
+    /// The profile's knowledge_base and knowledge_budget as set here ("" = none), saved with Save Knowledge….
+    @State private var knowledgeBase = ""
+    @State private var knowledgeBudget = ReviewKnowledgeCard.defaultBudget
+    @State private var bases: [KnowledgeBase] = []
 
     private var profile: ReviewProfile? { catalog?.profiles.first { $0.slug == rules } }
     private var access: ReviewMCPAccess { profile?.mcp ?? ReviewMCPAccess() }
@@ -596,6 +601,9 @@ struct ReviewSettingsSheet: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 overviewSection
+                if let profile {
+                    knowledgeSection(profile)
+                }
                 Section {
                     ForEach(catalog?.profiles ?? [], id: \.slug) { profile in
                         HStack {
@@ -639,14 +647,21 @@ struct ReviewSettingsSheet: View {
             .padding()
         }
         .frame(width: 600, height: 640)
-        .task { catalog = model.catalog(brain: brain) }
-        .onChange(of: rules) { extras = access.extraServers }
+        .task {
+            catalog = model.catalog(brain: brain)
+            bases = KnowledgeBase.all(home: model.home)
+        }
+        .onChange(of: rules) {
+            extras = access.extraServers
+            loadKnowledge()
+        }
         .sheet(item: Binding(get: { save.map(SaveBox.init) }, set: { save = $0?.save })) { box in
             ReviewSaveSheet(save: box.save, brain: brain) { saved in
                 save = nil
                 if saved {
                     catalog = model.catalog(brain: brain)
                     extras = access.extraServers
+                    loadKnowledge()
                     message = "Saved \(box.save.file.lastPathComponent)."
                 }
             }
@@ -738,6 +753,54 @@ struct ReviewSettingsSheet: View {
         }
     }
 
+    /// The profile's knowledge base (K18): the card Gather writes, and its size.
+    @ViewBuilder private func knowledgeSection(_ profile: ReviewProfile) -> some View {
+        let budget: Int? = knowledgeBudget == ReviewKnowledgeCard.defaultBudget && profile.knowledgeBudget == nil ? nil : knowledgeBudget
+        let base: String? = knowledgeBase.isEmpty ? nil : knowledgeBase
+        Section {
+            Picker("Knowledge base", selection: $knowledgeBase) {
+                Text("None").tag("")
+                ForEach(bases, id: \.root) { base in
+                    Text("\(base.name) (\(FileWalk.tilde(base.root, home: model.home)))").tag(base.world ?? base.root.path)
+                }
+                if let current = profile.knowledgeBase, !bases.contains(where: { ($0.world ?? $0.root.path) == current }) {
+                    Text("\(current) (not a base on this Mac)").tag(current)
+                }
+            }
+            TextField("Knowledge budget (tokens)", value: $knowledgeBudget, format: .number)
+                .help("knowledge_budget: the card's size in tokens, 8000 by default (about 4 bytes a token).")
+            if base != profile.knowledgeBase || budget != profile.knowledgeBudget {
+                HStack {
+                    Spacer()
+                    Button("Save Knowledge…") { planKnowledge(base: base, budget: budget) }
+                        .disabled(knowledgeBudget <= 0)
+                }
+            }
+        } header: {
+            Text("Knowledge base")
+        } footer: {
+            Text("knowledge_base: and knowledge_budget: of the profile. Gather refreshes the base's index and writes context/knowledge-card.md: "
+                 + "the systems the change touches (a note's files:), the others of the repository's areas (area.yaml projects:, "
+                 + "a note's repo:), their relations and neighbours, one line each, within the budget. Only the card goes in, never the notes "
+                 + "or the inbox. --knowledge-base and --knowledge-budget set them for one run.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func loadKnowledge() {
+        knowledgeBase = profile?.knowledgeBase ?? ""
+        knowledgeBudget = profile?.knowledgeBudget ?? ReviewKnowledgeCard.defaultBudget
+    }
+
+    /// Save Knowledge…: the profile's knowledge_base and knowledge_budget, shown as a diff first.
+    private func planKnowledge(base: String?, budget: Int?) {
+        do {
+            save = try ReviewConfigEditor.knowledge(base: base, budget: budget, profile: rules, home: model.home, brain: brain)
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
     /// Save Extra Servers…: the profile's mcp: extra_servers, shown as a diff first.
     private func planExtras() {
         do {
@@ -783,6 +846,8 @@ enum ReviewProfileTemplate {
     #   extra_servers: [figma]             # context servers on top (Figma, Confluence, a wiki): read only, in every run
     default_scenario: feature              # feature, bugfix, dependency-upgrade
     knowledge: []                          # markdown folders, e.g. [~/notes/my-service]
+    # knowledge_base: work                 # a knowledge base (world or folder): Gather adds its card of the touched systems
+    # knowledge_budget: 8000               # the card's size in tokens
     gather: []                             # e.g. - { name: tests, run: "npm test", timeout_s: 600 }; runs the MR's own code
     constraints: []                        # e.g. - "Public DTOs change only in backward-compatible ways"
     path_instructions: []                  # e.g. - { paths: ["**/*.generated.ts"], ignore: true }

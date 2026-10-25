@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import AKitBrain
 import AKitFoundation
+import AKitKnowledge
 import AKitProjectSetup
 @testable import AKitDoctor
 
@@ -94,6 +95,30 @@ struct DoctorTests {
         #expect(report.contains("! worktree ~/trees/x lacks .agents/skills/tdd, .claude/skills, AGENTS.md, CLAUDE.md; run akit worktrees sync ~/Projects/task."))
         #expect(report.contains("  github.com/me/elsewhere: not on this Mac"))
         #expect(report.contains("  no AKit crash reports"))
+    }
+
+    @Test func theKnowledgeBaseLineSaysNoRemoteAndARemoteIsAProblem() async throws {
+        func report() async -> String { await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")])) }
+        #expect(await report().contains("  knowledge base: none (a person creates one with akit kb init)"))
+        let base = try await KnowledgeBase.create(world: "work", env: env)
+        #expect(await report().contains("  knowledge base: ~/.akit/local/knowledge/work, no remote"))
+        try await git("remote", "add", "origin", "https://user:\(secrets[1])@example.com/me/kb.git", in: base.root)
+        let withRemote = await report()
+        #expect(withRemote.contains("! knowledge base: ~/.akit/local/knowledge/work has a git remote (origin)"), "\(withRemote)")
+        #expect(!withRemote.contains(secrets[1]) && !withRemote.contains("example.com/me/kb"))
+    }
+
+    @Test func theKnowledgeBaseLineShowsTheSetFolderAndItsVault() async throws {
+        func report() async -> String { await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")])) }
+        let vault = home.appending(path: "Vault")
+        try FileManager.default.createDirectory(at: vault.appending(path: ".obsidian"), withIntermediateDirectories: true)
+        try await KnowledgeBase.setFolder(world: "work", to: vault.appending(path: "kb"), env: env)
+        let text = await report()
+        #expect(text.contains("  knowledge base: ~/Vault/kb (world work, set in bases.json; in the Obsidian vault ~/Vault), no remote"), "\(text)")
+        try write(".akit/local/knowledge/bases.json", #"{"bases": {"work": "~/Vault/kb", "side": "~/Gone"}}"#)
+        #expect(await report().contains("! knowledge base: the world side is set to ~/Gone in ~/.akit/local/knowledge/bases.json, which is no base"))
+        try write(".akit/local/knowledge/bases.json", "{broken")
+        #expect(await report().contains("! knowledge base: ~/.akit/local/knowledge/bases.json can't be read"))
     }
 
     @Test func theSkillListingBudgetVariableShowsOnlyWhenSet() async throws {

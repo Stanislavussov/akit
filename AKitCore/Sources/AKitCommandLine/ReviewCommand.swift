@@ -60,6 +60,11 @@ extension AKitCLI {
       --summary-language CODE           The language of the overview AKit shows you (never posted):
                                         \(LabLanguage.codes); default the Mac's preferred language,
                                         else English
+      --knowledge-base WORLD|PATH       The knowledge base of this run's card (context/knowledge-card.md:
+                                        the systems the change touches, their relations and
+                                        neighbours), over the profile's knowledge_base
+      --knowledge-budget N              The card's size limit (default 8000, about 32 KB; 4 bytes
+                                        each), over the profile's knowledge_budget
       --step COMMAND                    A Pi step after the roles: /run AGENT [TASK] (a pi-subagents
                                         agent), /TEMPLATE [ARGS], /skill:NAME [REQUEST] or plain text.
                                         AKit runs it as its own pass with the review's reading tools
@@ -185,6 +190,8 @@ extension AKitCLI {
         choices.pi = ReviewPiExtras(flags: piFlags, steps: args.values("--step").map { ReviewStepConfig(command: $0) })
         if let problem = ReviewPiFlags.problem(piFlags) { throw Failure(message: "--pi-flags: \(problem)") }
         choices.fullReview = args.flag("--full")
+        choices.knowledgeBase = args.value("--knowledge-base")
+        choices.knowledgeBudget = try positiveNumber(args.value("--knowledge-budget"), "--knowledge-budget")
         choices.extraServers = args.values("--extra-server").flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
             .filter { !$0.isEmpty }
         for change in roleChanges {
@@ -450,7 +457,7 @@ extension AKitCLI {
                 throw error
             }
             lines.drain(out)
-            out(gatherSummary(result))
+            out(gatherSummary(result, env: env))
             if gatherOnly { return 0 }
             return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), anyway: anyway, env: env, out: out)
         case "pi":
@@ -486,7 +493,7 @@ extension AKitCLI {
                 throw error
             }
             lines.drain(out)
-            out(gatherSummary(result))
+            out(gatherSummary(result, env: env))
             if gatherOnly { return 0 }
             return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), anyway: anyway, env: env, out: out)
         case nil:
@@ -665,7 +672,7 @@ extension AKitCLI {
         return mr
     }
 
-    static func gatherSummary(_ result: ReviewGather.Result) -> String {
+    static func gatherSummary(_ result: ReviewGather.Result, env: HarnessEnvironment) -> String {
         let spec = result.spec
         var lines = ["Run \(spec.id): \(spec.mergeRequest.label) at \(spec.headSHA?.prefix(10) ?? "?"), scenario \(spec.scenario.value), "
                      + "roles \(spec.roles.map(\.id).joined(separator: ", ")).",
@@ -678,6 +685,13 @@ extension AKitCLI {
         }
         let extra = (spec.mcpServers ?? []).filter(\.readOnly).map { "\($0.name) [\($0.source.rawValue)]" }
         if !extra.isEmpty { lines.append("Context servers (read only): " + extra.joined(separator: ", ") + ".") }
+        if let base = spec.knowledgeBasePath {
+            let tools = ReviewPasses.knowledgeEnvironment(spec: spec, env: env)
+            lines.append("Knowledge card: context/knowledge-card.md, from \(FileWalk.tilde(URL(filePath: base), home: env.homeDirectory)).")
+            lines.append(tools.isEmpty ? "The review passes get no akit_kb_search / akit_kb_show: AKit found no akit to run."
+                         : "The review passes get akit_kb_search and akit_kb_show: "
+                         + tools.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ") + ".")
+        }
         if !result.scrubbed.isEmpty {
             lines.append("Masked before the agent sees it: " + result.scrubbed.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }.joined(separator: ", "))
         }

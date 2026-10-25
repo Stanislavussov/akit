@@ -62,6 +62,8 @@ public enum ReviewDiscuss {
         } else {
             arguments += ["--no-mcp"]
         }
+        let knowledge = ReviewPasses.knowledgeEnvironment(spec: run.spec, env: env)
+        if !knowledge.isEmpty { tools += "," + ReviewPasses.knowledgeTools.joined(separator: ",") }
         arguments += run.spec.roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
         arguments += ["--append-system-prompt", folder.appending(path: "prompts/discuss.md").path,
                       "-e", folder.appending(path: "akit-review.ts").path, "--tools", tools]
@@ -71,7 +73,7 @@ public enum ReviewDiscuss {
             ("AKIT_REVIEW_MCP", String(decoding: (try? JSONEncoder().encode(run.spec.access)) ?? Data("{}".utf8), as: UTF8.self)),
             ("AKIT_REVIEW_MAX", "50"), ("AKIT_REVIEW_ROOTS", ReviewPasses.readRoots(folder: folder, worktree: worktree)),
             ("AKIT_REVIEW_SCENARIO", run.spec.scenario.value), ("AKIT_REVIEW_HEAD", run.spec.headSHA ?? ""),
-        ]
+        ] + knowledge.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
         let text = """
         #!/bin/sh
         # Discuss in Pi… for AKit review run \(run.id). Written by AKit; it writes it again each time.

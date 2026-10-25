@@ -199,5 +199,42 @@ shot review-log          $MAIN --section review --tab log --select 20261015-0915
 shot review-local        $MAIN --section review --query "$DEMO/work/orders-service" --add
 # Base → Find…: the branches, the tag and the commits of the made-up clone.
 shot review-local-find   $MAIN --section review --query "$DEMO/work/orders-service" --tab find-base --add
+# Knowledge (guide knowledge.ru.md): the made-up base from tools/demo-home.sh.
+shot knowledge           $MAIN --section knowledge --select payments/orders-api
+shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
+shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties
+shot knowledge-kinds     $MAIN --section knowledge --select payments/orders-api --tab kinds
+# A map (read only) from the demo base's seed: payments/maps/overview.
+shot knowledge-map       $MAIN --section knowledge --tab map --select payments/maps/overview
+# The same map in Edit: Excalidraw's tools and the pressed Edit button.
+shot knowledge-map-edit  $MAIN --section knowledge --tab map-edit --select payments/maps/overview
+# A block's note beside its map (as a click on the block orders-api), with its Relations.
+shot knowledge-relations $MAIN --section knowledge --tab map --select block:blk-orders
+# Rename… of the note billing to invoicing: the planned changes.
+shot knowledge-rename    $MAIN --section knowledge --tab rename --select payments/billing --query invoicing
+# The toolbar search for "order": its hits (note, section, snippet) instead of the note list.
+shot knowledge-search    $MAIN --section knowledge --query order
+# Preview Agent Context… for the project orders-api, with the note orders-api in view (its neighbors too).
+shot knowledge-context   $MAIN --section knowledge --tab context --project orders-api --select payments/orders-api
+# Pi Template…: the core layer's Pi-only section about the base, with the layer.yaml and template diff.
+shot knowledge-pi-template $MAIN --section knowledge --tab pi-template
+# The Lint tab: the findings the seed's space lint-examples has on purpose (akit kb lint).
+shot knowledge-lint      $MAIN --section knowledge --tab lint
+# The Inbox tab: the seed's three proposals; the note proposal for billing selected, with its diff and the seeded mark.
+shot knowledge-inbox     $MAIN --section knowledge --tab inbox --select 2026-10-24-payments-billing
+# A map an agent drew with excalidraw-cli (5.4): the draft on its read-only canvas and the links Accept sets.
+shot knowledge-inbox-map $MAIN --section knowledge --tab inbox --select 2026-10-24-payments-maps-order-flow
+# Draw Map with Pi…: the form with a made-up prompt (nothing runs).
+shot knowledge-draw-map  $MAIN --section knowledge --tab draw-map
+# Add Sample Base…: the sample base (akit kb seed) next to the demo base, only for this shot.
+if [[ "$ONLY" == "  " || "$ONLY" == *" knowledge-sample "* ]]; then
+    HOME="$DEMO" GIT_CONFIG_GLOBAL=/dev/null "$ROOT/AKitCore/.build/debug/akit" kb seed >/dev/null
+fi
+shot knowledge-sample    $MAIN --section knowledge --tab sample --select payments/order-events
+rm -rf "$DEMO/.akit/local/knowledge/sample"
+# Settings → Knowledge: the base folder of each world (work has the demo base, personal none yet).
+shot knowledge-settings  900x760 --tab knowledge --settings
+# Settings → Knowledge check model: the Pi model and thinking of akit kb check (the default, Luna).
+shot knowledge-check-settings 900x760 --tab knowledge-check --settings
 
 exit $FAILED

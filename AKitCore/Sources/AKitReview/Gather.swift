@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitKnowledge
 import Foundation
 
 /// What GitLab said about the merge request when Gather ran (`<run>/gitlab/snapshot.json`), as
@@ -331,11 +332,32 @@ public enum ReviewGather {
                 gap("tests", "Output of \(spec.gather.map(\.name).joined(separator: ", "))", "Without a worktree the commands can't run.")
             }
         }
+        // A knowledge base gives only its card (K18): the profile's knowledge_base, and every
+        // knowledge: folder that is itself a base. Other folders keep their notes in the pack.
+        var bases: [KnowledgeBase] = []
+        if let chosen = spec.knowledgeBase?.value {
+            do {
+                if let base = try await KnowledgeBase.choose(option: chosen, folder: checkoutURL ?? env.homeDirectory, env: env,
+                                                             projectsRoot: env.homeDirectory.appending(path: "Projects"), forReading: true) {
+                    bases.append(base)
+                }
+            } catch {
+                gap("knowledge", "The knowledge base \(chosen)", error.localizedDescription,
+                    how: "Pick a base in Review Settings… (Knowledge base), or set knowledge_base: to a world name or a base folder.")
+            }
+        }
         var knowledgeSize = 0
         for root in spec.knowledge {
             let folderURL = env.expand(root)
             guard FileManager.default.fileExists(atPath: folderURL.path) else {
                 gap("knowledge", "Knowledge notes in \(root)", "The folder doesn't exist.")
+                continue
+            }
+            if KnowledgeBase.isBase(folderURL) {
+                let base = KnowledgeBase(root: folderURL.standardized)
+                if !bases.contains(where: { $0.root.resolvingSymlinksInPath().path == base.root.resolvingSymlinksInPath().path }) {
+                    bases.append(KnowledgeBase.all(home: env.homeDirectory).first { $0 == base } ?? base)
+                }
                 continue
             }
             let base = folderURL.resolvingSymlinksInPath().path
@@ -350,6 +372,30 @@ public enum ReviewGather {
                 guard path.hasPrefix(base + "/") else { continue }
                 let relative = String(path.dropFirst(base.count + 1))
                 files.append(("knowledge/\(folderURL.lastPathComponent)/\(relative)", "Knowledge note", text))
+            }
+        }
+        // The passes' kb tools read the first base: the profile's, else the first base folder.
+        spec.knowledgeBasePath = bases.first.map { $0.root.standardized.path }
+        if !bases.isEmpty {
+            progress("Making the knowledge card from \(bases.map(\.name).joined(separator: ", "))…")
+            let remote: String?
+            if let checkout = checkoutURL, let git = env.findExecutable("git"),
+               let result = await ProcessRunner.run(git, arguments: ["-C", checkout.path, "remote", "get-url", "origin"],
+                                                    environment: env.gitVariables, timeout: 10), result.succeeded {
+                remote = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                remote = local == nil ? "\(ref.host)/\(ref.projectPath)" : nil
+            }
+            let paths = diffs.filter { !isIgnored($0.newPath) }.flatMap { [$0.newPath, $0.oldPath] }
+            var unique: [String] = []
+            for path in paths where !path.isEmpty && !unique.contains(path) { unique.append(path) }
+            let budget = spec.knowledgeBudget?.value ?? ReviewKnowledgeCard.defaultBudget
+            let card = ReviewKnowledgeCard.make(bases: bases, remote: remote, checkout: checkoutURL, paths: unique, budget: budget,
+                                                scrub: scrub, home: env.homeDirectory)
+            for problem in card.problems { gap("knowledge", problem.needed, problem.why, how: problem.how) }
+            if let text = card.text {
+                files.append((ReviewKnowledgeCard.fileName, "The knowledge card: the systems the change touches, their relations and "
+                              + "neighbours, from the knowledge base (untrusted text)", text))
             }
         }
 

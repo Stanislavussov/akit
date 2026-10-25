@@ -1,6 +1,6 @@
 # AKit: словарь надписей
 
-Этот словарь объясняет каждую надпись, число, значок и совет на экранах AKit. Ищите надпись так, как она написана на экране: названия даны по-английски, жирным. У каждой статьи есть ссылка «Подробнее» на раздел [руководства по экранам](screens#start) или [руководства Error Analysis](error-analysis#overview) или [руководства AKit Review](review#overview).
+Этот словарь объясняет каждую надпись, число, значок и совет на экранах AKit. Ищите надпись так, как она написана на экране: названия даны по-английски, жирным. У каждой статьи есть ссылка «Подробнее» на раздел [руководства по экранам](screens#start) или [руководства Error Analysis](error-analysis#overview) или [руководства AKit Review](review#overview) или [руководства по базе знаний](knowledge#overview).
 
 Словарь разбит по экранам в том же порядке, что и боковое меню. Если надписи здесь нет, нажмите на неё правой кнопкой и выберите **Ask AKit About This**: помощник ответит по руководствам и данным экрана. Подробнее: [Ask AKit](screens#ask).
 
@@ -14,7 +14,7 @@
 - **Setup**: группа про то, что у агентов должно быть. В ней один экран, Brain: ваш git-репозиторий со скиллами и слоями, которые AKit ставит в проекты («rendered into projects»). Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Activity**: группа про то, как агенты работали. В ней Sessions (сохранённые сессии) и Usage (токены и деньги по дням). Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Improve**: группа про то, что в настройке лишнее, почему сессии идут плохо и помог ли фикс. В ней Insights, Lab и Error Analysis. Подробнее: [Боковое меню](screens#menus-sidebar)
-- **Work**: группа агентов, которые помогают в ежедневной работе. В ней Review: ИИ-ревью merge request'ов GitLab. Подробнее: [Боковое меню](screens#menus-sidebar)
+- **Work**: группа агентов, которые помогают в ежедневной работе. В ней Review (ИИ-ревью merge request'ов GitLab) и Knowledge (база знаний, которую читают агенты). Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Число справа от Skills**: сколько скиллов AKit нашёл всего, во всех группах экрана Skills. Фильтры экрана это число не меняют. Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Число справа от MCP Servers**: сколько записей MCP-серверов AKit нашёл во всех файлах настроек всех агентов. Фильтры экрана это число не меняют. Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Число справа от Lab**: сколько запусков Lab сейчас идёт или ждёт в очереди. Если таких нет, числа нет. Пример: «2» значит, что два разбора ещё не закончены. Подробнее: [Боковое меню](screens#menus-sidebar)
@@ -330,6 +330,11 @@
 - **Name of this Mac**: имя рабочего Mac, например `acme-laptop`. Пустое поле значит имя `work`. Подробнее: [Отметить рабочий Mac](screens#settings-machine)
 - **Brain repo**: путь к вашему brain, по умолчанию `~/.akit/registry`. Ни один агент эту папку не читает: AKit собирает из неё файлы. Подробнее: [Указать, где лежит brain](screens#settings-brain)
 - **Commit name / Commit email**: имя и почта в коммитах, которые AKit делает в brain. Хранятся в `.git/config` самого brain, только на этом Mac. На рабочем Mac без них AKit не меняет brain («This work Mac can't commit in the brain until both are set.»): иначе в личный brain попала бы рабочая почта. Подробнее: [Имя и почта для коммитов](screens#settings-brain-identity)
+- **Knowledge** (Settings): папка базы знаний каждого мира, только на этом Mac (`~/.akit/local/knowledge/bases.json`). Подходит любая локальная папка, например в vault Obsidian, кроме brain, синхронизируемых папок (iCloud Drive, Dropbox, Google Drive) и git-репозитория с remote. То же делает `akit kb path`. Подробнее: [Папка базы и Obsidian](knowledge#folder)
+- **Knowledge check model** (Settings): модель Pi (`provider/model`) и **Thinking**, которыми `akit kb check` ставит пометки на предложения агента: повтор, спор со стрелкой карты, сломанная ссылка. По умолчанию `opencode-go/gpt-6-luna` · low. **Reset to Default** возвращает это значение. Хранится в `~/.akit/lab/settings.json`; в терминале `akit kb check-model`. Подробнее: [Модель проверки](knowledge#inbox-check)
+- **Choose… / Use for Base** (Knowledge): взять другую папку для базы мира: новую, пустую, vault Obsidian или готовую базу. Старая база остаётся на месте. Подробнее: [Choose…](knowledge#folder-choose)
+- **Move Base… / Move Here** (Knowledge): закоммитить ждущие правки и перенести базу с историей git в новую папку. Подробнее: [Move Base…](knowledge#folder-move)
+- **Reset to Default** (Knowledge): снова папка по умолчанию `~/.akit/local/knowledge/<мир>`; ничего не переносится и не удаляется. Подробнее: [Show in Finder и Reset to Default](knowledge#folder-reset)
 - **Review language**: язык новых разборов сессий, один из 17 (например **English**, **Russian** или **Czech**). Тексты самого AKit остаются английскими. После смены языка уже разобранные сессии при следующем разборе в Error Analysis перепишутся, а это стоит денег; готовый разбор дешевле [перевести](screens#lab-translate). Подробнее: [Выбрать язык разборов](screens#settings-language)
 - **Translation model**: агент, модель и усилие, которыми переводит кнопка **Translate**. По умолчанию Claude Code · haiku · low, а на Mac без Claude Code — Pi с моделью по умолчанию: маленькой модели хватает. **Reset to Default** возвращает это значение. Хранится в `~/.akit/lab/settings.json`; в терминале `akit translate model`. Подробнее: [Выбрать модель перевода](screens#settings-translation)
 
@@ -1230,3 +1235,89 @@ Friction («трение») — места, где агент спотыкалс
 - **Граница** (boundary): что изменение даёт другим или берёт у них через край репозитория: API, GraphQL, micro-frontend, общий пакет, событие, схема базы, инфраструктура, CI, настройка. AKit оставляет её, только если цитата есть в коде. Подробнее: [Как агент ищет](review#map-impact)
 - **Использование в другом репозитории** (consumer): файл другого проекта GitLab, который использует границу. AKit оставляет его, только если цитата есть в ответе GitLab. Ломающее использование становится находкой роли `contracts`. Подробнее: [Как агент ищет](review#map-impact)
 - **Проход impact**: поиск использований в других репозиториях через сервер GitLab в Pi, после brief и до ролей; только чтение. Подробнее: [Как агент ищет](review#map-impact)
+
+## Knowledge
+<!-- section: terms-knowledge -->
+
+### Экран и панель инструментов
+<!-- section: terms-knowledge-screen -->
+
+- **Spaces**: список пространств базы. Пространство — папка в `areas/`, например `payments`. Число справа — сколько в нём заметок. Подробнее: [Пространства и заметки](knowledge#spaces)
+- **Base**: список баз, если их на этом Mac несколько. Одна база — один мир: `work` или `personal`. Подробнее: [Создать базу](knowledge#create)
+- **New Area…**: новое пространство, папка `areas/<Name>`. Коммита нет: git не хранит пустых папок. Подробнее: [Новое пространство](knowledge#spaces-new-area)
+- **New Note…**: новая заметка. Поля **Area** и **Name** обязательные, **Kind** — **None** или вид из списка. AKit сразу делает коммит только этого файла. То же делает `akit kb new-note`. Подробнее: [Новая заметка](knowledge#spaces-new-note)
+- **No knowledge base / Create Base…**: на этом Mac нет базы. **Create Base…** создаёт её в папке мира: по умолчанию `~/.akit/local/knowledge/<World>`, или в папке из Settings → **Knowledge**; то же делает `akit kb init --world NAME`. Подробнее: [Создать базу](knowledge#create)
+- **Sample Base**: меню в панели инструментов Knowledge: пример базы мира `sample` с выдуманными заметками, в котором видно всё, что умеет экран. Подробнее: [Пример базы](knowledge#sample)
+- **Add Sample Base…**: создать пример базы (или открыть его, если он уже есть) и показать его. Кнопка есть и рядом с **Create Base…**. То же делает `akit kb seed`. Подробнее: [Add Sample Base…](knowledge#sample-add)
+- **Remove Sample Base…**: убрать всю папку примера в Корзину. Доступна, только когда пример есть. То же делает `akit kb seed --remove --yes`. Подробнее: [Remove Sample Base…](knowledge#sample-remove)
+- **World**: поле в **Create Base…**: одно слово для мира базы. AKit предлагает тип этого Mac: `work` или `personal`. Подробнее: [Создать базу](knowledge#create)
+- **Show in Finder**: правый щелчок по пространству или заметке: показать папку или файл в Finder. Подробнее: [Удалить заметку или пространство](knowledge#spaces-delete)
+- **Kinds…**: виды заметок базы и поля каждого вида, файл `kb.yaml`. **Save** записывает его, коммит ждёт в очереди. То же делает `akit kb kinds`. Подробнее: [Kinds…](knowledge#kinds-sheet)
+- **Fields**: колонка в **Kinds…**: поля вида через запятую, их показывает **Properties**. Подробнее: [Kinds…](knowledge#kinds-sheet)
+- **Add Kind**: в **Kinds…**: новый вид с именем и полями. Подробнее: [Kinds…](knowledge#kinds-sheet)
+- **Rename…** (вид): новое имя вида в `kb.yaml` и во всех заметках этого вида, всё или ничего, одним коммитом сразу. То же делает `akit kb kinds rename`. Подробнее: [Rename… вида](knowledge#kinds-rename)
+- **Area Settings…**: правый щелчок по пространству: **Title**, **Description** и **Projects** пространства, файл `area.yaml`. То же делает `akit kb area`. Подробнее: [Area Settings…](knowledge#area-settings-edit)
+- **Projects / Add Project**: в **Area Settings…**: git remote, путь `~/…` или маска, о которых это пространство. Подробнее: [Настройки пространства](knowledge#area-settings)
+- **Search notes**: поле поиска в панели инструментов: ищет разделы заметок, где есть все слова запроса; находки — заметка, раздел и кусок текста — видны вместо списка заметок, нажатие открывает заметку на этом разделе. То же делает `akit kb search`. Подробнее: [Поиск](knowledge#search)
+- **N hits / No hits**: сколько разделов нашёл поиск; «No hits» — ни в одном разделе нет всех слов запроса. Подробнее: [Найти заметку](knowledge#search-find)
+- **Index: N notes, M sections**: строка под **Spaces**: размер индекса поиска `.akit-index.sqlite`. **stale** — индекс сейчас обновляет другая программа, поиск показывает его прошлое состояние. Подробнее: [Индекс поиска](knowledge#search-index)
+- **Reindex**: кнопка с круглой стрелкой в строке индекса: построить индекс заново из файлов. То же делает `akit kb index --rebuild`. Подробнее: [Индекс поиска](knowledge#search-index)
+- **Inbox: N**: сколько файлов ждёт в `inbox/`: заметки и карты, которые предлагают агенты. Подробнее: [Вкладка Inbox](knowledge#inbox-tab)
+- **Focus… / Now / Focus / None**: пространство, с которого агент начинает в проекте. **Now** — фокус сейчас и откуда он (**your choice**, **Area Settings**, **a note's repo:**); **None** убирает ваш выбор. **Save** пишет `~/.akit/local/knowledge/focus.json`. То же делает `akit kb focus --set` / `--clear`. Подробнее: [Focus…](knowledge#focus-set)
+- **Preview Agent Context… / List / JSON**: карточка, которую агент читает в начале задачи в проекте (`akit kb context`), и число её токенов из 4000; **cut** — AKit её обрезал. **JSON** — ровно вывод `--json`. Ниже — **Neighbors of …**: стрелки открытой заметки на картах (`akit kb neighbors`). Подробнее: [Что видит агент](knowledge#context)
+- **Pi Template… / Add to Core Layer / Update Template / Already set**: короткий раздел о базе для Pi в слое `core` мозга (`templates/kb-pi.md`, `when: target == pi`), потом **Update Home Folder…** кладёт его в `~/.pi/agent/AGENTS.md`, но не в `~/.claude/CLAUDE.md` (`akit kb pi-template`). Подробнее: [Подсказка для Pi](knowledge#pi-template)
+- **Other Folder…**: в **Focus…** и **Preview Agent Context…**: выбрать папку проекта, которой нет в списке **Project**. Подробнее: [Focus…](knowledge#focus-set)
+- **Notes / Inbox (N) / Lint (N)**: переключатель вверху экрана. **Notes** — пространства, заметки и карты. **Inbox** — предложения агентов; N — сколько их ждёт (`akit kb inbox`). **Lint** — находки проверки базы; N — сколько ошибок и предупреждений. То же делает `akit kb lint`. Подробнее: [Вкладка Inbox](knowledge#inbox-tab), [Проверка](knowledge#lint)
+- **Errors / Warnings / Hints**: части вкладки **Lint** по важности: сломанное, не найденное или неясное, совет. Подробнее: [Что проверяет Lint](knowledge#lint-rules)
+- **N errors, N warnings, N hints**: сколько находок каждой важности во всей базе. Подробнее: [Вкладка Lint](knowledge#lint-tab)
+- **Check Again**: проверить базу заново и заново найти проекты в папке проектов. Подробнее: [Вкладка Lint](knowledge#lint-tab)
+- **Open** (Lint): открыть заметку или карту находки. Подробнее: [Вкладка Lint](knowledge#lint-tab)
+- **Create Note…** (Lint): у сломанной ссылки на заметку: **New Note…** с пространством и именем из ссылки. Подробнее: [Вкладка Lint](knowledge#lint-tab)
+- **No findings**: проверка ничего не нашла: все ссылки, блоки, репозитории и пути в порядке. Подробнее: [Проверка](knowledge#lint)
+- **Reason / From / Checks / Check model / What Accept writes** (Inbox): части выбранного предложения: причина от агента, автор и время, проверки без модели (`secret`, `target`, `links`, `arrow`), пометки модели проверки (старые, если предложение изменилось) и разница, которую запишет Accept. Подробнее: [Вкладка Inbox](knowledge#inbox-tab)
+- **Accept… / Accept Proposal** (Inbox): у предложения заметки — окно с разницей; **Accept** пишет заметку с копией старой и делает один коммит (`akit kb accept ID --yes`). У стрелки — открывает карту с **Add an arrow?**. Подробнее: [Вкладка Inbox](knowledge#inbox-tab)
+- **Reject…** (Inbox): после вопроса **Move to Trash** отправляет файл предложения в Корзину; база не меняется (`akit kb reject ID --yes`). Подробнее: [Вкладка Inbox](knowledge#inbox-tab)
+- **Check Again** (Inbox): спросить модель проверки ещё раз через правила отправки (`akit kb check ID`); отказ показывает причину «Not sent: …». Подробнее: [Модель проверки](knowledge#inbox-check)
+- **No proposals**: в `inbox/` нет предложений агентов. Подробнее: [Предложения агента](knowledge#inbox)
+- **Add an arrow? / Add / Cancel**: полоса над картой в **Edit** после **Accept…** стрелки: **Add** рисует стрелку (и новый блок для заметки, которой нет на карте), сохраняет карту и закрывает предложение; **Cancel** оставляет его. Подробнее: [Add an arrow?](knowledge#inbox-arrow)
+- **Which map gets the arrow?**: вопрос, если предложение стрелки не называет карту, а в пространстве карт несколько. Подробнее: [Add an arrow?](knowledge#inbox-arrow)
+
+### Панель заметки
+<!-- section: terms-knowledge-note -->
+
+- **Вкладка заметки**: каждая открытая заметка — вкладка над панелью. Крестик (**Close Tab**) закрывает её, и AKit коммитит ждущие правки. Подробнее: [Коммиты правок](knowledge#commits)
+- **Edit**: показать Markdown заметки и править его. Каждая правка сразу сохраняется в файл, байт в байт. Подробнее: [Edit](knowledge#note-edit)
+- **Properties**: форма над заметкой: **Kind** и поля вида. Значение сохраняется по Return; `[a, b]` — список, пустое значение удаляет строку. Меняется одна строка начала заметки. То же делает `akit kb set`. Подробнее: [Properties](knowledge#kinds-properties)
+- **Add Field… / Add**: в **Properties**: добавить свой ключ (**Name**) и значение (**Value**). Подробнее: [Properties](knowledge#kinds-properties)
+- **Copy**: скопировать весь текст заметки. Подробнее: [Copy и Paste](knowledge#note-copy)
+- **Paste**: добавить текст из буфера обмена в конец заметки и сохранить. Подробнее: [Copy и Paste](knowledge#note-copy)
+- **Open in Obsidian**: открыть заметку в Obsidian (`obsidian://open`), в том vault, где лежит база. Подробнее: [Open in Obsidian](knowledge#note-obsidian)
+- **Delete… / Move to Trash**: переместить заметку (или пространство) в Корзину и сразу закоммитить удаление. Подробнее: [Удалить](knowledge#spaces-delete)
+- **Committed 1 edit. / Committed N edits.**: AKit только что закоммитил правки из очереди. Подробнее: [Коммиты правок](knowledge#commits)
+- **No note open**: ни одна заметка не открыта. Нажмите на заметку в списке. Подробнее: [Открыть заметку](knowledge#spaces-open)
+- **Maps**: часть списка над заметками: карты пространства, файлы `maps/*.excalidraw`. Нажмите на карту, чтобы открыть её справа. То же показывает `akit kb maps`. Подробнее: [Открыть карту](knowledge#maps-open)
+- **Edit** (карта): включить правку карты: инструменты Excalidraw, каждая правка сохраняется в файл через 0,8 секунды. Выключенная — режим просмотра, где нажатие на блок открывает его заметку. Подробнее: [Править карту](knowledge#maps-edit)
+- **Close Map**: закрыть вкладку карты на экране и закоммитить ждущие правки. Если в пространстве открыта другая карта, видна она, иначе панель заметки. Подробнее: [Открыть карту](knowledge#maps-open)
+- **Вкладка карты**: каждая открытая карта пространства — вкладка над картой. Крестик (**Close Tab**) закрывает её и коммитит ждущие правки. Подробнее: [Открыть карту](knowledge#maps-open)
+- **Checks**: часть панели заметки: находки проверки в этой заметке, по строке на находку; их ссылки и пути в тексте серые. Подробнее: [Серые ссылки в заметке](knowledge#lint-note)
+- **Relations**: часть панели заметки: стрелки к заметке и от неё на всех картах: другая заметка, подпись стрелки, заметка потока (**flow …**) и карта; нажатие открывает их. То же показывает `akit kb relations`. Подробнее: [Relations заметки](knowledge#maps-relations)
+- **Rename… / New name / Changes / Rename**: переименовать заметку или карту и все ссылки на неё, всё или ничего, одним коммитом. **Changes** показывает план или почему переименовать нельзя. То же делает `akit kb rename`. Подробнее: [Rename…](knowledge#rename)
+- **Save the open map first…**: перед переименованием открытая карта не смогла сохранить последнюю правку, поэтому ничего не переименовано. Подробнее: [Rename…](knowledge#rename)
+- **New Map… / Add Map**: новая пустая карта пространства. Поля **Area** и **Name** обязательные. AKit сразу коммитит её и открывает в **Edit**. То же делает `akit kb new-map`. Подробнее: [New Map…](knowledge#maps-new)
+- **Delete…** (карта): переместить файл карты в Корзину и сразу закоммитить удаление. То же делает `akit kb rm <карта> --yes`. Подробнее: [Delete… карты](knowledge#maps-delete)
+- **Changed on disk / Reload / Keep Mine**: файл карты поменялся на диске, пока она была открыта; AKit ничего не записал. **Reload** показывает карту с диска, **Keep Mine** записывает вашу, а копию с диска кладёт в `~/.akit/backups`. Подробнее: [Changed on disk](knowledge#maps-conflict)
+- **Changed on disk / Reload / Keep Mine** (заметка): заметку, открытую в **Edit**, поменяли снаружи (Obsidian, git). **Reload** показывает версию с диска, **Keep Mine** записывает ваш текст, а копию с диска кладёт в `~/.akit/backups`. Подробнее: [Правка в Obsidian](knowledge#search-watch)
+- **Show in Finder** (карта): показать файл `.excalidraw` карты в Finder. Есть над картой и в правом щелчке по карте в **Maps**. Подробнее: [Открыть карту](knowledge#maps-open)
+- **The link … points to no note or map in this base.**: ссылка блока или стрелки ни на что в базе не ведёт. Поправьте ссылку или создайте заметку. Подробнее: [Открыть заметку блока](knowledge#maps-block)
+
+### Слова базы знаний
+<!-- section: terms-knowledge-words -->
+
+- **База знаний** (knowledge base): папка мира (по умолчанию `~/.akit/local/knowledge/<мир>`) с `areas/` и `inbox/`, локальный git-репозиторий без remote. Подробнее: [Что такое база](knowledge#overview)
+- **Вид** (kind): строка `kind:` в начале заметки: `service`, `flow`, `team`. Виды и их поля лежат в `kb.yaml` базы. Подробнее: [Виды и свойства](knowledge#kinds)
+- **Свойство** (property): строка `ключ: значение` в начале заметки, например `owner: team-a`. Подробнее: [Properties](knowledge#kinds-properties)
+- **`kb.yaml`**: файл базы со списком видов и полей каждого вида. Его создаёт **Create Base…**; без него AKit берёт виды по умолчанию. Подробнее: [Виды и свойства](knowledge#kinds)
+- **Карта** (map): схема пространства в файле `areas/<пространство>/maps/<имя>.excalidraw`: блоки со ссылками на заметки и стрелки-связи между ними. Подробнее: [Карты](knowledge#maps)
+- **`area.yaml`**: необязательный файл пространства: название, описание, проекты. Подробнее: [Настройки пространства](knowledge#area-settings)
+- **Очередь коммитов** (commit queue): файл `.akit-pending.json` в базе: пути правок, которые ждут коммита. Подробнее: [Коммиты правок](knowledge#commits)
+- **Замок базы** (`.akit-queue.lock`): его берёт каждый коммит в базе, из приложения и из терминала. Подробнее: [Как AKit не путает коммиты](knowledge#commits-lock)

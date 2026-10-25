@@ -55,6 +55,20 @@ ProjectSetup already sees.
 calls `ModelCall` itself, as for Rewrite with Skill, so `AKitHelp` needs neither Lab nor any harness
 module. It is not in Foundation: the prompt is one feature's logic, not a shared tool.
 
+2026-10-24 (knowledge base, `knowledge.md`, slice 1.1): new module `AKitKnowledge`, on
+Foundation, Model, Brain and Yams. `AKitDoctor → AKitKnowledge` (the "knowledge base" line) and
+`AKitCommandLine → AKitKnowledge` (`akit kb`); the app imports it too. Knowledge sits beside
+Review, below Doctor, so the arrows still point down.
+
+2026-10-25 (knowledge base, slice 5.3): `AKitLab → AKitKnowledge`, for `KnowledgeChecker`: the
+check model's call on a proposal (candidates, `ModelCall` with the origin `knowledgeBase`, the
+stored marks), which `akit kb check` and the app's Inbox → Check Again share. Knowledge needs
+nothing from Lab (its model calls are only built there), so the arrows still point down.
+
+2026-10-25 (knowledge base, slice 6.1): `AKitReview → AKitKnowledge`, for the knowledge card
+Gather writes (K18): the base choice, the index refresh, the notes' `repo:` / `files:` and the
+map relations. Knowledge needs nothing from Review, so the arrows still point down.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -85,7 +99,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 
 | Module | Responsibility | Files that move there (from `AKitCore/Sources/AKitCore/`) |
 |---|---|---|
-| `AKitFoundation` | Shared toolbox with no harness knowledge: machine environment, running processes, secrets, backups, diffs, parsers, file walking, hashing. | `Support/*` except `FileProbe.swift`; `MCP/ConfigText.swift` (ConfigText, ConfigTextError, MiniTOML); `Sessions/JSONLines.swift`; new `FileWalk.swift` (`children`, `isDirectory` and `tilde`, taken out of `SkillScanner`); new `Trash.swift` (`SkillRemover.defaultTrash`); new `Checksum.swift` (`ProjectSetup.sha256`, which is the same code as `JSONLines.hash`); `TextDiff.unified` (was `AKitCLI.unifiedDiff`) |
+| `AKitFoundation` | Shared toolbox with no harness knowledge: machine environment, running processes, secrets, backups, diffs, parsers, file walking, hashing. | `Support/*` except `FileProbe.swift`; `MCP/ConfigText.swift` (ConfigText, ConfigTextError, MiniTOML); `Sessions/JSONLines.swift`; new `FileWalk.swift` (`children`, `isDirectory` and `tilde`, taken out of `SkillScanner`); new `Trash.swift` (`SkillRemover.defaultTrash`); new `Checksum.swift` (`ProjectSetup.sha256`, which is the same code as `JSONLines.hash`); `TextDiff.unified` (was `AKitCLI.unifiedDiff`); `SQLite.swift` (`SQLiteDatabase`, `SQLValue`, `SQLBindable`: the WAL wrapper over the system SQLite, moved from Insights' `IndexDatabase`, which is now a typealias; `AKitUsage/HarnessUsage.swift` may move onto it later) and `FileLock.swift` (`FileLock`, `flock` with an optional timeout; Insights' `ImportLock` is a typealias) |
 | `AKitModel` | Shared vocabulary that several modules use. Only value types: no file access, no logic. | `Model/Harness.swift` (HarnessID, HarnessInstallation, ConfigLocation); from `Model/Skill.swift`: SkillScope, SkillRoot; `MCPSource` and `MCPApproval` (from `MCP/MCPServer.swift`); `InstallScope` (from `SkillsSh/SkillInstaller.swift`); `TokenCounts` (from `Sessions/SessionUsage.swift`) |
 | `AKitHarnesses` | Detects which harnesses are installed and where each one keeps things: config folders, skill folders (also those of Pi packages, `PiPackages`), MCP files, known projects (Claude Code from `~/.claude.json`, Pi from its session headers). | `Adapters/*` (HarnessAdapter, the four adapters, HarnessCatalog; without `SystemPromptAccess`); `Custom/CustomHarness.swift`; `Support/FileProbe.swift`; `Skills/ProjectFinder.swift`; new `HarnessCatalog.configRoot(of:in:)` and `HarnessCatalog.adapter(for:)` |
 | `AKitSkills` | Finds, lists, reads and trashes skills on disk, and knows where each skill came from. | `Model/Skill.swift` (`Skill`); `Skills/SkillScanner.swift` (+ PiNameRule, SkillLock); `SkillFiles.swift`; `SkillRemover.swift`; `SkillsSh/InstalledSkillLock.swift` |
@@ -103,6 +117,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitErrorAnalysis` | Error analysis (added 2026-10-01, `error-analysis.md`): blind notes and the verifier, bootstrap labels, failure modes, checks, batch runs and reports, fixes and control sets. | new |
 | `AKitDoctor` | `akit doctor` and Help → Copy Diagnostics (added 2026-10-09, `machine-setup.md`): a read-only report of what AKit sees on this Mac, never a secret. Also the Help → Report a Bug… / Suggest a Feature… link (`IssueReport`, 2026-10-11). | new |
 | `AKitHelp` | Ask AKit (added 2026-10-14, `ask-akit.md`): the guide sections, prompt and answer of a question about a screen. Pure; the app makes the call. | new |
+| `AKitKnowledge` | Knowledge base (added 2026-10-24, `knowledge.md`): a base folder per world (by default `~/.akit/local/knowledge/<world>`, or the one set in `bases.json`; git without a remote), its areas and Markdown notes (frontmatter, `##` sections, byte-preserving edits), the `[[link]]` resolver, the base choice, the one commit function under the base's git lock, `obsidian://open` links. No UI, no model calls. | new |
 | `AKitReview` | AKit Review (added 2026-10-15, `review.md`): project profiles and the three config levels, Gather from GitLab and Azure DevOps REST into a context pack, the review passes in Pi, the requests and the drafts AKit writes after approval. | new |
 | `AKitCommandLine` | The logic behind the `akit` command, including the `akit setup` wizard. | `CLI/AKitCLI.swift`; `CLI/Onboarding.swift` (used only by the CLI; moved from `Brain/` in step 11) |
 | `akit` (executable) | Unchanged. It now imports `AKitCommandLine`, `AKitInsights` (`RecordSession`), `AKitHarnesses`, `AKitBrain` and `AKitFoundation`. | `Sources/akit/main.swift` |
@@ -156,12 +171,13 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
 | `AKitRender` | Foundation (`JSONValue`), Brain |
 | `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Instructions (the core block markers), Brain, Render, Insights, MCP (MCP switches' project files) |
-| `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
+| `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac), Knowledge (`KnowledgeChecker`: the check model's call on a proposal, shared by `akit kb check` and the app's Inbox, 2026-10-25; `KnowledgeMapDrawer`: Draw Map with Pi…, 5.4) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
-| `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup |
+| `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup, Knowledge (the knowledge base line) |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
-| `AKitReview` | Foundation, Model, Harnesses (Pi's packages, for Pi steps), Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Yams |
-| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review |
+| `AKitReview` | Foundation, Model, Harnesses (Pi's packages, for Pi steps), Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Knowledge (the knowledge card of Gather), Yams |
+| `AKitKnowledge` | Foundation, Model, Brain (this Mac's kind, the brain's root, project ids), Yams (note frontmatter) |
+| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review, Knowledge |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 
 Rules:

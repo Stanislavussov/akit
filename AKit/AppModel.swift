@@ -5,6 +5,7 @@ import AKitFoundation
 import AKitHarnesses
 import AKitInsights
 import AKitInstructions
+import AKitKnowledge
 import AKitLab
 import AKitMCP
 import AKitModel
@@ -240,6 +241,13 @@ final class AppModel {
     func updateLayer(_ name: String, to details: LayerEditor.Details) async throws {
         defer { Task { await refresh() } }
         try await oneLayerEditAtATime { brain in try await LayerEditor.update(name, to: details, in: brain, env: .current) }
+    }
+
+    /// Knowledge → Pi Template…: commits the base's pending edits, then writes the previewed core
+    /// layer section for Pi only (one brain commit); in line with the other layer edits.
+    func setKnowledgePiTemplate(_ edit: LayerEditor.FileEdit, base: KnowledgeBase?) async throws {
+        defer { Task { await refresh() } }
+        try await oneLayerEditAtATime { brain in try await KnowledgePiTemplate.apply(edit, base: base, brain: brain, env: .current) }
     }
 
     /// Import to Brain… of an instruction section: the layer's AGENTS.md text (committed), then the

@@ -23,6 +23,10 @@ public struct ReviewRunChoices: Sendable, Hashable {
     public var pi = ReviewPiExtras()
     /// Review the whole merge request again, not only what changed since the last review (R28).
     public var fullReview = false
+    /// The knowledge base of this run's card (`--knowledge-base WORLD|PATH`), over the profile's.
+    public var knowledgeBase: String?
+    /// The card's size in tokens for this run (`--knowledge-budget N`), over the profile's.
+    public var knowledgeBudget: Int?
 
     public init(scenario: String? = nil, rolesOn: [String] = [], rolesOff: [String] = [], settings: ReviewSettingsPatch = ReviewSettingsPatch(),
                 workItems: [Int] = [], notes: String = "", links: [String] = [], extraServers: [String] = []) {
@@ -136,6 +140,14 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var constraints: [String]
     public var pathInstructions: [ReviewProfile.PathInstruction]
     public var knowledge: [String]
+    /// The knowledge base Gather makes the card from (K18): a world name or a path; nil = none
+    /// (a `knowledge:` folder that is a base still gives one).
+    public var knowledgeBase: Sourced<String>?
+    /// The knowledge card's size in tokens; nil in runs made before 2026-10-25.
+    public var knowledgeBudget: Sourced<Int>?
+    /// Filled by Gather: the folder of the base the card came from, which the review passes'
+    /// `akit_kb_search` / `akit_kb_show` read (`AKIT_REVIEW_KB_BASE`); nil without a base.
+    public var knowledgeBasePath: String?
     public var gather: [ReviewProfile.GatherCommand]
     public var workItems: [Int]
     /// Filled by Gather: the commit the worktree and every finding refer to.
@@ -326,6 +338,18 @@ public enum ReviewResolver {
         spec.summaryLanguage = pick(\.summaryLanguage, fallback: preferredLanguage(preferredLanguages))
         let turnedOff = off.filter { !choices.rolesOn.contains($0) }.sorted()
         spec.rolesOff = turnedOff.isEmpty ? nil : turnedOff
+        if let base = choices.knowledgeBase {
+            spec.knowledgeBase = Sourced(base, .run)
+        } else if let base = profile?.knowledgeBase {
+            spec.knowledgeBase = Sourced(base, .project)
+        }
+        if let budget = choices.knowledgeBudget {
+            spec.knowledgeBudget = Sourced(budget, .run)
+        } else if let budget = profile?.knowledgeBudget {
+            spec.knowledgeBudget = Sourced(budget, .project)
+        } else {
+            spec.knowledgeBudget = Sourced(ReviewKnowledgeCard.defaultBudget, .builtIn)
+        }
         let levels: [(ReviewPiExtras, ReviewSource)] = [(catalog.brainPi, .brain), (profile?.pi ?? ReviewPiExtras(), .project), (choices.pi, .run)]
         for (extras, _) in levels {
             if let problem = ReviewPiFlags.problem(extras.flags) { throw Failure(message: "Pi flags: \(problem)") }
@@ -442,6 +466,8 @@ public enum ReviewResolver {
             }
         }
         if !spec.knowledge.isEmpty { lines += ["Knowledge folders [project]:"] + spec.knowledge.map { "  \($0)" } }
+        if let base = spec.knowledgeBase { lines.append(line("knowledge_base", base.value, base.source)) }
+        if let budget = spec.knowledgeBudget { lines.append(line("knowledge_budget", String(budget.value), budget.source)) }
         if !spec.gather.isEmpty { lines += ["Gather commands [project]:"] + spec.gather.map { "  \($0.name): \($0.run)" } }
         let access = spec.access
         let source = spec.project == nil ? "default" : "project"
