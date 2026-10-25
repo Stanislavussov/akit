@@ -3,9 +3,10 @@ import SwiftUI
 
 /// The Inbox tab of the Knowledge screen (5.3): the agents' proposals in `inbox/` (`akit kb
 /// inbox`) with their checks and the check model's marks; the selected one shows what Accept
-/// would write. Accept… writes a note proposal in one commit (after its diff is confirmed) or opens
-/// an arrow's map with "Add an arrow?"; Reject… moves the file to the Trash; Check Again asks the
-/// check model (`akit kb check`).
+/// would write. Accept… writes a note proposal in one commit (after its diff is confirmed), opens
+/// an arrow's map with "Add an arrow?", or (5.4) puts a map draft in Edit with its blocks linked
+/// to their notes for Save Map; Reject… moves the file to the Trash; Check Again asks the check
+/// model (`akit kb check`).
 struct InboxPanel: View {
     @Environment(KnowledgeModel.self) private var model
 
@@ -41,9 +42,9 @@ private struct ProposalRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: entry.kind == .arrow ? "arrow.right" : "doc.text")
+            Image(systemName: entry.kind == .arrow ? "arrow.right" : entry.kind == .map ? "point.3.connected.trianglepath.dotted" : "doc.text")
                 .foregroundStyle(.secondary)
-                .help(entry.kind == .arrow ? "An arrow for a map" : "A change of a note")
+                .help(entry.kind == .arrow ? "An arrow for a map" : entry.kind == .map ? "A map an agent drew" : "A change of a note")
             VStack(alignment: .leading, spacing: 2) {
                 Text(proposalTitle(entry)).lineLimit(1)
                 if let reason = entry.reason { Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
@@ -87,6 +88,8 @@ private struct ProposalDetail: View {
 
     var body: some View {
         let plan = model.acceptPlan(entry)
+        let mapRefused = { if case .failure? = model.mapPlan(entry) { true } else { false } }()
+        let accepting = model.mapAcceptRequest?.proposal.id == entry.id
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -98,9 +101,12 @@ private struct ProposalDetail: View {
                     Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Button("Accept…", systemImage: "checkmark") { model.requestAccept(entry) }
-                    .disabled(entry.proposal == nil || entry.checks.contains { $0.status == .failed } || { if case .failure? = plan { true } else { false } }())
+                    .disabled(entry.proposal == nil || entry.checks.contains { $0.status == .failed } || { if case .failure? = plan { true } else { false } }()
+                        || mapRefused || accepting)
                     .help(entry.kind == .arrow
                         ? "Open the map in Edit and draw this arrow there (and a block for a note the map lacks)"
+                        : entry.kind == .map
+                        ? "Put the draft in Edit with each block linked to the note its label names; then Save Map saves it into the base in one commit"
                         : "See the change, then write it into the note and commit it; the old note is backed up")
                 Button("Reject…", systemImage: "xmark") { model.rejectRequest = entry.id }
                     .help("Move the proposal's file to the Trash; nothing in the base changes")
@@ -115,6 +121,7 @@ private struct ProposalDetail: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if entry.kind == .map { MapDraftView(entry: entry) }
                     if let reason = entry.reason {
                         LabeledContent("Reason") { Text(reason).textSelection(.enabled) }
                     }
@@ -154,27 +161,123 @@ private struct ProposalDetail: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    GroupBox(entry.kind == .arrow ? "Arrow" : "What Accept writes") {
-                        Group {
-                            switch plan {
-                            case .success(let plan)?: Text(plan.diff).font(.callout.monospaced())
-                            case .failure(let error)?: Text(error.message).foregroundStyle(.red)
-                            case nil:
-                                if let arrow = entry.arrow {
-                                    Text("\(arrow.text)\n" + (arrow.map.map { "on the map \($0)" } ?? "on a map of \(arrow.from.split(separator: "/").first ?? "")")
-                                        + ". Accept… opens the map in Edit and asks “Add an arrow?”.")
-                                } else {
-                                    Text("AKit can't read this proposal; reject it.").foregroundStyle(.red)
+                    if entry.kind != .map {
+                        GroupBox(entry.kind == .arrow ? "Arrow" : "What Accept writes") {
+                            Group {
+                                switch plan {
+                                case .success(let plan)?: Text(plan.diff).font(.callout.monospaced())
+                                case .failure(let error)?: Text(error.message).foregroundStyle(.red)
+                                case nil:
+                                    if let arrow = entry.arrow {
+                                        Text("\(arrow.text)\n" + (arrow.map.map { "on the map \($0)" } ?? "on a map of \(arrow.from.split(separator: "/").first ?? "")")
+                                            + ". Accept… opens the map in Edit and asks “Add an arrow?”.")
+                                    } else {
+                                        Text("AKit can't read this proposal; reject it.").foregroundStyle(.red)
+                                    }
                                 }
                             }
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(12)
             }
         }
+    }
+}
+
+/// A map proposal (5.4): the draft on a read-only canvas, what Accept links (label → [[note]]),
+/// the labels that stay plain, and the blocks and arrows it adds or replaces. In Accept the canvas
+/// is in Edit with the links set, under "Save the map?".
+private struct MapDraftView: View {
+    @Environment(KnowledgeModel.self) private var model
+    let entry: KnowledgeInbox.Entry
+
+    var body: some View {
+        let plan = model.mapPlan(entry)
+        let accepting = model.mapAcceptRequest?.proposal.id == entry.id
+        VStack(alignment: .leading, spacing: 10) {
+            if accepting, let request = model.mapAcceptRequest { SaveMapBanner(plan: request) }
+            if let text = model.draftText(entry) {
+                MapCanvasView(scene: .init(key: KnowledgeInbox.draftPath(of: entry.id), text: text, generation: model.draftGeneration),
+                              viewMode: !accepting)
+                    .frame(height: 340)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
+                    .help(accepting ? "The draft in Edit: change it if you like; Save Map saves what you see" : "The agent's draft, as Excalidraw shows it (read only)")
+            } else {
+                Text("The draft \(KnowledgeInbox.draftPath(of: entry.id)) is missing; reject the proposal.").foregroundStyle(.red)
+            }
+            GroupBox("Links on Accept") {
+                VStack(alignment: .leading, spacing: 4) {
+                    switch plan {
+                    case .success(let plan)?:
+                        if plan.links.isEmpty { Text("No label names a note: every block stays plain.").foregroundStyle(.secondary) }
+                        ForEach(plan.links, id: \.element) { link in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Image(systemName: "link").foregroundStyle(.tint)
+                                Text(link.label).bold()
+                                Text("→ \(link.link)").font(.callout.monospaced())
+                                Text(link.note).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        ForEach(plan.unlinked, id: \.element) { plain in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Image(systemName: "minus.circle").foregroundStyle(.secondary)
+                                Text(plain.label).bold()
+                                Text(plain.candidates.isEmpty ? "stays plain: no note has this name"
+                                    : "stays plain: fits " + plain.candidates.joined(separator: ", "))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Divider()
+                        Text(plan.diff).font(.callout.monospaced())
+                    case .failure(let error)?: Text(error.message).foregroundStyle(.red)
+                    case nil: EmptyView()
+                    }
+                }
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+/// "Save the map?" above the draft in Edit (Accept of a map proposal): Save Map writes it into the
+/// base and commits it; Cancel leaves the proposal open.
+private struct SaveMapBanner: View {
+    @Environment(KnowledgeModel.self) private var model
+    let plan: KnowledgeInbox.MapPlan
+    @State private var working = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "square.and.arrow.down").font(.title3).foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Save the map?").bold()
+                Text(plan.mapPath + (plan.original == nil ? (plan.newArea ? " (new, in a new area)" : " (new)") : " (replaces the map; the old one is backed up)"))
+                    .font(.callout.monospaced()).textSelection(.enabled)
+                Text("\(plan.links.count) block\(plan.links.count == 1 ? "" : "s") linked to notes" + (plan.unlinked.isEmpty ? "." : ", \(plan.unlinked.count) plain."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Cancel") { model.cancelMapAccept() }
+                .help("Leave the proposal in the Inbox; nothing is saved")
+            Button("Save Map") {
+                working = true
+                Task {
+                    await model.saveAcceptedMap()
+                    working = false
+                }
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(working)
+            .help("Save the map as Excalidraw wrote it into the base, commit it, and remove the proposal")
+        }
+        .controlSize(.small)
+        .padding(8)
+        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 

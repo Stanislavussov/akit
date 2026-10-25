@@ -95,13 +95,15 @@ public enum WatchFilter {
         return batch
     }
 
-    /// The files under `inbox/` (hidden ones left out): the Inbox badge.
+    /// The files under `inbox/` (hidden ones left out, and a map proposal's draft, which goes with
+    /// its proposal): the Inbox badge.
     public static func inboxCount(_ root: URL) -> Int {
         let inbox = root.appending(path: "inbox", directoryHint: .isDirectory)
         guard let walker = FileManager.default.enumerator(at: inbox, includingPropertiesForKeys: [.isRegularFileKey],
                                                           options: [.skipsHiddenFiles]) else { return 0 }
         var count = 0
-        for case let url as URL in walker where (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+        for case let url as URL in walker where url.pathExtension != "excalidraw"
+            && (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
             count += 1
         }
         return count

@@ -634,8 +634,9 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 - Агент узнал из кода новый факт: «`billing` повторяет запрос три раза». Он предлагает добавить часть `## Retries` в заметку `payments/billing`.
 - Агент нашёл систему, которой нет в базе. Он предлагает новую заметку в новом пространстве, например `support/helpdesk`, а не кладёт её в чужое пространство.
 - Агент видит связь, которой нет на карте. Он предлагает стрелку, например `orders-api -events-> billing`. Стрелку на карте рисуете вы.
+- Агент нарисовал карту системы. Он присылает её черновик, а вы принимаете его как карту: [Карты от агента](#inbox-map).
 
-В примере базы в `inbox/` уже лежат два предложения: часть `## Refunds` и свойство `sla` для `payments/billing`, и стрелка `billing -paid orders-> warehouse` для карты `logistics/maps/routes`.
+В примере базы в `inbox/` уже лежат три предложения: часть `## Refunds` и свойство `sla` для `payments/billing`, стрелка `billing -paid orders-> warehouse` для карты `logistics/maps/routes` и карта `payments/maps/order-flow`, которую нарисовал агент.
 
 Предложения видно на вкладке **Inbox** экрана, а в терминале — командой `akit kb inbox`. Принимает и отклоняет их только человек.
 
@@ -658,7 +659,7 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 
 AKit читает `inbox/` заново, когда агент кладёт туда файл: список и число в **Inbox (N)** обновляются сами.
 
-![Экран Knowledge, вкладка Inbox: вверху переключатель Notes, Inbox (2) и Lint (8); слева два предложения агента pi — стрелка payments/billing -paid orders-> logistics/warehouse и заметка payments/billing с флажком 1; справа выбранное предложение payments/billing с кнопками Accept…, Reject… и Check Again, частями Reason, Checks, Check model с пометкой duplicate и What Accept writes с разницей: + sla: next day и новая часть Refunds](images/knowledge-inbox.png)
+![Экран Knowledge, вкладка Inbox: вверху переключатель Notes, Inbox (3) и Lint (8); слева три предложения агента pi — стрелка payments/billing -paid orders-> logistics/warehouse, заметка payments/billing с флажком 1 и карта payments/maps/order-flow; справа выбранное предложение payments/billing с кнопками Accept…, Reject… и Check Again, частями Reason, Checks, Check model с пометкой duplicate и What Accept writes с разницей: + sla: next day и новая часть Refunds](images/knowledge-inbox.png)
 
 ### Средне: принять стрелку: Add an arrow?
 <!-- section: inbox-arrow -->
@@ -685,6 +686,7 @@ AKit проверяет предложение без модели, сразу:
 | `target` | заметка лежит в `areas/`, путь не выходит из базы, у новой заметки названо пространство |
 | `links` | каждая ссылка `[[…]]` ведёт к заметке или карте (новая заметка тоже считается) |
 | `arrow` | у стрелки оба конца — заметки, а карта существует |
+| `map` | у предложения карты есть черновик, и это сцена Excalidraw с элементами |
 
 Если проверка не прошла, агент получает отказ, и файл не появляется. `kb inbox` проверяет заново: база могла измениться.
 
@@ -702,6 +704,7 @@ AKit проверяет предложение без модели, сразу:
 - Заметка уже есть: текст — это части `## Заголовок`. Часть с тем же заголовком заменяется, новая добавляется в конец.
 - Заметки нет: текст становится новой заметкой. Если пространства нет, AKit создаёт и его.
 - Стрелку `accept` не рисует: он пишет «Add the arrow … in the app (Knowledge → Inbox)» и выходит с кодом 2. Предложение остаётся. Стрелку принимают на вкладке **Inbox**: [Add an arrow?](#inbox-arrow).
+- Карту `accept` тоже не пишет: он пишет «Open Knowledge → Inbox to accept a map.» и выходит с кодом 2. Карту принимают на вкладке **Inbox**: [Карты от агента](#inbox-map).
 
 ### Средне: модель проверки: akit kb check
 <!-- section: inbox-check -->
@@ -725,6 +728,45 @@ AKit проверяет предложение без модели, сразу:
 **Какая модель.** Settings → **Knowledge check model**: **Model** — модель Pi в виде `provider/model` (по умолчанию `opencode-go/gpt-6-luna`), **Thinking** — сколько модель думает (по умолчанию `low`). **Reset to Default** возвращает модель по умолчанию. В терминале то же делает `akit kb check-model MODEL [THINKING]`, а `akit kb check ID --model provider/model` меняет модель на один раз.
 
 ![Окно Settings, часть Knowledge check model: поле Model со списком моделей Pi и значением Default (opencode-go/gpt-6-luna), поле Thinking со значением low; ниже пояснение: akit kb check отправляет предложение и до 1500 токенов заметок и стрелок этой модели Pi, она только ставит пометки](images/knowledge-check-settings.png)
+
+### Средне: карты от агента
+<!-- section: inbox-map -->
+
+**Что это:** агент рисует карту программой [excalidraw-cli](https://github.com/swiftlysingh/excalidraw-cli) и присылает черновик командой `akit kb propose --map ПРОСТРАНСТВО/ИМЯ --file черновик.excalidraw`. AKit кладёт черновик рядом с предложением, в `inbox/<id>.excalidraw`. Подписи блоков агент берёт из имён заметок. Когда вы принимаете карту, AKit даёт каждому такому блоку ссылку на его заметку.
+
+1. На вкладке **Inbox** выберите предложение карты. У него значок карты, а в списке написано, например, `payments/maps/order-flow`.
+2. Справа видно черновик: карту, как её показывает Excalidraw. Здесь её нельзя менять.
+3. Под картой часть **Links on Accept**:
+   - строка со значком ссылки — блок получит ссылку, например `orders-api → [[orders-api]]`;
+   - строка со значком минуса — блок останется без ссылки: заметки с таким именем нет («no note has this name») или их несколько («fits …»);
+   - ниже — что изменится: `+ block …` и `+ arrow …`. Если карта с таким именем уже есть, AKit пишет «replaces the map» и показывает, какие блоки и стрелки уйдут (`-`) и какие останутся.
+4. **Accept…** переводит черновик в режим правки и ставит ссылки на блоки. Над картой появляется полоса **Save the map?** с путём карты и числом блоков со ссылками. Можно поправить карту, как обычную.
+5. **Save Map** сохраняет карту в `areas/ПРОСТРАНСТВО/maps/ИМЯ.excalidraw` и делает один коммит. Предложение и черновик уходят из `inbox/`. Новая карта открывается на вкладке **Notes**. Если карта заменяет старую, старая копируется в `~/.akit/local/backups/knowledge/`. **Cancel** ничего не сохраняет: черновик снова показан без ссылок, предложение остаётся.
+
+Пример: в примере базы выберите `2026-10-24-payments-maps-order-flow`. **Links on Accept** показывает `orders-api → [[orders-api]]` и `billing → [[billing]]`. **Accept…** → **Save Map** сохраняет карту `payments/maps/order-flow`, и в git появляется коммит «Add map payments/maps/order-flow (accept proposal 2026-10-24-payments-maps-order-flow)». Заметка `orders-api` теперь показывает в **Relations** стрелку «events» к `billing` с этой карты.
+
+Если пространства ещё нет, AKit создаёт его, когда вы сохраняете карту. Файл, который не является сценой Excalidraw, и текст с токеном или паролем AKit не принимает: агент сразу получает отказ.
+
+![Экран Knowledge, вкладка Inbox: выбрано предложение карты payments/maps/order-flow от агента pi; справа черновик на карте Excalidraw — блоки orders-api и billing и стрелка events между ними; ниже часть Links on Accept со строками orders-api → [[orders-api]] и billing → [[billing]] и список изменений: + block orders-api, + block billing, + arrow orders-api -events-> billing; вверху кнопки Accept…, Reject… и Check Again](images/knowledge-inbox-map.png)
+
+### Средне: Draw Map with Pi…
+<!-- section: draw-map -->
+
+**Что это:** AKit сам просит Pi нарисовать карту. Черновик приходит на вкладку **Inbox**, как от любого агента.
+
+1. На панели инструментов нажмите **Draw Map with Pi…**.
+2. **Area** — пространство карты. **New Area…** — новое пространство, его имя вы пишете в поле **New area**.
+3. **Map name** — имя файла карты, например `order-flow`.
+4. **Model** — модель Pi. Если поле пустое, AKit берёт модель проверки (Settings → **Knowledge check model**).
+5. **What the map shows** — что нарисовать, например «Как заказ доходит до billing».
+6. **Run** запускает Pi. В части **Pi** видно, какие команды он запускает. **Stop** останавливает Pi.
+7. Когда Pi прислал черновик, окно закрывается, и вкладка **Inbox** открывается на новом предложении. Дальше — как в [Картах от агента](#inbox-map).
+
+Pi получает ваш текст, имена заметок пространства и шаги: нарисовать карту программой excalidraw-cli (через `npx`, если её нет), подписать блоки именами заметок и отправить черновик командой `akit kb propose --map`. Pi не принимает и не отклоняет предложения. Отправка идёт по правилам отправки (Settings → **Sending policy**), под месячным лимитом. В журнале отправок она записана как `kb-draw`.
+
+То же можно сделать без AKit: попросите Pi в терминале нарисовать карту. Навык `/akit` знает те же шаги.
+
+![Окно Draw Map with Pi: поля Area со значением payments, Map name со значением order-flow, Model со значением по умолчанию — моделью проверки opencode-go/gpt-6-luna, и What the map shows с текстом How an order reaches billing; внизу кнопки Close и Run](images/knowledge-draw-map.png)
 
 > **Важно:** `accept` и `reject` — команды для человека. Агент запускает их, только если вы попросили об этом в этой сессии. Сам он предложения не принимает и не отклоняет.
 

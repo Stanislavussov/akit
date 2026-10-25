@@ -12,8 +12,8 @@ import Foundation
 /// ```
 /// ---
 /// id: "2026-10-25-payments-billing"
-/// kind: note                       # note | arrow (5.4 adds map)
-/// target: "payments/billing"       # note: the note id; arrow: the map id, or none
+/// kind: note                       # note | arrow | map (5.4)
+/// target: "payments/billing"       # note: the note id; arrow: the map id, or none; map: the map id
 /// reason: "Retries were missing"   # optional
 /// created: "2026-10-25T09:12:00Z"
 /// author: "claude"                 # optional: --author, else the harness when known
@@ -31,9 +31,11 @@ import Foundation
 /// A note proposal's body is a whole new note when the target doesn't exist (a `# title` is added
 /// when it has none; a new area is created on Accept, K23), else `## Heading` blocks: each
 /// replaces the section with the same heading, or is appended. An arrow proposal changes no file:
-/// the person draws it on the map in the app.
+/// the person draws it on the map in the app. A map proposal (5.4, K21) has its draft beside it,
+/// `inbox/<id>.excalidraw`, and a body that lists the draft's blocks and arrows; the person
+/// accepts it in the app, which links the blocks to their notes and saves Excalidraw's own bytes.
 public struct KnowledgeProposal: Sendable, Equatable {
-    public enum Kind: String, Sendable, Encodable, CaseIterable { case note, arrow }
+    public enum Kind: String, Sendable, Encodable, CaseIterable { case note, arrow, map }
 
     public struct Arrow: Sendable, Equatable, Encodable {
         /// Note ids.
@@ -75,7 +77,7 @@ public struct KnowledgeProposal: Sendable, Equatable {
 
     public let id: String
     public let kind: Kind
-    /// Note: the note id. Arrow: the map id, or nil.
+    /// Note: the note id. Arrow: the map id, or nil. Map: the map id (`payments/maps/flow`).
     public let target: String?
     public let reason: String?
     /// ISO 8601, UTC.
@@ -180,6 +182,8 @@ public enum KnowledgeInbox {
             case note(String, body: String, set: [KnowledgeProposal.Setting])
             /// `--arrow "A -kind-> B"`, optionally on `--map MAP`.
             case arrow(String, map: String?)
+            /// `--map AREA/NAME` with a draft `.excalidraw` (a file or stdin), 5.4.
+            case map(String, draft: Data)
         }
 
         public let change: Change
@@ -316,6 +320,7 @@ extension KnowledgeBase {
         let reason = draft.reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let author = draft.author?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         var proposal: Proposal
+        var mapDraft: Data?
         switch draft.change {
         case .note(let name, let body, let set):
             if body.utf8.count > KnowledgeInbox.maxBytes {
@@ -339,8 +344,21 @@ extension KnowledgeBase {
             if let map { onMap = try mapID(map) }
             proposal = Proposal(id: "", kind: .arrow, target: onMap, reason: reason, created: created, author: author,
                                 arrow: .init(from: from, kind: parts.kind, to: to, map: onMap))
+        case .map(let name, let data):
+            mapDraft = data
+            if data.count > KnowledgeInbox.maxMapBytes {
+                throw Failure(message: "The draft is \(data.count / 1024) KB; a map draft holds at most \(KnowledgeInbox.maxMapBytes / 1024) KB.")
+            }
+            let target = try mapProposalTarget(name)
+            let scene: ExcalidrawFile
+            switch ExcalidrawFile.parse(data) {
+            case .success(let read): scene = read
+            case .failure(let failure): throw Failure(message: "Refused, nothing was written: the draft is \(failure.message).")
+            }
+            proposal = Proposal(id: "", kind: .map, target: target.id, reason: reason, created: created, author: author,
+                                body: KnowledgeInbox.mapSummary(scene))
         }
-        let checks = checks(of: proposal)
+        let checks = checks(of: proposal, draft: mapDraft)
         let failed = checks.filter { $0.status == .failed }
         if !failed.isEmpty {
             throw Failure(message: "Refused, nothing was written: " + failed.map { $0.message ?? $0.name }.joined(separator: " "))
@@ -351,10 +369,14 @@ extension KnowledgeBase {
         let id = try newProposalID(for: proposal, now: now)
         proposal = Proposal(id: id, kind: proposal.kind, target: proposal.target, reason: proposal.reason, created: proposal.created,
                             author: proposal.author, set: proposal.set, arrow: proposal.arrow, body: proposal.body)
+        let draftFile = root.appending(path: KnowledgeInbox.draftPath(of: id))
         do {
             try FileManager.default.createDirectory(at: inboxFolder, withIntermediateDirectories: true)
+            // The draft first: a map proposal is never without it.
+            if let mapDraft { try mapDraft.write(to: draftFile, options: .withoutOverwriting) }
             try Data(proposal.text.utf8).write(to: root.appending(path: proposal.path), options: .withoutOverwriting)
         } catch {
+            if mapDraft != nil { try? FileManager.default.removeItem(at: draftFile) }
             throw Failure(message: "Couldn't write \(proposal.path): \(error.localizedDescription)")
         }
         return (proposal, checks)
@@ -375,7 +397,8 @@ extension KnowledgeBase {
         let stem = formatter.string(from: now) + "-" + (KnowledgeInbox.slug(subject).nilIfEmpty ?? "proposal")
         for counter in 1...999 {
             let id = counter == 1 ? stem : "\(stem)-\(counter)"
-            if !FileManager.default.fileExists(atPath: root.appending(path: KnowledgeInbox.path(of: id)).path) { return id }
+            if !FileManager.default.fileExists(atPath: root.appending(path: KnowledgeInbox.path(of: id)).path),
+               !FileManager.default.fileExists(atPath: root.appending(path: KnowledgeInbox.draftPath(of: id)).path) { return id }
         }
         throw Failure(message: "inbox/ has too many proposals named \(stem); accept or reject some first.")
     }
@@ -478,11 +501,20 @@ extension KnowledgeBase {
         return proposal
     }
 
-    /// The checks without a model, run against the base as it is now.
+    /// The checks without a model, run against the base as it is now. A map proposal's draft is
+    /// read from `inbox/<id>.excalidraw`.
     public func checks(of proposal: Proposal) -> [KnowledgeInbox.Check] {
+        checks(of: proposal, draft: proposal.kind == .map ? try? Data(contentsOf: root.appending(path: KnowledgeInbox.draftPath(of: proposal.id))) : nil)
+    }
+
+    /// The checks with a map proposal's draft as given (`propose` checks it before it is written).
+    func checks(of proposal: Proposal, draft: Data?) -> [KnowledgeInbox.Check] {
         var checks: [KnowledgeInbox.Check] = []
-        let texts = [proposal.body, proposal.reason ?? "", proposal.arrow?.text ?? "", proposal.arrow?.map ?? "", proposal.target ?? ""]
+        var texts = [proposal.body, proposal.reason ?? "", proposal.arrow?.text ?? "", proposal.arrow?.map ?? "", proposal.target ?? ""]
             + proposal.set.flatMap { [$0.key, $0.value] }
+        if proposal.kind == .map, let draft, case .success(let scene) = ExcalidrawFile.parse(draft) {
+            texts += scene.elements.flatMap { [$0.text ?? "", $0.link ?? ""] }
+        }
         checks.append(texts.contains(where: KnowledgeInbox.hasSecret)
             ? .init(name: "secret", status: .failed, message: "The proposal holds what looks like a secret (a token, a key or a password); a base never keeps one.")
             : .init(name: "secret", status: .passed))
@@ -532,6 +564,8 @@ extension KnowledgeBase {
             } else {
                 checks.append(.init(name: "arrow", status: .passed))
             }
+        case .map:
+            checks += mapChecks(proposal, draft: draft)
         }
         return checks
     }
@@ -544,7 +578,7 @@ extension KnowledgeBase {
     /// `# title`; properties come with `set`).
     public func planAccept(_ proposal: Proposal) throws(Failure) -> KnowledgeInbox.Plan {
         guard proposal.kind == .note else {
-            throw Failure(message: KnowledgeInbox.arrowMessage(proposal))
+            throw Failure(message: proposal.kind == .map ? KnowledgeInbox.mapMessage : KnowledgeInbox.arrowMessage(proposal))
         }
         if let failed = checks(of: proposal).first(where: { $0.status == .failed }) {
             throw Failure(message: "The proposal fails its \(failed.name) check: \(failed.message ?? "")")
@@ -665,7 +699,7 @@ extension KnowledgeBase {
     }
 
     /// `~/.akit/local/backups/knowledge/<world>/<yyyy-MM-dd'T'HHmmss.SSS>/<path>`, readable only by the user.
-    private func backupNote(_ data: Data, path: String, home: URL, now: Date) throws -> URL {
+    func backupNote(_ data: Data, path: String, home: URL, now: Date) throws -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd'T'HHmmss.SSS"
@@ -691,14 +725,21 @@ extension KnowledgeBase {
     public func reject(_ proposal: Proposal, env: HarnessEnvironment, trash: (URL) throws -> URL? = Trash.move) async throws(Failure) -> URL? {
         let file = root.appending(path: proposal.path)
         let git = KnowledgeGit(base: root, env: env)
-        let tracked = !((try? await git.run(["ls-files", "--", proposal.path])) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // A map proposal's draft goes with it.
+        let draftPath = KnowledgeInbox.draftPath(of: proposal.id)
+        let draft = root.appending(path: draftPath)
+        let paths = [proposal.path] + (FileWalk.isRegularFile(draft) ? [draftPath] : [])
+        let tracked = !((try? await git.run(["ls-files", "--"] + paths)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let place: URL?
-        do { place = try trash(file) } catch {
+        do {
+            place = try trash(file)
+            if paths.count > 1 { _ = try trash(draft) }
+        } catch {
             throw Failure(message: "Couldn't move \(proposal.path) to the Trash: \(error.localizedDescription)")
         }
         removeCheck(of: proposal.id)
         guard tracked else { return place }
-        do { try await git.commit(paths: [proposal.path], message: "Reject proposal \(proposal.id)") } catch {
+        do { try await git.commit(paths: paths, message: "Reject proposal \(proposal.id)") } catch {
             throw Failure(message: "\(proposal.path) is in the Trash, but its removal wasn't committed: \(error.message)")
         }
         return place

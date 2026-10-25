@@ -14,12 +14,12 @@ import Foundation
 /// and the files the seed wrote. Only such a base is updated or removed here. The seed's
 /// proposals (`proposals`, 5.1) are written into `inbox/` after the commit and stay untracked, as
 /// an agent's proposals do (P3): they are not in the marker, and a seed run writes only the
-/// missing ones.
+/// missing ones. A map proposal's draft (`mapDrafts`, 5.4) is written beside it.
 public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 6
+    public static let version = 7
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -141,6 +141,9 @@ public enum KnowledgeSeed {
             let url = base.root.appending(path: proposal.path)
             guard !FileManager.default.fileExists(atPath: url.path) else { continue }
             try? FileManager.default.createDirectory(at: base.inboxFolder, withIntermediateDirectories: true)
+            if let draft = mapDrafts[proposal.id] {
+                try? Data(draft.utf8).write(to: base.root.appending(path: KnowledgeInbox.draftPath(of: proposal.id)), options: .withoutOverwriting)
+            }
             try? Data(proposal.text.utf8).write(to: url, options: .withoutOverwriting)
             // The check model's marks (5.2), made up: no model is called.
             if let marks = checkMarks[proposal.id], base.check(of: proposal) == nil {
@@ -479,7 +482,8 @@ public enum KnowledgeSeed {
     ]
 
     /// The proposals waiting in the sample base's `inbox/` (5.1): a note proposal that adds a
-    /// section to billing and sets a property, and an arrow proposal for the logistics map.
+    /// section to billing and sets a property, an arrow proposal for the logistics map, and a map
+    /// drawn by an agent with excalidraw-cli (5.4), whose labels name payments' notes.
     public static let proposals: [KnowledgeProposal] = [
         KnowledgeProposal(id: "2026-10-24-payments-billing", kind: .note, target: "payments/billing",
                           reason: "Refunds were missing from the billing note.", created: "2026-10-24T09:00:00Z", author: "pi",
@@ -492,7 +496,279 @@ public enum KnowledgeSeed {
         KnowledgeProposal(id: "2026-10-24-arrow-billing-warehouse", kind: .arrow, target: "logistics/maps/routes",
                           reason: "The warehouse ships only paid orders.", created: "2026-10-24T09:05:00Z", author: "pi",
                           arrow: .init(from: "payments/billing", kind: "paid orders", to: "logistics/warehouse", map: "logistics/maps/routes")),
+        KnowledgeProposal(id: "2026-10-24-payments-maps-order-flow", kind: .map, target: "payments/maps/order-flow",
+                          reason: "Drawn from the code: orders-api sends its events to billing.", created: "2026-10-24T09:20:00Z", author: "pi",
+                          body: "Blocks: orders-api, billing\nArrows: orders-api -events-> billing\n"),
     ]
+
+    /// The drafts beside the seed's map proposals (`inbox/<id>.excalidraw`): the raw JSON draft
+    /// `@swiftlysingh/excalidraw-cli` 1.5.0 wrote in spike 2.0 (its labels are free text, its
+    /// blocks have no links), as `Fixtures/cli-draft.excalidraw` has it.
+    public static let mapDrafts: [String: String] = ["2026-10-24-payments-maps-order-flow": cliDraft]
+
+    static let cliDraft = #"""
+        {
+          "type": "excalidraw",
+          "version": 2,
+          "source": "https://github.com/swiftlysingh/excalidraw-cli",
+          "elements": [
+            {
+              "id": "blk-orders",
+              "type": "rectangle",
+              "x": 62,
+              "y": 62,
+              "width": 140,
+              "height": 60,
+              "angle": 0,
+              "strokeColor": "#1e1e1e",
+              "backgroundColor": "transparent",
+              "fillStyle": "solid",
+              "strokeWidth": 2,
+              "strokeStyle": "solid",
+              "roughness": 1,
+              "opacity": 100,
+              "groupIds": [],
+              "frameId": null,
+              "index": "aa",
+              "roundness": {
+                "type": 3
+              },
+              "seed": 899707659,
+              "version": 1,
+              "versionNonce": 156847763,
+              "isDeleted": false,
+              "boundElements": [
+                {
+                  "id": "JIKhfxTmJq",
+                  "type": "arrow"
+                }
+              ],
+              "updated": 1792868594397,
+              "link": null,
+              "locked": false
+            },
+            {
+              "id": "x_vUj3bWT_hVZrF6I5_rh",
+              "type": "text",
+              "x": 72,
+              "y": 79.5,
+              "width": 120,
+              "height": 25,
+              "angle": 0,
+              "strokeColor": "#1e1e1e",
+              "backgroundColor": "transparent",
+              "fillStyle": "solid",
+              "strokeWidth": 2,
+              "strokeStyle": "solid",
+              "roughness": 1,
+              "opacity": 100,
+              "groupIds": [],
+              "frameId": null,
+              "index": "ab",
+              "roundness": null,
+              "seed": 1254040401,
+              "version": 1,
+              "versionNonce": 1087908608,
+              "isDeleted": false,
+              "boundElements": null,
+              "updated": 1792868594397,
+              "link": null,
+              "locked": false,
+              "text": "orders-api",
+              "fontSize": 20,
+              "fontFamily": 5,
+              "textAlign": "center",
+              "verticalAlign": "middle",
+              "containerId": null,
+              "originalText": "orders-api",
+              "autoResize": true,
+              "lineHeight": 1.25
+            },
+            {
+              "id": "blk-billing",
+              "type": "rectangle",
+              "x": 77,
+              "y": 282,
+              "width": 110,
+              "height": 60,
+              "angle": 0,
+              "strokeColor": "#1e1e1e",
+              "backgroundColor": "transparent",
+              "fillStyle": "solid",
+              "strokeWidth": 2,
+              "strokeStyle": "solid",
+              "roughness": 1,
+              "opacity": 100,
+              "groupIds": [],
+              "frameId": null,
+              "index": "ac",
+              "roundness": {
+                "type": 3
+              },
+              "seed": 1291096397,
+              "version": 1,
+              "versionNonce": 537101864,
+              "isDeleted": false,
+              "boundElements": [
+                {
+                  "id": "JIKhfxTmJq",
+                  "type": "arrow"
+                }
+              ],
+              "updated": 1792868594397,
+              "link": null,
+              "locked": false
+            },
+            {
+              "id": "iK21udhzNSzNSEH1W3nr-",
+              "type": "text",
+              "x": 90,
+              "y": 299.5,
+              "width": 84,
+              "height": 25,
+              "angle": 0,
+              "strokeColor": "#1e1e1e",
+              "backgroundColor": "transparent",
+              "fillStyle": "solid",
+              "strokeWidth": 2,
+              "strokeStyle": "solid",
+              "roughness": 1,
+              "opacity": 100,
+              "groupIds": [],
+              "frameId": null,
+              "index": "ad",
+              "roundness": null,
+              "seed": 1138106397,
+              "version": 1,
+              "versionNonce": 177342787,
+              "isDeleted": false,
+              "boundElements": null,
+              "updated": 1792868594397,
+              "link": null,
+              "locked": false,
+              "text": "billing",
+              "fontSize": 20,
+              "fontFamily": 5,
+              "textAlign": "center",
+              "verticalAlign": "middle",
+              "containerId": null,
+              "originalText": "billing",
+              "autoResize": true,
+              "lineHeight": 1.25
+            },
+            {
+              "id": "JIKhfxTmJq",
+              "type": "arrow",
+              "x": 132,
+              "y": 122,
+              "width": 0,
+              "height": 160,
+              "angle": 0,
+              "strokeColor": "#1e1e1e",
+              "backgroundColor": "transparent",
+              "fillStyle": "solid",
+              "strokeWidth": 2,
+              "strokeStyle": "solid",
+              "roughness": 1,
+              "opacity": 100,
+              "groupIds": [],
+              "frameId": null,
+              "index": "ae",
+              "roundness": {
+                "type": 2
+              },
+              "seed": 1221410067,
+              "version": 1,
+              "versionNonce": 1881358234,
+              "isDeleted": false,
+              "boundElements": [
+                {
+                  "id": "text-JIKhfxTmJq",
+                  "type": "text"
+                }
+              ],
+              "updated": 1792868594397,
+              "link": null,
+              "locked": false,
+              "points": [
+                [
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  160
+                ]
+              ],
+              "lastCommittedPoint": null,
+              "startBinding": {
+                "elementId": "blk-orders",
+                "mode": "orbit",
+                "fixedPoint": [
+                  0.5,
+                  1
+                ]
+              },
+              "endBinding": {
+                "elementId": "blk-billing",
+                "mode": "orbit",
+                "fixedPoint": [
+                  0.5,
+                  0
+                ]
+              },
+              "startArrowhead": null,
+              "endArrowhead": "arrow",
+              "elbowed": false
+            },
+            {
+              "id": "text-JIKhfxTmJq",
+              "type": "text",
+              "x": 96,
+              "y": 189.5,
+              "width": 72,
+              "height": 25,
+              "angle": 0,
+              "strokeColor": "#1e1e1e",
+              "backgroundColor": "transparent",
+              "fillStyle": "solid",
+              "strokeWidth": 2,
+              "strokeStyle": "solid",
+              "roughness": 1,
+              "opacity": 100,
+              "groupIds": [],
+              "frameId": null,
+              "index": "af",
+              "roundness": null,
+              "seed": 899262178,
+              "version": 1,
+              "versionNonce": 1310891759,
+              "isDeleted": false,
+              "boundElements": null,
+              "updated": 1792868594397,
+              "link": null,
+              "locked": false,
+              "text": "events",
+              "fontSize": 20,
+              "fontFamily": 5,
+              "textAlign": "center",
+              "verticalAlign": "middle",
+              "containerId": "JIKhfxTmJq",
+              "originalText": "events",
+              "autoResize": true,
+              "lineHeight": 1.25
+            }
+          ],
+          "appState": {
+            "gridSize": 20,
+            "gridStep": 5,
+            "gridModeEnabled": false,
+            "viewBackgroundColor": "#ffffff",
+            "lockedMultiSelections": {}
+          },
+          "files": {}
+        }
+        """#
 
     /// payments/maps/overview: orders-api → billing "events" (flow order-to-billing), and a block
     /// that jumps to logistics/maps/routes.

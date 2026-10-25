@@ -92,7 +92,7 @@ struct KnowledgeCheckTests {
         let entry = try #require(base.proposals().first { $0.id == proposal.id })
         #expect(entry.modelCheck?.marks == marks && entry.modelCheck?.stale == false)
         // The check file is no proposal: not listed, not counted.
-        #expect(base.proposals().count == 2 && WatchFilter.inboxCount(base.root) == 2)
+        #expect(base.proposals().count == KnowledgeSeed.proposals.count && WatchFilter.inboxCount(base.root) == KnowledgeSeed.proposals.count)
         #expect(WatchFilter.classify(KnowledgeCheck.path(of: proposal.id)) == .inbox(KnowledgeCheck.path(of: proposal.id)))
         // A changed proposal shows its marks as stale.
         try Data((proposal.text + "More.\n").utf8).write(to: base.root.appending(path: proposal.path))
@@ -114,6 +114,8 @@ struct KnowledgeCheckTests {
             return place
         }
         #expect(!fm.fileExists(atPath: base.root.appending(path: KnowledgeCheck.path(of: arrow.id)).path))
-        #expect(try await git("status", "--porcelain", in: base.root).isEmpty)
+        // Only the seed's map proposal and its draft are left.
+        let map = "2026-10-24-payments-maps-order-flow"
+        #expect(try await git("status", "--porcelain", in: base.root) == "?? \(KnowledgeInbox.draftPath(of: map))\n?? \(KnowledgeInbox.path(of: map))")
     }
 }

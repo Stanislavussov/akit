@@ -167,7 +167,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
 | `AKitRender` | Foundation (`JSONValue`), Brain |
 | `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Instructions (the core block markers), Brain, Render, Insights, MCP (MCP switches' project files) |
-| `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac), Knowledge (`KnowledgeChecker`: the check model's call on a proposal, shared by `akit kb check` and the app's Inbox, 2026-10-25) |
+| `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac), Knowledge (`KnowledgeChecker`: the check model's call on a proposal, shared by `akit kb check` and the app's Inbox, 2026-10-25; `KnowledgeMapDrawer`: Draw Map with Pi…, 5.4) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup, Knowledge (the knowledge base line) |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |

@@ -19,7 +19,9 @@ Agent Context…) built 2026-10-24. 3.4 (the Pi template: `templates/kb-pi.md` i
 in the note panel; seed v4 with the area `lint-examples`) built 2026-10-24: step 4 is done. 5.1 (proposals: `akit kb
 propose`, `inbox`, `accept`, `reject`; `KnowledgeInbox`; seed v5 with two proposals) built 2026-10-25; 5.2 (the check model: `KnowledgeCheck`, `akit kb check`, `kb check-model`, Settings →
 Knowledge check model, the origin `knowledgeBase`; seed v6 with a stored mark) built 2026-10-25; 5.3 (the Inbox
-tab: Accept…, Reject…, Check Again, "Add an arrow?" on the map; `KnowledgeChecker` in AKitLab) built 2026-10-25, see
+tab: Accept…, Reject…, Check Again, "Add an arrow?" on the map; `KnowledgeChecker` in AKitLab) built 2026-10-25; 5.4
+(agent-drawn maps, K21: `akit kb propose --map`, the draft's preview and Accept… with Save Map in the Inbox, Draw Map
+with Pi…, `KnowledgeMapDrawer` in AKitLab; seed v7 with a map proposal) built 2026-10-25: step 5 is done, see
 [Proposals](#proposals). Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
@@ -108,8 +110,8 @@ The file (`KnowledgeProposal.text`, read back by `parse`):
 ```markdown
 ---
 id: "2026-10-25-payments-billing"
-kind: note                        # note | arrow; 5.4 adds map
-target: "payments/billing"        # note: the note id; arrow: the map id, or none
+kind: note                        # note | arrow | map (5.4)
+target: "payments/billing"        # note: the note id; arrow: the map id, or none; map: the map id
 reason: "Retries were missing"    # --reason, optional
 created: "2026-10-25T09:12:00Z"
 author: "pi"                      # --author, else "claude" under Claude Code, else none
@@ -130,7 +132,7 @@ Three tries with backoff.
 | note, target exists | `## Heading` blocks only (no frontmatter, no `# title`, no loose text before the first block) | each block replaces the section with that heading (the blank line after the heading kept) or is appended; then each `set` key through `KnowledgeNote.setting` |
 | note, new target `AREA/NAME` | the whole note; `# NAME` is added when it has no title and no frontmatter | the file is created; a new area's folder too (K23, no `area.yaml`); then `set` |
 | arrow | empty | writes nothing: "Add the arrow A -kind-> B on map M in the app (Knowledge → Inbox)", exit 2, the proposal stays |
-| map (5.4) | the draft beside it, `inbox/<id>.excalidraw` | in the app only |
+| map (5.4), target `AREA/maps/NAME` | the draft's blocks and arrows as text (`Blocks: …`, `Arrows: …`); the draft itself beside it, `inbox/<id>.excalidraw` | in the app only (below); `kb accept` writes nothing: "Open Knowledge → Inbox to accept a map.", exit 2 |
 
 Checks without a model block `propose` at once, and are run again by `kb inbox` and before
 Accept (the base may have changed): `secret` (body, reason, `set`, arrow: `SecretFilter.masked`
@@ -170,6 +172,50 @@ not counted; untracked; `WatchFilter` treats it as `inbox/`) with the proposal f
 `kb inbox` shows them (`modelCheck`, `stale` after the proposal changed). Accept and Reject remove
 the file.
 
+Map proposals (5.4, K21, `KnowledgeMapProposal.swift`): an agent draws a map with
+[`@swiftlysingh/excalidraw-cli`](https://github.com/swiftlysingh/excalidraw-cli) in its own harness
+(AKit ships no Node) and sends it with `akit kb propose --map AREA/NAME (--file F.excalidraw |
+--stdin) [--reason T]`. `propose` copies the draft to `inbox/<id>.excalidraw` (written before the
+proposal file, so a map proposal never lacks it; at most 2 MB) and writes the proposal (id from the
+map id, `2026-10-25-payments-maps-flow`); `--json` adds `draft`. Refused: a file `ExcalidrawFile`
+can't read or without elements, a secret in any element's text or link, a name other than
+`AREA/NAME` or `AREA/maps/NAME` (no `..`, no absolute path, nothing hidden, not `inbox/`). An existing
+map is "replaced" (the `target` check says so); a new area is created on Accept (K23). The checks
+are `secret`, `target` and `map` (the draft is there and parses). The draft is never counted apart
+(`WatchFilter.inboxCount`) and goes to the Trash with its proposal on Reject.
+
+`planMap` reads the draft as `MapGraph.labels(in:)` does (bound text first, else the free text whose
+centre lies inside the smallest shape: excalidraw-cli's labels are free text) and matches each
+shape's label to one note (`KnowledgeInbox.match`): the link rules (P1, the label read as `[[label]]`
+from the map's path, so the map's own area wins), else a note's title, ignoring case. One note: the
+shape gets the shortest `[[…]]` that resolves to it from the map; ambiguous or none: it stays plain
+and is listed. The plan's diff lists blocks and arrows by label (`+ block billing`, `- arrow …`,
+kept ones indented) against the map it replaces. The Inbox shows the draft on a read-only canvas
+(the key `inbox/<id>.excalidraw`, never saved as a map), the links and the plain labels. **Accept…**
+puts that canvas in Edit and sets the links through the bridge (`akitSetLinks({elementId: link})`,
+on the shape that holds the label); **Save Map** takes `akitSerialize` (Excalidraw's own bytes, so
+`source` becomes `akit-web://app`) and `acceptMap` saves it: the queue is flushed (U2), the map must
+still be as planned (absent, or hashing to the planned bytes, as `saveChecked` checks), the proposal
+and the draft unchanged; a replaced map is backed up like a note; then the map is written (a new
+area's folder too), the proposal, draft and marks removed, and one commit holds only the map
+(`Add map M (accept proposal ID)` or `Replace map M …`); a failed commit puts everything back.
+**Cancel** reloads the draft without links. The new map opens in the Notes tab.
+
+**Draw Map with Pi…** (the Knowledge toolbar; R-AP): an area (or New Area…), a map name, what the
+map shows and a Pi model (`PiModelPicker`; empty = Settings → Knowledge check model). Run starts
+`pi -p --mode json --no-session --offline --no-skills --no-context-files --no-prompt-templates
+--no-extensions --tools bash,read,write [--model M --thinking T] -- <prompt>` in a temporary folder
+(`KnowledgeMapDrawer`, AKitLab; the Review's Pi runs need its extension and MCP, so this is a
+smaller run of its own through `ChildProcess`, the harness environment, Stop cancels it). The
+prompt is the person's words (scrubbed), then fixed steps: draw with `excalidraw-cli create …
+-o <tmp>/NAME.excalidraw` (through `npx --yes @swiftlysingh/excalidraw-cli` when it isn't
+installed), use the area's note names as block labels, then run `<akit> kb propose --map AREA/NAME
+--file … --reason … --base <base>`; never accept or reject. The gate checks the origin
+`.knowledgeBase` (it carries the note names), the monthly limit and the send log apply (purpose
+`kb-draw`, logged after the run with Pi's recorded usage). The sheet shows Pi's tools and answers
+as they come; a run that made no map proposal says so. On success the Inbox opens on the new
+proposal. Pi without AKit does the same from the terminal: the `/akit` skill has the recipe.
+
 Accept (`kb accept ID [--yes]`, `planAccept` + `accept`): without `--yes` it prints the diff and
 exits 0. With it: the commit queue is flushed (U2), the note is backed up to
 `~/.akit/local/backups/knowledge/<world>/<yyyy-MM-dd'T'HHmmss.SSS>/areas/…` (0600), written,
@@ -191,7 +237,7 @@ panel on the right with **Open in Obsidian**; **Inbox** and **Lint** as tabs of 
 | 2 | Excalidraw in the app, offline: map tabs, block ↔ `[[note]]`, jump to another map, relations from arrows | 2026-10-24: the bundle and `MapCanvasView` (2.0), `ExcalidrawFile`, `MapGraph`, `akit kb maps/relations/new-map` (2.1), the map view (2.2a), Edit with checked saves and Changed on disk (2.2b), map tabs, drag a note onto a map, Relations, `KnowledgeRename` and `akit kb rename` (2.3) |
 | 3 | SQLite index (FTS + graph); `akit kb search / show / neighbors / context --json`; the Pi template in the core layer; the `/akit` skill | 2026-10-24/25, done (3.2a, 3.2b, 3.3, 3.4): (3.2a) `KnowledgeIndex` (`<base>/.akit-index.sqlite`: files, notes, nodes, edges, chunks + FTS5; schema version with "Update akit"; incremental refresh under `.akit-index.lock`, `stale` when busy), `Budget` (tokens ≈ bytes / 4), `.akit-misses.log`, `akit kb search / show / index`; (3.2b) focus of a folder (`focus.json` override, then the first area whose `area.yaml` `projects:` names its remote, `~/` path or glob, then the area of a note whose `repo:` is its remote or `~/` path; remotes through `ProjectRecords.normalizedRemote`), `akit kb neighbors NOTE [--depth 1; (3.4, K16) the Pi template: `templates/kb-pi.md` in the core layer, listed as `{template: kb-pi.md, to: AGENTS.md, when: target == pi}` through `LayerEditor.addingFile` (read-back verify, one brain commit), so `akit apply --home` writes it only into Pi's AGENTS.md, never `~/.claude/CLAUDE.md`; `akit kb pi-template [--yes] [--json]` (person only; commits the base's pending edits first; a second run says "already set") and Knowledge → Pi Template… with its own preview, then Update Home Folder… |2]`, `akit kb context [FOLDER]` (the focus area's notes with title and one line, the arrows touching them, their neighbours in other areas; ≤ 4000 tokens, `truncated`), `akit kb focus [FOLDER] [--set AREA \| --clear]` (person only); (3.3) the search field in Knowledge (hits by section, a click opens the note at that section), the index line (notes, sections, stale) with Reindex, `KnowledgeWatcher` + `WatchFilter` (outside edits reindexed within about a second and joined to the batch commit; inbox/ only counted; an open note or map changed outside asks Reload / Keep Mine), Focus… and Preview Agent Context… (exactly `akit kb context`, with its tokens) |
 | 4 | Lint: block without a note, unbound arrow, broken repo/file references | 2026-10-24 (4.1): `KnowledgeLint` with errors (broken link, map that doesn't parse), warnings (ambiguous link, block without a note, unbound arrow, `repo:` not a known project, `files:` path missing in the local copy, `~/` path missing) and hints (kind not in `kb.yaml`, K24; a block of an unrelated area, R-SEP: no map of one area jumps to one of the other). Known projects: `origin` remotes of the repos in the projects root (and one folder below), the project stores' ids, the areas' `area.yaml` remotes, all through `normalizedRemote`. `akit kb lint [--json]` (`{base, findings, counts}`), the Lint tab (Open, Create Note…, Check Again), Checks and grey links in the note panel; the seed's area `lint-examples` has one finding per rule |
-| 5 | `akit kb propose`, Inbox, the light-model check, Accept / Reject with a commit | 2026-10-25 (5.1): `KnowledgeInbox` (`KnowledgeProposal` file format, checks without a model, `planAccept`/`accept` with a backup and one commit, `reject` to the Trash), `inbox/.gitkeep` in new bases, `akit kb propose / inbox / accept / reject`, seed v5 with a note and an arrow proposal; see [Proposals](#proposals). 5.2: the check model (`KnowledgeCheck`, `kb check`, `kb check-model`, Settings → Knowledge check model, `SendOrigin.knowledgeBase`, purpose `kb-check`, marks in `inbox/.<id>.check.json`, seed v6). 5.3: the Inbox tab (the list with checks and marks, the diff, Accept…, Reject…, Check Again through `KnowledgeChecker`, an arrow drawn on its map with "Add an arrow?" and closed by `closeArrow`, the badge Inbox (N)). Map drafts (5.4) follow |
+| 5 | `akit kb propose`, Inbox, the light-model check, Accept / Reject with a commit | 2026-10-25 (5.1): `KnowledgeInbox` (`KnowledgeProposal` file format, checks without a model, `planAccept`/`accept` with a backup and one commit, `reject` to the Trash), `inbox/.gitkeep` in new bases, `akit kb propose / inbox / accept / reject`, seed v5 with a note and an arrow proposal; see [Proposals](#proposals). 5.2: the check model (`KnowledgeCheck`, `kb check`, `kb check-model`, Settings → Knowledge check model, `SendOrigin.knowledgeBase`, purpose `kb-check`, marks in `inbox/.<id>.check.json`, seed v6). 5.3: the Inbox tab (the list with checks and marks, the diff, Accept…, Reject…, Check Again through `KnowledgeChecker`, an arrow drawn on its map with "Add an arrow?" and closed by `closeArrow`, the badge Inbox (N)). 5.4: agent-drawn maps (`kb propose --map`, the draft beside its proposal, `planMap` / `acceptMap`, the draft's preview, Accept… with links set on the canvas and Save Map, Draw Map with Pi… through `KnowledgeMapDrawer`, purpose `kb-draw`, seed v7): step 5 is done |
 | 6 | AKit Review reads the base (K18) | — |
 | 7 | Embeddings with a local model, if FTS misses (K17) | — |
 

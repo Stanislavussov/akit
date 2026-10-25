@@ -284,7 +284,27 @@ akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--re
 akit kb propose --arrow "A -kind-> B" [--map MAP] [--reason T] [--json]
                                                    # a relation between two notes (kind = what
                                                    # flows); the user draws it on the map
+akit kb propose --map AREA/NAME (--file F.excalidraw | --stdin) [--reason T] [--json]
+                                                   # a map you drew: the draft goes to
+                                                   # inbox/<id>.excalidraw; an existing map is
+                                                   # replaced only when the user accepts; a new
+                                                   # area is created then. Refused: a file that
+                                                   # isn't an Excalidraw scene, a secret in its text.
+                                                   # --json: {id, path, kind, target, checks, draft}
 ```
+
+To draw a map, use excalidraw-cli (`npx --yes @swiftlysingh/excalidraw-cli` when
+`excalidraw-cli` isn't installed; it needs Node 20.19 or later). Label each block with a note's
+name exactly as `kb notes AREA` lists it, so AKit links the block to that note on Accept (a
+label that names no note, or more than one, stays plain); name each arrow by what flows:
+
+```
+excalidraw-cli create --inline '[orders-api] -> "events" -> [billing]' -o /tmp/x.excalidraw
+akit kb propose --map payments/order-flow --file /tmp/x.excalidraw --reason "orders-api sends its events to billing"
+```
+
+The user accepts or rejects the map in AKit (Knowledge → Inbox); `kb accept` of a map only
+says so (exit 2). AKit's Draw Map with Pi… runs these same steps through Pi.
 
 Run `kb lint` before you trust a note's `repo:`/`files:` or a map's blocks, and after you
 propose a change. Errors: a broken link, a map that doesn't parse. Warnings: an ambiguous link,
@@ -340,8 +360,8 @@ akit kb rename NOTE|MAP NEW [--yes] [--json]      # rename a note or map and eve
                                                    # another link would change its target)
 akit kb accept ID [--yes] [--json]                 # accept a proposal: shows the diff; --yes backs
                                                    # the note up, writes it and commits it with the
-                                                   # proposal's removal; an arrow: exit 2, drawn
-                                                   # in the app
+                                                   # proposal's removal; an arrow or a map: exit 2,
+                                                   # accepted in the app
 akit kb reject ID [--yes] [--json]                 # a proposal to the Trash
 akit kb check-model [MODEL [THINKING]]             # the check model of kb check: a Pi provider/model
                                                    # (default opencode-go/gpt-6-luna, low)

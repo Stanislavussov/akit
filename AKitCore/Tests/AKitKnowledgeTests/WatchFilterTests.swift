@@ -161,6 +161,9 @@ struct WatchFilterTests {
         try write(root, "inbox/a.md", "a")
         try write(root, "inbox/maps/b.excalidraw", "{}")
         try write(root, "inbox/.DS_Store", "")
+        // A map proposal's draft goes with its proposal (5.4): not counted apart.
+        try write(root, "inbox/c.md", "c")
+        try write(root, "inbox/c.excalidraw", "{}")
         #expect(WatchFilter.inboxCount(root) == 2)
     }
 }

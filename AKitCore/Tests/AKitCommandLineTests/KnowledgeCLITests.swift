@@ -63,7 +63,7 @@ struct KnowledgeCLITests {
         }
         for command in ["akit kb areas", "akit kb notes", "akit kb maps", "akit kb relations", "akit kb kinds [--json]", "akit kb area AREA [--json]",
                         "akit kb search", "akit kb show", "akit kb index", "akit kb neighbors", "akit kb context", "akit kb focus [FOLDER] [--json]", "akit kb lint",
-                        "akit kb inbox", "akit kb propose --note", "akit kb propose --arrow", "akit kb check ID"] {
+                        "akit kb inbox", "akit kb propose --note", "akit kb propose --arrow", "akit kb propose --map", "akit kb check ID"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(!lines[index...].prefix(3).contains { $0.contains("person only") }, "\(command) is a read command")
         }
@@ -557,6 +557,46 @@ struct KnowledgeCLITests {
         #expect(Int(try await git("rev-list", "--count", "HEAD")) == Int(commits)! + 1)
         #expect(try await git("status", "--porcelain").hasPrefix("?? inbox/"))
         #expect(await akit("kb", "accept", "nope").err.contains("No proposal nope"))
+    }
+
+    /// 5.4: propose --map copies an excalidraw-cli draft into inbox/ beside its proposal (from a file
+    /// or stdin); a file that isn't a scene is refused; accept of a map writes nothing and exits 2.
+    @Test func proposeAMapAndAcceptItOnlyInTheApp() async throws {
+        #expect(await akit("kb", "init", "--world", "work").code == 0)
+        #expect(await akit("kb", "new-note", "payments", "billing").code == 0)
+        #expect(await akit("kb", "new-note", "payments", "orders-api").code == 0)
+        let fixture = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "AKitKnowledgeTests/Fixtures/cli-draft.excalidraw")
+        let proposed = await akit("kb", "propose", "--map", "payments/flow", "--file", fixture.path, "--reason", "drawn by pi", "--json")
+        #expect(proposed.code == 0, "\(proposed.err)")
+        let answer = try json(proposed.out)
+        let id = try #require(answer["id"] as? String)
+        #expect(Set(answer.keys) == ["id", "path", "kind", "target", "checks", "draft"])
+        #expect(answer["kind"] as? String == "map" && answer["target"] as? String == "payments/maps/flow"
+            && answer["draft"] as? String == "inbox/\(id).excalidraw")
+        #expect((answer["checks"] as? [[String: Any]])?.map { $0["name"] as? String } == ["secret", "target", "map"])
+        #expect(try await git("status", "--porcelain") == "?? inbox/\(id).excalidraw\n?? inbox/\(id).md")
+        #expect(await akit("kb", "inbox").out.contains("\(id)  map payments/maps/flow"))
+        // From stdin too; a file that isn't a scene is refused, nothing written.
+        let piped = await akit(["kb", "propose", "--map", "logistics/routes", "--stdin"], stdin: try String(contentsOf: fixture, encoding: .utf8))
+        #expect(piped.code == 0 && piped.out.contains("the person accepts it in Knowledge → Inbox"), "\(piped.err)")
+        let broken = await akit(["kb", "propose", "--map", "payments/flow", "--stdin"], stdin: "{\"elements\": [")
+        #expect(broken.code == 2 && broken.err.contains("not valid JSON"))
+        #expect(await akit(["kb", "propose", "--map", "../flow", "--file", fixture.path]).code == 2)
+        #expect(await akit(["kb", "propose", "--map", "payments/flow"]).err.contains("Give the draft"))
+
+        // Accept of a map: in the app only; nothing changes.
+        let commits = try await git("rev-list", "--count", "HEAD")
+        let accepted = await akit("kb", "accept", id, "--yes")
+        #expect(accepted.code == 2 && accepted.out == "Open Knowledge → Inbox to accept a map.")
+        let json = try json(await akit("kb", "accept", id, "--yes", "--json").out)
+        #expect(json["accepted"] as? Bool == false && json["kind"] as? String == "map")
+        #expect(try await git("rev-list", "--count", "HEAD") == commits)
+        #expect(!fm.fileExists(atPath: base.appending(path: "areas/payments/maps/flow.excalidraw").path))
+        #expect(fm.fileExists(atPath: base.appending(path: "inbox/\(id).excalidraw").path))
+        // Reject takes the draft with it.
+        #expect(await akit("kb", "reject", id, "--yes").code == 0)
+        #expect(!fm.fileExists(atPath: base.appending(path: "inbox/\(id).excalidraw").path))
     }
 
     /// 5.2: kb check sends the proposal through Pi under the sending policy (purpose kb-check),

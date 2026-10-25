@@ -215,8 +215,26 @@ struct MapCanvasView: NSViewRepresentable {
             return (result as? [String: Any])?["arrow"] as? String
         }
 
+        /// Accept of a map proposal (5.4): each element's link (`[[note]]`), set on the canvas so the
+        /// saved bytes are Excalidraw's own. How many elements got one; throws the page's error.
+        func setLinks(_ links: [String: String]) async throws -> Int {
+            let result = try await webView?.callAsyncJavaScript("return akitSetLinks(links)", arguments: ["links": links], contentWorld: .page)
+            return (result as? NSNumber)?.intValue ?? 0
+        }
+
+        /// Snapshots and Accept of a map proposal: waits (up to `timeout` seconds) until this canvas
+        /// is ready and shows the scene with `key`.
+        func waitForScene(_ key: String, timeout: Double = 10) async -> Bool {
+            let deadline = Date.now.addingTimeInterval(timeout)
+            while !(isReady && loadedElements != nil && scene.key == key), Date.now < deadline {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            return isReady && loadedElements != nil && scene.key == key
+        }
+
         func loadScene() async {
             guard let webView else { return }
+            loadedElements = nil
             do {
                 _ = try await webView.callAsyncJavaScript("return akitLoadScene(json, key)", arguments: ["json": scene.text, "key": scene.key],
                                                           contentWorld: .page)

@@ -77,6 +77,11 @@ import SwiftUI
 /// proposal (prints the result and the new commit), `--tab inbox-reject --select <id>` rejects one (to the Trash),
 /// `--tab inbox-arrow --select <id> [--query <map id>]` accepts an arrow: its map opens in Edit with "Add an arrow?",
 /// Add draws it and saves the map, and the capture prints the posts, the map's relations and the inbox left.
+/// 5.4: `--tab inbox --select <map proposal id>` waits for the draft's read-only canvas and prints what it served (all
+/// `akit-web:`), its element count and the planned links (label → [[note]], plain labels, the diff);
+/// `--tab inbox-map --select <id>` runs Accept… and Save Map (links set on the canvas, Excalidraw's bytes saved and
+/// committed) and prints the saved map's blocks and relations and the last commit; `--tab draw-map` opens Draw Map
+/// with Pi… with a made-up prompt (`--query` another) and prints the form (nothing runs).
 ///
 /// `--right-click 300,400;300,420` right-clicks there before the capture and prints each context
 /// menu's items (to check which places get Ask AKit About This);
@@ -195,6 +200,29 @@ enum DebugSnapshot {
         // A map waits for its canvas first, so a click can open a block's link.
         let mapOpen = options.section == .knowledge && KnowledgeModel.current?.map != nil
         if mapOpen { await MapCanvasView.Coordinator.waitAndPrint() }
+        // A map proposal's draft in the Inbox (5.4) waits for its canvas the same way.
+        let draftOpen = !mapOpen && options.section == .knowledge && KnowledgeModel.current?.screenTab == .inbox
+            && KnowledgeModel.current?.selectedProposal?.kind == .map
+        if draftOpen { await MapCanvasView.Coordinator.waitAndPrint() }
+        if draftOpen, options.tab == "inbox-map", let model = KnowledgeModel.current, let entry = model.selectedProposal, let base = model.base {
+            await model.startMapAccept(entry)
+            print("inbox: accept \(entry.id): " + (model.mapAcceptRequest != nil ? model.notice ?? "" : model.problem ?? "refused"))
+            try? await Task.sleep(for: .milliseconds(400))
+            let target = model.mapAcceptRequest?.map
+            let saved = await model.saveAcceptedMap()
+            print("inbox: save map: " + (saved ? model.notice ?? "" : model.problem ?? "refused"))
+            if let target, saved, let graph = try? base.mapGraph(), let map = graph.maps.first(where: { $0.id == target }) {
+                for block in map.blocks { print("saved block: \(block.element) \(block.label ?? "-") → \(block.note)") }
+                for edge in map.edges { print("saved relation: \(edge.from) → \(edge.to)" + (edge.kind.map { " \"\($0)\"" } ?? "")) }
+                if case .success(let scene) = ExcalidrawFile.load(base.mapFile(target)) { print("saved source: \(scene.source ?? "-")") }
+            }
+            let git = URL(filePath: "/usr/bin/git")
+            let log = await ProcessRunner.run(git, arguments: ["log", "-1", "--name-only", "--format=%s"], directory: base.root,
+                                              environment: HarnessEnvironment.current.variables, timeout: 20)
+            let status = await ProcessRunner.run(git, arguments: ["status", "--porcelain"], directory: base.root, environment: HarnessEnvironment.current.variables, timeout: 20)
+            print("inbox: last commit: " + (log?.output.split(separator: "\n").joined(separator: "; ") ?? "-"))
+            print("inbox: git status: " + (status?.output.split(separator: "\n").joined(separator: "; ") ?? "-"))
+        }
         // Checks of 2.3: `--tab map-drop --query <note id>` drops the note in the canvas's middle (K6) and waits past
         // the save; `--tab map-rename --query <note>=<new name>` adds a rectangle (not yet saved) and renames at once (N5).
         if mapOpen, let canvas = MapCanvasView.Coordinator.current, let model = KnowledgeModel.current, let webView = canvas.webView,

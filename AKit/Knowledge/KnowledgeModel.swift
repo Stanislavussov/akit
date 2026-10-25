@@ -122,6 +122,14 @@ final class KnowledgeModel {
     var arrowMapRequest: ArrowMapRequest?
     /// "Add an arrow?" on the map in Edit: what Add draws.
     var arrowRequest: KnowledgeInbox.ArrowPlan?
+    /// Accept… of a map proposal (5.4): the draft is in Edit in the Inbox, its blocks linked, until
+    /// Save Map or Cancel.
+    var mapAcceptRequest: KnowledgeInbox.MapPlan?
+    /// Raised by Cancel, so the draft's canvas shows the file again without the links.
+    var draftGeneration = 0
+    /// Draw Map with Pi… while Pi runs: the log lines, and the task (Stop cancels it).
+    var drawLog: [String] = []
+    var drawTask: Task<Void, Never>?
     /// The heading a search hit opened the note at; the read view scrolls to it.
     private(set) var sectionTarget: String?
     /// The note in Edit changed on disk, not by AKit: Reload or Keep Mine.
@@ -221,7 +229,7 @@ final class KnowledgeModel {
             kindsFile = .defaults
             (watcher, indexStatus, searchAnswer, inboxCount) = (nil, nil, nil, 0)
             lintFindings = []
-            (proposals, proposalID, arrowRequest) = ([], nil, nil)
+            (proposals, proposalID, arrowRequest, mapAcceptRequest) = ([], nil, nil, nil)
             return
         }
         defer {
@@ -387,7 +395,8 @@ final class KnowledgeModel {
     /// the page didn't answer or the save didn't go through (a conflict, a write error).
     @discardableResult
     func forcePostDirty() async -> Bool {
-        guard map != nil, let canvas = MapCanvasView.Coordinator.current else { return true }
+        // The Inbox's map draft (5.4) is no map of the base: its canvas is never saved this way.
+        guard map != nil, let canvas = MapCanvasView.Coordinator.current, !canvas.scene.key.hasPrefix("inbox/") else { return true }
         let save: (key: String, json: String)?
         do { save = try await canvas.takeUnsaved() } catch { return false }
         guard let save else { return mapConflict == nil }
@@ -1054,6 +1063,12 @@ final class KnowledgeModel {
     func markOwnWrite(note id: String) {
         guard let base else { return }
         noteHashes[id] = KnowledgeWrite.hash(of: base.noteFile(id))
+    }
+
+    /// A map AKit wrote outside the canvas (Accept of a map proposal): the same for the watcher.
+    func markOwnWrite(map id: String) {
+        guard let base else { return }
+        mapHashes[id] = KnowledgeWrite.hash(of: base.mapFile(id))
     }
 
     private func enqueue(_ path: String, in base: KnowledgeBase) {

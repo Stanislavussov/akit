@@ -23,6 +23,8 @@
 //                        an end without an element gets a new labelled block with that link right of the
 //                        drawing; then an arrow bound to both blocks, labelled; returns {arrow, from, to} ids
 //                        (saved like any change)
+//   akitSetLinks(links)  Accept of a map proposal: {elementId: link} sets each live element's link (a new
+//                        version of it); returns how many were set (saved like any change)
 //   akitDebugAddRectangle()  snapshots: adds one rectangle through the API, like a user would
 //   akitDiagnostics()    what the page loaded, for snapshots and checks
 //   akitClick(x, y)      snapshots: a pointer click at that page point (a web view takes no synthetic AppKit clicks)
@@ -195,6 +197,20 @@ window.EXCALIDRAW_ASSET_PATH = new URL("vendor/", location.href).href;
     const elements = api.getSceneElementsIncludingDeleted().map((element) => changed[element.id] || element);
     api.updateScene({ elements: elements.concat(added, arrowElements) });
     return { arrow: arrowId, from: from.id, to: to.id };
+  };
+
+  window.akitSetLinks = function (links) {
+    if (!api) throw new Error("The canvas is not ready yet.");
+    let count = 0;
+    const elements = api.getSceneElementsIncludingDeleted().map((element) => {
+      if (element.isDeleted || !Object.prototype.hasOwnProperty.call(links, element.id)) return element;
+      count += 1;
+      return Object.assign({}, element, {
+        link: links[element.id], version: element.version + 1, versionNonce: Math.floor(Math.random() * 2147483647), updated: Date.now(),
+      });
+    });
+    api.updateScene({ elements });
+    return count;
   };
 
   window.akitLoadScene = function (json, key) {

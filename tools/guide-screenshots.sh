@@ -214,8 +214,12 @@ shot knowledge-context   $MAIN --section knowledge --tab context --project order
 shot knowledge-pi-template $MAIN --section knowledge --tab pi-template
 # The Lint tab: the findings the seed's space lint-examples has on purpose (akit kb lint).
 shot knowledge-lint      $MAIN --section knowledge --tab lint
-# The Inbox tab: the seed's two proposals; the note proposal for billing selected, with its diff and the seeded mark.
+# The Inbox tab: the seed's three proposals; the note proposal for billing selected, with its diff and the seeded mark.
 shot knowledge-inbox     $MAIN --section knowledge --tab inbox --select 2026-10-24-payments-billing
+# A map an agent drew with excalidraw-cli (5.4): the draft on its read-only canvas and the links Accept sets.
+shot knowledge-inbox-map $MAIN --section knowledge --tab inbox --select 2026-10-24-payments-maps-order-flow
+# Draw Map with Pi…: the form with a made-up prompt (nothing runs).
+shot knowledge-draw-map  $MAIN --section knowledge --tab draw-map
 # Add Sample Base…: the sample base (akit kb seed) next to the demo base, only for this shot.
 if [[ "$ONLY" == "  " || "$ONLY" == *" knowledge-sample "* ]]; then
     HOME="$DEMO" GIT_CONFIG_GLOBAL=/dev/null "$ROOT/AKitCore/.build/debug/akit" kb seed >/dev/null

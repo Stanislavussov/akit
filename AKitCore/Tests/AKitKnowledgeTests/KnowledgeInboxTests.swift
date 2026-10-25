@@ -272,7 +272,10 @@ struct KnowledgeInboxTests {
         let arrow = KnowledgeProposal(id: "a", kind: .arrow, target: nil, reason: nil, created: "now", author: "claude",
                                       arrow: .init(from: "a/b", kind: nil, to: "c/d", map: nil))
         #expect(KnowledgeProposal.parse(arrow.text) == arrow)
-        #expect(KnowledgeProposal.parse("---\nid: x\nkind: map\ncreated: now\n---\n") == nil)
+        #expect(KnowledgeProposal.parse("---\nid: x\nkind: drawing\ncreated: now\n---\n") == nil)
+        let map = KnowledgeProposal(id: "m", kind: .map, target: "payments/maps/flow", reason: nil, created: "now", author: "pi",
+                                    body: "Blocks: a, b\nArrows: a -> b\n")
+        #expect(KnowledgeProposal.parse(map.text) == map)
         #expect(KnowledgeInbox.parseArrow("orders-api -ships to-> billing")! == ("orders-api", "ships to", "billing"))
         #expect(KnowledgeInbox.parseArrow("orders-api -> billing")! == ("orders-api", nil, "billing"))
         #expect(KnowledgeInbox.parseArrow("orders-api billing") == nil)

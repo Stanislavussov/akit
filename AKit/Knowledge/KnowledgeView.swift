@@ -11,7 +11,7 @@ import SwiftUI
 struct KnowledgeView: View {
     @Environment(KnowledgeModel.self) private var model
     @Environment(AppModel.self) private var app
-    /// Snapshots: `--tab new-area|new-note|new-map|create-base|kinds|area-settings|focus|context|pi-template`.
+    /// Snapshots: `--tab new-area|new-note|new-map|create-base|kinds|area-settings|focus|context|pi-template|draw-map`.
     @State private var sheet: Sheet? = DebugSnapshot.options?.tab.flatMap(Sheet.init(rawValue:))
     @State private var areaToDelete: String?
     /// Add Sample Base… / Remove Sample Base… waiting for confirmation. Snapshots: `--tab sample-remove`.
@@ -21,7 +21,7 @@ struct KnowledgeView: View {
 
     enum Sheet: String, Identifiable {
         case createBase = "create-base", newArea = "new-area", newNote = "new-note", newMap = "new-map", kinds, areaSettings = "area-settings"
-        case focus, context, piTemplate = "pi-template", homeSetup = "home-setup"
+        case focus, context, piTemplate = "pi-template", homeSetup = "home-setup", drawMap = "draw-map"
         var id: Self { self }
     }
 
@@ -191,6 +191,9 @@ struct KnowledgeView: View {
             Button("Pi Template…", systemImage: "text.badge.plus") { sheet = .piTemplate }
                 .disabled(model.base == nil)
                 .help("Tell Pi about this base: a short section in the core layer for Pi only, then Update Home Folder… (akit kb pi-template)")
+            Button("Draw Map with Pi…", systemImage: "wand.and.rays") { sheet = .drawMap }
+                .disabled(model.base == nil)
+                .help("Say what a map shows; Pi draws it with excalidraw-cli and proposes the draft, which waits in the Inbox for you to accept")
         }
         ToolbarItem {
             Menu("Sample Base", systemImage: "shippingbox") {
@@ -219,6 +222,7 @@ struct KnowledgeView: View {
         // Update Home Folder… takes the Pi Template sheet's place.
         case .piTemplate: PiTemplateSheet { self.sheet = .homeSetup }
         case .homeSetup: ProjectSetupSheet(forHome: true)
+        case .drawMap: DrawMapSheet()
         }
     }
 

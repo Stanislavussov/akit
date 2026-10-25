@@ -159,20 +159,34 @@ struct KnowledgeSeedTests {
         ("the rest of the seed has no findings", { base in try lint(base).allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } }),
         // Proposals (5.1): untracked files in inbox/, every check passed.
         ("a note proposal (a section and a property) and an arrow proposal wait in inbox/", { base in
-            let entries = base.proposals()
+            let entries = base.proposals().filter { $0.kind != .map }
             return entries.map(\.id) == ["2026-10-24-arrow-billing-warehouse", "2026-10-24-payments-billing"]
                 && entries.map(\.kind) == [.arrow, .note] && entries.allSatisfy { $0.checks.allSatisfy { $0.status == .passed } }
                 && entries[1].set == [.init(key: "sla", value: "next day")]
         }),
         // The check model's marks (5.2), stored without a call.
         ("the note proposal has a stored duplicate mark, the arrow none", { base in
-            let entries = base.proposals()
+            let entries = base.proposals().filter { $0.kind != .map }
             return entries[1].modelCheck?.marks.map(\.kind) == [.duplicate] && entries[1].modelCheck?.stale == false
                 && entries[0].modelCheck == nil
         }),
         ("the note proposal applies: billing gets ## Refunds and sla", { base in
             let plan = try base.planAccept(try base.proposal("2026-10-24-payments-billing"))
             return plan.planned.contains("## Refunds") && plan.planned.contains("sla: next day") && !plan.newArea
+        }),
+        // Agent-drawn maps (5.4): the excalidraw-cli draft beside its proposal, its labels linked on Accept.
+        ("a map proposal with the excalidraw-cli draft waits in inbox/, every check passed", { base in
+            let entry = base.proposals().first { $0.kind == .map }
+            let draft = try Data(contentsOf: base.root.appending(path: KnowledgeInbox.draftPath(of: "2026-10-24-payments-maps-order-flow")))
+            guard case .success(let scene) = ExcalidrawFile.parse(draft) else { return false }
+            return entry?.id == "2026-10-24-payments-maps-order-flow" && entry?.target == "payments/maps/order-flow"
+                && entry?.checks.allSatisfy { $0.status == .passed } == true
+                && scene.source == "https://github.com/swiftlysingh/excalidraw-cli" && entry?.proposal?.body == KnowledgeInbox.mapSummary(scene)
+        }),
+        ("the map proposal links both blocks to payments' notes, a new map", { base in
+            let plan = try base.planMap(try base.proposal("2026-10-24-payments-maps-order-flow"))
+            return plan.links.map { "\($0.element) \($0.link)" } == ["blk-orders [[orders-api]]", "blk-billing [[billing]]"]
+                && plan.unlinked.isEmpty && plan.original == nil && !plan.newArea
         }),
     ]
 
@@ -207,7 +221,8 @@ struct KnowledgeSeedTests {
         #expect(try await git("log", "--format=%s", in: outcome.base.root) == "Seed: sample base v\(KnowledgeSeed.version)\nCreate the knowledge base")
         // Only the seed's proposals are untracked (P3), and the marker doesn't list them.
         #expect(try await git("status", "--porcelain", in: outcome.base.root)
-            == (KnowledgeSeed.proposals.map { "?? \($0.path)" } + KnowledgeSeed.checkMarks.keys.map { "?? \(KnowledgeCheck.path(of: $0))" })
+            == (KnowledgeSeed.proposals.map { "?? \($0.path)" } + KnowledgeSeed.checkMarks.keys.map { "?? \(KnowledgeCheck.path(of: $0))" }
+                + KnowledgeSeed.mapDrafts.keys.map { "?? \(KnowledgeInbox.draftPath(of: $0))" })
                 .sorted().joined(separator: "\n"))
         #expect(try await git("ls-files", "--", ".akit-seed.json", in: outcome.base.root) == ".akit-seed.json")
         #expect(try await git("ls-files", "inbox", in: outcome.base.root) == KnowledgeInbox.keepFile)

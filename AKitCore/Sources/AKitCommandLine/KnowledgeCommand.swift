@@ -67,7 +67,7 @@ extension AKitCLI {
                                         [{rule, severity, file, element, link, message, fix}], counts}
       akit kb inbox [--json] [--base PATH|WORLD]
                                         The proposals waiting in inbox/ for the person: id, kind
-                                        (note or arrow), target, reason, created, author, and the
+                                        (note, arrow or map), target, reason, created, author, and the
                                         checks run now (secret, target, links, arrow: passed,
                                         warning or failed), and the check model's marks
       akit kb check ID [--model M] [--json] [--base PATH|WORLD]
@@ -94,6 +94,16 @@ extension AKitCLI {
       akit kb propose --arrow "A -kind-> B" [--map MAP] [--reason T] [--author NAME] [--json]
                                         Propose an arrow between two notes (on the map MAP): the
                                         person draws it on the map in the app
+      akit kb propose --map AREA/NAME (--file F.excalidraw | --stdin) [--reason T] [--author NAME]
+                      [--json] [--base PATH|WORLD]
+                                        Propose a map drawn by an agent (excalidraw-cli create …):
+                                        the draft is copied to inbox/<id>.excalidraw beside the
+                                        proposal (never committed). Label blocks with note names:
+                                        on Accept, in the app, each block whose label names one
+                                        note gets its [[link]]. An existing map is replaced (the
+                                        Inbox shows the blocks and arrows that change); a new area
+                                        is created on Accept. Refused: a file that isn't an
+                                        Excalidraw scene, a secret in its text, a path outside areas/
 
     Write (for a person only: an agent runs these only when the user asked for that action in
     this session; otherwise it proposes or asks):
@@ -146,8 +156,9 @@ extension AKitCLI {
                                         diff; with --yes commits the pending edits, backs the note
                                         up (~/.akit/local/backups/knowledge/), writes it and
                                         commits it in one commit that also removes the proposal.
-                                        An arrow proposal is drawn in the app: it writes nothing,
-                                        says so and exits 2
+                                        An arrow proposal is drawn in the app, and a map proposal
+                                        is accepted in the app: they write nothing, say so and
+                                        exit 2
       akit kb check-model [MODEL [THINKING]]
                                         For a person only. Show or set the check model of kb check:
                                         a Pi model provider/model (default
@@ -753,11 +764,24 @@ extension AKitCLI {
             let reason = args.value("--reason"), author = args.value("--author")
             let sets = args.values("--set")
             try args.finish()
-            let usage = "Use: akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--reason T] [--json], or akit kb propose --arrow \"A -kind-> B\" [--map MAP] [--reason T] [--json]"
-            guard (note == nil) != (arrow == nil) else { throw Failure(message: usage) }
+            let usage = "Use: akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--reason T] [--json], akit kb propose --arrow \"A -kind-> B\" [--map MAP] [--reason T] [--json], or akit kb propose --map AREA/NAME (--file F.excalidraw | --stdin) [--reason T] [--json]"
+            guard [note, arrow].compactMap(\.self).count == 1 || (note == nil && arrow == nil && map != nil) else { throw Failure(message: usage) }
             if file != nil, stdin { throw Failure(message: "Use --file F or --stdin, not both.") }
             let change: KnowledgeInbox.Draft.Change
-            if let arrow {
+            if note == nil, arrow == nil, let map {
+                if !sets.isEmpty { throw Failure(message: "A map proposal has no properties. \(usage)") }
+                let data: Data
+                if let file {
+                    let url = resolve(file, cwd: cwd, env: env)
+                    guard let read = try? Data(contentsOf: url) else { throw Failure(message: "Can't read \(url.path).") }
+                    data = read
+                } else if stdin {
+                    data = input()
+                } else {
+                    throw Failure(message: "Give the draft: --file F.excalidraw or --stdin. \(usage)")
+                }
+                change = .map(map, draft: data)
+            } else if let arrow {
                 if file != nil || stdin || !sets.isEmpty { throw Failure(message: "An arrow proposal has no text or properties. \(usage)") }
                 change = .arrow(arrow, map: map)
             } else {
@@ -789,10 +813,12 @@ extension AKitCLI {
             let proposal: KnowledgeProposal, checks: [KnowledgeInbox.Check]
             do { (proposal, checks) = try base.propose(.init(change, reason: reason, author: harness)) } catch { throw Failure(message: error.message) }
             if json {
-                out(encode(ProposeAnswer(id: proposal.id, path: proposal.path, kind: proposal.kind.rawValue, target: proposal.target, checks: checks)))
+                out(encode(ProposeAnswer(id: proposal.id, path: proposal.path, kind: proposal.kind.rawValue, target: proposal.target, checks: checks,
+                                         draft: proposal.kind == .map ? KnowledgeInbox.draftPath(of: proposal.id) : nil)))
             } else {
                 let marks = checks.filter { $0.status != .passed || $0.message != nil }.map { "  \($0.name): \($0.message ?? $0.status.rawValue)" }
-                out(([proposal.id, "Proposed in \(proposal.path), for the person to accept or reject (not committed)."] + marks).joined(separator: "\n"))
+                let draft = proposal.kind == .map ? " The draft is \(KnowledgeInbox.draftPath(of: proposal.id)); the person accepts it in Knowledge → Inbox." : ""
+                out(([proposal.id, "Proposed in \(proposal.path), for the person to accept or reject (not committed).\(draft)"] + marks).joined(separator: "\n"))
             }
             return 0
         case "inbox":
@@ -839,7 +865,7 @@ extension AKitCLI {
                 return 0
             }
             guard proposal.kind == .note else {
-                let message = KnowledgeInbox.arrowMessage(proposal)
+                let message = proposal.kind == .map ? KnowledgeInbox.mapMessage : KnowledgeInbox.arrowMessage(proposal)
                 out(json ? encode(AcceptAnswer(base: base.root.path, id: proposal.id, kind: proposal.kind.rawValue, note: nil, path: nil,
                                                newArea: false, accepted: false, backup: nil, diff: nil, message: message)) : message)
                 return 2
@@ -948,8 +974,10 @@ extension AKitCLI {
         let kind: String
         let target: String?
         let checks: [KnowledgeInbox.Check]
+        /// A map proposal's draft (5.4); left out for the other kinds.
+        var draft: String? = nil
 
-        private enum CodingKeys: String, CodingKey { case id, path, kind, target, checks }
+        private enum CodingKeys: String, CodingKey { case id, path, kind, target, checks, draft }
 
         func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
@@ -958,6 +986,7 @@ extension AKitCLI {
             try container.encode(kind, forKey: .kind)
             try container.encode(target, forKey: .target) // null for an arrow on no named map
             try container.encode(checks, forKey: .checks)
+            try container.encodeIfPresent(draft, forKey: .draft)
         }
     }
 
