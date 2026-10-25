@@ -1,4 +1,5 @@
 import AKitKnowledge
+import AppKit
 import SwiftUI
 
 /// The open note tabs and the note in view: read (frontmatter and Markdown) or Edit, which saves
@@ -52,6 +53,9 @@ struct NotePanel: View {
             }
         } message: {
             Text("The file goes to the Trash, and its removal is committed in the base's git. Links to it from other notes stay as they are.")
+        }
+        .sheet(isPresented: Binding(get: { model.obsidianSetup != nil }, set: { if !$0 { model.obsidianSetup = nil } })) {
+            if let folder = model.obsidianSetup { ObsidianSetupSheet(folder: folder) }
         }
         .alert("Changed on disk", isPresented: Binding(get: { model.noteConflict != nil }, set: { _ in })) {
             Button("Reload") { model.reloadConflictedNote() }
@@ -374,5 +378,57 @@ struct NoteChecksView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Open in Obsidian on a base that is in none of Obsidian's vaults: Obsidian opens only files of
+/// its vaults, so the base folder is opened as a vault once, in Obsidian. AKit doesn't change
+/// Obsidian's list itself; `.obsidian/` stays out of the base's git (`.gitignore`).
+struct ObsidianSetupSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let folder: URL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Open the Base in Obsidian").font(.title3.weight(.semibold))
+            Text("Obsidian opens only notes inside its vaults, and this base isn't one yet. Make it a vault once, then Open in Obsidian opens its notes.")
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("1. Open Obsidian.")
+                Text("2. In the vault switcher choose Open folder as vault, then Open.")
+                Text("3. Pick this folder (Copy Path, then ⇧⌘G in the folder dialog):")
+                Text(folder.tildePath)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.leading, 16)
+                Text("4. Back in AKit, press Open in Obsidian again.")
+            }
+            Text("Obsidian keeps its settings in .obsidian/ inside the folder; the base's .gitignore keeps it out of the base's commits.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Copy Path", systemImage: "doc.on.doc") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(folder.path, forType: .string)
+                }
+                .help("Copy the base folder's path, to paste into Obsidian's folder dialog")
+                Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+                    .help("Show the base folder in Finder")
+                Spacer()
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Open Obsidian") {
+                    if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "md.obsidian") {
+                        NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
+                    }
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .help("Start Obsidian, where you open this folder as a vault")
+            }
+        }
+        .padding(20)
+        .frame(width: 520)
     }
 }

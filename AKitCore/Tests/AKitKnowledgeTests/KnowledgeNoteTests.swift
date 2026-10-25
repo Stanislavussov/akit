@@ -85,4 +85,20 @@ struct KnowledgeNoteTests {
         let url = Obsidian.openURL(note: URL(filePath: "/Users/me/.akit/local/knowledge/work/areas/pay & co/Café #1.md"))
         #expect(url?.absoluteString == "obsidian://open?path=%2FUsers%2Fme%2F.akit%2Flocal%2Fknowledge%2Fwork%2Fareas%2Fpay%20%26%20co%2FCaf%C3%A9%20%231.md")
     }
+
+    /// Obsidian opens only files of the vaults in its own list; AKit reads that list to tell.
+    @Test func obsidianCanOpenOnlyNotesInsideAKnownVault() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "akit-obsidian-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        #expect(Obsidian.knownVaults(home: home) == nil)
+        let list = home.appending(path: "Library/Application Support/obsidian/obsidian.json")
+        try FileManager.default.createDirectory(at: list.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"vaults":{"c14a":{"path":"/Users/me/Obsidian Vault","ts":1,"open":true},"bad":{"ts":2}}}"#.utf8).write(to: list)
+        let known = try #require(Obsidian.knownVaults(home: home))
+        #expect(known.map(\.path) == ["/Users/me/Obsidian Vault"])
+        #expect(Obsidian.canOpen(URL(filePath: "/Users/me/Obsidian Vault/kb/areas/payments/billing.md"), known: known))
+        #expect(!Obsidian.canOpen(URL(filePath: "/Users/me/.akit/local/knowledge/sample/areas/payments/billing.md"), known: known))
+        // A folder whose name only starts like the vault's is not inside it.
+        #expect(!Obsidian.canOpen(URL(filePath: "/Users/me/Obsidian Vault 2/note.md"), known: known))
+    }
 }

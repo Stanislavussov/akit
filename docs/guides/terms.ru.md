@@ -1292,6 +1292,7 @@ Friction («трение») — места, где агент спотыкалс
 - **Copy**: скопировать весь текст заметки. Подробнее: [Copy и Paste](knowledge#note-copy)
 - **Paste**: добавить текст из буфера обмена в конец заметки и сохранить. Подробнее: [Copy и Paste](knowledge#note-copy)
 - **Open in Obsidian**: открыть заметку в Obsidian (`obsidian://open`), в том vault, где лежит база. Подробнее: [Open in Obsidian](knowledge#note-obsidian)
+- **Open the Base in Obsidian / Copy Path / Open Obsidian**: окно, если базы нет среди хранилищ Obsidian: как один раз открыть папку базы как vault (**Open folder as vault**). **Copy Path** копирует путь папки, **Open Obsidian** запускает Obsidian. Подробнее: [Open in Obsidian](knowledge#note-obsidian)
 - **Delete… / Move to Trash**: переместить заметку (или пространство) в Корзину и сразу закоммитить удаление. Подробнее: [Удалить](knowledge#spaces-delete)
 - **Committed 1 edit. / Committed N edits.**: AKit только что закоммитил правки из очереди. Подробнее: [Коммиты правок](knowledge#commits)
 - **No note open**: ни одна заметка не открыта. Нажмите на заметку в списке. Подробнее: [Открыть заметку](knowledge#spaces-open)

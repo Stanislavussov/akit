@@ -53,6 +53,27 @@ public enum Obsidian {
         return nil
     }
 
+    /// The vaults Obsidian knows, from its own list `~/Library/Application Support/obsidian/
+    /// obsidian.json` (`{"vaults": {id: {"path": …}}}`), read only. nil when the list can't be
+    /// read (Obsidian never ran, or a format AKit doesn't know): then AKit can't tell.
+    public static func knownVaults(home: URL) -> [URL]? {
+        let file = home.appending(path: "Library/Application Support/obsidian/obsidian.json")
+        guard let data = try? Data(contentsOf: file),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let vaults = json["vaults"] as? [String: Any] else { return nil }
+        return vaults.values.compactMap { ($0 as? [String: Any])?["path"] as? String }.map { URL(filePath: $0, directoryHint: .isDirectory) }
+    }
+
+    /// Whether Obsidian can open `note`: one of `known` (its vaults) is the note's folder or a
+    /// folder above it. `obsidian://open` refuses any other file ("Unable to find a vault").
+    public static func canOpen(_ note: URL, known: [URL]) -> Bool {
+        let path = note.standardized.resolvingSymlinksInPath().path.precomposedStringWithCanonicalMapping
+        return known.contains { vault in
+            let folder = vault.standardized.resolvingSymlinksInPath().path.precomposedStringWithCanonicalMapping
+            return path.hasPrefix(folder.hasSuffix("/") ? folder : folder + "/")
+        }
+    }
+
     /// `obsidian://open?vault=Notes&file=kb%2Fareas%2Fpayments%2Forders-api.md` inside a vault,
     /// else `obsidian://open?path=%2FUsers%2Fme%2F…%2Forders-api.md`.
     public static func openURL(note: URL) -> URL? {

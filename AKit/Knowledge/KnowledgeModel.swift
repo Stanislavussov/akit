@@ -59,6 +59,9 @@ final class KnowledgeModel {
     /// The text of the note in view, as on disk after the last save.
     private(set) var text = ""
     var problem: String?
+    /// Open in Obsidian found the base in none of Obsidian's vaults: the base folder, for the
+    /// sheet that says how to open it as a vault once.
+    var obsidianSetup: URL?
     /// The note panel shows the Markdown to edit (Edit). Snapshots: `--tab edit` (and `watch-edit`).
     var editing = ["edit", "watch-edit"].contains(DebugSnapshot.options?.tab)
     /// The note panel shows the Properties form (kind and fields). Snapshots: `--tab properties`.
@@ -183,6 +186,7 @@ final class KnowledgeModel {
         if let select, allNotes.contains(where: { $0.id == select }) {
             open(select)
             if DebugSnapshot.options?.tab == "delete" { deleteRequest = select }
+            if DebugSnapshot.options?.tab == "obsidian-setup", let base { obsidianSetup = base.root }
         } else if let select, targets.maps.contains(select) {
             open(map: select)
             if DebugSnapshot.options?.tab == "map-delete" { mapDeleteRequest = select }
@@ -685,6 +689,11 @@ final class KnowledgeModel {
         guard let base, let note, let url = Obsidian.openURL(note: base.noteFile(note)) else { return }
         if NSWorkspace.shared.urlForApplication(toOpen: url) == nil {
             problem = "Obsidian isn't installed. The base is a plain folder of Markdown files: \(base.root.tildePath)"
+            return
+        }
+        // Obsidian opens only files of its vaults; for any other it says "Unable to find a vault".
+        if let known = Obsidian.knownVaults(home: home), !Obsidian.canOpen(base.noteFile(note), known: known) {
+            obsidianSetup = base.root
             return
         }
         NSWorkspace.shared.open(url)

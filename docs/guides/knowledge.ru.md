@@ -325,7 +325,18 @@ AKit пишет файл целиком и атомарно: сначала во
 
 База — обычное хранилище (vault) Obsidian: ссылки `[[…]]` и начало заметки Obsidian понимает сам. **Open in Obsidian** открывает заметку в Obsidian по адресу `obsidian://open?path=…`. Плагин не нужен.
 
-Если Obsidian не установлен, экран скажет об этом и покажет папку базы. Чтобы Obsidian узнал базу, один раз откройте в нём папку базы как vault. Или положите базу в свой vault: [Папка базы и Obsidian](#folder).
+Если Obsidian не установлен, экран скажет об этом и покажет папку базы.
+
+Obsidian открывает только заметки из своих хранилищ. Если базы среди них нет, Obsidian пишет «Unable to find a vault for the URL…». Поэтому AKit сначала смотрит список хранилищ Obsidian (только читает его). Если базы там нет, вместо Obsidian открывается окно **Open the Base in Obsidian**:
+
+1. Нажмите **Copy Path**, потом **Open Obsidian**.
+2. В Obsidian откройте переключатель хранилищ и выберите **Open folder as vault** → **Open**.
+3. В окне выбора папки нажмите ⇧⌘G, вставьте путь и выберите папку.
+4. Вернитесь в AKit и снова нажмите **Open in Obsidian**: заметка откроется.
+
+Это нужно один раз на каждую базу, например `work` и `sample` отдельно. Настройки Obsidian лежат в папке `.obsidian/` внутри базы, и файл `.gitignore` базы не пускает её в коммиты. Другой путь — положить базу внутрь своего vault: [Папка базы и Obsidian](#folder).
+
+![Окно Open the Base in Obsidian: объяснение, что Obsidian открывает только заметки своих хранилищ; четыре шага: открыть Obsidian, выбрать Open folder as vault, выбрать папку ~/.akit/local/knowledge/work, снова нажать Open in Obsidian; пояснение про .obsidian/ и .gitignore; кнопки Copy Path, Show in Finder, Close и Open Obsidian](images/knowledge-obsidian-setup.png)
 
 ## Карты
 <!-- section: maps -->
