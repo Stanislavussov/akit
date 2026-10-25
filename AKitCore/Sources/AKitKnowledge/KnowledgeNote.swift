@@ -71,6 +71,11 @@ public struct KnowledgeNote: Sendable, Equatable {
     }
 
     public var kind: String? { string("kind") }
+    /// Whether `description:` holds a line: what agents read before they open the note.
+    public var hasDescription: Bool {
+        guard let value = frontmatter["description"], !(value is NSNull) else { return false }
+        return !"\(value)".trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     /// The repository's git remote URL, or a `~/` path (K12).
     public var repo: String? { string("repo") }
     /// The system's folder on this Mac, a `~/` or absolute path (K27): a repository's local

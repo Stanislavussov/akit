@@ -237,6 +237,21 @@ is the Mac's preferred language, else English. GitLab text keeps `posting: langu
 review.yaml) sets how hard the verifier model thinks: off, minimal, low, medium,
 high, xhigh or max; alone it keeps the configured verifier model. The New Review sheet has the
 same menu (Verifier thinking).
+`akit review kb-gaps RUN [--json]` lists what a review missed in the knowledge base: searches
+with no answer, gaps a pass reported with `system: knowledge`, and notes it used without a
+`description:`; each line ends with the `akit kb propose …` command that fills it. Use it after a
+review when the user asks what the base lacks; propose notes only with the user's words, never
+invent facts. Every note needs `description:` (one line: agents read it first and open the note
+only when needed; `akit kb lint` reports `missing-description`), so pass `--set description=…`
+when you propose a note. The Review screen has the same list (Missing in the knowledge base,
+Propose Note… / Propose Description…).
+`akit review ask RUN [--finding ID] (--question TEXT | --note TEXT) [--json]` asks Pi about a
+finding (or the whole review without --finding) or adds the user's knowledge; Pi forks the
+conversation's last session, so it remembers the review and the earlier questions. A note may
+change the findings: AKit makes a new version and plans the requests again (nothing is sent).
+Use it when the user wants an answer about a finding or tells you something the review should
+take into account; `--json` gives {id, finding, kind, text, answer, error, version, changes}. The
+Review screen has Ask… and Add Note… on each comment and an Ask… menu for the whole review.
 
 `akit review points [PATH] --find TEXT [--kind branches|tags|commits] [--json]` lists the branches, remote branches, tags and
 commits of a local workspace whose name, commit message, author or id start holds every word of

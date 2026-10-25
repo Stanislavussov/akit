@@ -19,7 +19,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 9
+    public static let version = 10
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -232,6 +232,7 @@ public enum KnowledgeSeed {
         // service: repo, path, files and sections; its repo is $HOME/Projects/orders-api in the demo home.
         File(path: "areas/payments/orders-api.md", text: """
             ---
+            description: Takes orders from the shop and publishes order.created for billing.
             kind: service
             repo: git@example.com:shop/orders-api.git
             path: ~/Projects/orders-api
@@ -253,6 +254,7 @@ public enum KnowledgeSeed {
             """),
         File(path: "areas/payments/billing.md", text: """
             ---
+            description: Bills each order once, from the order.created event.
             kind: service
             repo: git@example.com:shop/billing.git
             owner: checkout-team
@@ -269,6 +271,7 @@ public enum KnowledgeSeed {
         // flow, in a subfolder of its area.
         File(path: "areas/payments/flows/order-to-billing.md", text: """
             ---
+            description: How an order becomes an invoice, from orders-api to billing.
             kind: flow
             ---
             # order-to-billing
@@ -280,6 +283,7 @@ public enum KnowledgeSeed {
         // team: members (a list) and channel.
         File(path: "areas/payments/checkout-team.md", text: """
             ---
+            description: The team that owns orders-api, billing and orders-db.
             kind: team
             members: [Ann Lee, Bo Chen]
             channel: checkout-help
@@ -296,6 +300,7 @@ public enum KnowledgeSeed {
         // database: repo and owner.
         File(path: "areas/payments/orders-db.md", text: """
             ---
+            description: The database of orders-api - orders, their lines and the outbox.
             kind: database
             repo: git@example.com:shop/orders-db.git
             owner: checkout-team
@@ -313,6 +318,7 @@ public enum KnowledgeSeed {
         // queue: owner, and a link into another area (logistics/warehouse).
         File(path: "areas/payments/order-events.md", text: """
             ---
+            description: The order.created topic, who writes it and who reads it.
             kind: queue
             owner: checkout-team
             ---
@@ -326,6 +332,7 @@ public enum KnowledgeSeed {
         // orders is rare enough in the base for BM25 to score a real match below the miss cutoff.
         File(path: "areas/logistics/warehouse.md", text: """
             ---
+            description: Keeps the stock and reserves items for paid orders.
             kind: service
             repo: git@example.com:shop/warehouse.git
             ---
@@ -348,6 +355,7 @@ public enum KnowledgeSeed {
             """),
         File(path: "areas/logistics/shipping.md", text: """
             ---
+            description: Books the courier and tracks each parcel.
             kind: service
             ---
             # shipping
@@ -365,6 +373,7 @@ public enum KnowledgeSeed {
             """),
         File(path: "areas/logistics/flows/pick-and-ship.md", text: """
             ---
+            description: How a paid order is picked in the warehouse and shipped.
             kind: flow
             owner: logistics
             ---
@@ -376,6 +385,7 @@ public enum KnowledgeSeed {
         // external: url and owner.
         File(path: "areas/logistics/courier-api.md", text: """
             ---
+            description: The courier's booking API that shipping calls.
             kind: external
             url: https://courier.example.com/api
             owner: logistics
@@ -405,18 +415,27 @@ public enum KnowledgeSeed {
             """),
         // broken-link, and ambiguous-link: [[status]] fits old/status and new/status.
         File(path: "areas/lint-examples/links.md", text: """
+            ---
+            description: A broken link and an ambiguous one, on purpose.
+            ---
             # links
 
             A link to [[no-such-note]], which points nowhere, and one to [[status]], which fits two notes.
 
             """),
         File(path: "areas/lint-examples/old/status.md", text: """
+            ---
+            description: The old status page, one of two notes named status.
+            ---
             # status
 
             The old status page.
 
             """),
         File(path: "areas/lint-examples/new/status.md", text: """
+            ---
+            description: The new status page, one of two notes named status.
+            ---
             # status
 
             The new status page.
@@ -425,6 +444,7 @@ public enum KnowledgeSeed {
         // unknown-repo.
         File(path: "areas/lint-examples/unknown-repo.md", text: """
             ---
+            description: A repo that no project of this Mac has, on purpose.
             kind: service
             repo: git@example.com:shop/no-such-repo.git
             ---
@@ -436,6 +456,7 @@ public enum KnowledgeSeed {
         // missing-file: the local copy of lint-examples has no src/.
         File(path: "areas/lint-examples/missing-file.md", text: """
             ---
+            description: A files entry the local copy lacks, on purpose.
             kind: service
             repo: git@example.com:shop/lint-examples.git
             files: [src/status-page.ts]
@@ -448,6 +469,7 @@ public enum KnowledgeSeed {
         // missing-home-path; a folder note (K27): a folder without git, like a local wiki.
         File(path: "areas/lint-examples/home-path.md", text: """
             ---
+            description: A path folder that does not exist, on purpose.
             kind: folder
             path: ~/akit-lint-examples/wiki
             owner: checkout-team
@@ -460,11 +482,19 @@ public enum KnowledgeSeed {
         // unknown-kind (a hint, K24).
         File(path: "areas/lint-examples/gadget.md", text: """
             ---
+            description: A kind that kb.yaml does not list, on purpose.
             kind: gadget
             ---
             # gadget
 
             A kind that kb.yaml doesn't list.
+
+            """),
+        // missing-description: a note without the one line agents read first.
+        File(path: "areas/lint-examples/no-description.md", text: """
+            # no-description
+
+            A note without a description: agents have to open it to find out what it is about.
 
             """),
         // block-without-note, unbound-arrow and unrelated-area (a hint, R-SEP); then map-parse.

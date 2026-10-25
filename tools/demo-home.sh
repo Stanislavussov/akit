@@ -918,7 +918,7 @@ public sealed class AuthMiddleware(RequestDelegate next, ILogger<AuthMiddleware>
 }
 EOF
 file "$REVIEWRUN/run.json" <<EOF
-{"version":1,"id":"20261015-091500-orders-service-42","created":"$(rago 3H)",
+{"version":1,"id":"20261015-091500-orders-service-42","created":"$(rago 3H)","knowledgeBasePath":"$DEMO/.akit/local/knowledge/work",
  "mergeRequest":{"host":"https://gitlab.example.com","projectPath":"shop/orders-service","iid":42},"project":"orders-service",
  "scenario":{"value":"bugfix","source":"project"},
  "checks":["Is the cause fixed, not the symptom (from the repro steps)?","Does a regression test reproduce the bug?"],
@@ -975,7 +975,8 @@ file "$REVIEWRUN/findings.json" <<EOF
 EOF
 file "$REVIEWRUN/gaps.json" <<'EOF'
 [{"id":"g1","system":"tests","needed":"Output of tests","why":"dotnet test failed to build in the worktree.","howToGet":"Check the command in the profile.","effect":"","reportedBy":"gather"},
- {"id":"g2","system":"azure-devops","needed":"Které endpointy zůstanou anonymní","why":"Work item #4512 je neuvádí.","howToGet":"Zeptejte se autora.","effect":"f5 je otázka, ne nález.","reportedBy":"role-requirements"}]
+ {"id":"g2","system":"azure-devops","needed":"Které endpointy zůstanou anonymní","why":"Work item #4512 je neuvádí.","howToGet":"Zeptejte se autora.","effect":"f5 je otázka, ne nález.","reportedBy":"role-requirements"},
+ {"id":"g3","system":"knowledge","needed":"Kdo čte logy orders-service a kam se posílají","why":"Nález f1 závisí na tom, zda log čtou i další týmy.","howToGet":"payments","effect":"f1","reportedBy":"role-security"}]
 EOF
 # The overview (Review → a run: Overview and Flow), in the run's summary language, and what the
 # map (Review → a run → Map) is built from: the boundaries the brief kept and the uses the impact
@@ -1027,6 +1028,18 @@ file "$REVIEWRUN/mcp/calls/fetch-1760520002000-0003.json" <<'EOF'
 EOF
 file "$REVIEWRUN/mcp/calls/role-security-1760520100000-0001.json" <<'EOF'
 {"pass":"role-security","tool":"mcp__context7__query-docs","server":"context7","input":"{\"libraryId\":\"/dotnet/aspnetcore\",\"query\":\"ILogger structured logging sensitive data\"}","text":["Docs about logging."],"isError":false}
+EOF
+# Ask… on the whole review (Questions and notes of the run): a made-up question and Pi's answer.
+file "$REVIEWRUN/conversation.jsonl" <<'EOF'
+{"answer":"Ne. /health a /metrics middleware nepouští dál bez hlavičky; dostanou 401 jako ostatní cesty. Pokud mají zůstat anonymní, je to otázka f5.","asked":"2026-10-15T09:40:00Z","id":"a1","kind":"question","text":"Zůstane /health dostupný bez přihlášení?"}
+EOF
+# The knowledge base in the review passes: a search with no answer and an opened note without a
+# description ("Missing in the knowledge base" of the run).
+file "$REVIEWRUN/mcp/calls/role-security-1760520101000-0002.json" <<'EOF'
+{"pass":"role-security","tool":"akit_kb_search","server":"akit-kb","input":"{\"query\":\"log retention\"}","text":["{\"results\":[],\"stale\":false,\"tokens\":0}"],"isError":false}
+EOF
+file "$REVIEWRUN/mcp/calls/role-security-1760520102000-0003.json" <<'EOF'
+{"pass":"role-security","tool":"akit_kb_show","server":"akit-kb","input":"{\"note\":\"no-description\"}","text":["{\"note\":\"lint-examples/no-description\",\"title\":\"no-description\",\"sections\":[]}"],"isError":false}
 EOF
 file "$REVIEWRUN/mcp/blocked.jsonl" <<'EOF'
 {"tool":"mcp__gitlab__create_note","pass":"role-bug-hunter","reason":"a review pass only reads"}

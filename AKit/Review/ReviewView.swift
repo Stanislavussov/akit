@@ -216,6 +216,8 @@ struct ReviewRunDetail: View {
     let run: ReviewWorkflow.Run
     @State private var showSend = false
     @State private var showMissed = false
+    /// Ask… / Add Note… on the whole review. Snapshots: `--tab ask` opens Add Note….
+    @State private var reviewAskKind: ReviewConversationEntry.Kind? = DebugSnapshot.options?.tab == "ask" ? .note : nil
     /// Snapshots: `--tab log` opens it.
     @State private var showLog = DebugSnapshot.options?.tab == "log"
     /// Translate of the brief, the overview and the requests; what goes to GitLab stays the original.
@@ -226,6 +228,8 @@ struct ReviewRunDetail: View {
     @State private var overview: ReviewOverview?
     @State private var map: ReviewMap?
     @State private var mapLoaded = false
+    /// What the review missed in the knowledge base, read with the overview.
+    @State private var knowledgeGaps: [ReviewKnowledgeGap] = []
 
     enum Tab: String, CaseIterable {
         case requests = "Requests", map = "Map"
@@ -234,6 +238,7 @@ struct ReviewRunDetail: View {
     /// What the overview and the map show: they are read again when the findings change.
     private var filesKey: String {
         "\(run.id)|\(run.status?.stage.rawValue ?? "")|\(run.findings?.version ?? 0)|\(run.findings?.created.timeIntervalSince1970 ?? 0)"
+            + "|\(model.conversation.count)"
     }
 
     private var requests: [ReviewRequest] { run.plan?.requests ?? [] }
@@ -275,7 +280,10 @@ struct ReviewRunDetail: View {
                     case .map:
                         mapSection(proxy)
                     }
+                    reviewThread
                     gaps
+                    ReviewKnowledgeGapsSection(gaps: knowledgeGaps, run: run.id,
+                                               base: run.spec.knowledgeBasePath.map { URL(filePath: $0, directoryHint: .isDirectory) })
                     missed
                 }
                 .padding(20)
@@ -299,9 +307,12 @@ struct ReviewRunDetail: View {
         .sheet(isPresented: $showMissed) { AddMissedSheet(files: run.snapshot?.diffs.map(\.newPath) ?? []) }
         .task(id: filesKey) {
             let folder = run.folder
-            let found = await Task.detached { (ReviewOverview.load(folder: folder), ReviewMap.load(folder: folder)) }.value
+            let found = await Task.detached {
+                (ReviewOverview.load(folder: folder), ReviewMap.load(folder: folder), ReviewKnowledgeGaps.read(run: folder))
+            }.value
             overview = found.0
             map = found.1
+            knowledgeGaps = found.2
             mapLoaded = true
         }
     }
@@ -543,6 +554,15 @@ struct ReviewRunDetail: View {
         }
     }
 
+    @ViewBuilder private var reviewThread: some View {
+        let count = model.thread(nil).count
+        if count > 0 || model.isAsking(nil) {
+            DisclosureGroup("Questions and notes (\(count))") {
+                ReviewThreadView(run: run, finding: nil).padding(.top, 4)
+            }
+        }
+    }
+
     @ViewBuilder private var gaps: some View {
         if !run.gaps.isEmpty {
             DisclosureGroup("Context gaps (\(run.gaps.count))") {
@@ -589,6 +609,14 @@ struct ReviewRunDetail: View {
                     .disabled(model.isBusy)
                     .help("Read this merge request's threads again (one small pass) and record what became of each 🤖 comment: fixed, dismissed, ignored or open. Review → Quality shows the numbers.")
             }
+            Menu("Ask…") {
+                Button("Ask About the Review…") { reviewAskKind = .question }
+                Button("Add a Note to the Review…") { reviewAskKind = .note }
+            }
+            .fixedSize()
+            .disabled(run.passes == nil || model.isBusy)
+            .help("A question about the whole review, or what you know that it missed: Pi answers here; a note may change the findings")
+            .sheet(item: $reviewAskKind) { kind in ReviewAskSheet(finding: nil, kind: kind) }
             Button("Discuss in Pi…") { model.discuss() }
                 .help("Open Pi in a terminal with the whole review (a fork of the verifier's session). What it submits becomes a new version here.")
                 .disabled(run.passes?.verifierSession == nil && run.passes == nil)
@@ -625,6 +653,8 @@ struct ReviewRequestCard: View {
     @State private var editing = false
     @State private var reason: ReviewRequest.Reason?
     @State private var comment = ""
+    /// Ask… or Add Note… on this request's finding.
+    @State private var askKind: ReviewConversationEntry.Kind?
 
     private var finding: ReviewFinding? { run.finding(request.findingID) }
 
@@ -676,8 +706,10 @@ struct ReviewRequestCard: View {
             if let error = request.sent?.error {
                 Label("GitLab: \(error)", systemImage: "xmark.octagon").font(.caption).foregroundStyle(.red).textSelection(.enabled)
             }
+            if let id = request.findingID { ReviewThreadView(run: run, finding: id) }
             if !request.isSent { buttons }
         }
+        .sheet(item: $askKind) { kind in ReviewAskSheet(finding: finding, kind: kind) }
         .padding(12)
         .background(.background, in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(request.decision == .approved ? Color.green.opacity(0.6) : Color.secondary.opacity(0.25)))
@@ -708,6 +740,14 @@ struct ReviewRequestCard: View {
                 }
                 .disabled(request.kind == .delete)
                 .help("Change the text before it goes to GitLab; the change is kept to improve the roles")
+                if finding != nil {
+                    Button("Ask…") { askKind = .question }
+                        .disabled(model.isBusy)
+                        .help("Ask Pi about this finding: it answers with the whole review in mind")
+                    Button("Add Note…") { askKind = .note }
+                        .disabled(model.isBusy)
+                        .help("Add what you know about it: Pi may confirm, reject or correct the finding (a new version you approve)")
+                }
             }
             Spacer()
             if request.findingID != nil {

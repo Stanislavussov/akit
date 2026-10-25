@@ -18,6 +18,7 @@ import Foundation
 /// | `missing-home-path` | warning | a `~/` path in `repo:` or `files:`, or a `path:` folder, that doesn't exist |
 /// | `unrelated-area` | hint | a block for a note of another area that no map of this area jumps to or from (R-SEP) |
 /// | `unknown-kind` | hint | a note's `kind:` that `kb.yaml` doesn't list (K24) |
+/// | `missing-description` | warning | a note without `description:`: agents read the one line first, the note only when needed |
 ///
 /// Known projects (K12): the `origin` remotes of the git repos in the projects root (and one
 /// folder below), the project ids of the project store (the brain's `projects/` and
@@ -44,6 +45,7 @@ public enum KnowledgeLint {
         case missingHomePath = "missing-home-path"
         case unrelatedArea = "unrelated-area"
         case unknownKind = "unknown-kind"
+        case missingDescription = "missing-description"
 
         public var severity: Severity {
             switch self {
@@ -248,6 +250,11 @@ public enum KnowledgeLint {
             if let finding = linkFinding(token.value, resolution: targets.resolve(token.value, from: path), file: path, element: nil) {
                 findings.append(finding)
             }
+        }
+        if !note.hasDescription {
+            findings.append(Finding(rule: .missingDescription, file: path,
+                                    message: "The note has no description. Agents (an AKit review) read each note's one line first and open the note only when it is the one they need; without it they open the note to find out.",
+                                    fix: "Add description: <one line: what this note is about> to its properties."))
         }
         if let kind = note.kind, kinds.kind(kind) == nil {
             findings.append(Finding(rule: .unknownKind, file: path, link: kind,

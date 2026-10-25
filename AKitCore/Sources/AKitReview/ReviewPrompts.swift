@@ -90,6 +90,15 @@ public enum ReviewPrompts {
             `context/links.md`, with the links that couldn't be read.
             """
         }
+        // Descriptions first (K18): every note a pass opens costs context.
+        let knowledgeRule = spec.knowledgeBasePath == nil ? "" : """
+            - The knowledge base: read the one-line descriptions first (the systems in knowledge-card.md, the snippets \
+            `akit_kb_search` returns). Open a note with `akit_kb_show` only when its line says it holds what you need, and ask \
+            for one `section` when you can: every note you open costs context. When the base has nothing on a system, a contract \
+            or a decision you needed, call `akit_report_context_gap` with `system: "knowledge"`: `needed` says what a note \
+            should hold, `how_to_get` names the area or the note it belongs to.
+
+            """
         return """
         # AKit review
 
@@ -135,7 +144,7 @@ public enum ReviewPrompts {
         go to the merge request as written. Code, identifiers, file paths, `evidence` and `suggestion` stay exactly as in the code.
         - When you need something the context pack doesn't have\(spec.access.inPasses ? " and your MCP tools can't read" : ""), call \
         `akit_report_context_gap` instead of guessing.
-        - Don't repeat what a person already raised in `threads.md`, open or resolved.
+        \(knowledgeRule)- Don't repeat what a person already raised in `threads.md`, open or resolved.
         - Review what this change brings. A real problem that was already there before it (the same code at the base commit) is \
         not the author's: report it only when it is serious, with `preExisting: true`; it stays with the developer and never goes \
         to the merge request.

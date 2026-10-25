@@ -146,7 +146,7 @@ final class KnowledgeSeedTests {
         // Lint (4.1), with the made-up repos cloned as tools/demo-home.sh clones them.
         ("lint-examples has one finding of each rule", { base in
             let found = try lint(base).filter { $0.severity != .hint }
-            return found.allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } && found.count == 8
+            return found.allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } && found.count == 9
                 && Set(found.map(\.rule)) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint })
         }),
         ("lint-examples has the hints unknown kind and unrelated area", { base in

@@ -1,4 +1,5 @@
 ---
+description: The missing-file example note.
 kind: service
 repo: ~/Library
 files: [akit-lint-fixture/no-such-file.txt]

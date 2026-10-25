@@ -1,4 +1,5 @@
 ---
+description: The gadget example note.
 kind: gadget
 ---
 # gadget

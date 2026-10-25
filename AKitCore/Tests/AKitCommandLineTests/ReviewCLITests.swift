@@ -29,6 +29,29 @@ extension AKitCLITests {
         #expect(await review(["config", "show", "--project", "nope"]).err.contains("no project profile nope"))
     }
 
+    /// `ask RUN`: one of --question and --note; a run without passes has no session to fork.
+    @Test func reviewAskArguments() async throws {
+        try write(".akit/local/review/runs/r2/run.json", "{}")
+        #expect(await review(["ask", "r2"]).err.contains("Give one: --question TEXT or --note TEXT."))
+        #expect(await review(["ask", "r2", "--question", "a", "--note", "b"]).err.contains("Give one"))
+        #expect(await review(["--help"]).out.contains("akit review ask RUN [--finding ID]"))
+    }
+
+    /// `kb-gaps RUN`: what the review missed in the knowledge base, each with its propose command.
+    @Test func reviewKnowledgeGaps() async throws {
+        let run = ".akit/local/review/runs/r1"
+        try write("\(run)/run.json", "{}")
+        try write("\(run)/mcp/calls/role-a-1-0001.json", #"{"pass":"role-a","tool":"akit_kb_search","input":"{\"query\":\"refunds\"}","text":["{\"results\":[],\"stale\":false}"],"isError":false}"#)
+        try write("\(run)/gaps.json", #"[{"id":"g1","system":"knowledge","needed":"Who reads order.created","why":"A field goes","howToGet":"","effect":"","reportedBy":"role-a"}]"#)
+        let shown = await review(["kb-gaps", "r1"])
+        #expect(shown.code == 0, "\(shown)")
+        #expect(shown.out.contains("k1  No answer for the search \"refunds\"  [role-a]"), "\(shown.out)")
+        #expect(shown.out.contains("k2  Needed: Who reads order.created (A field goes)") && shown.out.contains("akit kb propose --note AREA/NAME"))
+        let json = await review(["kb-gaps", "r1", "--json"])
+        #expect(json.out.contains("\"kind\" : \"search\"") || json.out.contains("\"kind\":\"search\""), "\(json.out)")
+        #expect(await review(["kb-gaps", "nope"]).err.contains("There is no review run nope"))
+    }
+
     /// `--verifier-thinking`: a level alone keeps the configured verifier model; a wrong level stops.
     @Test func reviewVerifierThinking() async throws {
         try write(".akit/local/review/projects/app.yaml", """

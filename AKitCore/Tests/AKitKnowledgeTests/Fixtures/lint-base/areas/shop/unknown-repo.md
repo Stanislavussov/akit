@@ -1,4 +1,5 @@
 ---
+description: The unknown-repo example note.
 kind: service
 repo: git@example.com:lint/no-such-repo.git
 ---
