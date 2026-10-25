@@ -53,7 +53,8 @@ public enum ReviewEvalSet {
         let run = try ReviewWorkflow.load(folder)
         guard run.spec.local == nil else { throw Failure(message: "A local review has no merge request to pin: add a merge request's run.") }
         guard let head = run.spec.headSHA else { throw Failure(message: "\(run.id) isn't gathered: it has no head commit to pin.") }
-        let all = run.findings?.findings ?? []
+        // A case pins the first merge request: findings of linked ones aren't in its code.
+        let all = (run.findings?.findings ?? []).filter { ReviewLinked.key(of: $0.file, spec: run.spec) == nil }
         var picked: [ReviewFinding] = []
         if !clean {
             if let ids {

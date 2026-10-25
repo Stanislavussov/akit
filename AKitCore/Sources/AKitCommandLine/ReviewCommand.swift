@@ -11,7 +11,7 @@ extension AKitCLI {
     roles, the rules and the limits, and nothing reaches GitLab until you approve it.
 
     Usage:
-      akit review MR-URL [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
+      akit review MR-URL[@COMMIT] [MR-URL[@COMMIT]…] [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
                          [--note TEXT]… [--note-file PATH]… [--link URL]… [--extra-server NAME]…
                          [--impact auto|off|always] [--summary-language CODE] [--gather-only]
@@ -26,7 +26,14 @@ extension AKitCLI {
                                         when the merge request is a draft, its pipeline failed, or AKit
                                         already reviewed this commit. A rerun after a push reviews
                                         only what changed since the last review; --full reads the
-                                        whole merge request again
+                                        whole merge request again.
+                                        Several addresses: one review of linked merge requests (a
+                                        frontend and its API in other repositories). The roles read
+                                        all of them; the first sets the profile, scenario and roles;
+                                        each finding goes to drafts in its own merge request; files of
+                                        the others are named @<project>/<path>. @COMMIT: report only
+                                        on what changed after that commit of the merge request (else
+                                        from the merge base, where its branch left the target)
       akit review points [PATH] [--find TEXT] [--kind branches|tags|commits] [--json]
                                         Find a base or head for a local review: the branches, remote
                                         branches, tags and commits of the workspace (PATH: the current
@@ -207,7 +214,7 @@ extension AKitCLI {
             let runs = ReviewRuns.list(home: env.homeDirectory)
             if runs.isEmpty { out("No review runs yet.") }
             for run in runs {
-                out("\(run.id)  \(run.spec.mergeRequest.label)  \(run.spec.scenario.value)  \(run.status?.stage.rawValue ?? "?")")
+                out("\(run.id)  \(run.spec.label)  \(run.spec.scenario.value)  \(run.status?.stage.rawValue ?? "?")")
             }
             return 0
         case "config":
@@ -481,7 +488,25 @@ extension AKitCLI {
             try args.finish()
             return try await runPasses(folder: try runFolder(id, env: env), anyway: anyway, env: env, out: out)
         case let text?:
-            let mr = try mergeRequest(text)
+            let entries: [ReviewMergeRequestEntry]
+            do {
+                var list = [try ReviewLinked.entry(text)]
+                while let more = args.positional() {
+                    // `URL COMMIT` as two arguments, as in the app's field.
+                    if let last = list.last, last.fromCommit == nil, MergeRequestRef.parse(more) == nil,
+                       let entry = try? ReviewLinked.entry("\(last.mergeRequest.url) \(more)") {
+                        list[list.count - 1] = entry
+                    } else {
+                        list.append(try ReviewLinked.entry(more))
+                    }
+                }
+                entries = try ReviewLinked.checked(list)
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            let mr = entries[0].mergeRequest
+            choices.fromCommit = entries[0].fromCommit
+            choices.linked = Array(entries.dropFirst())
             try args.finish()
             let lines = LineBox()
             let result: ReviewGather.Result
@@ -685,6 +710,13 @@ extension AKitCLI {
         }
         let extra = (spec.mcpServers ?? []).filter(\.readOnly).map { "\($0.name) [\($0.source.rawValue)]" }
         if !extra.isEmpty { lines.append("Context servers (read only): " + extra.joined(separator: ", ") + ".") }
+        if let since = spec.since {
+            lines.append("From commit \(since.asked): findings only on the lines changed after it (context/since-commit.md).")
+        }
+        for change in spec.linked ?? [] {
+            lines.append("Linked \(change.mergeRequest.label): " + (change.headSHA.map { "at \($0.prefix(10)), files named @\(change.key)/…"
+                + (change.since.map { ", from commit \($0.asked)" } ?? "") + "." } ?? "not read (see the gaps)."))
+        }
         if let base = spec.knowledgeBasePath {
             let tools = ReviewPasses.knowledgeEnvironment(spec: spec, env: env)
             lines.append("Knowledge card: context/knowledge-card.md, from \(FileWalk.tilde(URL(filePath: base), home: env.homeDirectory)).")

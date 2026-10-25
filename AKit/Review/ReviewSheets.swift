@@ -61,7 +61,9 @@ struct NewReviewSheet: View {
             _headRef = State(initialValue: local.headRef ?? "")
             _mode = State(initialValue: local.mode)
         } else {
-            _address = State(initialValue: again.mergeRequest.url)
+            let first = again.mergeRequest.url + (again.fromCommit.map { " " + $0 } ?? "")
+            let linked = (again.linked ?? []).map { $0.mergeRequest.url + ($0.fromCommit.map { " " + $0 } ?? "") }
+            _address = State(initialValue: ([first] + linked).joined(separator: "\n"))
         }
         _scenario = State(initialValue: again.scenario.value)
         _notes = State(initialValue: again.notes ?? "")
@@ -74,7 +76,9 @@ struct NewReviewSheet: View {
         _fullReview = State(initialValue: true)
     }
 
-    private var mr: MergeRequestRef? { MergeRequestRef.parse(address) }
+    /// The Merge requests field: one per line, an optional commit after each.
+    private var entries: Result<[ReviewMergeRequestEntry], Error> { Result { try ReviewLinked.entries(address) } }
+    private var mr: MergeRequestRef? { (try? entries.get())?.first?.mergeRequest }
     private var profile: ReviewProfile? {
         switch source {
         case .mergeRequest: catalog?.profile(for: mr)
@@ -130,16 +134,7 @@ struct NewReviewSheet: View {
                     localSection
                 } else {
                 Section {
-                    TextField(text: $address, prompt: Text("https://gitlab.example.com/group/project/-/merge_requests/12")) {
-                        RequiredLabel("Merge request")
-                    }
-                    if !address.isEmpty, mr == nil {
-                        Text("Paste the merge request's address from GitLab.").font(.caption).foregroundStyle(.red)
-                    } else if let mr {
-                        Text(profile.map { "Project profile: \($0.project) (\($0.slug).yaml)" }
-                             ?? "No project profile for \(mr.projectPath): no checkout, tracker or project rules. Review Settings… adds one.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                    mergeRequestsField
                     TextField("Work items", text: $workItems, prompt: Text("e.g. 4512 (else the number in the branch: COL-4512)"))
                 }
                 }
@@ -223,6 +218,51 @@ struct NewReviewSheet: View {
         .task(id: "\(source.rawValue)|\(workspace)|\(baseRef)|\(headRef)") { await inspect() }
         .task { await loadPi() }
         .task { piModels = await LabRuns.models(for: .pi, env: model.env) }
+    }
+
+    /// One merge request per line; the first is the main one, the others are linked.
+    @ViewBuilder private var mergeRequestsField: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            RequiredLabel("Merge requests")
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $address)
+                    .font(.callout.monospaced())
+                    .frame(height: 64)
+                if address.isEmpty {
+                    Text("https://gitlab.example.com/group/project/-/merge_requests/12")
+                        .font(.callout.monospaced()).foregroundStyle(.tertiary).padding(.leading, 5).allowsHitTesting(false)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
+            switch entries {
+            case .failure(let error):
+                Text(error.localizedDescription).font(.caption).foregroundStyle(.red)
+            case .success(let list) where list.isEmpty:
+                EmptyView()
+            case .success(let list):
+                ForEach(Array(list.enumerated()), id: \.offset) { index, entry in
+                    Text(caption(entry, linked: index > 0)).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Text("One per line. The first sets the profile, scenario and roles; the others are linked merge requests of the same change "
+                 + "(another repository): the roles read them all, and each finding goes to drafts in its own merge request. After an "
+                 + "address, a commit (a1b2c3d) reviews only what changed after it; without one the review starts at the merge base, "
+                 + "where the branch left its target.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// `Linked: team/api!12, from the merge base · profile api.yaml`.
+    private func caption(_ entry: ReviewMergeRequestEntry, linked: Bool) -> String {
+        var text = linked ? "Linked: " : ""
+        text += entry.mergeRequest.label
+        text += entry.fromCommit.map { ", from commit \($0)" } ?? ", from the merge base"
+        if let found = catalog?.profile(for: entry.mergeRequest) {
+            text += " · profile \(found.slug).yaml"
+        } else {
+            text += " · no project profile: no checkout, tracker or rules (Review Settings… adds one)"
+        }
+        return text
     }
 
     /// Pi steps after the roles and extra Pi flags: suggested from the user's Pi set-up, or typed.
@@ -511,8 +551,10 @@ struct NewReviewSheet: View {
         choices.pi = ReviewPiExtras(flags: ReviewPiFlags.split(piFlags), steps: steps.map { ReviewStepConfig(command: $0) })
         if source == .local, let inspection {
             model.startLocal(inspection, mode: mode, project: profile?.slug, choices: choices, brain: brain)
-        } else if let mr {
-            model.start(mr: mr, project: profile?.slug, choices: choices, brain: brain)
+        } else if let list = try? entries.get(), let first = list.first {
+            choices.fromCommit = first.fromCommit
+            choices.linked = Array(list.dropFirst())
+            model.start(mr: first.mergeRequest, project: profile?.slug, choices: choices, brain: brain)
         } else {
             return
         }

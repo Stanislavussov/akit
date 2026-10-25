@@ -57,6 +57,31 @@ public enum ReviewPrompts {
             missing work item or missing acceptance criteria as a gap or a finding.
             """
         }
+        if let since = spec.since {
+            let many = !(spec.linked ?? []).isEmpty
+            let which = many ? " in \(spec.mergeRequest.label)" : ""
+            let others = many ? " The linked merge requests below follow their own lines." : ""
+            context += """
+
+
+            The developer asked to review only what changed after commit \(since.commit.prefix(10))\(which): \
+            `context/since-commit.md` lists those lines. Report findings there only on them; the rest of the merge request is \
+            context.\(others)
+            """
+        }
+        let linked = (spec.linked ?? []).filter { $0.headSHA != nil }
+        if !linked.isEmpty {
+            let up = hasWorktree ? "../" : ""
+            context += """
+
+
+            This change spans several merge requests that go together, often in different repositories. Review them as one \
+            change: besides each one's own defects, check that every side still fits the others (API contracts, payloads and \
+            DTOs, events, routes, config keys, versions, migrations). The first is \(spec.mergeRequest.label), the repository \
+            of your working folder. The linked ones:
+            \(linkedLines(linked, up: up))
+            """
+        }
         if !(spec.links ?? []).isEmpty {
             context += """
 
@@ -125,7 +150,8 @@ public enum ReviewPrompts {
         - Scenario: \(spec.scenario.value). \(spec.checks.isEmpty ? "" : "Its checks: " + spec.checks.joined(separator: " "))\(spec.rerun.map { rerun in
             "\n- This is a rerun after the author's push: an earlier review covered commit \(rerun.previousHead.prefix(10)). Review only the lines " +
             "listed in `context/since-last-review.md` (read the rest only to understand them). AKit carries the earlier findings on the " +
-            "other lines; never report them again."
+            "other lines; never report them again." + ((spec.linked ?? []).isEmpty ? ""
+                : " This is about \(spec.mergeRequest.label) only: review the linked merge requests as their own lines below say.")
         } ?? "")
         """
     }
@@ -236,7 +262,8 @@ public enum ReviewPrompts {
         Rules:
         - Budget: at most \(ReviewConsumers.maxSearches) searches and \(ReviewConsumers.maxFileReads) files read in all. AKit counts them. Spend \
         them on the boundaries most likely to break a user.
-        - Skip the merge request's own project `\(project)`: its uses are in the worktree.
+        - Skip the merge request's own project `\(project)`: its uses are in the worktree.\((spec.linked ?? []).isEmpty ? "" : " Skip "
+            + (spec.linked ?? []).map { "`\($0.mergeRequest.projectPath)`" }.joined(separator: ", ") + " too: linked merge requests of this change, already in the review.")
         - Search terms are short names: one line, at most 300 characters, never code, file contents or a secret. AKit refuses \
         longer or multi-line arguments.
         - When code search fails (in a group or the whole GitLab it can need Advanced search), call `akit_report_context_gap` \
@@ -395,6 +422,20 @@ public enum ReviewPrompts {
         """
     }
 
+    /// One line per linked merge request: its file names, where its files and context are.
+    static func linkedLines(_ linked: [ReviewLinkedChange], up: String) -> String {
+        var lines: [String] = []
+        for change in linked {
+            let head = change.headSHA.map { String($0.prefix(10)) } ?? "?"
+            var line = "- \(change.mergeRequest.label) at commit \(head): name its files `@\(change.key)/<path>` in a finding's `file`; "
+            line += "read them in `\(up)linked/\(change.key)/worktree/<path>`; its context is in `\(up)context/linked/\(change.key)/` "
+            line += "(merge-request.md, changes.md, diff.patch, threads.md"
+            if let since = change.since { line += ", and since-commit.md: report on its lines after \(since.asked) only" }
+            lines.append(line + ").")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// The fetch pass: read everything through MCP, in scripts, so the answers reach AKit and not
     /// the model's context.
     static func fetch(spec: ReviewRunSpec) -> String {
@@ -489,12 +530,13 @@ public enum ReviewPrompts {
         """
     }
 
-    static func send(spec: ReviewRunSpec, count: Int) -> String {
-        let mr = spec.mergeRequest
+    static func send(spec: ReviewRunSpec, count: Int, mergeRequests: [MergeRequestRef]? = nil) -> String {
+        let all = mergeRequests ?? [spec.mergeRequest]
+        let named = all.map { "\($0.url) (project `\($0.projectPath)`, merge request number \($0.iid))" }.joined(separator: "; ")
         return """
-        AKit review, step Send Drafts. The user approved \(count) request(s) for GitLab merge request \(mr.url) (project \
-        `\(mr.projectPath)`, merge request number \(mr.iid)). Carry them out as draft notes of the user's pending review, with \
-        your GitLab MCP tools, through `codemode`.
+        AKit review, step Send Drafts. The user approved \(count) request(s) for GitLab merge request\(all.count == 1 ? "" : "s") \
+        \(named). Carry them out as draft notes of the user's pending review\(all.count == 1 ? "" : " in each merge request"), with \
+        your GitLab MCP tools, through `codemode`. Each request names its own merge request in `mr`.
 
         1. Read the requests with `akit_approved_requests` (in the script: `JSON.parse(await tools.akit_approved_requests({}))`).
         2. For each request, by its `action`:

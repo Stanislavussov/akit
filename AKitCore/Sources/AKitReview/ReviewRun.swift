@@ -58,8 +58,21 @@ public enum ReviewRuns {
         let profile = catalog.profile(for: mr, named: project)
         if let project, profile == nil { throw Failure(message: "There is no project profile \(project).") }
         let id = newID(for: mr)
-        let (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: mr, id: id,
+        var (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: mr, id: id,
                                                        pi: ReviewPiLibrary.load(env: env))
+        if let commit = choices.fromCommit, !ReviewLinked.isCommit(commit) {
+            throw Failure(message: "\(commit) is not a commit id (7–40 hex characters).")
+        }
+        spec.fromCommit = choices.fromCommit
+        let linked = try ReviewLinked.checked([ReviewMergeRequestEntry(mergeRequest: mr, fromCommit: choices.fromCommit)] + choices.linked)
+            .dropFirst()
+        if !linked.isEmpty {
+            let keys = ReviewLinked.keys(main: mr, linked: linked.map(\.mergeRequest))
+            spec.linked = zip(keys, linked).map { key, entry in
+                ReviewLinkedChange(key: key, mergeRequest: entry.mergeRequest, project: catalog.profile(for: entry.mergeRequest)?.slug,
+                                   fromCommit: entry.fromCommit)
+            }
+        }
         // No run folder for a run that can't finish (R25).
         if let problem = spec.verifierProblem { throw Failure(message: problem) }
         let folder = ReviewPaths(home: home).run(id)
@@ -68,8 +81,12 @@ public enum ReviewRuns {
         try setStatus(.gathering, folder: folder)
         let settings = LabSettings.load(env: env)
         do {
+            var linkedProfiles: [String: ReviewProfile] = [:]
+            for change in spec.linked ?? [] {
+                if let slug = change.project, let found = catalog.profiles.first(where: { $0.slug == slug }) { linkedProfiles[change.key] = found }
+            }
             let result = try await ReviewGather.run(spec: spec, profile: profile, roles: roles, folder: folder, scrub: settings.scrub, env: env,
-                                                    options: options)
+                                                    options: options, linkedProfiles: linkedProfiles)
             try setStatus(.gathered, folder: folder)
             return result
         } catch {

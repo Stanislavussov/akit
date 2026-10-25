@@ -27,6 +27,10 @@ public struct ReviewRunChoices: Sendable, Hashable {
     public var knowledgeBase: String?
     /// The card's size in tokens for this run (`--knowledge-budget N`), over the profile's.
     public var knowledgeBudget: Int?
+    /// Review only what changed after this commit of the merge request (`URL@COMMIT`); nil = the merge base.
+    public var fromCommit: String?
+    /// Other merge requests reviewed in the same run, in order (`akit review URL URL…`).
+    public var linked: [ReviewMergeRequestEntry] = []
 
     public init(scenario: String? = nil, rolesOn: [String] = [], rolesOff: [String] = [], settings: ReviewSettingsPatch = ReviewSettingsPatch(),
                 workItems: [Int] = [], notes: String = "", links: [String] = [], extraServers: [String] = []) {
@@ -124,6 +128,12 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var fullReview: Bool?
     /// A rerun after a push (R28), set by Gather: what changed since the last reviewed head.
     public var rerun: ReviewRerunInfo?
+    /// The commit the developer asked to review from (as typed); nil = the merge base.
+    public var fromCommit: String?
+    /// Filled by Gather when `fromCommit` resolved: the lines after it.
+    public var since: ReviewSince?
+    /// Other merge requests of the same change, reviewed in this run; nil for one merge request.
+    public var linked: [ReviewLinkedChange]?
     public var id: String
     public var created: Date
     public var mergeRequest: MergeRequestRef
