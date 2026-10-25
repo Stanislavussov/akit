@@ -264,6 +264,13 @@ akit kb check ID [--json] [--base PATH|WORLD]      # ask the user's check model 
                                                    # marks: [{kind, note, edge, link, message}]}
 ```
 
+A review (`akit review MR-URL` or `akit review local …`) reads a base only as a card,
+`context/knowledge-card.md`: the systems the change touches (a note's `files:`), the rest of
+the repository's areas, their relations and neighbours, within a token budget. The project
+profile sets it (`knowledge_base: WORLD|PATH`, `knowledge_budget: N`, default 8000; Review
+Settings… → Knowledge base); for one run add `--knowledge-base WORLD|PATH` and
+`--knowledge-budget N` (`--gather-only` stops before the model passes).
+
 You never edit the base: you propose, and the user accepts or rejects in AKit. Propose when
 you learn a fact a note lacks, find a system the base doesn't have, or see a relation no map
 shows. Name the note as AREA/NAME (`kb context`'s focus or `kb areas` picks the area); for a

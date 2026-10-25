@@ -46,6 +46,10 @@ struct KnowledgeSeedTests {
         ("logistics names a remote and a glob", { base in
             try base.settings(area: "logistics").projects == ["git@example.com:shop/warehouse.git", "~/Projects/shipping-*"]
         }),
+        ("a Review knowledge card for orders-api: its repo: and a files: path the demo repo's commits change (6.1)", { base in
+            let note = KnowledgeNote.load(base.noteFile("payments/orders-api"))
+            return note?.repo == "git@example.com:shop/orders-api.git" && note?.files.contains("src/events/order-created.ts") == true
+        }),
         ("kb.yaml with the default kinds", { base in try base.kinds() == KnowledgeKinds.defaults }),
         ("a note of every kind in kb.yaml", { base in
             let used = Set(try base.notes().compactMap(\.kind))

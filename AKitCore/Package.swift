@@ -65,7 +65,7 @@ let package = Package(
         // Ask AKit: questions about a screen, answered from the in-app guides (docs/design/ask-akit.md).
         .target(name: "AKitHelp", dependencies: ["AKitFoundation"]),
         // AI review of GitLab merge requests: AKit gathers, Pi reads, AKit posts drafts after approval (docs/design/review.md).
-        .target(name: "AKitReview", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSessions", "AKitLab", "AKitBrain", "Yams"]),
+        .target(name: "AKitReview", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSessions", "AKitLab", "AKitBrain", "AKitKnowledge", "Yams"]),
         // Knowledge base: areas, notes, links and git of a base folder (docs/design/knowledge.md).
         // → Brain: this Mac's kind (work or personal), the brain's root and project ids.
         .target(name: "AKitKnowledge", dependencies: ["AKitFoundation", "AKitModel", "AKitBrain", "Yams"]),
@@ -87,7 +87,7 @@ let package = Package(
         .testTarget(name: "AKitLabTests", dependencies: ["AKitLab", "AKitFoundation", "AKitModel", "AKitBrain", "AKitKnowledge"]),
         .testTarget(name: "AKitErrorAnalysisTests", dependencies: ["AKitErrorAnalysis", "AKitHelp", "AKitLab", "AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights", "AKitBrain", "AKitRender"]),
         .testTarget(name: "AKitDoctorTests", dependencies: ["AKitDoctor", "AKitKnowledge", "AKitInsights", "AKitMCP", "AKitFoundation", "AKitBrain", "AKitProjectSetup"]),
-        .testTarget(name: "AKitReviewTests", dependencies: ["AKitReview", "AKitFoundation", "AKitLab", "AKitBrain"]),
+        .testTarget(name: "AKitReviewTests", dependencies: ["AKitReview", "AKitFoundation", "AKitLab", "AKitBrain", "AKitKnowledge"]),
         .testTarget(name: "AKitHelpTests", dependencies: ["AKitHelp", "AKitFoundation"]),
         .testTarget(name: "AKitKnowledgeTests", dependencies: ["AKitKnowledge", "AKitFoundation", "AKitBrain"],
                     // Read by path (#filePath): a base layout with Excalidraw 0.17.6 maps, not bundle resources.

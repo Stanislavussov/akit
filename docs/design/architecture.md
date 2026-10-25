@@ -65,6 +65,10 @@ check model's call on a proposal (candidates, `ModelCall` with the origin `knowl
 stored marks), which `akit kb check` and the app's Inbox → Check Again share. Knowledge needs
 nothing from Lab (its model calls are only built there), so the arrows still point down.
 
+2026-10-25 (knowledge base, slice 6.1): `AKitReview → AKitKnowledge`, for the knowledge card
+Gather writes (K18): the base choice, the index refresh, the notes' `repo:` / `files:` and the
+map relations. Knowledge needs nothing from Review, so the arrows still point down.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -171,7 +175,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup, Knowledge (the knowledge base line) |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
-| `AKitReview` | Foundation, Model, Harnesses (Pi's packages, for Pi steps), Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Yams |
+| `AKitReview` | Foundation, Model, Harnesses (Pi's packages, for Pi steps), Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Knowledge (the knowledge card of Gather), Yams |
 | `AKitKnowledge` | Foundation, Model, Brain (this Mac's kind, the brain's root, project ids), Yams (note frontmatter) |
 | `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review, Knowledge |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |

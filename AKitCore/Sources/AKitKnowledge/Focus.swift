@@ -65,7 +65,7 @@ extension KnowledgeBase {
 
     /// `pattern` (a `~/` or absolute path, maybe a glob) names `folder` or a folder it is in.
     /// Both sides are tried as written and with links resolved (`/tmp` → `/private/tmp`).
-    static func matches(path pattern: String, folder: URL, home: URL) -> Bool {
+    public static func matches(path pattern: String, folder: URL, home: URL) -> Bool {
         var pattern = pattern
         while pattern.count > 1, pattern.hasSuffix("/") { pattern.removeLast() }
         let homes = Set([home.standardized.path, resolved(home)])
@@ -240,6 +240,18 @@ extension KnowledgeIndex {
         return answer
     }
 
+    /// Every arrow between two notes on any map, read from the index (refreshed first), in map
+    /// and arrow order; `stale` when another process holds the index lock.
+    public func edges() throws(Failure) -> (edges: [MapGraph.Edge], stale: Bool) {
+        let opened = try prepare(rebuild: false)
+        guard let database = opened.database else { return ([], opened.stale) }
+        do {
+            return (try Self.edges(database), opened.stale)
+        } catch {
+            throw failure(error)
+        }
+    }
+
     /// Every edge of the index, in map and arrow order.
     private static func edges(_ database: SQLiteDatabase) throws -> [MapGraph.Edge] {
         try database.rows("SELECT from_note, to_note, kind, flow, map, arrow FROM edges ORDER BY map, arrow").map { row in
@@ -250,7 +262,7 @@ extension KnowledgeIndex {
 
     /// A note's one line: its frontmatter `description`, else the first sentence of its first
     /// paragraph of text (the title left out), at most 200 characters.
-    static func line(of note: KnowledgeNote) -> String {
+    public static func line(of note: KnowledgeNote) -> String {
         if let description = note.frontmatter["description"].map({ "\($0)".trimmingCharacters(in: .whitespacesAndNewlines) }),
            !description.isEmpty, !(note.frontmatter["description"] is NSNull) {
             return clip(description)

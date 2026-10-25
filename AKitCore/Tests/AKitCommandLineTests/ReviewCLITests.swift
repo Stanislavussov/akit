@@ -53,6 +53,23 @@ extension AKitCLITests {
         #expect(await review(["--help"]).out.contains("--link URL"))
     }
 
+    /// `--knowledge-base`, `--knowledge-budget`: the knowledge card of one run (K18), over the profile's.
+    @Test func reviewKnowledgeOptions() async throws {
+        try write(".akit/local/review/projects/app.yaml", """
+        gitlab: { host: https://gitlab.test, project_path: team/app }
+        knowledge_base: work
+
+        """)
+        let none = home.appending(path: "none").path
+        let profile = await review(["config", "show", "--project", "app", "--brain", none])
+        #expect(profile.out.contains("knowledge_base: work  [project]") && profile.out.contains("knowledge_budget: 8000  [built-in]"), "\(profile)")
+        let run = await review(["config", "show", "--project", "app", "--brain", none, "--knowledge-base", "~/kb", "--knowledge-budget", "4000"])
+        #expect(run.out.contains("knowledge_base: ~/kb  [run]") && run.out.contains("knowledge_budget: 4000  [run]"), "\(run)")
+        let zero = await review(["config", "show", "--project", "app", "--brain", none, "--knowledge-budget", "0"])
+        #expect(zero.code != 0 && zero.err.contains("--knowledge-budget needs a whole number above 0"))
+        #expect(await review(["--help"]).out.contains("--knowledge-budget N"))
+    }
+
     @Test func reviewNeedsAMergeRequest() async throws {
         #expect(await review(["https://gitlab.test/a/-/issues/1"]).err.contains("not a merge request address"))
         let help = await review(["--help"])

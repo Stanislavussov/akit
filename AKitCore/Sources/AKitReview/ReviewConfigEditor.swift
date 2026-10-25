@@ -201,6 +201,51 @@ public enum ReviewConfigEditor {
         return lines.joined(separator: "\n")
     }
 
+    /// Review Settings… → Knowledge base and Knowledge budget: the profile's top-level
+    /// `knowledge_base:` (nil removes it) and `knowledge_budget:` (nil removes it: the default),
+    /// the rest of the file as it was. Nothing is written; the save shows its diff.
+    public static func knowledge(base: String?, budget: Int?, profile slug: String, home: URL, brain: URL) throws -> Save {
+        if let budget, budget <= 0 { throw Failure(message: "The knowledge budget is a number of tokens above 0.") }
+        if let base, base.isEmpty || base.contains("\n") || base.contains("\"") || base.contains("\\") {
+            throw Failure(message: "\(base) is not a knowledge base name or folder.")
+        }
+        let url = file(.profile, id: slug, level: .project(slug), home: home, brain: brain)
+        guard let old = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(message: "There is no project profile \(slug).") }
+        var text = settingTopLevel("knowledge_base", base.map { "\"\($0)\"" }, in: old)
+        text = settingTopLevel("knowledge_budget", budget.map(String.init), in: text)
+        // The edit may change these two keys and nothing else.
+        var parsed = try? ReviewProfile.parse(text, slug: slug)
+        let before = try? ReviewProfile.parse(old, slug: slug)
+        parsed?.knowledgeBase = before?.knowledgeBase
+        parsed?.knowledgeBudget = before?.knowledgeBudget
+        guard let after = try? ReviewProfile.parse(text, slug: slug), after.knowledgeBase == base, after.knowledgeBudget == budget,
+              let before, parsed == before else {
+            throw Failure(message: "AKit couldn't change \(url.lastPathComponent) by itself. Edit… the file and set "
+                          + "knowledge_base: \(base ?? "(remove)") and knowledge_budget: \(budget.map(String.init) ?? "(remove)").")
+        }
+        return try plan(.profile, id: slug, text: text, level: .project(slug), home: home, brain: brain)
+    }
+
+    /// The YAML text with a top-level `key: value` set (its line replaced, its trailing comment
+    /// kept), added at the end when missing, or removed with a nil value. Other lines stay byte
+    /// for byte; CRLF line ends stay too.
+    static func settingTopLevel(_ key: String, _ value: String?, in original: String) -> String {
+        let crlf = original.contains("\r\n")
+        var lines = (crlf ? original.replacingOccurrences(of: "\r\n", with: "\n") : original).components(separatedBy: "\n")
+        if let at = lines.firstIndex(where: { $0.hasPrefix(key + ":") }) {
+            if let value {
+                lines[at] = "\(key): \(value)" + comment(lines[at]).comment
+            } else {
+                lines.remove(at: at)
+            }
+        } else if let value {
+            if lines.last == "" { lines.removeLast() }
+            lines += ["\(key): \(value)", ""]
+        }
+        let result = lines.joined(separator: "\n")
+        return crlf ? result.replacingOccurrences(of: "\n", with: "\r\n") : result
+    }
+
     /// Review Settings… → Every Pi server in the review passes: the profile's `mcp: all_servers:`.
     public static func allServers(_ on: Bool, profile slug: String, home: URL, brain: URL) throws -> Save {
         let url = file(.profile, id: slug, level: .project(slug), home: home, brain: brain)

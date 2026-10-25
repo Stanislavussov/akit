@@ -45,6 +45,11 @@ extension AKitCLI {
                                         server's reading tools (context/links.md; a gap when it can't)
       --extra-server NAME               A Pi MCP server added for this run as a read-only context
                                         server, on top of the profile's mcp: servers and extra_servers
+      --knowledge-base WORLD|PATH       The knowledge base of this run's card (context/knowledge-card.md:
+                                        the systems the change touches, their relations and
+                                        neighbours), over the profile's knowledge_base
+      --knowledge-budget N              The card's size limit (default 8000, about 32 KB; 4 bytes
+                                        each), over the profile's knowledge_budget
       --step COMMAND                    A Pi step after the roles: /run AGENT [TASK] (a pi-subagents
                                         agent), /TEMPLATE [ARGS], /skill:NAME [REQUEST] or plain text.
                                         AKit runs it as its own pass with the review's reading tools
@@ -148,6 +153,8 @@ extension AKitCLI {
         choices.pi = ReviewPiExtras(flags: piFlags, steps: args.values("--step").map { ReviewStepConfig(command: $0) })
         if let problem = ReviewPiFlags.problem(piFlags) { throw Failure(message: "--pi-flags: \(problem)") }
         choices.fullReview = args.flag("--full")
+        choices.knowledgeBase = args.value("--knowledge-base")
+        choices.knowledgeBudget = try positiveNumber(args.value("--knowledge-budget"), "--knowledge-budget")
         choices.extraServers = args.values("--extra-server").flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
             .filter { !$0.isEmpty }
         for change in roleChanges {
