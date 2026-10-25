@@ -41,11 +41,15 @@ Pi and other harnesses read this file too.
   and the status note of its design doc.
 - AKit only reads harness files unless a step explicitly adds safe writing
   (backup + diff first). Deleting moves things to the Trash.
-- The `/akit` skill lets an agent do in the terminal what the UI does. When a feature or an
-  `akit` command is finished, update the skill in the same commit: the template
-  `AKitCore/Sources/AKitBrain/AKitSkill.swift` (new brains get it) and the user's copy
-  `~/.akit/registry/skills/akit/SKILL.md` (commit it in the brain repo, then
-  `akit apply --home`). Say the command, when to use it, and its `--json` / `--yes` flags.
+- Two skills let an agent do in the terminal what the UI does: the manual `/akit` (setting
+  AKit and harnesses up: layers, apply, MCP, review, the person-only `akit kb` commands) and
+  the auto `/akit-context` (what an agent uses during a task: reading the knowledge base,
+  `akit kb propose`, `akit notebook`). When a feature or an `akit` command is finished, update
+  the skill it belongs to in the same commit: the template
+  `AKitCore/Sources/AKitBrain/AKitSkill.swift` or `AKitContextSkill.swift` (new brains get it)
+  and the user's copy `~/.akit/registry/skills/<name>/SKILL.md` (commit it in the brain repo,
+  then `akit apply --home`). Say the command, when to use it, and its `--json` / `--yes` flags.
+  Each command lives in one skill; keep `/akit-context` short, it loads on ordinary tasks.
 - Never display or copy secrets: auth.json files, tokens, MCP env/headers,
   `settings.local.json`. One exception (2026-10-24, user's choice): MCP Approve… writes the
   single key `enabledMcpjsonServers` of a project's `.claude/settings.local.json`, and its

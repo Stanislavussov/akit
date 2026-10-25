@@ -21,7 +21,7 @@ public enum AKitCLI {
                                           set up session capture (akit insights install)
 
         Brain:
-          akit init                       Create a brain: core layer with the /akit skill, git repo
+          akit init                       Create a brain: core layer with /akit and /akit-context, git repo
           akit check                      Read every layer and skill; list problems (exit 1 if any)
           akit layers [--json]            Layers with their fields, skills and files
           akit skills                     Skills in the brain
@@ -540,7 +540,7 @@ public enum AKitCLI {
                     throw Failure(message: error.message)
                 }
                 out("""
-                    Created a brain in \(brainRoot.path): the core layer with the /akit skill, committed.
+                    Created a brain in \(brainRoot.path): the core layer with the /akit and /akit-context skills, committed.
                     Put core into this Mac's home folder: akit apply --home
                     To share it between Macs, push it to a private repo:
                       git -C \(brainRoot.path) remote add origin <url> && git -C \(brainRoot.path) push -u origin main

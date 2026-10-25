@@ -116,7 +116,7 @@ struct OnboardingTests {
     @Test func withoutATerminalEveryDefaultIsTaken() async throws {
         let result = await setup()
         #expect(result.code == 0, "\(result.out)")
-        #expect(Brain.load(from: brain)?.skills.map(\.name) == ["akit"])
+        #expect(Brain.load(from: brain)?.skills.map(\.name) == ["akit", "akit-context"])
         #expect(result.session.projectsRoot == "~/Projects")
         #expect(read(".agents/skills/akit/SKILL.md")?.contains("disable-model-invocation: true") == true)
         #expect(result.out.contains("/akit set up this project"))
@@ -236,7 +236,7 @@ struct OnboardingTests {
         try fm.removeItem(at: brain)
         try fm.createDirectory(at: brain, withIntermediateDirectories: true)
         #expect(await setup().code == 0)
-        #expect(Brain.load(from: brain)?.skills.map(\.name) == ["akit"])
+        #expect(Brain.load(from: brain)?.skills.map(\.name) == ["akit", "akit-context"])
     }
 
     @Test func aBareProjectsFolderNameMeansOneInHome() async throws {

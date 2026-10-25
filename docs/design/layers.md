@@ -815,7 +815,8 @@ Not built: the global files of other harnesses (Codex `~/.codex/AGENTS.md`, Open
 
 Status: not built. What exists instead: every new brain starts with the manual `/akit`
 skill in the core layer, so an agent can already create layers and set up a project
-through the `akit` command, without a draft file.
+through the `akit` command, without a draft file. Next to it is the auto `/akit-context`
+skill (knowledge base and notebook during a task, [knowledge.md K28](knowledge.md)).
 
 `/akit-setup` is a `manual` skill in the core layer. It reads
 `~/.akit/registry/layers/*/layer.yaml`, asks about missing fields and writes

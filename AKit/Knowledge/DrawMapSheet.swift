@@ -8,7 +8,7 @@ import SwiftUI
 /// labelled with the area's note names; AKit draws it with excalidraw-cli (through npx when it
 /// isn't installed) and proposes the draft. It then waits in the Inbox for Accept… or Reject….
 /// The prompt goes through the sending policy (purpose kb-draw). Pi without AKit does the same
-/// from the terminal (the /akit skill).
+/// from the terminal (the /akit-context skill).
 struct DrawMapSheet: View {
     @Environment(KnowledgeModel.self) private var model
     @Environment(AppModel.self) private var app
