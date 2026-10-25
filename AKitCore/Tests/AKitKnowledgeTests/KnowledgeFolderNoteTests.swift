@@ -81,7 +81,7 @@ final class KnowledgeFolderNoteTests {
         try write(mono.appending(path: "src/a.ts"), "")
         let base = KnowledgeBase(root: try folder("kb"))
         try write(base.noteFile("shop/api"), "---\nkind: service\nrepo: git@example.com:shop/mono.git\npath: ~/Projects/mono/packages/api\nfiles: [src/a.ts]\n---\n# api\n")
-        #expect(KnowledgeLint.run(base, projects: KnowledgeLint.Projects(), home: home).isEmpty)
+        #expect(KnowledgeLint.run(base, projects: KnowledgeLint.Projects(), home: home).filter { $0.rule != .missingDescription }.isEmpty)
     }
 
     @Test func theBaseRefusesItselfAnExistingNoteAndWhatIsNoFolder() throws {
@@ -116,7 +116,7 @@ final class KnowledgeFolderNoteTests {
         try write(base.noteFile("shop/a"), "---\nkind: service\npath: ~/Code/orders\nfiles: [src/a.ts, src/b.ts]\n---\n# a\n")
         try write(base.noteFile("shop/b"), "---\nkind: folder\npath: ~/gone\n---\n# b\n")
         try write(base.noteFile("shop/c"), "---\nkind: folder\npath: wiki\n---\n# c\n")
-        let found = KnowledgeLint.run(base, projects: KnowledgeLint.Projects(), home: home).map { "\($0.rule.rawValue) \($0.file) \($0.link ?? "")" }
+        let found = KnowledgeLint.run(base, projects: KnowledgeLint.Projects(), home: home).filter { $0.rule != .missingDescription }.map { "\($0.rule.rawValue) \($0.file) \($0.link ?? "")" }
         #expect(found == ["missing-file areas/shop/a.md src/b.ts", "missing-home-path areas/shop/b.md ~/gone", "missing-home-path areas/shop/c.md wiki"])
     }
 }

@@ -1,4 +1,5 @@
 ---
+description: The home-path example note.
 kind: service
 files: [~/akit-lint-fixture-missing/notes.txt]
 ---

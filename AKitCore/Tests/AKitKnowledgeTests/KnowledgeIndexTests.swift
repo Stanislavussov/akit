@@ -90,7 +90,7 @@ final class KnowledgeIndexTests {
         #expect(try queries.map { try index.search($0) } == before)
         #expect(try index.dump() == dump)
         let status = try index.refresh()
-        #expect(status == .init(notes: 17, maps: 4, chunks: 28, rebuilt: false, stale: false, tokens: status.tokens))
+        #expect(status == .init(notes: 18, maps: 4, chunks: 29, rebuilt: false, stale: false, tokens: status.tokens))
     }
 
     @Test func anOlderSchemaIsRebuiltANewerOneNeverWritten() throws {

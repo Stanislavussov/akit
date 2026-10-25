@@ -135,8 +135,8 @@ final class FocusTests {
         #expect(card.base == root.path && card.focus == "payments" && card.stale == false && card.truncated == false)
         #expect(card.systems.map(\.note) == ["payments/billing", "payments/checkout-team", "payments/flows/order-to-billing",
                                              "payments/order-events", "payments/orders-api", "payments/orders-db", "logistics/courier-api"])
-        #expect(card.systems[0] == .init(note: "payments/billing", title: "billing", line: "Bills each order once."))
-        #expect(card.systems.last?.line == "The courier's booking API that [[shipping]] calls.")
+        #expect(card.systems[0] == .init(note: "payments/billing", title: "billing", line: "Bills each order once, from the order.created event."))
+        #expect(card.systems.last?.line == "The courier's booking API that shipping calls.")
         #expect(card.relations == [.init(from: "payments/billing", kind: "pays", to: "logistics/courier-api"),
                                    .init(from: "payments/orders-api", kind: "events", to: "payments/billing")])
         #expect(card.tokens > 0 && card.tokens <= Budget.defaultTokens)

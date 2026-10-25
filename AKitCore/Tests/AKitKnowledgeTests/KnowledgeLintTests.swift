@@ -36,14 +36,15 @@ final class KnowledgeLintTests {
             "warning unbound-arrow areas/shop/maps/blocks.excalidraw arr-loose -",
             "warning block-without-note areas/shop/maps/blocks.excalidraw blk-draft -",
             "warning missing-file areas/shop/missing-file.md - akit-lint-fixture/no-such-file.txt",
+            "warning missing-description areas/shop/no-description.md - -",
             "warning unknown-repo areas/shop/unknown-repo.md - git@example.com:lint/no-such-repo.git",
             "hint unknown-kind areas/shop/gadget.md - gadget",
             "hint unrelated-area areas/shop/maps/blocks.excalidraw blk-thing other/thing",
         ])
         let rules = findings.filter { $0.severity != .hint }.map(\.rule)
-        #expect(rules.count == 8 && Set(rules) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint }))
+        #expect(rules.count == 9 && Set(rules) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint }))
         #expect(findings.allSatisfy { $0.fix != nil && !$0.message.isEmpty })
-        #expect(KnowledgeLint.counts(findings) == .init(error: 2, warning: 6, hint: 2))
+        #expect(KnowledgeLint.counts(findings) == .init(error: 2, warning: 7, hint: 2))
     }
 
     @Test func theAnswerEncodesAsTheCLIPrintsIt() throws {
@@ -64,9 +65,9 @@ final class KnowledgeLintTests {
                   ".git/config", in: repo)
         try write("x\n", "src/a.ts", in: repo)
         try write("projects: [git@example.com:shop/billing.git, ~/Projects/pay-*]\n", "areas/pay/area.yaml", in: base)
-        try write("---\nkind: service\nrepo: https://example.com/shop/orders-api\nfiles: [src/a.ts]\n---\n# api\n\nSee [[billing]] and [[pay/maps/m]], ![[shot.png]], https://example.com.\n",
+        try write("---\nkind: service\ndescription: The orders API.\nrepo: https://example.com/shop/orders-api\nfiles: [src/a.ts]\n---\n# api\n\nSee [[billing]] and [[pay/maps/m]], ![[shot.png]], https://example.com.\n",
                   "areas/pay/api.md", in: base)
-        try write("---\nkind: service\nrepo: git@example.com:shop/billing.git\nfiles: [src/not/checked.ts]\n---\n# billing\n", "areas/pay/billing.md", in: base)
+        try write("---\nkind: service\ndescription: Bills orders.\nrepo: git@example.com:shop/billing.git\nfiles: [src/not/checked.ts]\n---\n# billing\n", "areas/pay/billing.md", in: base)
         try write(NewMap.scene(elements: NewMap.block(.init(id: "b1", x: 0, y: 0), label: "api", link: "[[api]]", arrows: ["a1"])
                     + NewMap.block(.init(id: "b2", x: 400, y: 0), label: "billing", link: "[[billing]]", arrows: ["a1"])
                     + NewMap.arrow("a1", from: .init(id: "b1", x: 0, y: 0), to: .init(id: "b2", x: 400, y: 0), label: "calls", link: nil)
@@ -101,8 +102,8 @@ final class KnowledgeLintTests {
 
     @Test func unrelatedAreasAreAHintUntilAMapJumpsBetweenThem() throws {
         let base = home.appending(path: "base")
-        try write("# a\n", "areas/one/a.md", in: base)
-        try write("# b\n", "areas/two/b.md", in: base)
+        try write("---\ndescription: A.\n---\n# a\n", "areas/one/a.md", in: base)
+        try write("---\ndescription: B.\n---\n# b\n", "areas/two/b.md", in: base)
         let map = "areas/one/maps/m.excalidraw"
         try write(NewMap.scene(elements: NewMap.block(.init(id: "blk", x: 0, y: 0), label: "b", link: "[[two/b]]")), map, in: base)
         let first = KnowledgeLint.run(KnowledgeBase(root: base), projects: .init(), home: home)
