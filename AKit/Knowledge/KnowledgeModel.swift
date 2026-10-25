@@ -29,6 +29,8 @@ final class KnowledgeModel {
     /// Open map tabs (ids), in the order they were opened. The tab bar shows those of the area
     /// of the map in view.
     private(set) var mapTabs: [String] = []
+    /// The map in view has nothing on it: the canvas says how to start instead of staying blank.
+    private(set) var mapIsEmpty = false
     /// The arrows to and from the note in view on every map (`MapGraph.relations(of:)`).
     private(set) var noteRelations: [MapGraph.Edge] = []
     /// What the canvas shows: the map's `.excalidraw` text as on disk when it was opened (or
@@ -300,10 +302,17 @@ final class KnowledgeModel {
         let area = String(id.split(separator: "/").first ?? "")
         if area != self.area { choose(area: area) }
         mapHashes[id] = KnowledgeWrite.hash(data)
+        mapIsEmpty = Self.isEmpty(map: data)
         showScene(id, data)
         if !mapTabs.contains(id) { mapTabs.append(id) }
         map = id
         noteBesideMap = false
+    }
+
+    /// Whether a map file has no element left (an unreadable one is not empty: Lint reports it).
+    static func isEmpty(map data: Data) -> Bool {
+        if case .success(let file) = ExcalidrawFile.parse(data) { return file.live.isEmpty }
+        return false
     }
 
     /// Puts the map's bytes on the canvas as a new scene.
@@ -388,6 +397,7 @@ final class KnowledgeModel {
             switch outcome {
             case .saved(let hash):
                 mapHashes[id] = hash
+                if id == map { mapIsEmpty = Self.isEmpty(map: bytes) }
                 enqueue(path, in: base)
                 if let note { noteRelations = (try? base.mapGraph().relations(of: note)) ?? [] }
             case .conflict:
@@ -1208,7 +1218,7 @@ final class KnowledgeModel {
         lines.append("notes: " + notes.map(\.id).joined(separator: ", "))
         lines.append("maps: " + maps.map { $0 == map ? "\($0)*" : $0 }.joined(separator: ", "))
         if !mapTabs.isEmpty { lines.append("map tabs: " + mapTabs.joined(separator: ", ")) }
-        if let map { lines.append("map: \(map), \(mapEditing ? "Edit" : "view only")" + (noteBesideMap && note != nil ? ", note beside it" : "")) }
+        if let map { lines.append("map: \(map), \(mapEditing ? "Edit" : "view only")" + (mapIsEmpty ? ", empty" : "") + (noteBesideMap && note != nil ? ", note beside it" : "")) }
         if let mapConflict { lines.append("conflict: Changed on disk, \(mapConflict.id): Reload / Keep Mine") }
         lines.append("tabs: " + tabs.joined(separator: ", "))
         if let entry = noteEntry {

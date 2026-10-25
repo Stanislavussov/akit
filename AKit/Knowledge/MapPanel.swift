@@ -48,6 +48,10 @@ struct MapPanel: View {
                     AddArrowBanner(plan: plan)
                     Divider()
                 }
+                if model.mapIsEmpty, !model.mapEditing {
+                    EmptyMapHint()
+                    Divider()
+                }
                 MapCanvasView(scene: model.mapScene, viewMode: !model.mapEditing) { message in
                     switch message.type {
                     case "linkOpen":
@@ -197,5 +201,30 @@ struct NewMapSheet: View {
         .padding(20)
         .frame(width: 420)
         .onAppear { area = model.area ?? model.areas.first?.name ?? "" }
+    }
+}
+
+/// Above an empty map in view mode, which is only a blank canvas: how to put something on it.
+/// A banner, not an overlay: the web view draws over SwiftUI layers.
+private struct EmptyMapHint: View {
+    @Environment(KnowledgeModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "point.3.connected.trianglepath.dotted").font(.title2).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("This map is empty").font(.headline)
+                Text("Press Edit to draw blocks and arrows with Excalidraw's tools, or drag a note from the list onto the map. Draw Map with Pi… in the toolbar can draw one for you.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Edit", systemImage: "pencil") { model.mapEditing = true }
+                .buttonStyle(.borderedProminent)
+                .help("Edit the map: Excalidraw's tools appear at the top of the canvas")
+        }
+        .padding(10)
+        .background(.blue.opacity(0.08))
     }
 }
