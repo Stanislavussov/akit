@@ -63,12 +63,14 @@ struct AKitApp: App {
                         .version: "",
                     ])
                 }
-                Button(rebuild.state == .building ? "Updating…" : update.title) { update.start(rebuild) }
-                    .disabled(update.available == nil || rebuild.state == .building)
-                    .help("Build the newer AKit in its source folder and restart")
+                Button(rebuild.state == .building || update.isUpdating ? "Updating…" : update.title) { update.start(rebuild) }
+                    .disabled(!update.hasUpdate || rebuild.state == .building || update.isUpdating)
+                    .help(update.fromRelease ? "Download the newer AKit release from GitHub and restart"
+                          : "Build the newer AKit in its source folder and restart")
                 Button("Check for Updates") { Task { await update.check() } }
                     .disabled(!update.isAvailable)
-                    .help("Look for new commits on this build's branch in its source folder")
+                    .help(update.fromRelease ? "Look for a newer AKit release on GitHub"
+                          : "Look for new commits on this build's branch in its source folder")
             }
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .toolbar) {

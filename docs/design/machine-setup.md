@@ -107,17 +107,28 @@ and quits; a failed build leaves the running app open with the reason.
   working files don't change. Update then runs `git pull --ff-only` before `make install`; a
   folder with commits of its own on top isn't pulled (its own commits are the update, and the
   tooltip says how many upstream commits to merge by hand), and a failed pull shows git's reason.
-- A copy installed from a release zip (`install.sh` without a checkout) has no source folder
-  and no Update button: it updates by running `install.sh` again, which takes the latest GitHub
-  Release. A new version needs `make release` and `gh release create <tag> dist/AKit.zip`, not
-  only a pushed tag.
+- A copy installed from a release zip (`install.sh` without a checkout) has no source folder.
+  Since 2026-10-25 (the user: the button showed on the developing Mac only) it asks GitHub's
+  `releases/latest` (`ReleaseUpdate`, public repo, no token): a release is newer when its tag
+  differs from the build's (and from the one Update installed last, kept in the app's defaults)
+  and it was published after the build. `make release` builds only at a date tag with a clean
+  tree, so a zip's tag is its release's; the installed tag stops a loop for a zip made otherwise. The button says **Update to <version>** and "New release on GitHub";
+  Update downloads `AKit.zip` (https only), checks it holds AKit.app with the bundle id
+  `dev.ussov.akit` and its executable and `akit`, copies the app next to the running one,
+  renames the old one aside, the new one in place (the old one back on failure), then the old one
+  to the Trash; `akit` into `~/.local/bin` (a failure there only warns: the app is in place and
+  AKit restarts); removes the quarantine and restarts; it doesn't run `akit setup`. Leftovers of a
+  crashed update are removed first. GitHub allows 60 unsigned calls an hour, so a release copy
+  checks every 15 minutes and on activation at most as often (Check for Updates at once); a
+  failed check (offline, the limit) keeps the release found before.
+  A release zip is the build without `AKitSourcePath` in `BuildInfo.plist` (`AKIT_DIST=1`). A new
+  version still needs `make release` and `gh release create <tag> dist/AKit.zip`, not only a
+  pushed tag.
 - Checked at launch, every 5 minutes, when AKit comes to the front (at most every 20 s) and
   with **AKit → Check for Updates**.
 - Another branch checked out in the folder: no button, a build would be of that branch.
 - Uncommitted changes to tracked files: the update asks first (**Update Anyway**), since
   another agent session may be working in the main checkout.
-- Not covered: copies installed from a release zip (`install.sh` without a source folder);
-  `install.sh` run again updates them.
 
 ## Onboarding (proposal)
 

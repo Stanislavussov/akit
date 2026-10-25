@@ -3,6 +3,9 @@ import Foundation
 /// Where this build of AKit comes from, stamped into BuildInfo.plist in the app's
 /// resources at build time (see "Stamp build source" in project.yml).
 struct BuildInfo {
+    /// A release zip (`make release`, installed by install.sh): no source folder is stamped, so
+    /// updates come from GitHub Releases.
+    var fromRelease = false
     let sourcePath: String?
     let branch: String?
     let commit: String?
@@ -19,7 +22,8 @@ struct BuildInfo {
         func value(_ key: String) -> String? {
             (info[key] as? String).flatMap { $0.isEmpty ? nil : $0 }
         }
-        return BuildInfo(sourcePath: value("AKitSourcePath") ?? SelfRebuild.sourceRoot?.path,
+        return BuildInfo(fromRelease: value("AKitSourcePath") == nil && value("AKitGitCommit") != nil,
+                         sourcePath: value("AKitSourcePath") ?? SelfRebuild.sourceRoot?.path,
                          branch: value("AKitGitBranch").flatMap { $0 == "HEAD" ? nil : $0 },
                          commit: value("AKitGitCommit"),
                          versionTag: value("AKitVersionTag"),
