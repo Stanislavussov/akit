@@ -1,28 +1,41 @@
+import AKitFoundation
 import Foundation
 
 /// The model that checks knowledge base proposals (`akit kb check`, K15): a light model run
 /// through a harness this Mac has (Pi by default, or Claude Code), set in Settings → Knowledge
-/// check model (`akit kb check-model`). The prompt, the candidates and the parser are in
-/// `AKitKnowledge.KnowledgeCheck`; the call goes through `ModelCall` with the origin
-/// `.knowledgeBase` and the purpose `kb-check`.
+/// check model (`akit kb check-model`). Models come only from the harness's own list
+/// (`LabRuns.models`: `pi --list-models`, Claude Code's aliases), never typed in. The prompt,
+/// the candidates and the parser are in `AKitKnowledge.KnowledgeCheck`; the call goes through
+/// `ModelCall` with the origin `.knowledgeBase` and the purpose `kb-check`.
 public enum KnowledgeCheckModel {
+    public struct Failure: Error, LocalizedError, Sendable {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
     /// The send log's purpose.
     public static let purpose = "kb-check"
-    /// GPT-6 Luna under the Pi providers the user has (K15): OpenCode Go on the home Mac, GitHub
-    /// Copilot on the work Mac. The first one is the default.
+    /// The user's choice (K15): GPT-6 Luna, under whichever provider Pi lists it (OpenCode Go at
+    /// home, GitHub Copilot on the work Mac).
     public static let lunaModels = ["opencode-go/gpt-6-luna", "github-copilot/gpt-6-luna"]
-    /// The user's choice (K15): GPT-6 Luna through Pi's OpenCode Go provider, at thinking low.
-    public static let defaultAgent = LabAgent(harness: .pi, model: lunaModels[0], effort: "low", mode: .call)
+    /// Pi at thinking low with no model: the model is picked from Pi's list at call time.
+    public static let defaultAgent = defaultAgent(for: .pi)
 
-    /// A harness's model when none was chosen for it: Luna for Pi, haiku for Claude Code.
+    /// A harness with no model chosen: its model is picked from its list (`defaultModel`).
     public static func defaultAgent(for harness: LabHarness) -> LabAgent {
+        LabAgent(harness: harness, model: "", effort: "low", mode: .call)
+    }
+
+    /// The default among the models `harness` lists: for Pi the first Luna it lists, else its
+    /// first model; for Claude Code haiku, else its first. nil when it lists none.
+    public static func defaultModel(for harness: LabHarness, available: [String]) -> String? {
         switch harness {
-        case .pi: defaultAgent
-        case .claudeCode: LabAgent(harness: .claudeCode, model: "haiku", effort: "low", mode: .call)
+        case .pi: lunaModels.first(where: available.contains) ?? available.first
+        case .claudeCode: available.contains("haiku") ? "haiku" : available.first
         }
     }
 
-    /// The model the check uses now.
+    /// The model the check uses now (model "" = the harness's default).
     public static func agent(settings: LabSettings) -> LabAgent { settings.knowledgeCheckAgent ?? defaultAgent }
 
     /// The model `harness` would use: the current one when it is that harness, else the last
@@ -40,27 +53,26 @@ public enum KnowledgeCheckModel {
         settings.knowledgeCheckModels[agent.harness.rawValue] = agent == defaultAgent(for: agent.harness) ? nil : agent
     }
 
-    /// Whether `model` names a model of `harness`: Pi takes `provider/model`, Claude Code an
-    /// alias or a full name.
-    public static func isValid(_ model: String, for harness: LabHarness) -> Bool {
-        switch harness {
-        case .pi: model.contains("/")
-        case .claudeCode: !model.isEmpty && !model.contains(" ")
+    /// `agent` with a model its harness lists: the default filled in, a model the harness
+    /// doesn't list refused. `available` is the harness's list.
+    public static func resolved(_ agent: LabAgent, available: [String]) throws(Failure) -> LabAgent {
+        let source = agent.harness == .pi ? "pi --list-models" : "Claude Code's models"
+        guard !available.isEmpty else {
+            throw Failure(message: "\(agent.harness.title) lists no models (\(source)), so there is nothing to check with.")
         }
+        var agent = agent
+        if agent.model.isEmpty {
+            agent.model = defaultModel(for: agent.harness, available: available) ?? ""
+        } else if !available.contains(agent.model) {
+            throw Failure(message: "\(agent.model) is not among \(agent.harness.title)'s models (\(source)). "
+                + "Choose one in Settings → Knowledge check model or with akit kb check-model.")
+        }
+        return agent
     }
 
-    /// The harness's models to choose from; for Pi both Lunas first, so either one is a click
-    /// away even when Pi does not list it.
-    public static func choices(_ models: [String], harness: LabHarness = .pi) -> [String] {
-        guard harness == .pi else { return models }
-        return lunaModels + models.filter { !lunaModels.contains($0) }
-    }
-
-    /// The other Luna when Pi lists it but not `model`: on the work Mac the default
-    /// `opencode-go/gpt-6-luna` is missing and `github-copilot/gpt-6-luna` is there.
-    public static func lunaSwitch(from model: String, piModels: [String]) -> String? {
-        guard !piModels.isEmpty, !piModels.contains(model) else { return nil }
-        return lunaModels.first { $0 != model && piModels.contains($0) }
+    /// `resolved` with the harness's list read now.
+    public static func resolved(_ agent: LabAgent, env: HarnessEnvironment) async throws(Failure) -> LabAgent {
+        try resolved(agent, available: await LabRuns.models(for: agent.harness, env: env))
     }
 
     /// "Pi · opencode-go/gpt-6-luna · low".

@@ -4,7 +4,7 @@ enum AKitSkill {
     static let text = #"""
 ---
 name: akit
-description: Create or edit harness layers in the AKit brain (~/.akit/registry) and set up a project's harness from them with the akit command. Use when the user asks to make or change a layer, add skills or fields to one, or set up / re-render a project's AGENTS.md and skills.
+description: Create or edit harness layers in the AKit brain (~/.akit/registry) and set up a project's harness from them with the akit command. Use when the user asks to make or change a layer, add skills or fields to one, or set up / re-render a project's AGENTS.md and skills, and to read the knowledge base or propose to it (akit kb: context, search, show, propose).
 ---
 
 # AKit: layers and project setup
@@ -404,9 +404,9 @@ akit kb accept ID [--yes] [--json]                 # accept a proposal: shows th
 akit kb reject ID [--yes] [--json]                 # a proposal to the Trash
 akit kb check-model [MODEL [THINKING]] [--harness pi|claude-code]
                                                    # the check model of kb check: harness (default
-                                                   # pi; each keeps its own model) and model (Pi:
-                                                   # opencode-go/gpt-6-luna, low; with Copilot:
-                                                   # github-copilot/gpt-6-luna; Claude Code: haiku)
+                                                   # pi; each keeps its own model) and a model from
+                                                   # that harness's list only (no MODEL: shows the
+                                                   # list); default the GPT-6 Luna Pi lists, low
 akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
                                                    # commit; without --yes it only shows what goes
 akit kb pi-template [--yes] [--json]               # the core layer's section about the base, for Pi

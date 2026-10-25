@@ -99,13 +99,15 @@ final class FocusTests {
         let projects = home.appending(path: "Projects")
         let found = await base.focus(folder: orders, env: env, projectsRoot: projects)
         #expect(found.project == "example.com/shop/orders-api" && found.choice == .init(area: "payments", source: .repo))
-        try KnowledgeBase.Focus.load(home: home).setting(area: "logistics", project: found.project).save(home: home)
+        try KnowledgeBase.Focus.load(home: home).setting(area: "logistics", project: found.project, in: base).save(home: home)
+        // The choice names its base too, so the project's commands read that base.
+        #expect(KnowledgeBase.Focus.load(home: home).projects[found.project] == .init(base: base.world ?? base.root.path, area: "logistics"))
         #expect(await base.focus(folder: orders, env: env, projectsRoot: projects).choice == .init(area: "logistics", source: .override))
         #expect(await base.focus(folder: labels, env: env, projectsRoot: projects).choice.source == .areaSettings)
-        // Clearing keeps another project's base choice, and drops an entry with nothing left.
+        // Clearing drops the project's entry and keeps another project's.
         var focus = KnowledgeBase.Focus.load(home: home)
         focus.projects["local/other"] = .init(base: "work")
-        try focus.setting(area: nil, project: found.project).setting(area: nil, project: "local/other").save(home: home)
+        try focus.setting(area: nil, project: found.project, in: base).save(home: home)
         #expect(KnowledgeBase.Focus.load(home: home) == .init(projects: ["local/other": .init(base: "work")]))
         #expect(await base.focus(folder: orders, env: env, projectsRoot: projects).choice.source == .repo)
     }

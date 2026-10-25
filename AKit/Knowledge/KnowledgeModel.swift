@@ -1023,9 +1023,9 @@ final class KnowledgeModel {
 
     /// Focus… Save: `akit kb focus FOLDER --set AREA` (nil: `--clear`), in `focus.json` on this Mac.
     func saveFocus(area: String?, projectsRoot: URL) async -> Bool {
-        guard let info = focusInfo else { return false }
+        guard let info = focusInfo, let base else { return false }
         do {
-            try KnowledgeBase.Focus.load(home: home).setting(area: area, project: info.project).save(home: home)
+            try KnowledgeBase.Focus.load(home: home).setting(area: area, project: info.project, in: base).save(home: home)
         } catch {
             problem = error.message
             return false

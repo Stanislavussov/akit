@@ -103,12 +103,11 @@ extension KnowledgeBase.Focus {
         }
     }
 
-    /// Sets (or with nil clears) the focus area of a project, keeping its base choice.
-    public func setting(area: String?, project: String) -> KnowledgeBase.Focus {
+    /// Sets the focus area of a project together with the base it is in, so the project's
+    /// commands (and its agents) read that base; nil clears both.
+    public func setting(area: String?, project: String, in base: KnowledgeBase) -> KnowledgeBase.Focus {
         var copy = self
-        var entry = projects[project] ?? Entry()
-        entry.area = area
-        copy.projects[project] = entry.base == nil && entry.area == nil ? nil : entry
+        copy.projects[project] = area.map { Entry(base: base.world ?? base.root.path, area: $0) }
         return copy
     }
 }

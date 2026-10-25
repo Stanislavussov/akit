@@ -24,7 +24,8 @@ public enum KnowledgeChecker {
     public static func run(_ proposal: KnowledgeProposal, in base: KnowledgeBase, agent: LabAgent? = nil,
                            env: HarnessEnvironment) async throws(Failure) -> Outcome {
         do {
-            let agent = try agent ?? KnowledgeCheckModel.agent(settings: LabSettings.loadForSending(env: env))
+            let chosen = try agent ?? KnowledgeCheckModel.agent(settings: LabSettings.loadForSending(env: env))
+            let agent = try await KnowledgeCheckModel.resolved(chosen, env: env)
             let candidates = base.checkCandidates(for: proposal)
             let request = ModelCall.Request(agent: agent, purpose: KnowledgeCheckModel.purpose, system: KnowledgeCheck.system,
                                             input: KnowledgeCheck.input(proposal, candidates: candidates), schema: KnowledgeCheck.schema,
@@ -37,6 +38,8 @@ public enum KnowledgeChecker {
             let result = try base.saveCheck(marks, of: proposal, model: KnowledgeCheckModel.label(agent))
             return Outcome(result: result, candidates: candidates)
         } catch let error as KnowledgeCheck.Failure {
+            throw Failure(message: error.message)
+        } catch let error as KnowledgeCheckModel.Failure {
             throw Failure(message: error.message)
         } catch let error as KnowledgeBase.Failure {
             throw Failure(message: error.message)

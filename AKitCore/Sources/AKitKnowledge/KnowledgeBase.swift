@@ -477,7 +477,10 @@ public struct KnowledgeBase: Sendable, Hashable {
         if let option { return try named(option, from: "--base") }
         if FileManager.default.fileExists(atPath: focusFile(home: home).path) {
             let id = await ProjectRecords.projectID(for: folder, projectsRoot: projectsRoot, env: env)
-            if let chosen = Focus.load(home: home).projects[id]?.base { return try named(chosen, from: "focus.json, project \(id)") }
+            // A chosen base that is gone (the sample base removed) falls back to the rules below.
+            if let chosen = Focus.load(home: home).projects[id]?.base, let base = try? named(chosen, from: "focus.json, project \(id)") {
+                return base
+            }
         }
         if bases.count <= 1 { return bases.first }
         let kind = MachineProfile.load(home: home).kind.rawValue

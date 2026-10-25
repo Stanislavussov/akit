@@ -40,6 +40,7 @@ final class KnowledgeMapDrawerTests {
         try script("pi", """
             #!/bin/sh
             if [ "$1 $2" = "auth check" ]; then echo '{"status":"ready"}'; exit 0; fi
+            if [ "$1" = "--list-models" ]; then printf 'provider model\\nopencode-go gpt-6-luna\\nzai glm-5-air\\n'; exit 0; fi
             for a in "$@"; do printf '%s\\n' "$a"; last="$a"; done > "$HOME/pi-args.txt"
             cp "${last#@}" "$HOME/pi-input.txt"
             cat "$HOME/pi-event.json"; echo

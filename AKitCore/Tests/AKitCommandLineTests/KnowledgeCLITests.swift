@@ -214,6 +214,9 @@ struct KnowledgeCLITests {
         #expect(set["focus"] as? String == "logistics" && set["source"] as? String == "override")
         #expect(KnowledgeBase.Focus.load(home: home).projects["example.com/shop/orders-api"]?.area == "logistics")
         #expect(try json(await akit("kb", "context", orders.path, "--json", "--base", base).out)["focus"] as? String == "logistics")
+        // The choice keeps its base: the project's commands read it with no --base.
+        let routed = try json(await akit("kb", "context", orders.path, "--json").out)
+        #expect(routed["focus"] as? String == "logistics" && (routed["base"] as? String).map { URL(filePath: $0).standardized } == URL(filePath: base).standardized)
         #expect(await akit("kb", "focus", orders.path, "--set", "nowhere", "--base", base).code == 2)
         #expect(await akit("kb", "focus", orders.path, "--set", "payments", "--clear", "--base", base).code == 2)
         #expect(await akit("kb", "context", orders.path, "--set", "payments", "--base", base).code == 2)
@@ -622,12 +625,15 @@ struct KnowledgeCLITests {
         try Data(#"""
             #!/bin/sh
             if [ "$1 $2" = "auth check" ]; then echo '{"status":"ready"}'; exit 0; fi
+            if [ "$1" = "--list-models" ]; then printf 'provider model\nopencode-go gpt-6-luna\nzai glm-5-air\n'; exit 0; fi
             echo "$@" > "$HOME/pi-args.txt"
             for a in "$@"; do case "$a" in @*) cp "${a#@}" "$HOME/pi-input.json";; esac; done
             echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\"marks\":[{\"kind\":\"duplicate\",\"note\":\"payments/billing\",\"message\":\"Invoices says it.\"}],\"accept\":true}"}],"usage":{"input":10,"output":3}}}'
 
             """#.utf8).write(to: bin.appending(path: "pi"))
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: "pi").path)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: bin.appending(path: "claude"))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: "claude").path)
         let piEnv = HarnessEnvironment(homeDirectory: home, variables: env.variables, executableSearchPaths: [bin, URL(filePath: "/usr/bin"), URL(filePath: "/bin")])
         func run(_ arguments: String...) async -> (code: Int32, out: String, err: String) {
             var out: [String] = [], err: [String] = []
@@ -656,8 +662,11 @@ struct KnowledgeCLITests {
         #expect(await run("kb", "check-model", "zai/glm-5-air", "minimal").out == "Knowledge check model: Pi · zai/glm-5-air · minimal")
         #expect(LabSettings.load(env: piEnv).knowledgeCheckAgent == LabAgent(harness: .pi, model: "zai/glm-5-air", effort: "minimal"))
         #expect(await run("kb", "check-model", "glm").code == 2)
+        // Only models the harness lists: a made-up one is refused, here and for one check.
+        #expect(await run("kb", "check-model", "github-copilot/gpt-6-luna").err.contains("not among Pi's models: opencode-go/gpt-6-luna, zai/glm-5-air"))
+        #expect(await run("kb", "check", "2026-10-24-arrow-billing-warehouse", "--model", "made/up").err.contains("not among Pi's models"))
         // Another harness keeps its own model; switching back brings Pi's back.
-        #expect(await run("kb", "check-model", "--harness", "claude-code").out == "Knowledge check model: Claude Code · haiku · low")
+        #expect(await run("kb", "check-model", "--harness", "claude-code").out == "Knowledge check model: Claude Code · default model · low")
         #expect(await run("kb", "check-model", "sonnet", "--harness", "claude-code").out == "Knowledge check model: Claude Code · sonnet · low")
         #expect(await run("kb", "check-model", "--harness", "pi").out == "Knowledge check model: Pi · zai/glm-5-air · minimal")
         #expect(await run("kb", "check-model", "--harness", "claude-code").out == "Knowledge check model: Claude Code · sonnet · low")

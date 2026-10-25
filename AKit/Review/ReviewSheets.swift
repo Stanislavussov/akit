@@ -1188,32 +1188,37 @@ struct RequiredLabel: View {
 }
 
 /// One of Pi's models to choose (`pi --list-models`), with what an empty choice means first. A
-/// model not in Pi's list (the list failed, an offline provider) is typed under **Other…**.
+/// model not in Pi's list (the list failed, an offline provider) is typed under **Other…**,
+/// unless `allowsOther` is off: then only the listed models can be picked.
 struct PiModelPicker<Label: View>: View {
     @Binding var selection: String
     let models: [String]
     let empty: String
     var help = "Models Pi has credentials for (pi --list-models); Other… to type one"
+    var allowsOther = true
     @ViewBuilder let label: () -> Label
     @State private var other = false
 
     private static var otherTag: String { "\u{1}other" }
 
     var body: some View {
-        Picker(selection: Binding(get: { other || (!selection.isEmpty && !models.contains(selection)) ? Self.otherTag : selection },
+        Picker(selection: Binding(get: { !allowsOther && !models.contains(selection) ? ""
+                                      : other || (!selection.isEmpty && !models.contains(selection)) ? Self.otherTag : selection },
                                   set: { value in
                                       other = value == Self.otherTag
                                       if !other { selection = value }
                                   })) {
             Text(empty).tag("")
             ForEach(models, id: \.self) { Text($0).tag($0) }
-            Divider()
-            Text("Other…").tag(Self.otherTag)
+            if allowsOther {
+                Divider()
+                Text("Other…").tag(Self.otherTag)
+            }
         } label: {
             label()
         }
         .help(help)
-        if other || (!selection.isEmpty && !models.contains(selection)) {
+        if allowsOther, other || (!selection.isEmpty && !models.contains(selection)) {
             TextField("Model", text: $selection, prompt: Text("provider/model"))
         }
     }

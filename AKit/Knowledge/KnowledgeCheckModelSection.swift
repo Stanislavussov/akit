@@ -5,8 +5,8 @@ import SwiftUI
 /// Settings → Knowledge check model (K15): the harness, model and thinking `akit kb check` uses
 /// to mark a proposal (duplicate, contradiction with a map arrow, broken link), kept in
 /// `~/.akit/lab/settings.json` (`akit kb check-model` sets it too). Harnesses are the ones this
-/// Mac has; each keeps its own model. Unset: Pi with GPT-6 Luna through OpenCode Go; both
-/// Lunas are always in Pi's list.
+/// Mac has; each keeps its own model. Models come only from the harness's list; the default is
+/// picked from it (Pi: the GPT-6 Luna it lists; Claude Code: haiku).
 struct KnowledgeCheckModelSection: View {
     @Environment(AppModel.self) private var model
     @Binding var lab: LabSettings
@@ -33,23 +33,21 @@ struct KnowledgeCheckModelSection: View {
             })) {
                 ForEach(harnesses, id: \.self) { Text($0.title).tag($0) }
             }
-            let fallback = KnowledgeCheckModel.defaultAgent(for: agent.harness).model
-            PiModelPicker(selection: Binding(get: { agent.model == fallback ? "" : agent.model }, set: { name in
-                let name = name.trimmingCharacters(in: .whitespaces)
+            let fallback = KnowledgeCheckModel.defaultModel(for: agent.harness, available: models)
+            PiModelPicker(selection: Binding(get: { agent.model }, set: { name in
                 var changed = agent
-                changed.model = name.isEmpty ? fallback : name
+                changed.model = name
                 set(changed)
-            }), models: KnowledgeCheckModel.choices(models, harness: agent.harness).filter { $0 != fallback },
-                           empty: "Default (\(fallback))",
-                           help: agent.harness == .pi ? "Models Pi has credentials for (pi --list-models); Other… to type one"
-                               : "Claude Code model aliases; Other… to type a full name") {
+            }), models: models, empty: "Default (\(fallback ?? (models.isEmpty ? "reading the list…" : "none")))",
+                           help: agent.harness == .pi ? "Models Pi has credentials for (pi --list-models)" : "Claude Code's models",
+                           allowsOther: false) {
                 Text("Model")
             }
-            if agent.harness == .pi, let other = KnowledgeCheckModel.lunaSwitch(from: agent.model, piModels: models) {
-                LabeledContent("Pi has no \(agent.model)") {
-                    Button("Use \(other)") {
+            if !models.isEmpty, !agent.model.isEmpty, !models.contains(agent.model) {
+                LabeledContent("\(agent.harness.title) has no \(agent.model)") {
+                    Button("Use Default (\(fallback ?? "-"))") {
                         var changed = agent
-                        changed.model = other
+                        changed.model = ""
                         set(changed)
                     }
                 }

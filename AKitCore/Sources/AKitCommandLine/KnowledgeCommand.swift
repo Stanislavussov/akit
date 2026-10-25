@@ -142,8 +142,9 @@ extension AKitCLI {
                                         at once. P is a git remote, a ~/ path or a glob
       akit kb focus [FOLDER] --set AREA | --clear [--json] [--base PATH|WORLD]
                                         For a person only. Choose the area a project's sessions
-                                        start from (kept on this Mac in
-                                        ~/.akit/local/knowledge/focus.json, not in the base), or
+                                        start from and the base it is in (kept on this Mac in
+                                        ~/.akit/local/knowledge/focus.json, not in the base): the
+                                        project's kb commands and agents then read that base. Or
                                         clear the choice to go back to area.yaml and repo:
       akit kb rename NOTE|MAP NEW [--yes] [--json] [--base PATH|WORLD]
                                         For a person only. Rename a note or a map (NEW: a name in the
@@ -164,9 +165,9 @@ extension AKitCLI {
       akit kb check-model [MODEL [THINKING]] [--harness pi|claude-code]
                                         For a person only. Show or set the check model of kb check:
                                         the harness (default pi; each keeps its own model), a model
-                                        (Pi: provider/model, default opencode-go/gpt-6-luna,
-                                        github-copilot/gpt-6-luna on a Mac with Copilot; Claude
-                                        Code: default haiku) and its thinking (default low),
+                                        from the harness's own list (pi --list-models; Claude
+                                        Code's models), by default the GPT-6 Luna Pi lists or
+                                        haiku, and its thinking (default low),
                                         kept in ~/.akit/lab/settings.json; the same as Settings →
                                         Knowledge check model
       akit kb reject ID [--yes] [--json] [--base PATH|WORLD]
@@ -612,7 +613,7 @@ extension AKitCLI {
                 }
                 do {
                     try KnowledgeBase.Focus.load(home: home)
-                        .setting(area: set?.precomposedStringWithCanonicalMapping, project: project).save(home: home)
+                        .setting(area: set?.precomposedStringWithCanonicalMapping, project: project, in: base).save(home: home)
                 } catch {
                     throw Failure(message: error.message)
                 }
@@ -889,9 +890,15 @@ extension AKitCLI {
             let settings = LabSettings.load(env: env)
             let current = KnowledgeCheckModel.agent(settings: settings)
             guard model != nil || harnessName != nil else {
-                out(json ? encode(CheckModelAnswer(current)) : "Knowledge check model: \(KnowledgeCheckModel.label(current))\n"
-                    + "GPT-6 Luna: " + KnowledgeCheckModel.lunaModels.map { "akit kb check-model \($0)" }.joined(separator: " | ")
-                    + "\nOther harness: akit kb check-model --harness claude-code [MODEL [EFFORT]]")
+                let available = await LabRuns.models(for: current.harness, env: env)
+                let shown = current.model.isEmpty
+                    ? LabAgent(harness: current.harness, model: KnowledgeCheckModel.defaultModel(for: current.harness, available: available) ?? "",
+                               effort: current.effort, mode: .call)
+                    : current
+                out(json ? encode(CheckModelAnswer(shown)) : "Knowledge check model: \(KnowledgeCheckModel.label(shown))"
+                    + (current.model.isEmpty ? " (default)" : "") + "\n"
+                    + "\(current.harness.title) lists: \(available.isEmpty ? "nothing" : available.joined(separator: ", "))\n"
+                    + "Other harness: akit kb check-model --harness \(LabHarness.allCases.map(\.rawValue).joined(separator: "|")) [MODEL [EFFORT]]")
                 return 0
             }
             var harness = current.harness
@@ -899,14 +906,15 @@ extension AKitCLI {
                 guard let chosen = LabHarness(rawValue: harnessName) else {
                     throw Failure(message: "--harness is one of \(LabHarness.allCases.map(\.rawValue).joined(separator: ", ")).")
                 }
+                guard env.findExecutable(chosen.command) != nil else { throw Failure(message: "\(chosen.title) (\(chosen.command)) is not installed.") }
                 harness = chosen
             }
             var agent = KnowledgeCheckModel.agent(for: harness, settings: settings)
             if let model {
-                guard KnowledgeCheckModel.isValid(model, for: harness) else {
-                    throw Failure(message: harness == .pi
-                        ? "MODEL is a Pi model provider/model, like \(KnowledgeCheckModel.defaultAgent.model); for Claude Code add --harness claude-code."
-                        : "MODEL is a \(harness.title) model, like \(KnowledgeCheckModel.defaultAgent(for: harness).model).")
+                let available = await LabRuns.models(for: harness, env: env)
+                guard available.contains(model) else {
+                    throw Failure(message: "\(model) is not among \(harness.title)'s models: "
+                        + (available.isEmpty ? "it lists none." : available.joined(separator: ", ") + "."))
                 }
                 agent.model = model
             }
@@ -930,10 +938,7 @@ extension AKitCLI {
         do { proposal = try base.proposal(id) } catch { throw Failure(message: error.message) }
         var agent = KnowledgeCheckModel.agent(settings: try LabSettings.loadForSending(env: env))
         if let modelOption {
-            guard KnowledgeCheckModel.isValid(modelOption, for: agent.harness) else {
-                throw Failure(message: "--model is a \(agent.harness.title) model of the check model's harness, like \(KnowledgeCheckModel.defaultAgent(for: agent.harness).model).")
-            }
-            agent.model = modelOption
+            agent.model = modelOption  // KnowledgeChecker refuses a model the harness doesn't list.
         }
         let outcome: KnowledgeChecker.Outcome
         do { outcome = try await KnowledgeChecker.run(proposal, in: base, agent: agent, env: env) } catch { throw Failure(message: error.message) }

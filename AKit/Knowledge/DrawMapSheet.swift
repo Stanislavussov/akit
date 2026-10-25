@@ -33,7 +33,7 @@ struct DrawMapSheet: View {
     /// What `--tab draw-map` snapshots print.
     var manifest: String {
         "draw map: area \(chosenArea.isEmpty ? "-" : chosenArea), name \(trimmedName.isEmpty ? "-" : trimmedName), model "
-            + "\(modelName.isEmpty ? checkAgent.model : modelName), prompt \(prompt.isEmpty ? "empty" : "\(prompt.count) characters"), Run "
+            + "\(modelName.isEmpty ? (checkAgent.model.isEmpty ? "default" : checkAgent.model) : modelName), prompt \(prompt.isEmpty ? "empty" : "\(prompt.count) characters"), Run "
             + (canRun ? "enabled" : "disabled") + (missingDrawer == nil ? "" : ", no excalidraw-cli or npx")
     }
 
@@ -63,7 +63,8 @@ struct DrawMapSheet: View {
                 }
                 TextField(text: $name, prompt: Text("order-flow")) { RequiredLabel("Map name") }
                     .help("The map's file name: areas/AREA/maps/NAME.excalidraw; an existing map is replaced only when you accept")
-                PiModelPicker(selection: $modelName, models: KnowledgeCheckModel.choices(models), empty: "Knowledge check model (\(checkAgent.model))") {
+                PiModelPicker(selection: $modelName, models: models, empty: "Knowledge check model (\(checkAgent.model.isEmpty ? KnowledgeCheckModel.defaultModel(for: .pi, available: models) ?? "Pi's default" : checkAgent.model))",
+                              help: "Models Pi has credentials for (pi --list-models)", allowsOther: false) {
                     Text("Model")
                 }
                 LabeledContent {

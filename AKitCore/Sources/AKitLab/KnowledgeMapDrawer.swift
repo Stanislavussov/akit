@@ -132,6 +132,8 @@ public enum KnowledgeMapDrawer {
         }
         guard env.findExecutable("pi") != nil else { throw Failure(message: "Pi (pi) is not installed.") }
         guard let drawer = drawer(env: env) else { throw Failure(message: missingDrawer(env: env) ?? "") }
+        var request = request
+        do { request.agent = try await KnowledgeCheckModel.resolved(request.agent, env: env) } catch { throw Failure(message: error.message) }
         let notes = ((try? base.notes()) ?? []).filter { $0.area == request.area }.map { String($0.id.split(separator: "/").last ?? "") }
         let folder = FileManager.default.temporaryDirectory.appending(path: "akit-kb-draw-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: folder) }
