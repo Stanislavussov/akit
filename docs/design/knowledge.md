@@ -63,7 +63,7 @@ describe the system once, by hand, and let the agent read it.
 | K18 | AKit Review | Yes, the user wants it (2026-10-24), as step 6. Gather adds only a **card** of the systems an MR touches and their neighbours (names, one line each, relations), within the profile's `knowledge_budget` (8 000 tokens by default; the user found 1 500 too small); the roles get `akit_kb_search` / `akit_kb_show` for the rest. The profile field `knowledge:` keeps working |
 | K19 | Token budget | The point of the RAG is to send little. `akit kb context`: a card, 4 000 tokens at most by default. `search`: the 10 best chunks (one chunk = one `##` section of a note), snippets first. `show`: a whole note only when the agent asks for it. Each command takes `--max-tokens`. The defaults are a first guess; tune them from real Review logs |
 | K20 | RAG engine | All in one SQLite file: FTS5 with BM25 for words, `nodes` / `edges` tables for the graph, and (step 7) one vector BLOB per chunk with cosine similarity in Swift (Accelerate), no extension: macOS's system SQLite can't load `sqlite-vec` (checked 2026-10-24 on macOS 15.6.1: SQLite 3.43.2 is built with `OMIT_LOAD_EXTENSION`, the SDK header has no `sqlite3_load_extension`; `ENABLE_FTS5` is on and an FTS5 table with `bm25()` works). Embeddings from a local model (`NLContextualEmbedding` or Ollama) |
-| K21 | Maps drawn by an agent | Added 2026-10-24 at the user's request. Pi draws a map from a prompt with [`@swiftlysingh/excalidraw-cli`](https://github.com/swiftlysingh/excalidraw-cli) (MIT; runs in the agent's harness, AKit ships no Node) and sends it with `akit kb propose --map AREA/NAME --file F`. The draft waits in Inbox; on Accept, AKit links each block whose label names one note to `[[note]]` and saves Excalidraw's own bytes. In AKit: **Draw Map with Pi…** (a prompt → Pi → the same path). Spike answer 6 lists the format gaps |
+| K21 | Maps drawn by an agent | Added 2026-10-24 at the user's request. Pi draws a map from a prompt with [`@swiftlysingh/excalidraw-cli`](https://github.com/swiftlysingh/excalidraw-cli) (MIT; runs in the agent's harness, AKit ships no Node) and sends it with `akit kb propose --map AREA/NAME --file F`. The draft waits in Inbox; on Accept, AKit links each block whose label names one note to `[[note]]` and saves Excalidraw's own bytes. In AKit: **Draw Map with Pi…** (a prompt → Pi with no tools writes the DSL → AKit runs excalidraw-cli and proposes the draft; 2026-10-25 review: no shell for Pi). Spike answer 6 lists the format gaps |
 | K22 | AKit and Pi | Added 2026-10-24 at the user's request: everything works from AKit (a button) and from Pi (an `akit kb` command with `--json` / `--yes`). The `/akit` skill lists the person-only commands too, with the rule: run them only when the user asked for that action in the session; never accept or reject a proposal on your own |
 | K23 | Separate folders | Added 2026-10-24 at the user's request: one area `areas/<name>/` per project, system or unrelated entity, with its own notes and maps; unrelated worlds get separate bases. Every create or proposal names its area; an agent proposes a new area instead of mixing unrelated systems, and the area is created on Accept |
 | K24 | Kinds and settings | Added 2026-10-24 at the user's request: kinds and their fields are data in `<base>/kb.yaml` (defaults `service`, `flow`, `team`, `database`, `queue`, `external`; the user adds, renames, removes). A note's kind and fields change in the note panel's **Properties** or with `akit kb set NOTE KEY=VALUE`, one frontmatter line at a time. `areas/<name>/area.yaml` maps an area to projects (remotes, `~/` paths, globs), so focus and Review find the area for new clones and folders without setup |
@@ -88,7 +88,18 @@ describe the system once, by hand, and let the agent read it.
 
 The folder is the default; `~/.akit/local/knowledge/bases.json` may set another one per world
 (K25), like `~/Notes/Vault/kb` inside an Obsidian vault or the vault itself. The vault's own notes
-outside `areas/` stay untracked, and `.obsidian/` is git-ignored.
+outside `areas/` stay untracked, and `.obsidian/` is git-ignored. A vault with Obsidian Sync on
+(`.obsidian/sync.json`, or the core plugin `sync` enabled in `core-plugins.json` or
+`core-plugins-migration.json`) uploads the base with it: on a work Mac the folder is refused, on
+another Mac it is allowed with a warning that `kb path`, `kb init` and Settings → Knowledge show
+(review 2026-10-25).
+
+When the app opens a base it sweeps it once: `git status --porcelain -z -- areas/ kb.yaml` (with
+`GIT_OPTIONAL_LOCKS=0`) names what differs from the last commit, and those paths join the commit
+queue (`KnowledgeCommitQueue.sweep`), so an edit whose enqueue was lost (the lock was held at quit,
+a crash) still gets its commit; `inbox/` never. Git in a base runs only where the base has its own
+`.git` (only `init` runs without one), with `GIT_CEILING_DIRECTORIES` at the base's parent, so a
+base that lost its `.git` never commits into a repo above it.
 
 A note of a system:
 
@@ -205,19 +216,22 @@ area's folder too), the proposal, draft and marks removed, and one commit holds 
 **Cancel** reloads the draft without links. The new map opens in the Notes tab.
 
 **Draw Map with Pi…** (the Knowledge toolbar; R-AP): an area (or New Area…), a map name, what the
-map shows and a Pi model (`PiModelPicker`; empty = Settings → Knowledge check model). Run starts
-`pi -p --mode json --no-session --offline --no-skills --no-context-files --no-prompt-templates
---no-extensions --tools bash,read,write [--model M --thinking T] -- <prompt>` in a temporary folder
-(`KnowledgeMapDrawer`, AKitLab; the Review's Pi runs need its extension and MCP, so this is a
-smaller run of its own through `ChildProcess`, the harness environment, Stop cancels it). The
-prompt is the person's words (scrubbed), then fixed steps: draw with `excalidraw-cli create …
--o <tmp>/NAME.excalidraw` (through `npx --yes @swiftlysingh/excalidraw-cli` when it isn't
-installed), use the area's note names as block labels, then run `<akit> kb propose --map AREA/NAME
---file … --reason … --base <base>`; never accept or reject. The gate checks the origin
-`.knowledgeBase` (it carries the note names), the monthly limit and the send log apply (purpose
-`kb-draw`, logged after the run with Pi's recorded usage). The sheet shows Pi's tools and answers
-as they come; a run that made no map proposal says so. On success the Inbox opens on the new
-proposal. Pi without AKit does the same from the terminal: the `/akit` skill has the recipe.
+map shows and a Pi model (`PiModelPicker`; empty = Settings → Knowledge check model). Run makes one
+`ModelCall` (`KnowledgeMapDrawer`, AKitLab): `pi -p --mode json --no-session --offline --no-tools
+--no-skills --no-context-files --no-prompt-templates`, so Pi has no shell and runs nothing. The
+input is the person's words, the area and map names and the area's note names (all scrubbed); the
+system prompt asks for excalidraw-cli's DSL (`[orders-api] -> "events" -> [billing]`, note names as
+block labels) and a one-line reason as `{"dsl", "reason"}` (a fenced block is read too). The gate
+checks the origin `.knowledgeBase` (it carries the note names), and the monthly limit and the send
+log apply (purpose `kb-draw`): the log records exactly what was sent. AKit then draws the DSL itself
+without a shell, through `ChildProcess` (Stop cancels it): `excalidraw-cli create --inline <DSL> -o
+<tmp>/NAME.excalidraw` when `excalidraw-cli` is on the PATH, else `npx --yes
+@swiftlysingh/excalidraw-cli create …` (AKit ships no Node; without either the sheet says so and
+Run stays off). A DSL that is empty, longer than 20 000 characters or starts with `-` (it is one
+argument) is refused. The draft goes to `propose(.map …)` in-process (author `pi`, the reason from
+Pi); no `akit` subprocess. The sheet shows each step; on success the Inbox opens on the new
+proposal. Pi without AKit, in the terminal, still draws as before: the `/akit` skill's recipe runs
+excalidraw-cli and `akit kb propose --map` in Pi's own shell.
 
 Accept (`kb accept ID [--yes]`, `planAccept` + `accept`): without `--yes` it prints the diff and
 exits 0. With it: the commit queue is flushed (U2), the note is backed up to

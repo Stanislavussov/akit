@@ -1,6 +1,11 @@
 import Foundation
 
 /// An exclusive `flock` on a file. Released when the value goes away (or the process ends).
+///
+/// `acquire(_:timeout:)` blocks the calling thread for up to `timeout` seconds while another
+/// holder keeps the lock: never call it on the main actor (the app's UI would hang). The app
+/// calls the code that takes it from a detached task or a nonisolated async function; the
+/// `akit` command may wait on its main thread.
 public final class FileLock: @unchecked Sendable {
     private let descriptor: Int32
 
@@ -12,6 +17,7 @@ public final class FileLock: @unchecked Sendable {
     }
 
     /// Polls `LOCK_NB` every 50 ms until `timeout` seconds pass; nil when the lock stays held.
+    /// Blocks the calling thread up to `timeout`; never call it on the main actor.
     public static func acquire(_ url: URL, timeout: TimeInterval) throws -> FileLock? {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])

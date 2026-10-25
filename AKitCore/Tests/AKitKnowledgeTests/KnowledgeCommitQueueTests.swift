@@ -4,7 +4,9 @@ import AKitFoundation
 @testable import AKitKnowledge
 
 /// The commit queue (U2) on a base in a temporary fake home.
-struct KnowledgeCommitQueueTests {
+final class KnowledgeCommitQueueTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -33,7 +35,7 @@ struct KnowledgeCommitQueueTests {
 
     /// A base with two committed notes.
     func makeBase() async throws -> KnowledgeBase {
-        let base = try await KnowledgeBase.create(world: "work", env: env())
+        let base = try await TemplateBase.base(home: home)
         try await base.newNote(area: "payments", name: "orders-api", kind: "service", env: env())
         try await base.newNote(area: "payments", name: "billing", kind: "service", env: env())
         return base
@@ -59,6 +61,33 @@ struct KnowledgeCommitQueueTests {
         #expect(try await git("status", "--porcelain", in: base.root).isEmpty)
         #expect(try await git("log", "-1", "--format=%s", in: base.root) == "Edit 2 notes: payments/billing, payments/orders-api")
         #expect(queue.pending().isEmpty)
+    }
+
+    /// The startup sweep queues what differs from the last commit under areas/ and kb.yaml (an edit,
+    /// a new file in a new folder, a deletion, both sides of a staged rename), never inbox/ or
+    /// anything else, and the next flush commits it.
+    @Test func theSweepQueuesWhatDiffersFromTheLastCommit() async throws {
+        let base = try await makeBase()
+        let queue = KnowledgeCommitQueue(base: base.root, env: env())
+        #expect(await queue.sweep() == .queued(refused: []))
+        #expect(queue.pending().isEmpty)
+        try edit(base, "areas/payments/orders-api.md", "Edited while AKit was closed.")
+        try edit(base, "kb.yaml", "# a comment")
+        try fm.createDirectory(at: base.areasFolder.appending(path: "logistics/flows"), withIntermediateDirectories: true)
+        try Data("# routes\n".utf8).write(to: base.areasFolder.appending(path: "logistics/flows/routes.md"))
+        // A staged rename names both sides.
+        _ = try await git("mv", "areas/payments/billing.md", "areas/payments/invoicing.md", in: base.root)
+        #expect(try await KnowledgeGit(base: base.root, env: env()).changedPaths().filter { $0.contains("payments/") && !$0.contains("orders") }
+            == ["areas/payments/billing.md", "areas/payments/invoicing.md"])
+        _ = try await git("mv", "areas/payments/invoicing.md", "areas/payments/billing.md", in: base.root)
+        try fm.removeItem(at: base.areasFolder.appending(path: "payments/billing.md"))
+        try Data("proposal\n".utf8).write(to: base.inboxFolder.appending(path: "2026-10-25-x.md"))
+        try Data("loose\n".utf8).write(to: base.root.appending(path: "notes.txt"))
+        #expect(await queue.sweep() == .queued(refused: []))
+        #expect(queue.pending() == ["areas/logistics/flows/routes.md", "areas/payments/billing.md", "areas/payments/orders-api.md", "kb.yaml"])
+        guard case .committed = await queue.flush() else { Issue.record("no commit"); return }
+        #expect(try await git("status", "--porcelain", in: base.root) == "?? inbox/2026-10-25-x.md\n?? notes.txt")
+        #expect(try await KnowledgeGit(base: base.root, env: env()).changedPaths().isEmpty)
     }
 
     @Test func anEmptyFlushMakesNoCommit() async throws {

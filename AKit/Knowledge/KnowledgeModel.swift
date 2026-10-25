@@ -238,6 +238,7 @@ final class KnowledgeModel {
         }
         if watcher?.root != base.root {
             watcher = KnowledgeWatcher(root: base.root) { [weak self] paths in self?.changed(paths) }
+            sweep(base)
             noteHashes = [:]
             inboxCount = WatchFilter.inboxCount(base.root)
             if loaded { Task { await refreshIndex() } }
@@ -708,12 +709,14 @@ final class KnowledgeModel {
     func removeSampleBase() async {
         guard let sample = sampleBase else { return }
         do {
-            try KnowledgeSeed.remove(sample, home: home)
+            // The base's lock is waited for (up to 2 s), never on the main actor.
+            let home = home
+            try await Task.detached { _ = try KnowledgeSeed.remove(sample, home: home) }.value
             if base == sample { (base, area, tabs, note) = (nil, nil, [], nil) }
             await load()
             notice = "Moved the sample base to the Trash."
         } catch {
-            problem = error.message
+            problem = error.localizedDescription
         }
     }
 
@@ -1069,6 +1072,19 @@ final class KnowledgeModel {
     func markOwnWrite(map id: String) {
         guard let base else { return }
         mapHashes[id] = KnowledgeWrite.hash(of: base.mapFile(id))
+    }
+
+    /// The startup sweep when a base opens: what differs from its last commit under `areas/` and
+    /// `kb.yaml` is queued (`KnowledgeCommitQueue.sweep`), so an edit whose enqueue was lost last
+    /// time (`unqueued` lives in memory only) still gets its commit. Never `inbox/`.
+    private func sweep(_ base: KnowledgeBase) {
+        let queue = KnowledgeCommitQueue(base: base.root, env: env)
+        let previous = lastEnqueue
+        lastEnqueue = Task {
+            await previous?.value
+            _ = await Task.detached { await queue.sweep() }.value
+        }
+        scheduleIdleFlush()
     }
 
     private func enqueue(_ path: String, in base: KnowledgeBase) {

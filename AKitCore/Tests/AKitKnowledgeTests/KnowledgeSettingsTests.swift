@@ -5,7 +5,9 @@ import AKitFoundation
 @testable import AKitKnowledge
 
 /// K24: kinds in `kb.yaml`, note properties as one-line frontmatter edits (P4), `area.yaml`.
-struct KnowledgeSettingsTests {
+final class KnowledgeSettingsTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -103,7 +105,7 @@ struct KnowledgeSettingsTests {
     // MARK: - kb.yaml
 
     @Test func kindsDefaultsReadAndWrite() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env)
+        let base = try await TemplateBase.base(home: home)
         #expect(try base.kinds() == KnowledgeKinds.defaults)
         #expect(KnowledgeKinds.defaults.names == ["service", "flow", "team", "database", "queue", "external"])
         #expect(try await git("ls-files", in: base.root).split(separator: "\n").contains("kb.yaml"))
@@ -139,7 +141,7 @@ struct KnowledgeSettingsTests {
     }
 
     @Test func renameKindIsAllOrNothingInOneCommit() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env)
+        let base = try await TemplateBase.base(home: home)
         try await base.newNote(area: "payments", name: "orders-api", kind: "service", env: env)
         try await base.newNote(area: "logistics", name: "warehouse", kind: "service", env: env)
         try await base.newNote(area: "logistics", name: "pick", kind: "flow", env: env)
@@ -173,7 +175,7 @@ struct KnowledgeSettingsTests {
     }
 
     @Test func setPropertiesSavesOnlyWhenChanged() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env)
+        let base = try await TemplateBase.base(home: home)
         try await base.newNote(area: "payments", name: "orders-api", kind: "service", env: env)
         let set = try base.setProperties(note: "payments/orders-api", set: [("owner", .string("team-a")), ("kind", .string("flow"))])
         #expect(set.path == "areas/payments/orders-api.md" && set.changed)
@@ -188,7 +190,7 @@ struct KnowledgeSettingsTests {
     // MARK: - area.yaml
 
     @Test func areaSettingsReadAndWrite() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env)
+        let base = try await TemplateBase.base(home: home)
         try base.newArea("payments")
         #expect(try base.settings(area: "payments") == KnowledgeArea())
         #expect(base.areas().first?.projects == [])

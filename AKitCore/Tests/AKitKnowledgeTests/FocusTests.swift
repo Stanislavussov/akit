@@ -6,7 +6,9 @@ import AKitFoundation
 
 /// Focus (K5, K12, K24), `neighbors` and `context` (3.2b) on the seed's files in a temporary
 /// fake home, without git in the base (the index needs only `areas/`).
-struct FocusTests {
+final class FocusTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -162,5 +164,18 @@ struct FocusTests {
         #expect(KnowledgeIndex.line(of: KnowledgeNote(text: "# a\n\n## Only\n\nA section. B.\n")) == "A section.")
         #expect(KnowledgeIndex.line(of: KnowledgeNote(text: "# a\n")) == "")
         #expect(KnowledgeIndex.line(of: KnowledgeNote(text: "# a\n\n" + String(repeating: "x", count: 300) + "\n")).count == 200)
+    }
+
+    /// The one matcher of `projects:` and `repo:` (Focus and AKit Review's knowledge card): a path
+    /// matches the folder, anything else is a remote compared normalized.
+    @Test func aProjectNamesTheRepositoryByPathOrRemote() {
+        let folder = home.appending(path: "Projects/app")
+        let remote = "github.com/me/app"
+        #expect(KnowledgeBase.names(project: " git@github.com:me/app.git ", remote: remote, folder: folder, home: home))
+        #expect(KnowledgeBase.names(project: "https://github.com/me/app", remote: remote, folder: nil, home: home))
+        #expect(!KnowledgeBase.names(project: "github.com/me/other", remote: remote, folder: folder, home: home))
+        #expect(!KnowledgeBase.names(project: "github.com/me/app", remote: nil, folder: folder, home: home))
+        #expect(KnowledgeBase.names(project: "~/Projects/*", remote: nil, folder: folder, home: home))
+        #expect(!KnowledgeBase.names(project: "~/Projects/app", remote: remote, folder: nil, home: home))
     }
 }

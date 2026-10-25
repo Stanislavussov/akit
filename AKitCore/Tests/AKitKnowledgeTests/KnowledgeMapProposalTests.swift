@@ -6,7 +6,9 @@ import AKitFoundation
 /// Map proposals (5.4, K21) in a temporary fake home, on the excalidraw-cli draft of spike 2.0:
 /// propose writes only `inbox/` (the proposal and its draft), a broken or secret draft is refused,
 /// labels match notes by the link rules and titles, Accept saves the canvas's bytes in one commit.
-struct KnowledgeMapProposalTests {
+final class KnowledgeMapProposalTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     static let fixture = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/cli-draft.excalidraw")
 
     let home: URL
@@ -34,7 +36,7 @@ struct KnowledgeMapProposalTests {
 
     /// A base with payments/billing and payments/orders-api.
     func makeBase() async throws -> KnowledgeBase {
-        let base = try await KnowledgeBase.create(world: "work", env: env)
+        let base = try await TemplateBase.base(home: home)
         try await base.newNote(area: "payments", name: "billing", kind: "service", env: env)
         try await base.newNote(area: "payments", name: "orders-api", kind: "service", env: env)
         return base

@@ -202,9 +202,10 @@ EOF
 # Kept out of git, as a private skill is: a skill that git tracks can't leave the project from AKit.
 mkdir -p "$DEMO/Projects/notes-mac/.git/info" && echo ".agents/skills/note-templates/" >> "$DEMO/Projects/notes-mac/.git/info/exclude"
 
-# Stand-ins for the agents' commands, so the demo shows ~/.local/bin paths and made-up versions.
+# Stand-ins for the agents' commands, so the demo shows ~/.local/bin paths and made-up versions
+# (npx: Draw Map with Pi… runs excalidraw-cli through it).
 mkdir -p "$DEMO/.local/bin"
-for pair in "claude:2.1.0 (Claude Code)" "pi:0.40.0" "codex:codex-cli 0.150.0" "opencode:1.18.0"; do
+for pair in "claude:2.1.0 (Claude Code)" "pi:0.40.0" "codex:codex-cli 0.150.0" "opencode:1.18.0" "npx:11.6.0"; do
     printf '#!/bin/sh\necho "%s"\n' "${pair#*:}" > "$DEMO/.local/bin/${pair%%:*}"
     chmod +x "$DEMO/.local/bin/${pair%%:*}"
 done

@@ -6,7 +6,9 @@ import AKitFoundation
 
 /// The sample base (K26) in a temporary fake home: every seeded feature, idempotence, updates,
 /// removal to a fake Trash, `kb rm` items.
-struct KnowledgeSeedTests {
+final class KnowledgeSeedTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -241,7 +243,7 @@ struct KnowledgeSeedTests {
     }
 
     @Test func anOlderSeedIsUpdatedUnlessTheUserChangedIt() async throws {
-        let base = try await KnowledgeSeed.seed(env: env).base
+        let base = try await TemplateBase.seeded(home: home)
         // An older seed: v0 with one file this seed no longer has, and an older text.
         let stale = "areas/payments/old.md"
         try Data("# old\n".utf8).write(to: base.root.appending(path: stale))
@@ -290,7 +292,7 @@ struct KnowledgeSeedTests {
 
     @Test func rmFindsNotesMapsAndAreasAndRefusesTheInbox() async throws {
         // The seeded map payments/maps/overview is removed as a map.
-        let base = try await KnowledgeSeed.seed(env: env).base
+        let base = try await TemplateBase.seeded(home: home)
 
         #expect(try base.item("payments") == .init(kind: .area, id: "payments", path: "areas/payments"))
         #expect(try base.item("areas/logistics/") == .init(kind: .area, id: "logistics", path: "areas/logistics"))

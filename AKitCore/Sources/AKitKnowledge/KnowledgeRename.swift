@@ -246,34 +246,57 @@ extension KnowledgeBase {
     /// plan. The committed paths.
     @discardableResult
     public func apply(_ plan: KnowledgeRename, env: HarnessEnvironment) async throws(Failure) -> [String] {
+        try await apply(plan, env: env) { data, url in try data.write(to: url, options: .atomic) }
+    }
+
+    /// `apply` with the file writer given (tests make it fail after a move).
+    func apply(_ plan: KnowledgeRename, env: HarnessEnvironment,
+               write: (Data, URL) throws -> Void) async throws(Failure) -> [String] {
         _ = await KnowledgeCommitQueue(base: root, env: env).flush()
         for change in plan.files where (try? Data(contentsOf: root.appending(path: change.path))) != change.original {
             throw Failure(message: "\(change.path) changed after the rename was planned; nothing was written. Plan it again.")
         }
+        // Every change whose file was moved or written, recorded right after its move, so a write
+        // that fails after the move is undone too.
         var written: [KnowledgeRename.FileChange] = []
         do {
             for change in plan.files {
                 let from = root.appending(path: change.path), to = root.appending(path: change.newPath)
                 if change.path == change.newPath {
-                    try change.planned.write(to: from, options: .atomic)
+                    try write(change.planned, from)
+                    written.append(change)
                 } else {
                     try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
                     if change.path.lowercased() == change.newPath.lowercased() {
                         // A change of case only: through a temporary name (the disk may ignore case).
                         let temporary = from.deletingLastPathComponent().appending(path: ".akit-rename-\(UUID().uuidString)")
                         try FileManager.default.moveItem(at: from, to: temporary)
-                        try FileManager.default.moveItem(at: temporary, to: to)
+                        do { try FileManager.default.moveItem(at: temporary, to: to) } catch {
+                            try? FileManager.default.moveItem(at: temporary, to: from)
+                            throw error
+                        }
                     } else {
                         try FileManager.default.moveItem(at: from, to: to)
                     }
-                    try change.planned.write(to: to, options: .atomic)
+                    written.append(change)
+                    try write(change.planned, to)
                 }
-                written.append(change)
             }
         } catch {
             for change in written.reversed() {
                 let from = root.appending(path: change.path), to = root.appending(path: change.newPath)
-                if change.path != change.newPath { try? FileManager.default.moveItem(at: to, to: from) }
+                if change.path != change.newPath {
+                    if change.path.lowercased() == change.newPath.lowercased() {
+                        // Back through a temporary name too.
+                        let temporary = to.deletingLastPathComponent().appending(path: ".akit-rename-\(UUID().uuidString)")
+                        if (try? FileManager.default.moveItem(at: to, to: temporary)) != nil,
+                           (try? FileManager.default.moveItem(at: temporary, to: from)) == nil {
+                            try? FileManager.default.moveItem(at: temporary, to: to)
+                        }
+                    } else {
+                        try? FileManager.default.moveItem(at: to, to: from)
+                    }
+                }
                 try? change.original.write(to: from, options: .atomic)
             }
             throw Failure(message: "Couldn't write the rename (\(error.localizedDescription)); the files written are back as they were.")

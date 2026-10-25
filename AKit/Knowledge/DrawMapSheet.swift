@@ -4,10 +4,11 @@ import AKitLab
 import SwiftUI
 
 /// Knowledge → Draw Map with Pi… (5.4, K21, R-AP): an area (or a new one), a map name and what the
-/// map shows. Run starts Pi without a session (`KnowledgeMapDrawer`): it draws with excalidraw-cli,
-/// labels blocks with the area's note names, and sends the draft with `akit kb propose --map`.
-/// The draft then waits in the Inbox for Accept… or Reject…. The prompt goes through the sending
-/// policy (purpose kb-draw). Pi without AKit does the same from the terminal (the /akit skill).
+/// map shows. Run asks Pi, with no tools, for the map's excalidraw-cli DSL (`KnowledgeMapDrawer`),
+/// labelled with the area's note names; AKit draws it with excalidraw-cli (through npx when it
+/// isn't installed) and proposes the draft. It then waits in the Inbox for Accept… or Reject….
+/// The prompt goes through the sending policy (purpose kb-draw). Pi without AKit does the same
+/// from the terminal (the /akit skill).
 struct DrawMapSheet: View {
     @Environment(KnowledgeModel.self) private var model
     @Environment(AppModel.self) private var app
@@ -21,6 +22,8 @@ struct DrawMapSheet: View {
     @State private var modelName = ""
     @State private var models: [String] = []
     @State private var running = false
+    /// Neither excalidraw-cli nor npx is on the PATH: Run stays off.
+    @State private var missingDrawer: String?
 
     private var checkAgent: LabAgent { KnowledgeCheckModel.agent(settings: LabSettings.load(env: model.env)) }
     private var chosenArea: String { (area == Self.newAreaTag ? newArea : area).trimmingCharacters(in: .whitespaces) }
@@ -30,19 +33,23 @@ struct DrawMapSheet: View {
     var manifest: String {
         "draw map: area \(chosenArea.isEmpty ? "-" : chosenArea), name \(trimmedName.isEmpty ? "-" : trimmedName), model "
             + "\(modelName.isEmpty ? checkAgent.model : modelName), prompt \(prompt.isEmpty ? "empty" : "\(prompt.count) characters"), Run "
-            + (canRun ? "enabled" : "disabled")
+            + (canRun ? "enabled" : "disabled") + (missingDrawer == nil ? "" : ", no excalidraw-cli or npx")
     }
 
     private var canRun: Bool {
-        !running && !chosenArea.isEmpty && !trimmedName.isEmpty && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !running && missingDrawer == nil && !chosenArea.isEmpty && !trimmedName.isEmpty && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && ![chosenArea, trimmedName].contains { $0.hasPrefix(".") || $0.contains("/") }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Draw Map with Pi").font(.title3.bold())
-            Text("Pi draws the map with excalidraw-cli (through npx when it isn't installed), labels blocks with the area's note names, and proposes the draft. It waits in the Inbox: Accept… links each block to its note and saves the map. Pi gets the bash, read and write tools and none of your skills; the prompt and the note names go through the sending policy (kb-draw).")
+            Text("Pi writes the map as excalidraw-cli text, with the area's note names as block labels. AKit draws it with excalidraw-cli (through npx when it isn't installed) and proposes the draft. It waits in the Inbox: Accept… links each block to its note and saves the map. Pi gets no tools and none of your skills; the prompt and the note names go through the sending policy (kb-draw).")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let missing = missingDrawer {
+                Label(missing, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Form {
                 Picker(selection: $area) {
                     ForEach(model.areas, id: \.name) { Text($0.name).tag($0.name) }
@@ -97,6 +104,7 @@ struct DrawMapSheet: View {
             // A sheet opened at launch (snapshots) waits for the base's areas.
             for _ in 0..<50 where model.areas.isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
             area = model.area ?? model.areas.first?.name ?? Self.newAreaTag
+            missingDrawer = KnowledgeMapDrawer.missingDrawer(env: model.env)
             model.drawLog = []
             if DebugSnapshot.options?.tab == "draw-map" {
                 if model.areas.contains(where: { $0.name == "payments" }) { area = "payments" }

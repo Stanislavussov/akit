@@ -46,13 +46,7 @@ public enum ReviewKnowledgeCard {
         let index = KnowledgeIndex(base: base)
         _ = try index.refresh()
         let remote = remote.flatMap(ProjectRecords.normalizedRemote)
-        func names(_ project: String) -> Bool {
-            let project = project.trimmingCharacters(in: .whitespaces)
-            if project.hasPrefix("~") || project.hasPrefix("/") {
-                return checkout.map { KnowledgeBase.matches(path: project, folder: $0, home: home) } ?? false
-            }
-            return remote != nil && ProjectRecords.normalizedRemote(project) == remote
-        }
+        func names(_ project: String) -> Bool { KnowledgeBase.names(project: project, remote: remote, folder: checkout, home: home) }
         let entries = try base.notes()
         let notes = Dictionary(entries.map { ($0.id, KnowledgeNote.load(base.root.appending(path: $0.path))) }) { first, _ in first }
         let repoNotes = entries.filter { notes[$0.id]??.repo.map(names) == true }.map(\.id)

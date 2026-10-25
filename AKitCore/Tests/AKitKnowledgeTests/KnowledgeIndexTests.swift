@@ -5,7 +5,9 @@ import AKitFoundation
 
 /// The search index (3.2a) on a base folder in a temporary directory: the seed's files, written
 /// without git (the index needs only `areas/`).
-struct KnowledgeIndexTests {
+final class KnowledgeIndexTests {
+    deinit { try? FileManager.default.removeItem(at: root) }
+
     let root: URL
     let fm = FileManager.default
 

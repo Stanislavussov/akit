@@ -4,7 +4,9 @@ import AKitFoundation
 @testable import AKitKnowledge
 
 /// Renaming notes and maps (R3) on a base in a temporary fake home.
-struct KnowledgeRenameTests {
+final class KnowledgeRenameTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -28,7 +30,7 @@ struct KnowledgeRenameTests {
 
     /// A base with these files (path under areas/ → text), committed.
     func makeBase(_ files: [String: String]) async throws -> KnowledgeBase {
-        let base = try await KnowledgeBase.create(world: "work", env: env())
+        let base = try await TemplateBase.base(home: home)
         for (path, text) in files {
             let url = base.areasFolder.appending(path: path)
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -142,5 +144,64 @@ struct KnowledgeRenameTests {
         try await base.apply(try base.planRename("billing", to: "invoicing"), env: env())
         #expect(try await git(base, "log", "-2", "--format=%s") == "Rename note payments/billing to payments/invoicing, 1 link in 1 file\nEdit payments/orders")
         #expect(try text(base, "payments/orders.md") == "# orders\nSee [[invoicing]].\n")
+    }
+
+    /// A write that fails after a file was moved: every file is back as it was, the moved one at
+    /// its old name, and no temporary `.akit-rename-*` is left. A rename, a change of case only,
+    /// and a failure in a later file.
+    @Test func aWriteFailingAfterTheMoveRestoresEverything() async throws {
+        struct Refused: Error {}
+        let files = ["payments/billing.md": "# billing\n", "payments/orders.md": "See [[billing]].\n"]
+        let base = try await makeBase(files)
+        func unchanged() throws {
+            for (path, text) in files { #expect(try self.text(base, path) == text, "\(path)") }
+            let names = try fm.contentsOfDirectory(atPath: base.areasFolder.appending(path: "payments").path).sorted()
+            #expect(names == ["billing.md", "orders.md"], "\(names)")
+        }
+        for (target, failing) in [("invoicing", "invoicing.md"), ("Billing", "Billing.md"), ("invoicing", "orders.md")] {
+            let plan = try base.planRename("billing", to: target)
+            await #expect(throws: KnowledgeBase.Failure.self) {
+                try await base.apply(plan, env: env()) { data, url in
+                    if url.lastPathComponent == failing { throw Refused() }
+                    try data.write(to: url, options: .atomic)
+                }
+            }
+            try unchanged()
+        }
+        #expect(try await git(base, "status", "--porcelain").isEmpty)
+        // The real writer still renames.
+        try await base.apply(try base.planRename("billing", to: "invoicing"), env: env())
+        #expect(try fm.contentsOfDirectory(atPath: base.areasFolder.appending(path: "payments").path).sorted() == ["invoicing.md", "orders.md"])
+    }
+
+    /// A change of case only (a disk that ignores case, like the Mac's): one commit with the
+    /// rename and the rewritten links, `git status` clean, and an edit staged elsewhere stays out.
+    @Test func aCaseOnlyRenameOfANoteAndAMapCommitsOnce() async throws {
+        let base = try await makeBase([
+            "payments/billing.md": "# billing\n",
+            "payments/orders.md": "See [[billing]] on [[payments/maps/overview]].\n",
+            "payments/maps/overview.excalidraw": map(["blk-a": "[[billing]]"]),
+            "logistics/routes.md": "# routes\n",
+        ])
+        let before = try await git(base, "rev-list", "--count", "HEAD")
+        try Data("# routes, staged\n".utf8).write(to: base.areasFolder.appending(path: "logistics/routes.md"))
+        _ = try await git(base, "add", "areas/logistics/routes.md")
+
+        try await base.apply(try base.planRename("billing", to: "Billing"), env: env())
+        #expect(try await git(base, "rev-list", "--count", "HEAD") == String((Int(before) ?? 0) + 1))
+        #expect(try await git(base, "log", "-1", "-M", "--name-status", "--format=%s")
+            == "Rename note payments/billing to payments/Billing, 2 links in 2 files\n\n"
+            + "R100\tareas/payments/billing.md\tareas/payments/Billing.md\nM\tareas/payments/maps/overview.excalidraw\nM\tareas/payments/orders.md")
+        #expect(try text(base, "payments/orders.md") == "See [[Billing]] on [[payments/maps/overview]].\n")
+        #expect(try text(base, "payments/maps/overview.excalidraw").contains("\"[[Billing]]\""))
+        #expect(try await git(base, "status", "--porcelain") == "M  areas/logistics/routes.md")
+
+        try await base.apply(try base.planRename("payments/maps/overview", to: "Overview"), env: env())
+        #expect(try await git(base, "log", "-1", "-M", "--name-status", "--format=%s")
+            == "Rename map payments/maps/overview to payments/maps/Overview, 1 link in 1 file\n\n"
+            + "R100\tareas/payments/maps/overview.excalidraw\tareas/payments/maps/Overview.excalidraw\nM\tareas/payments/orders.md")
+        #expect(try text(base, "payments/orders.md") == "See [[Billing]] on [[payments/maps/Overview]].\n")
+        #expect(try await git(base, "ls-files", "areas/payments") == "areas/payments/Billing.md\nareas/payments/maps/Overview.excalidraw\nareas/payments/orders.md")
+        #expect(try await git(base, "status", "--porcelain") == "M  areas/logistics/routes.md")
     }
 }

@@ -311,7 +311,8 @@ akit kb propose --map payments/order-flow --file /tmp/x.excalidraw --reason "ord
 ```
 
 The user accepts or rejects the map in AKit (Knowledge → Inbox); `kb accept` of a map only
-says so (exit 2). AKit's Draw Map with Pi… runs these same steps through Pi.
+says so (exit 2). AKit's Draw Map with Pi… does the same with Pi given no tools: Pi writes
+only the DSL, and AKit runs excalidraw-cli and proposes the draft itself.
 
 Run `kb lint` before you trust a note's `repo:`/`files:` or a map's blocks, and after you
 propose a change. Errors: a broken link, a map that doesn't parse. Warnings: an ambiguous link,

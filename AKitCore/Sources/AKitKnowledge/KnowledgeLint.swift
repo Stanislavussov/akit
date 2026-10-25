@@ -135,7 +135,7 @@ public enum KnowledgeLint {
             func look(_ folder: URL, depth: Int) {
                 for child in FileWalk.children(of: folder) where FileWalk.isDirectory(child) && !child.lastPathComponent.hasPrefix(".") {
                     if FileManager.default.fileExists(atPath: child.appending(path: ".git").path) {
-                        if let remote = origin(of: child), let id = ProjectRecords.normalizedRemote(remote), copies[id] == nil {
+                        if let remote = GitCheckout.originURL(of: child), let id = ProjectRecords.normalizedRemote(remote), copies[id] == nil {
                             copies[id] = child
                         }
                     } else if depth > 0 {
@@ -156,30 +156,6 @@ public enum KnowledgeLint {
                 }
             }
             return Projects(known: known, copies: copies)
-        }
-
-        /// The `origin` URL in a repo's git config (a worktree's or submodule's `.git` file is followed).
-        static func origin(of repo: URL) -> String? {
-            var gitDir = repo.appending(path: ".git")
-            if !FileWalk.isDirectory(gitDir) {
-                guard let text = try? String(contentsOf: gitDir, encoding: .utf8), text.hasPrefix("gitdir:") else { return nil }
-                let path = text.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
-                gitDir = path.hasPrefix("/") ? URL(filePath: path) : repo.appending(path: path)
-                if gitDir.deletingLastPathComponent().lastPathComponent == "worktrees" {
-                    gitDir = gitDir.deletingLastPathComponent().deletingLastPathComponent()
-                }
-            }
-            guard let config = try? String(contentsOf: gitDir.appending(path: "config"), encoding: .utf8) else { return nil }
-            var inOrigin = false
-            for raw in config.split(whereSeparator: \.isNewline) {
-                let line = raw.trimmingCharacters(in: .whitespaces)
-                if line.hasPrefix("[") {
-                    inOrigin = line.replacingOccurrences(of: " ", with: "") == "[remote\"origin\"]"
-                } else if inOrigin, let equal = line.firstIndex(of: "="), line[..<equal].trimmingCharacters(in: .whitespaces) == "url" {
-                    return line[line.index(after: equal)...].trimmingCharacters(in: .whitespaces)
-                }
-            }
-            return nil
         }
     }
 

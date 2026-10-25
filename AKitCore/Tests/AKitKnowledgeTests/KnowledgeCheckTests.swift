@@ -6,7 +6,9 @@ import AKitFoundation
 
 /// The check model's prompt, candidates and parser (5.2), on the sample base in a temporary
 /// fake home; no model is called here (AKitKnowledge makes no calls, C1).
-struct KnowledgeCheckTests {
+final class KnowledgeCheckTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -52,7 +54,7 @@ struct KnowledgeCheckTests {
     }
 
     @Test func theCandidatesAreTheSearchSectionsAndOneHopArrowsUnder1500Tokens() async throws {
-        let base = try await KnowledgeSeed.seed(world: "work", env: env).base
+        let base = try await TemplateBase.seeded(world: "work", home: home)
         let proposal = try base.proposal("2026-10-24-payments-billing")
         let candidates = base.checkCandidates(for: proposal)
         #expect(!candidates.sections.isEmpty && candidates.sections.count <= KnowledgeCheck.sectionCount)
@@ -77,7 +79,7 @@ struct KnowledgeCheckTests {
     }
 
     @Test func aModelAnswerOnlyMarksAndNeverAccepts() async throws {
-        let base = try await KnowledgeSeed.seed(world: "work", env: env).base
+        let base = try await TemplateBase.seeded(world: "work", home: home)
         let proposal = try base.proposal("2026-10-24-arrow-billing-warehouse")
         let before = try await git("status", "--porcelain", in: base.root)
         let head = try await git("rev-parse", "HEAD", in: base.root)
@@ -100,7 +102,7 @@ struct KnowledgeCheckTests {
     }
 
     @Test func acceptAndRejectTakeTheMarksWithThem() async throws {
-        let base = try await KnowledgeSeed.seed(world: "work", env: env).base
+        let base = try await TemplateBase.seeded(world: "work", home: home)
         let note = try base.proposal("2026-10-24-payments-billing")
         #expect(base.check(of: note)?.marks == KnowledgeSeed.checkMarks[note.id])
         try await base.accept(try base.planAccept(note), env: env)

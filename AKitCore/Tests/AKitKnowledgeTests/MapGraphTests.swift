@@ -6,7 +6,9 @@ import AKitFoundation
 
 /// `.excalidraw` reading and the map graph, on the 0.17.6 fixtures of spike 2.0 (read in place by
 /// #filePath; the fixture base has no git) and on fresh bases in a temporary fake home.
-struct MapGraphTests {
+final class MapGraphTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     static let fixtures = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "Fixtures")
     static let fixtureBase = KnowledgeBase(root: fixtures.appending(path: "base"))
 
@@ -141,7 +143,7 @@ struct MapGraphTests {
     }
 
     @Test func newMapWritesAnEmptySceneInOneCommit() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env)
+        let base = try await TemplateBase.base(home: home)
         let path = try await base.newMap(area: "payments", name: "flows-overview", env: env)
         #expect(path == "areas/payments/maps/flows-overview.excalidraw")
         #expect(try await git("log", "--format=%s", in: base.root) == "Add map payments/maps/flows-overview\nCreate the knowledge base")

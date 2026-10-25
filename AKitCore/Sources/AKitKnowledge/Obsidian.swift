@@ -26,6 +26,33 @@ public enum Obsidian {
         return nil
     }
 
+    /// Obsidian Sync is on in `vault`: `.obsidian/sync.json` exists (Sync's own settings), or the
+    /// core plugin `sync` is enabled in `.obsidian/core-plugins.json` or
+    /// `core-plugins-migration.json` (`{"sync": true}`, or the older list `["sync", …]`).
+    public static func syncIsOn(_ vault: URL) -> Bool {
+        let settings = vault.appending(path: ".obsidian")
+        if FileManager.default.fileExists(atPath: settings.appending(path: "sync.json").path) { return true }
+        for name in ["core-plugins.json", "core-plugins-migration.json"] {
+            guard let data = try? Data(contentsOf: settings.appending(path: name)),
+                  let json = try? JSONSerialization.jsonObject(with: data) else { continue }
+            if let enabled = json as? [String: Any], enabled["sync"] as? Bool == true { return true }
+            if let list = json as? [String], list.contains("sync") { return true }
+        }
+        return false
+    }
+
+    /// The nearest vault at or above `url` with Obsidian Sync on (`syncIsOn`); nil when none is.
+    /// Sync uploads the whole vault, so a base in any folder of it leaves the Mac.
+    public static func syncedVault(containing url: URL) -> URL? {
+        var next: URL? = url
+        while let folder = next, let vault = vault(containing: folder) {
+            if syncIsOn(vault) { return vault }
+            let parent = vault.deletingLastPathComponent()
+            next = parent.standardized.path == vault.standardized.path ? nil : parent
+        }
+        return nil
+    }
+
     /// `obsidian://open?vault=Notes&file=kb%2Fareas%2Fpayments%2Forders-api.md` inside a vault,
     /// else `obsidian://open?path=%2FUsers%2Fme%2F…%2Forders-api.md`.
     public static func openURL(note: URL) -> URL? {

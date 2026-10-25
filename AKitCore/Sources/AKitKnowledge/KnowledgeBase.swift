@@ -157,9 +157,14 @@ public struct KnowledgeBase: Sendable, Hashable {
         do {
             if !isRepo { try await git.run(["init", "--quiet", "--initial-branch=main"]) }
             // P5: the user's own identity when git has one; else the base's own, as the modes repo does.
-            let name = (try? await git.run(["config", "--get", "user.name"]))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let email = (try? await git.run(["config", "--get", "user.email"]))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if name.isEmpty || email.isEmpty {
+            // One git call for both keys: "user.name VALUE" and "user.email VALUE" lines (exit 1 when neither is set).
+            let identity = ((try? await git.run(["config", "--get-regexp", "^user\\.(name|email)$"])) ?? "").split(separator: "\n")
+            func has(_ key: String) -> Bool {
+                identity.contains { line in
+                    line.lowercased().hasPrefix(key + " ") && !line.dropFirst(key.count + 1).trimmingCharacters(in: .whitespaces).isEmpty
+                }
+            }
+            if !has("user.name") || !has("user.email") {
                 try await git.run(["config", "--local", "user.name", "AKit"])
                 try await git.run(["config", "--local", "user.email", "akit@localhost"])
             }

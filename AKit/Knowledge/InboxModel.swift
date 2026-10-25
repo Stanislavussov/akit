@@ -266,8 +266,8 @@ extension KnowledgeModel {
 
     // MARK: - Draw Map with Pi (5.4)
 
-    /// Draw Map with Pi…: Pi draws with excalidraw-cli and proposes the draft (`KnowledgeMapDrawer`),
-    /// then the Inbox opens on it. Stop cancels Pi.
+    /// Draw Map with Pi…: Pi writes the map's DSL, AKit draws it with excalidraw-cli and proposes the
+    /// draft (`KnowledgeMapDrawer`), then the Inbox opens on it. Stop cancels Pi or excalidraw-cli.
     func drawMap(_ request: KnowledgeMapDrawer.Request) async -> Bool {
         guard let base else { return false }
         drawLog = ["Asks Pi to draw \(request.area)/\(request.name)…"]
@@ -289,7 +289,7 @@ extension KnowledgeModel {
             readInbox()
             proposalID = outcome.proposals.last
             screenTab = .inbox
-            notice = "Pi proposed \(outcome.proposals.joined(separator: ", ")): look at the draft, then Accept… or Reject…."
+            notice = "Proposed \(outcome.proposals.joined(separator: ", ")) from Pi's map: look at the draft, then Accept… or Reject…."
             drawLog.append(notice ?? "")
             return true
         case .failure(let error):

@@ -38,11 +38,7 @@ extension KnowledgeBase {
             return FocusChoice(area: override, source: .override)
         }
         let remote = remote.flatMap(ProjectRecords.normalizedRemote)
-        func names(_ project: String) -> Bool {
-            let project = project.trimmingCharacters(in: .whitespaces)
-            if project.hasPrefix("~") || project.hasPrefix("/") { return Self.matches(path: project, folder: folder, home: home) }
-            return remote != nil && ProjectRecords.normalizedRemote(project) == remote
-        }
+        func names(_ project: String) -> Bool { Self.names(project: project, remote: remote, folder: folder, home: home) }
         if let area = areas.first(where: { $0.projects.contains(where: names) }) {
             return FocusChoice(area: area.name, source: .areaSettings)
         }
@@ -61,6 +57,16 @@ extension KnowledgeBase {
         let remote = id.hasPrefix("local/") ? nil : id
         let override = Focus.load(home: home).projects[id]?.area
         return (id, focus(remote: remote, folder: folder, home: home, override: override))
+    }
+
+    /// `project` (an `area.yaml` `projects:` entry or a note's `repo:`) names the repository whose
+    /// normalized `origin` is `remote` (`ProjectRecords.normalizedRemote`), checked out in
+    /// `folder`: a `~/` or absolute path (maybe a glob) matches the folder, anything else is a
+    /// remote compared normalized. A path never matches without a folder, a remote never without one.
+    public static func names(project: String, remote: String?, folder: URL?, home: URL) -> Bool {
+        let project = project.trimmingCharacters(in: .whitespaces)
+        if project.hasPrefix("~") || project.hasPrefix("/") { return folder.map { matches(path: project, folder: $0, home: home) } ?? false }
+        return remote != nil && ProjectRecords.normalizedRemote(project) == remote
     }
 
     /// `pattern` (a `~/` or absolute path, maybe a glob) names `folder` or a folder it is in.

@@ -4,7 +4,9 @@ import AKitFoundation
 @testable import AKitKnowledge
 
 /// Checked map saves (step 2.2b) on a base in a temporary fake home.
-struct KnowledgeWriteTests {
+final class KnowledgeWriteTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -21,7 +23,7 @@ struct KnowledgeWriteTests {
     }
 
     func makeMap() async throws -> (KnowledgeBase, String) {
-        let base = try await KnowledgeBase.create(world: "work", env: env())
+        let base = try await TemplateBase.base(home: home)
         try base.newArea("payments")
         _ = try await base.newMap(area: "payments", name: "overview", env: env())
         return (base, "payments/maps/overview")

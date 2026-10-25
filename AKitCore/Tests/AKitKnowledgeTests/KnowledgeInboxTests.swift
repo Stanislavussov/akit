@@ -7,7 +7,9 @@ import AKitFoundation
 /// Proposals (5.1, K14, P3) in a temporary fake home: propose writes only `inbox/`, the checks
 /// without a model block, Accept is one commit with a backup, Reject goes to a fake Trash, an
 /// arrow is never written.
-struct KnowledgeInboxTests {
+final class KnowledgeInboxTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
     /// 2026-10-25 12:00 UTC.
@@ -41,7 +43,7 @@ struct KnowledgeInboxTests {
 
     /// A base with payments/billing (a ## Invoices section) and payments/orders-api.
     func makeBase() async throws -> KnowledgeBase {
-        let base = try await KnowledgeBase.create(world: "work", env: env)
+        let base = try await TemplateBase.base(home: home)
         try await base.newNote(area: "payments", name: "billing", kind: "service", env: env)
         try base.save(note: "payments/billing", text: "---\nkind: service\n---\n# billing\n\n## Invoices\n\nOne per order.\n")
         try await base.newNote(area: "payments", name: "orders-api", kind: "service", env: env)
@@ -66,7 +68,7 @@ struct KnowledgeInboxTests {
     }
 
     @Test func createTracksTheInboxFolder() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env)
+        let base = try await TemplateBase.base(home: home)
         #expect(try await git("ls-files", "inbox", in: base.root) == KnowledgeInbox.keepFile)
         #expect(base.proposals().isEmpty)
     }

@@ -6,7 +6,9 @@ import AKitFoundation
 /// Lint (4.1): the fixture `Fixtures/lint-base` (no git, read by #filePath) has one finding of each
 /// rule and two hints; bases written in a temporary fake home check the known projects, the clean
 /// case and the R-SEP hint.
-struct KnowledgeLintTests {
+final class KnowledgeLintTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     static let fixture = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/lint-base")
     let home: URL
     let fm = FileManager.default

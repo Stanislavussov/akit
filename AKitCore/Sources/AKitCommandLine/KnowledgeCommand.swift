@@ -267,7 +267,7 @@ extension AKitCLI {
             out("""
                 Created the knowledge base \(FileWalk.tilde(base.root, home: env.homeDirectory)): areas/, inbox/, git without a remote, committed.
                 Add a note: akit kb new-note AREA NAME [--kind K]
-                """)
+                """ + (KnowledgeBase.syncWarning(folder: base.root, home: env.homeDirectory).map { "\nWarning: \($0)" } ?? ""))
             return 0
         case "new-note":
             let kind = args.value("--kind")
@@ -688,16 +688,18 @@ extension AKitCLI {
         let root = KnowledgeBase(root: KnowledgeBase.root(world: world, home: home)).root
         let answer = PathAnswer(world: world, path: root.path, configured: KnowledgeBase.isConfigured(world: world, home: home),
                                 isBase: KnowledgeBase.isBase(root), vault: Obsidian.vault(containing: root)?.standardized.path,
-                                defaultPath: KnowledgeBase(root: KnowledgeBase.world(world, home: home)).root.path)
+                                defaultPath: KnowledgeBase(root: KnowledgeBase.world(world, home: home)).root.path,
+                                warning: KnowledgeBase.syncWarning(folder: root, home: home))
         if json {
             out(encode(answer))
         } else if let report {
-            out(report)
+            out(report + (answer.warning.map { "\nWarning: \($0)" } ?? ""))
         } else {
             var lines = ["\(world): \(FileWalk.tilde(root, home: home))"
                 + (answer.configured ? " (set on this Mac in ~/.akit/local/knowledge/bases.json)" : " (the default folder)")]
             if !answer.isBase { lines.append("No base there yet (a person creates one with akit kb init --world \(world)).") }
             if let vault = answer.vault { lines.append("In the Obsidian vault \(FileWalk.tilde(URL(filePath: vault), home: home)).") }
+            if let warning = answer.warning { lines.append("Warning: \(warning)") }
             out(lines.joined(separator: "\n"))
         }
         return 0
@@ -1281,8 +1283,10 @@ extension AKitCLI {
         /// The Obsidian vault the folder is in (nearest folder with `.obsidian/`).
         let vault: String?
         let defaultPath: String
+        /// The folder is in an Obsidian vault with Obsidian Sync on (`KnowledgeBase.syncWarning`).
+        let warning: String?
 
-        private enum CodingKeys: String, CodingKey { case world, path, configured, isBase, vault, defaultPath }
+        private enum CodingKeys: String, CodingKey { case world, path, configured, isBase, vault, defaultPath, warning }
 
         func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
@@ -1292,6 +1296,7 @@ extension AKitCLI {
             try container.encode(isBase, forKey: .isBase)
             try container.encode(vault, forKey: .vault) // null outside a vault
             try container.encode(defaultPath, forKey: .defaultPath)
+            try container.encode(warning, forKey: .warning) // null unless Obsidian Sync is on
         }
     }
 

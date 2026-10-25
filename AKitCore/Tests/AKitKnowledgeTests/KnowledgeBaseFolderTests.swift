@@ -6,7 +6,9 @@ import AKitFoundation
 
 /// K25: the base folder per world in `bases.json`, its refusals, move and reset, the Obsidian vault.
 /// Everything in a temporary fake home.
-struct KnowledgeBaseFolderTests {
+final class KnowledgeBaseFolderTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -139,6 +141,38 @@ struct KnowledgeBaseFolderTests {
         await #expect(throws: KnowledgeBase.Failure.self) { try await KnowledgeBase.setFolder(world: "work", to: base.root, env: env()) }
         #expect(!fm.fileExists(atPath: KnowledgeBase.basesFile(home: home).path))
         await #expect(throws: KnowledgeBase.Failure.self) { try await KnowledgeBase.setFolder(world: "../x", to: home, env: env()) }
+    }
+
+    /// A vault with Obsidian Sync on (sync.json, or the core plugin in core-plugins.json or its
+    /// migration file, as an object or the older list) uploads every folder in it: refused on a
+    /// work Mac, allowed with a warning on another. Sync off: neither.
+    @Test func obsidianSyncIsRefusedOnAWorkMacAndAWarningElsewhere() async throws {
+        let vault = home.appending(path: "Notes/Vault")
+        try write(vault.appending(path: ".obsidian/core-plugins.json"), #"{"file-explorer": true, "sync": false}"#)
+        #expect(!Obsidian.syncIsOn(vault) && KnowledgeBase.syncWarning(folder: vault.appending(path: "kb"), home: home) == nil)
+        for (file, text) in [("core-plugins.json", #"{"file-explorer": true, "sync": true}"#), ("core-plugins.json", #"["file-explorer", "sync"]"#),
+                             ("core-plugins-migration.json", #"{"sync": true}"#), ("sync.json", "{}")] {
+            let folder = home.appending(path: "Synced/\(UUID().uuidString)")
+            try write(folder.appending(path: ".obsidian/\(file)"), text)
+            #expect(Obsidian.syncedVault(containing: folder.appending(path: "deep/kb"))?.path == folder.path, "\(file) \(text)")
+        }
+        try write(vault.appending(path: ".obsidian/sync.json"), "{}")
+
+        let personal = try await KnowledgeBase.setFolder(world: "personal", to: vault.appending(path: "kb"), env: env())
+        #expect(personal.created && personal.warning?.contains("has Obsidian Sync on") == true)
+        #expect(personal.warning?.contains("~/Notes/Vault") == true)
+        #expect(try KnowledgeBase.check(folder: vault.appending(path: "other"), home: home) == personal.warning)
+
+        try MachineProfile(kind: .work, name: "work").save(home: home)
+        do {
+            try await KnowledgeBase.setFolder(world: "work", to: vault.appending(path: "work-kb"), env: env())
+            Issue.record("a vault with Obsidian Sync was allowed on a work Mac")
+        } catch {
+            #expect(error.message.contains("Obsidian Sync on") && error.message.contains("work Mac"), "\(error.message)")
+        }
+        #expect(!fm.fileExists(atPath: vault.appending(path: "work-kb").path))
+        await #expect(throws: KnowledgeBase.Failure.self) { try await KnowledgeBase.create(at: vault.appending(path: "x"), env: self.env()) }
+        #expect(KnowledgeBase.syncWarning(folder: vault.appending(path: "kb"), home: home) == nil)
     }
 
     @Test func oneFolderIsTheBaseOfOneWorld() async throws {

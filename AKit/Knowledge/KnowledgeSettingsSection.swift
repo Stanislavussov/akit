@@ -23,6 +23,8 @@ struct KnowledgeSettingsSection: View {
         let configured: Bool
         let isBase: Bool
         let vault: URL?
+        /// The folder is in an Obsidian vault with Obsidian Sync on (a work Mac refuses it).
+        let warning: String?
     }
 
     private var env: HarnessEnvironment { .current }
@@ -32,7 +34,8 @@ struct KnowledgeSettingsSection: View {
         KnowledgeBase.worlds(home: home).map { world in
             let path = KnowledgeBase.root(world: world, home: home)
             return Row(world: world, path: path, configured: KnowledgeBase.isConfigured(world: world, home: home),
-                       isBase: KnowledgeBase.isBase(path), vault: Obsidian.vault(containing: path))
+                       isBase: KnowledgeBase.isBase(path), vault: Obsidian.vault(containing: path),
+                       warning: KnowledgeBase.syncWarning(folder: path, home: home))
         }
     }
 
@@ -40,7 +43,7 @@ struct KnowledgeSettingsSection: View {
     static func manifest(home: URL = HarnessEnvironment.current.homeDirectory) -> String {
         rows(home: home).map { row in
             "knowledge folder: \(row.world) \(row.path.tildePath) (\(row.configured ? "set" : "default"), \(row.isBase ? "base" : "no base yet")"
-                + (row.vault.map { ", Obsidian vault \($0.tildePath)" } ?? "") + ")"
+                + (row.vault.map { ", Obsidian vault \($0.tildePath)" } ?? "") + (row.warning == nil ? "" : ", Obsidian Sync on") + ")"
         }.joined(separator: "\n")
     }
 
@@ -57,6 +60,10 @@ struct KnowledgeSettingsSection: View {
                         if working == row.world { ProgressView().controlSize(.small) }
                     }
                     Text(status(row)).font(.callout).foregroundStyle(.secondary)
+                    if let warning = row.warning {
+                        Label(warning, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack {
                         Button("Choose…") { choose(row) }
                             .help("Use another folder for this base, like one in your Obsidian vault. A new or empty folder or a vault becomes a base; the old base stays where it is.")
@@ -82,7 +89,7 @@ struct KnowledgeSettingsSection: View {
         } header: {
             Text("Knowledge").id("knowledge")
         } footer: {
-            Text("Where each world's knowledge base lives, on this Mac only (~/.akit/local/knowledge/bases.json; akit kb path does the same). Any local folder works, like one in your Obsidian vault, except inside the brain, a synced folder (iCloud Drive, Dropbox, Google Drive) or a git repo with a remote.")
+            Text("Where each world's knowledge base lives, on this Mac only (~/.akit/local/knowledge/bases.json; akit kb path does the same). Any local folder works, like one in your Obsidian vault, except inside the brain, a synced folder (iCloud Drive, Dropbox, Google Drive) or a git repo with a remote. An Obsidian vault with Obsidian Sync on is refused on a work Mac and shown with a warning on others.")
                 .foregroundStyle(.secondary)
         }
         .onAppear(perform: refresh)

@@ -121,7 +121,7 @@ enum BindingPaths {
     /// The project id of the repository with this common git dir: its `origin` remote, else the
     /// `local/…` id of its main folder, as `ProjectRecords.projectID` gives it.
     static func projectID(commonDir: String, projectsRoot: String) -> String {
-        if let remote = RecordSession.small(commonDir + "/config").flatMap(RecordSession.originURL).flatMap(ProjectRecords.normalizedRemote) {
+        if let remote = RecordSession.small(commonDir + "/config").flatMap(GitCheckout.originURL(inConfig:)).flatMap(ProjectRecords.normalizedRemote) {
             return remote
         }
         return ProjectRecords.localID(path: canonical(mainFolder(ofCommonDir: commonDir)), projectsRoot: projectsRoot)

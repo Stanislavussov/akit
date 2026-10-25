@@ -5,7 +5,9 @@ import AKitFoundation
 @testable import AKitKnowledge
 
 /// Bases in a temporary fake home: create, refusals, identity, base choice, commits.
-struct KnowledgeBaseTests {
+final class KnowledgeBaseTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -123,7 +125,7 @@ struct KnowledgeBaseTests {
     }
 
     @Test func commitRefusedWhileARemoteIsSet() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env())
+        let base = try await TemplateBase.base(home: home)
         _ = try await git("remote", "add", "origin", "git@example.com:me/kb.git", in: base.root)
         try write(base.areasFolder.appending(path: "a/x.md"), "# x\n")
         await #expect(throws: KnowledgeGit.Failure.self) {
@@ -133,8 +135,33 @@ struct KnowledgeBaseTests {
         #expect(await KnowledgeGit(base: base.root, env: env()).remotes() == ["origin"])
     }
 
+    /// A base whose `.git` is gone, inside a repo without a remote: git never runs there (it would
+    /// commit to the enclosing repo); only `init` runs in a folder without its own `.git`.
+    @Test func gitIsRefusedInABaseWithoutItsOwnRepo() async throws {
+        let outer = home.appending(path: "outer")
+        try fm.createDirectory(at: outer, withIntermediateDirectories: true)
+        _ = try await git("init", "--quiet", in: outer)
+        let base = try await KnowledgeBase.create(at: outer.appending(path: "kb"), env: env())
+        try fm.removeItem(at: base.root.appending(path: ".git"))
+        try write(base.areasFolder.appending(path: "a/x.md"), "# x\n")
+        let git = KnowledgeGit(base: base.root, env: env())
+        await #expect {
+            try await git.commit(paths: ["areas/a/x.md"], message: "x")
+        } throws: { error in
+            (error as? KnowledgeGit.Failure)?.message.contains("is not a git repository (no .git)") == true
+        }
+        await #expect(throws: KnowledgeGit.Failure.self) { try await git.changedPaths() }
+        #expect(await git.remotes() == nil)
+        await #expect(throws: KnowledgeBase.Failure.self) { try await base.newNote(area: "a", name: "y", kind: nil, env: self.env()) }
+        // The enclosing repo is untouched: no commit, nothing staged.
+        let head = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["rev-parse", "--verify", "-q", "HEAD"],
+                                                         directory: outer, environment: env().variables, timeout: 20))
+        #expect(!head.succeeded)
+        #expect(try await self.git("ls-files", in: outer).isEmpty)
+    }
+
     @Test func newNoteCommitsOnlyItsOwnFile() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env())
+        let base = try await TemplateBase.base(home: home)
         // A pending edit of another note, staged even: it must stay out of the new note's commit.
         try write(base.areasFolder.appending(path: "payments/billing.md"), "# billing\n")
         _ = try await git("add", "areas/payments/billing.md", in: base.root)
@@ -149,7 +176,7 @@ struct KnowledgeBaseTests {
     }
 
     @Test func commitOfNothingChangedMakesNoCommit() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env())
+        let base = try await TemplateBase.base(home: home)
         let git = KnowledgeGit(base: base.root, env: env())
         #expect(try await git.commit(paths: [".gitignore"], message: "again") == false)
         #expect(try await git.commit(paths: ["areas/none.md"], message: "gone") == false)
@@ -163,7 +190,7 @@ struct KnowledgeBaseTests {
     }
 
     @Test func aHeldLockMakesACommitWaitThenFail() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env())
+        let base = try await TemplateBase.base(home: home)
         let lock = try #require(try FileLock.acquire(base.root.appending(path: KnowledgeBase.queueLockName)))
         try write(base.areasFolder.appending(path: "a/x.md"), "# x\n")
         let started = Date.now
@@ -176,7 +203,7 @@ struct KnowledgeBaseTests {
     }
 
     @Test func areasAndNotesAreListed() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env())
+        let base = try await TemplateBase.base(home: home)
         try write(base.areasFolder.appending(path: "payments/orders-api.md"), "---\nkind: service\n---\n# Orders API\n")
         try write(base.areasFolder.appending(path: "payments/flows/order-to-billing.md"), "---\nkind: flow\n---\ntext\n")
         try write(base.areasFolder.appending(path: "payments/maps/overview.excalidraw"), "{}")

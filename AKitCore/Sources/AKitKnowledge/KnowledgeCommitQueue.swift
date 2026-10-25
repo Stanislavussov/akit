@@ -74,6 +74,17 @@ public struct KnowledgeCommitQueue: Sendable {
         return .queued(refused: refused)
     }
 
+    /// The startup sweep (when a base opens): every path under `areas/` and `kb.yaml` that differs
+    /// from the last commit is queued, so an edit whose enqueue was lost (the app quit while the
+    /// lock was held, a crash, an edit made while AKit didn't run) still gets its commit. Never
+    /// `inbox/`. `.failed` when git can't read the status.
+    @discardableResult
+    public func sweep() async -> EnqueueResult {
+        let paths: [String]
+        do { paths = try await KnowledgeGit(base: base, env: env).changedPaths() } catch { return .failed(error.message) }
+        return enqueue(paths)
+    }
+
     /// Commits every pending path in one commit and empties the queue. `message` defaults to one
     /// that names the notes.
     @discardableResult

@@ -4,7 +4,9 @@ import AKitFoundation
 @testable import AKitKnowledge
 
 /// The watcher's filter and the own-write rule (3.3), on bases in a temporary fake home.
-struct WatchFilterTests {
+final class WatchFilterTests {
+    deinit { try? FileManager.default.removeItem(at: home) }
+
     let home: URL
     let fm = FileManager.default
 
@@ -130,7 +132,7 @@ struct WatchFilterTests {
     }
 
     @Test func aProposalWrittenWhileEditsArePendingStaysUntrackedAfterTheFlush() async throws {
-        let base = try await KnowledgeBase.create(world: "work", env: env())
+        let base = try await TemplateBase.base(home: home)
         try await base.newNote(area: "payments", name: "orders-api", kind: "service", env: env())
         let queue = KnowledgeCommitQueue(base: base.root, env: env())
         // An outside edit of a note is pending…

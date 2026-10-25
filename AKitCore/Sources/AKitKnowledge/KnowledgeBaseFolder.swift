@@ -78,8 +78,10 @@ extension KnowledgeBase {
 
     /// The K25 refusals that need no git: inside the brain (`brainRoot`, default `~/.akit/registry`),
     /// in a synced folder (iCloud Drive, CloudStorage, Dropbox, Google Drive, a folder holding
-    /// `.dropbox`), not on a local disk.
-    public static func check(folder root: URL, home: URL, brainRoot: URL? = nil) throws(Failure) {
+    /// `.dropbox`), not on a local disk; in an Obsidian vault with Obsidian Sync on, on a work Mac.
+    /// On any other Mac such a vault is allowed with a warning, which is returned (`syncWarning`).
+    @discardableResult
+    public static func check(folder root: URL, home: URL, brainRoot: URL? = nil) throws(Failure) -> String? {
         let root = root.standardized
         let brain = brainRoot ?? Brain.defaultRoot(home: home)
         if isWithin(root, brain) {
@@ -102,6 +104,18 @@ extension KnowledgeBase {
         if (try? existing.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal == false {
             throw Failure(message: "\(root.path) is not on a local disk (a network volume). Pick a folder on this Mac.")
         }
+        if let vault = Obsidian.syncedVault(containing: root), MachineProfile.load(home: home).isWork {
+            throw Failure(message: "\(root.path) is in the Obsidian vault \(vault.path), which has Obsidian Sync on, so its notes would leave this work Mac. Pick a folder outside the vault, or turn Sync off for it in Obsidian.")
+        }
+        return syncWarning(folder: root, home: home)
+    }
+
+    /// The warning for a base in an Obsidian vault with Obsidian Sync on, on a Mac that isn't a work
+    /// Mac (there `check` refuses it); nil otherwise. The CLI (`kb path`, `kb init`) and
+    /// Settings → Knowledge show it.
+    public static func syncWarning(folder root: URL, home: URL) -> String? {
+        guard let vault = Obsidian.syncedVault(containing: root.standardized), !MachineProfile.load(home: home).isWork else { return nil }
+        return "The Obsidian vault \(FileWalk.tilde(vault, home: home)) has Obsidian Sync on: the base's notes are uploaded with the vault. Turn Sync off for the vault or exclude the base's folder in Obsidian → Settings → Sync if they must stay on this Mac."
     }
 
     // MARK: - Set, reset, move
@@ -109,6 +123,8 @@ extension KnowledgeBase {
     /// What `setFolder` did.
     public struct FolderChange: Sendable, Equatable {
         public let base: KnowledgeBase
+        /// `syncWarning`: the folder is in a vault with Obsidian Sync on (allowed on this Mac).
+        public let warning: String?
         /// A new base was made in the folder (`create(at:)`); false when it was one already.
         public let created: Bool
         /// The world's earlier base, which stays where it is and is no longer used.
@@ -144,7 +160,8 @@ extension KnowledgeBase {
         do { try set.save(home: home) } catch {
             throw Failure(message: (created ? "The base was created in \(target.path), but " : "") + error.message)
         }
-        return FolderChange(base: KnowledgeBase(root: target, world: world), created: created, previous: previous)
+        return FolderChange(base: KnowledgeBase(root: target, world: world), warning: syncWarning(folder: target, home: home),
+                            created: created, previous: previous)
     }
 
     /// `akit kb path WORLD --reset`, Reset to Default: removes the world's entry, so its base is
