@@ -48,6 +48,7 @@ struct HarnessEditorView: View {
                             PathField(title: "Skill folder", text: skillFolder(at: index), prompt: "skills", pickFolders: true)
                             Button("Remove", systemImage: "minus.circle") { if index < draft.skillFolders.count { draft.skillFolders.remove(at: index) } }
                                 .labelStyle(.iconOnly)
+                                .help("Remove this skill folder")
                                 .buttonStyle(.borderless)
                         }
                     }

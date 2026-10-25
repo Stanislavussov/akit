@@ -135,6 +135,7 @@ struct ErrorAnalysisView: View {
             Spacer()
             Button("Dismiss", systemImage: "xmark", action: close)
                 .labelStyle(.iconOnly)
+                .help("Hide this message")
                 .buttonStyle(.borderless)
         }
         .font(.callout)

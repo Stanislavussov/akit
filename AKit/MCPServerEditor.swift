@@ -219,6 +219,7 @@ struct MCPServerEditor: View {
                         list.wrappedValue.removeAll { $0.id == value.id }
                     }
                     .labelStyle(.iconOnly)
+                    .help("Remove this entry")
                     .buttonStyle(.borderless)
                 }
                 .labelsHidden()

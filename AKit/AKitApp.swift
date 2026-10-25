@@ -14,6 +14,9 @@ struct AKitApp: App {
     init() {
         // A window tab's "+" would open a second main window.
         NSWindow.allowsAutomaticWindowTabbing = false
+        // Tooltips (.help) show at once, not after about a second: the toolbar buttons are
+        // icons, and the tooltip says what each does. Registered, so nothing is written.
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 100])
         let model = AppModel()
         _model = State(initialValue: model)
         _ask = State(initialValue: AskAKitModel(app: model))

@@ -187,6 +187,7 @@ struct InsightsView: View {
                                     self.notice = nil
                                 }
                                 .labelStyle(.iconOnly)
+                                .help("Hide this message")
                                 .buttonStyle(.borderless)
                             }
                             if !toPlan.isEmpty { planButtons }

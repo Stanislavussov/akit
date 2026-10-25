@@ -364,6 +364,7 @@ private struct ReviewMapInspector: View {
                 Spacer()
                 Button("Close", systemImage: "xmark") { close() }
                     .labelStyle(.iconOnly).buttonStyle(.borderless)
+                    .help("Close this panel")
             }
             Text(node.boundary?.name ?? node.path ?? node.label).font(.callout.weight(.medium)).textSelection(.enabled)
             content

@@ -29,6 +29,7 @@ struct SendingPolicySections: View {
                     Spacer()
                     Button("Remove", systemImage: "minus.circle") { lab.allowedDestinations.removeAll { $0 == destination } }
                         .labelStyle(.iconOnly)
+                        .help("Remove this destination from the list")
                         .buttonStyle(.borderless)
                 }
             }
@@ -77,9 +78,11 @@ struct SendingPolicySections: View {
                             harness: .pi, provider: account.provider, account: account.account, org: account.org))
                     }
                     .labelStyle(.iconOnly)
+                    .help("Edit this Pi account")
                     .buttonStyle(.borderless)
                     Button("Remove", systemImage: "minus.circle") { lab.piAccounts.removeAll { $0 == account } }
                         .labelStyle(.iconOnly)
+                        .help("Remove this Pi account")
                         .buttonStyle(.borderless)
                 }
             }

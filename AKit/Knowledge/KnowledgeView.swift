@@ -598,6 +598,7 @@ struct AreaSettingsSheet: View {
                                 Spacer()
                                 Button("Remove \(project)", systemImage: "minus.circle") { projects.removeAll { $0 == project } }
                                     .labelStyle(.iconOnly)
+                                    .help("Remove this project from the space")
                                     .buttonStyle(.borderless)
                             }
                         }

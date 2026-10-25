@@ -212,6 +212,7 @@ struct ConfirmedFollowUps: View {
             if let close {
                 Button("Dismiss", systemImage: "xmark", action: close)
                     .labelStyle(.iconOnly)
+                    .help("Hide this message")
                     .buttonStyle(.borderless)
             }
         }

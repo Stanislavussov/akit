@@ -48,6 +48,7 @@ struct SettingsView: View {
                         Spacer()
                         Button("Remove", systemImage: "minus.circle") { remove(root) }
                             .labelStyle(.iconOnly)
+                            .help("Remove this folder")
                             .buttonStyle(.borderless)
                     }
                 }

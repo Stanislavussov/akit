@@ -252,6 +252,7 @@ private struct SplitModeSheet: View {
                                 if parts.count > 2 {
                                     Button("Remove", systemImage: "minus.circle") { parts.removeAll { $0.id == part.id } }
                                         .labelStyle(.iconOnly)
+                                        .help("Remove this part")
                                         .buttonStyle(.borderless)
                                 }
                             }
