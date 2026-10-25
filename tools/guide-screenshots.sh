@@ -204,6 +204,11 @@ shot knowledge           $MAIN --section knowledge --select payments/orders-api
 shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
 # Add Folder… with the demo's handbook folder (no git: kind folder, README's line as the description).
 shot knowledge-add-folder 900x700 --section knowledge --select payments/orders-api --tab add-folder --query "~/Documents/payments-handbook"
+# The notebook (notebook.ru.md): the sample base's Inbox tab, Today on a fixed day, New Tab… and the Plans tab.
+shot notebook            $MAIN --section notebook
+shot notebook-today      $MAIN --section notebook --tab notebook-today --query 2026-10-26
+shot notebook-new-tab    $MAIN --section notebook --tab notebook-new --query Ideas
+shot notebook-plans      $MAIN --section notebook --select Plans
 shot knowledge-obsidian-setup 900x600 --section knowledge --select payments/orders-api --tab obsidian-setup
 shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties
 shot knowledge-kinds     $MAIN --section knowledge --select payments/orders-api --tab kinds

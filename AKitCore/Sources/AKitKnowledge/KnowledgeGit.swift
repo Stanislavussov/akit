@@ -137,11 +137,11 @@ public struct KnowledgeGit: Sendable {
         return try await run(["remote"]).split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
-    /// The base-relative paths under `areas/` and `kb.yaml` that differ from the last commit
+    /// The base-relative paths under `areas/` and `notebook/` and `kb.yaml` that differ from the last commit
     /// (changed, added, deleted, untracked; both sides of a rename), sorted. Read with
     /// `GIT_OPTIONAL_LOCKS=0`, so it never takes git's index lock from a writer.
     public func changedPaths() async throws(Failure) -> [String] {
-        let output = try await run(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "areas/", KnowledgeKinds.fileName],
+        let output = try await run(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "areas/", KnowledgeNotebook.folderName + "/", KnowledgeKinds.fileName],
                                    extra: ["GIT_OPTIONAL_LOCKS": "0"])
         var paths: Set<String> = []
         var entries = output.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)[...]
@@ -152,7 +152,7 @@ public struct KnowledgeGit: Sendable {
             // A rename or copy names its source next, as an entry of its own.
             if status.contains("R") || status.contains("C"), let source = entries.popFirst() { paths.insert(source) }
         }
-        return paths.filter { $0 == KnowledgeKinds.fileName || $0.hasPrefix("areas/") }.sorted()
+        return paths.filter { $0 == KnowledgeKinds.fileName || $0.hasPrefix("areas/") || $0.hasPrefix(KnowledgeNotebook.folderName + "/") }.sorted()
     }
 
     /// Runs git in the base; the output on success. Only `init` runs in a folder without its own

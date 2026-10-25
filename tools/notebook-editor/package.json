@@ -1,0 +1,13 @@
+{
+  "name": "akit-notebook-editor",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The Notebook's editor: Milkdown Crepe bundled into one offline script (tools/build-notebook-editor.sh)",
+  "license": "MIT",
+  "dependencies": {
+    "@milkdown/crepe": "7.22.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}

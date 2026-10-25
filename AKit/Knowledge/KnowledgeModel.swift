@@ -271,12 +271,14 @@ final class KnowledgeModel {
         guard base != self.base else { return }
         let old = self.base
         Task {
-            // An open map's last change is saved in the old base first (N5).
+            // An open map's or notebook tab's last change is saved in the old base first (N5).
             await forcePostDirty()
+            await NotebookModel.current?.forcePostDirty()
             self.base = base
             (area, tabs, note, map) = (nil, [], nil, nil)
             mapTabs = []
             reload()
+            NotebookModel.current?.refresh()
             await flush(old)
         }
     }
@@ -952,6 +954,7 @@ final class KnowledgeModel {
         var own: [String: String] = [:]
         for (id, hash) in noteHashes { own[base.notePath(id)] = hash }
         for (id, hash) in mapHashes { own[base.mapPath(id)] = hash }
+        for (path, hash) in NotebookModel.current?.ownHashes ?? [:] { own[path] = hash }
         let root = base.root
         let batch = WatchFilter.batch(paths, own: own) { KnowledgeWrite.hash(of: root.appending(path: $0)) }
         if DebugSnapshot.options != nil {
@@ -959,6 +962,7 @@ final class KnowledgeModel {
         }
         if batch.inbox { readInbox() }
         for path in batch.enqueue { enqueue(path, in: base) }
+        if batch.notebook { NotebookModel.current?.changedOnDisk(batch.outside) }
         if let note, editing, batch.outside.contains(base.notePath(note)), FileWalk.isRegularFile(base.noteFile(note)) {
             noteConflict = note
         }
@@ -1104,6 +1108,35 @@ final class KnowledgeModel {
 
     // MARK: - Commit queue
 
+    /// The Notebook screen: the bases are read once, by whichever screen comes first.
+    func loadIfNeeded() async {
+        if !loaded { await load() }
+    }
+
+    /// A notebook save (its tab or an image): queued for the commit like a note edit (U2).
+    func enqueueEdit(_ path: String, in base: KnowledgeBase) { enqueue(path, in: base) }
+
+    /// ⌘-click on a `[[note]]` in the notebook: the note opens on this screen (true), else a notice.
+    func openFromNotebook(_ link: String) -> Bool {
+        switch targets.resolve(link, from: KnowledgeNotebook.folderName + "/") {
+        case .note(let id):
+            screenTab = .notes
+            if let entry = allNotes.first(where: { $0.id == id }), entry.area != area { choose(area: entry.area) }
+            open(id)
+            noteBesideMap = map != nil
+            return true
+        case .map(let id):
+            screenTab = .notes
+            open(map: id)
+            return true
+        case .missing:
+            NotebookModel.current?.notice = "The link \(link) points to no note or map in this base."
+        case .ambiguous(let ids):
+            NotebookModel.current?.notice = "The link \(link) fits more than one: \(ids.joined(separator: ", "))."
+        }
+        return false
+    }
+
     /// Waits until the last save is queued (before a write that flushes the queue, like Accept).
     func lastEnqueueDone() async { await lastEnqueue?.value }
 
@@ -1186,6 +1219,7 @@ final class KnowledgeModel {
     static func flushBeforeQuit() async {
         let env = HarnessEnvironment.current
         if let current {
+            await NotebookModel.current?.forcePostDirty()
             await current.forcePostDirty()
             await current.flush(current.base)
         }

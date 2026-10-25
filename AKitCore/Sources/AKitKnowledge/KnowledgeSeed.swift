@@ -19,7 +19,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 8
+    public static let version = 9
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -471,6 +471,60 @@ public enum KnowledgeSeed {
         File(path: "areas/lint-examples/maps/examples.excalidraw", text: lintMap),
         File(path: "areas/lint-examples/maps/broken.excalidraw", text: """
             {"type": "excalidraw", "version": 2, "elements": [
+
+            """),
+        // The notebook (docs/design/notebook.md): two tabs, in their order; a day log with tasks,
+        // a [[link]] to a note and a web link, and an image in notebook/assets/.
+        File(path: "notebook/.tabs.json", text: """
+            {
+              "tabs" : [
+                "Inbox",
+                "Plans"
+              ]
+            }
+
+            """),
+        File(path: "notebook/Inbox.md", text: """
+            ## 2026-10-25
+
+            - [x] Answer the question about refunds in [[billing]]
+            - [ ] Check why order-created events arrive twice
+            - [ ] Read the retry policy: https://example.com/retries
+
+            ![](assets/2026-10-25-deploy.svg)
+
+            ## 2026-10-24
+
+            - [x] Move the checkout team's meeting to Thursday
+            - [x] Draw the order flow map
+
+            """),
+        File(path: "notebook/Plans.md", text: """
+            # Plans
+
+            ## This week
+
+            - [ ] Split [[orders-api]] events by version
+            - [ ] Ask logistics about the new warehouse
+
+            ## Later
+
+            | What | Who |
+            | --- | --- |
+            | Faster refunds | billing |
+            | Track parcels live | shipping |
+
+            """),
+        File(path: "notebook/assets/2026-10-25-deploy.svg", text: """
+            <svg xmlns="http://www.w3.org/2000/svg" width="520" height="120" viewBox="0 0 520 120" font-family="Helvetica, Arial, sans-serif" font-size="15">
+              <rect x="10" y="30" width="140" height="60" rx="8" fill="#e7f0fd" stroke="#1971c2" stroke-width="2"/>
+              <text x="80" y="65" text-anchor="middle" fill="#1d1d1f">orders-api</text>
+              <rect x="370" y="30" width="140" height="60" rx="8" fill="#fdf0e7" stroke="#c2621a" stroke-width="2"/>
+              <text x="440" y="65" text-anchor="middle" fill="#1d1d1f">billing</text>
+              <line x1="150" y1="60" x2="362" y2="60" stroke="#495057" stroke-width="2"/>
+              <path d="M362 54 L372 60 L362 66 Z" fill="#495057"/>
+              <text x="260" y="50" text-anchor="middle" fill="#495057">order created (twice?)</text>
+            </svg>
 
             """),
     ]

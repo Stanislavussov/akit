@@ -277,30 +277,40 @@ struct MapCanvasMessage: @unchecked Sendable {
 }
 
 /// Serves `akit-web://app/<path>` from one folder: no `..`, no absolute paths, nothing outside it.
+/// With `files`, `akit-web://app/files/<link>` is the file it names (the notebook's images), or
+/// refused when it names none.
 @MainActor
 final class MapWebFiles: NSObject, WKURLSchemeHandler {
     let root: URL
     let contentSecurityPolicy: String
+    let files: ((String) -> URL?)?
     /// Requests that were refused (outside the folder, missing, or not `akit-web://app/`).
     private(set) var refused = 0
     /// Every path that was served, in order.
     private(set) var served: [String] = []
 
-    init(root: URL, contentSecurityPolicy: String) {
+    init(root: URL, contentSecurityPolicy: String, files: ((String) -> URL?)? = nil) {
         self.root = root.standardizedFileURL
         self.contentSecurityPolicy = contentSecurityPolicy
+        self.files = files
     }
 
     static let mimeTypes = [
         "html": "text/html", "js": "text/javascript", "css": "text/css", "json": "application/json",
         "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf", "svg": "image/svg+xml",
-        "png": "image/png", "txt": "text/plain",
+        "png": "image/png", "txt": "text/plain", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
+        "webp": "image/webp", "heic": "image/heic", "pdf": "application/pdf",
     ]
 
     /// The file for a request URL, or nil when it must be refused.
     func file(for url: URL) -> URL? {
         guard url.scheme == MapCanvasView.scheme, url.host() == "app" else { return nil }
         let path = url.path(percentEncoded: false)
+        if let files, path.hasPrefix("/files/") {
+            guard let file = files(String(path.dropFirst("/files/".count))),
+                  Self.mimeTypes[file.pathExtension.lowercased()] != nil else { return nil }
+            return file
+        }
         let parts = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
         guard path.hasPrefix("/"), !parts.isEmpty,
               parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\0") && !$0.contains("\\") })
@@ -318,7 +328,7 @@ final class MapWebFiles: NSObject, WKURLSchemeHandler {
             task.didFailWithError(URLError(.fileDoesNotExist))
             return
         }
-        served.append(file.path.dropFirst(root.path.count + 1).description)
+        served.append(file.path.hasPrefix(root.path + "/") ? file.path.dropFirst(root.path.count + 1).description : "files/" + file.lastPathComponent)
         let mime = Self.mimeTypes[file.pathExtension.lowercased()]!
         let headers = [
             "Content-Type": mime.hasPrefix("text/") ? "\(mime); charset=utf-8" : mime,

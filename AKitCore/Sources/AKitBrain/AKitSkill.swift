@@ -430,6 +430,23 @@ akit kb seed --remove [--world NAME] [--yes] [--json]
                                                    # the whole sample base to the Trash
 ```
 
+## Notebook
+
+The user's plans, to-dos and "what I did today", one Markdown file per tab in the base's
+`notebook/` folder (the Notebook screen). Not knowledge about systems: `kb search` and
+`kb context` leave it out. Read it when the user asks about their plans or tasks; write only when
+the user asked ("add to my notebook", "tick that off").
+
+```
+akit notebook tabs [--json]                        # the tabs in order, open tasks each
+akit notebook show TAB [--open] [--json]           # a tab's Markdown; --open: open tasks only
+akit notebook add TAB TEXT [--task] [--today] [--json]
+                                                   # one line at the top (after a # Title); --task:
+                                                   # "- [ ] TEXT"; --today: under "## YYYY-MM-DD",
+                                                   # made when missing. Committed at once
+akit notebook done TAB TEXT [--json]               # ticks the first open task containing TEXT
+```
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

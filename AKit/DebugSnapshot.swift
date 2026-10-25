@@ -388,6 +388,24 @@ enum DebugSnapshot {
         if options.section == .knowledge, let manifest = KnowledgeModel.current?.manifest {
             print(manifest)
         }
+        // The notebook waits for its editor. `--tab notebook-tick` clicks the first check box,
+        // `--tab notebook-today --query <date>` presses Today; both wait past the save.
+        let notebookOpen = options.section == .notebook && NotebookEditorView.Coordinator.current != nil
+        if notebookOpen, let editor = NotebookEditorView.Coordinator.current, let model = NotebookModel.current {
+            _ = await editor.waitForTab(editor.document.key)
+            if options.tab == "notebook-tick" { print("notebook: tick: \(await editor.debugTick(0))") }
+            if options.tab == "notebook-today" { await model.today() }
+            if ["notebook-tick", "notebook-today"].contains(options.tab) {
+                try? await Task.sleep(for: .milliseconds(1600))
+                if let notebook = model.notebook, let tab = model.tab {
+                    print("notebook file: \((try? notebook.text(tab)) ?? "-")")
+                    print("notebook pending commit: " + KnowledgeCommitQueue(base: notebook.base.root, env: .current).pending().joined(separator: ", "))
+                }
+            }
+            await NotebookEditorView.Coordinator.waitAndPrint()
+            print("notebook tabs: \(model.tabs.joined(separator: ", ")); in view: \(model.tab ?? "-")" + (model.notice.map { "; notice: \($0)" } ?? "")
+                  + (model.problem.map { "; problem: \($0)" } ?? ""))
+        }
         if options.settings, options.tab == "knowledge" || options.tab == "knowledge-check" {
             print(KnowledgeSettingsSection.manifest())
             print(KnowledgeCheckModelSection.manifest())
@@ -395,12 +413,13 @@ enum DebugSnapshot {
         let bounds = view.bounds
         guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { exit(1) }
         view.cacheDisplay(in: bounds, to: rep)
-        // cacheDisplay draws no web view: draw the map canvas's own snapshot over its place.
-        if mapOpen, let webView = MapCanvasView.Coordinator.current?.webView, webView.window == window,
+        // cacheDisplay draws no web view: draw the map canvas's or the notebook editor's own snapshot over its place.
+        let pageView = mapOpen ? MapCanvasView.Coordinator.current?.webView : notebookOpen ? NotebookEditorView.Coordinator.current?.webView : nil
+        if let webView = pageView, webView.window == window,
            let image = try? await webView.takeSnapshot(configuration: nil) {
             var frame = webView.convert(webView.bounds, to: view)
             if view.isFlipped { frame.origin.y = bounds.height - frame.maxY }
-            print("map canvas: \(Int(frame.minX)),\(Int(bounds.height - frame.maxY)),\(Int(frame.width)),\(Int(frame.height))")
+            print("\(mapOpen ? "map canvas" : "notebook editor"): \(Int(frame.minX)),\(Int(bounds.height - frame.maxY)),\(Int(frame.width)),\(Int(frame.height))")
             if let context = NSGraphicsContext(bitmapImageRep: rep) {
                 NSGraphicsContext.saveGraphicsState()
                 NSGraphicsContext.current = context
