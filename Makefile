@@ -58,6 +58,11 @@ icon:   ## redraw the app icon
 	swift tools/make-icon.swift
 
 release: generate   ## dist/AKit.zip: universal AKit.app + akit, for GitHub Releases (install.sh downloads it)
+	@# Only at a date tag with a clean tree: the zip's version is then its release's tag, which the
+	@# app's Update compares (a zip past its tag would offer its own release again).
+	@tag="$$(git describe --exact-match --tags --match 'v[0-9]*' 2>/dev/null)"; \
+	  [ -n "$$tag" ] || { echo "make release: tag this commit first (git tag -a vYYYY.MM.DD -m ...)" >&2; exit 1; }; \
+	  [ -z "$$(git status --porcelain --untracked-files=no)" ] || { echo "make release: commit or stash the changes first" >&2; exit 1; }
 	rm -rf dist && mkdir -p dist/AKit
 	xcodebuild -project AKit.xcodeproj -scheme AKit -configuration Release \
 	  -derivedDataPath $(DERIVED)/universal ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO AKIT_DIST=1 -quiet build
@@ -65,7 +70,7 @@ release: generate   ## dist/AKit.zip: universal AKit.app + akit, for GitHub Rele
 	cd AKitCore && swift build -c release --product akit --arch arm64 --arch x86_64
 	cp AKitCore/.build/apple/Products/Release/akit dist/AKit/
 	cd dist && ditto -c -k --norsrc --noextattr --keepParent AKit AKit.zip && rm -rf AKit
-	@echo "Built dist/AKit.zip. Publish: gh release create v$$(date +%Y.%m.%d-%H%M) dist/AKit.zip --generate-notes"
+	@echo "Built dist/AKit.zip. Publish: gh release create $$(git describe --exact-match --tags --match 'v[0-9]*') dist/AKit.zip --generate-notes"
 
 banner:   ## redraw the README banner (docs/assets/banner.png)
 	swift tools/make-banner.swift && sips -Z 1920 docs/assets/banner.png >/dev/null
