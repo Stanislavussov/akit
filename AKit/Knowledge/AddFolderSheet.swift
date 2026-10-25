@@ -19,9 +19,14 @@ struct AddFolderSheet: View {
     @State private var description = ""
     @State private var working = false
 
-    private var plan: Result<KnowledgeFolderNote, KnowledgeBase.Failure>? {
-        guard let base = model.base, let folder, !area.isEmpty else { return nil }
-        return Result { () throws(KnowledgeBase.Failure) in
+    /// The note Add Note writes, made again when a field changes (it reads the folder), not on
+    /// every render; kept while Add Note runs, so its "exists already" never flashes.
+    @State private var plan: Result<KnowledgeFolderNote, KnowledgeBase.Failure>?
+
+    private func makePlan() {
+        guard !working else { return }
+        guard let base = model.base, let folder, !area.isEmpty else { plan = nil; return }
+        plan = Result { () throws(KnowledgeBase.Failure) in
             try base.plan(folder: folder, area: area, name: name.isEmpty ? nil : name, description: description, home: model.home)
         }
     }
@@ -87,6 +92,7 @@ struct AddFolderSheet: View {
         .onAppear {
             if let folder { picked(folder) }
         }
+        .onChange(of: [folder?.path ?? "", area, name, description], initial: true) { makePlan() }
         // The areas may arrive after the sheet (a snapshot opens it at launch).
         .task(id: model.areas.map(\.name)) {
             if area.isEmpty { area = model.area ?? model.areas.first?.name ?? "" }

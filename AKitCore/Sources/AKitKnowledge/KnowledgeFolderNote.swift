@@ -47,8 +47,11 @@ public struct KnowledgeFolderNote: Sendable, Equatable, Encodable {
         guard KnowledgeBase.validName(name) else {
             throw Failure(message: "“\(name)” can't be a note name: one file name, without /, and doesn't start with a dot. Give another name.")
         }
-        let repo = GitCheckout.at(folder).flatMap(\.originURL).map(withoutCredentials)
-        let kind = GitCheckout.at(folder) != nil ? "service" : "folder"
+        // The repository the folder is (or is inside, in a monorepo); a home folder under git doesn't count.
+        let checkout = GitCheckout.containing(folder).flatMap { $0.folder.standardizedFileURL.path == home.standardizedFileURL.path ? nil : $0 }
+        // A remote that still looks like it holds a secret stays out of the base.
+        let repo = checkout.flatMap(\.originURL).map(withoutCredentials).flatMap { KnowledgeInbox.hasSecret($0) ? nil : $0 }
+        let kind = checkout != nil ? "service" : "folder"
         // /tmp and /private/tmp (or /var and /private/var) are one folder: either spelling gets its ~.
         var path = FileWalk.tilde(folder, home: home)
         if !path.hasPrefix("~") { path = FileWalk.tilde(folder.standardizedFileURL, home: home.standardizedFileURL) }
@@ -68,12 +71,18 @@ public struct KnowledgeFolderNote: Sendable, Equatable, Encodable {
         let names = ["README.md", "README", "readme.md", "Readme.md", "README.markdown", "README.txt", "index.md"]
         guard let file = names.map({ folder.appending(path: $0) }).first(where: FileWalk.isRegularFile),
               let data = FileManager.default.contents(atPath: file.path), data.count < 1_000_000 else { return nil }
-        var inFence = false
-        for raw in String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("```") { inFence.toggle(); continue }
+        var inFence = false, inComment = false
+        var lines = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        // YAML frontmatter (an Obsidian or Hugo page) is no prose.
+        if lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") { lines.removeSubrange(...end) }
+        for line in lines {
+            if inComment { if line.contains("-->") { inComment = false }; continue }
+            if line.hasPrefix("<!--") { inComment = !line.contains("-->"); continue }
+            if line.hasPrefix("```") || line.hasPrefix("~~~") { inFence.toggle(); continue }
             if inFence || line.isEmpty || line.hasPrefix("#") || line.hasPrefix("[!") || line.hasPrefix("![") || line.hasPrefix("<")
-                || line.hasPrefix("---") || line.hasPrefix("===") || line.hasPrefix("|") || line.hasPrefix(">") { continue }
+                || line.hasPrefix("---") || line.hasPrefix("===") || line.hasPrefix("|") || line.hasPrefix(">")
+                || line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") { continue }
             var sentence = line
             if let end = line.range(of: ". ") { sentence = String(line[..<end.lowerBound]) + "." }
             return sentence.count <= 200 ? sentence : String(sentence.prefix(199)) + "…"
@@ -81,11 +90,24 @@ public struct KnowledgeFolderNote: Sendable, Equatable, Encodable {
         return nil
     }
 
-    /// `https://user:token@host/x.git` → `https://host/x.git`; other remotes as they are.
+    /// A remote without a password or a token: `https://user:token@host/x.git` → `https://host/x.git`,
+    /// `…/x.git?private_token=…` → `…/x.git`. A user without a password (`ssh://git@host/x`)
+    /// stays: cloning needs it. A password may hold "/", "?" or "#", so the user part ends at the
+    /// last "@".
     static func withoutCredentials(_ remote: String) -> String {
-        guard let scheme = remote.range(of: "://"), let at = remote[scheme.upperBound...].firstIndex(of: "@"),
-              !remote[scheme.upperBound..<at].contains("/") else { return remote }
-        return String(remote[..<scheme.upperBound]) + remote[remote.index(after: at)...]
+        var remote = remote.trimmingCharacters(in: .whitespacesAndNewlines)
+        var head = ""
+        if let scheme = remote.range(of: "://") {
+            head = String(remote[..<scheme.upperBound])
+            remote = String(remote[scheme.upperBound...])
+            if let at = remote.lastIndex(of: "@") {
+                let user = remote[..<at]
+                let rest = String(remote[remote.index(after: at)...])
+                remote = user.contains(":") || user.contains("/") || user.contains("?") || user.contains("#") ? rest : user + "@" + rest
+            }
+        }
+        if let cut = remote.firstIndex(where: { $0 == "?" || $0 == "#" }) { remote = String(remote[..<cut]) }
+        return head + remote
     }
 
     /// A value as one YAML scalar: plain when that reads back the same, else double-quoted.
@@ -123,18 +145,27 @@ extension KnowledgeBase {
         if FileManager.default.fileExists(atPath: file.path) { throw Failure(message: "The note \(plan.note) exists already.") }
         var paths = [path]
         var kindAdded = false
-        if FileManager.default.fileExists(atPath: root.appending(path: KnowledgeKinds.fileName).path),
-           let kinds = try? kinds(), kinds.kind(plan.kind) == nil, kinds.unknownKeys.isEmpty,
-           let fields = KnowledgeKinds.defaults.kind(plan.kind)?.fields {
-            try kinds.adding(plan.kind, fields: fields).write(base: root)
-            paths.append(KnowledgeKinds.fileName)
-            kindAdded = true
-        }
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(plan.text.utf8).write(to: file, options: .withoutOverwriting)
         } catch {
             throw Failure(message: "Couldn't write \(path): \(error.localizedDescription)")
+        }
+        // The kind goes into a kb.yaml that lacks it, only when kb.yaml has no change of the
+        // user's waiting for its commit (that one would be swept into this commit).
+        let kindsFile = root.appending(path: KnowledgeKinds.fileName)
+        if FileManager.default.fileExists(atPath: kindsFile.path),
+           let kinds = try? kinds(), kinds.kind(plan.kind) == nil, kinds.unknownKeys.isEmpty,
+           let fields = KnowledgeKinds.defaults.kind(plan.kind)?.fields,
+           let changed = try? await KnowledgeGit(base: root, env: env).changedPaths(), !changed.contains(KnowledgeKinds.fileName) {
+            do {
+                try kinds.adding(plan.kind, fields: fields).write(base: root)
+                paths.append(KnowledgeKinds.fileName)
+                kindAdded = true
+            } catch {
+                try? FileManager.default.removeItem(at: file)
+                throw error
+            }
         }
         do {
             try await KnowledgeGit(base: root, env: env).commit(paths: paths, message: "Add note \(plan.note) for \(plan.path)")

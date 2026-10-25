@@ -59,6 +59,29 @@ final class KnowledgeFolderNoteTests {
         #expect(KnowledgeFolderNote.yaml("~/a #b") == "\"~/a #b\"")
         #expect(KnowledgeFolderNote.withoutCredentials("git@github.com:a/b.git") == "git@github.com:a/b.git")
         #expect(KnowledgeFolderNote.withoutCredentials("https://github.com/a/b.git") == "https://github.com/a/b.git")
+        // A token in the query, a password holding "/" or "@": cut. An ssh user stays.
+        #expect(KnowledgeFolderNote.withoutCredentials("https://gitlab.example.com/x.git?private_token=abc") == "https://gitlab.example.com/x.git")
+        #expect(KnowledgeFolderNote.withoutCredentials("https://u:ab/c@d@host/x.git") == "https://host/x.git")
+        #expect(KnowledgeFolderNote.withoutCredentials("ssh://git@github.com/org/x.git") == "ssh://git@github.com/org/x.git")
+    }
+
+    @Test func theReadmeLineSkipsFrontmatterCommentsAndLists() throws {
+        let wiki = try folder("wiki")
+        try write(wiki.appending(path: "index.md"), "---\ntags: [home]\n---\n<!--\nhidden\n-->\n- a list\nThe team wiki.\n")
+        #expect(KnowledgeFolderNote.readmeLine(in: wiki) == "The team wiki.")
+    }
+
+    @Test func aFolderInsideARepositoryIsAServiceOfThatRepository() async throws {
+        let mono = try folder("Projects/mono"), api = try folder("Projects/mono/packages/api")
+        _ = try await FakeHome.git(["init", "-q"], in: mono, env: env)
+        _ = try await FakeHome.git(["remote", "add", "origin", "git@example.com:shop/mono.git"], in: mono, env: env)
+        let plan = try KnowledgeFolderNote.plan(folder: api, area: "shop", home: home)
+        #expect(plan.kind == "service" && plan.repo == "git@example.com:shop/mono.git" && plan.path == "~/Projects/mono/packages/api")
+        // Lint: the clone at path: is known wherever it lies, and files: are relative to its top.
+        try write(mono.appending(path: "src/a.ts"), "")
+        let base = KnowledgeBase(root: try folder("kb"))
+        try write(base.noteFile("shop/api"), "---\nkind: service\nrepo: git@example.com:shop/mono.git\npath: ~/Projects/mono/packages/api\nfiles: [src/a.ts]\n---\n# api\n")
+        #expect(KnowledgeLint.run(base, projects: KnowledgeLint.Projects(), home: home).isEmpty)
     }
 
     @Test func theBaseRefusesItselfAnExistingNoteAndWhatIsNoFolder() throws {

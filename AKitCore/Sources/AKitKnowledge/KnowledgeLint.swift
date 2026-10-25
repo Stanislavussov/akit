@@ -258,6 +258,10 @@ public enum KnowledgeLint {
             value == "~" ? home : value.hasPrefix("~/") ? home.appending(path: String(value.dropFirst(2))) : nil
         }
         var copy: URL?
+        // The path: folder, and the repository it is in (it, or a folder inside a monorepo):
+        // files: are relative to the repository's top. A home folder under git doesn't count.
+        let pathFolder = note.path.flatMap { KnowledgeLocal.url($0, home: home) }.flatMap { FileWalk.isDirectory($0) ? $0 : nil }
+        let pathCheckout = pathFolder.flatMap(GitCheckout.containing).flatMap { $0.folder.standardizedFileURL.path == home.standardizedFileURL.path ? nil : $0 }
         if let repo = note.repo {
             if let url = homePath(repo) {
                 if FileManager.default.fileExists(atPath: url.path) {
@@ -266,6 +270,10 @@ public enum KnowledgeLint {
                     findings.append(Finding(rule: .missingHomePath, file: path, link: repo, message: "The repo: path \(repo) doesn't exist on this Mac.",
                                             fix: "Clone the repository there, or set repo: to its git remote URL."))
                 }
+            } else if let id = ProjectRecords.normalizedRemote(repo), let checkout = pathCheckout,
+                      checkout.originURL.flatMap(ProjectRecords.normalizedRemote) == id {
+                // path: is a clone of this remote (Add Folder… writes both): known, wherever it lies.
+                copy = checkout.folder
             } else if let id = ProjectRecords.normalizedRemote(repo), projects.known.contains(id) {
                 copy = projects.copies[id]
             } else {
@@ -275,8 +283,8 @@ public enum KnowledgeLint {
             }
         }
         if let value = note.path {
-            if let url = KnowledgeLocal.url(value, home: home), FileWalk.isDirectory(url) {
-                copy = url
+            if let pathFolder {
+                copy = pathCheckout?.folder ?? pathFolder
             } else {
                 let absolute = KnowledgeLocal.url(value, home: home) != nil
                 findings.append(Finding(rule: .missingHomePath, file: path, link: value,
