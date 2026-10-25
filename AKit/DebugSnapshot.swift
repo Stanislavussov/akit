@@ -305,12 +305,16 @@ enum DebugSnapshot {
             if let canvas, let local = inCanvas, let webView = canvas.webView {
                 await canvas.click(x: local.x, y: webView.isFlipped ? local.y : webView.bounds.height - local.y)
             }
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] where inCanvas == nil {
-                if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
-                    window.sendEvent(event)
+            if inCanvas == nil {
+                func mouse(_ type: NSEvent.EventType) -> NSEvent? {
+                    NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
                 }
-                try? await Task.sleep(for: .milliseconds(80))
+                // A list row tracks the mouse inside sendEvent until the button goes up, so the
+                // mouse-up waits in the queue first; a button that doesn't track leaves it there
+                // to arrive next.
+                if let up = mouse(.leftMouseUp) { NSApp.postEvent(up, atStart: false) }
+                if let down = mouse(.leftMouseDown) { window.sendEvent(down) }
             }
             try? await Task.sleep(for: .seconds(1))
         }

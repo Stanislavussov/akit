@@ -283,10 +283,11 @@ struct KnowledgeView: View {
         List(selection: listSelection) {
             if !model.maps.isEmpty {
                 Section("Maps") {
-                    ForEach(model.maps, id: \.self) { id in
+                    // The row's ForEach id is its selection value (a .tag isn't), so it carries the "map:" itself.
+                    ForEach(model.maps.map { "map:" + $0 }, id: \.self) { row in
+                        let id = String(row.dropFirst("map:".count))
                         Label(KnowledgeModel.mapName(id), systemImage: "point.3.connected.trianglepath.dotted")
                             .lineLimit(1)
-                            .tag(Optional("map:" + id))
                             .help("areas/\(id).excalidraw: click to view the map; click a block on it to open its note")
                             .contextMenu {
                                 Button("Show in Finder") {
