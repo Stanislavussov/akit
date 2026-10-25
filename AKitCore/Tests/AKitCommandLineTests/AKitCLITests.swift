@@ -321,14 +321,28 @@ struct AKitCLITests {
         #expect(created.code == 0 && created.out.contains("akit apply --home"))
         let brain = try #require(Brain.load(from: Brain.defaultRoot(home: home)))
         #expect(brain.problems.isEmpty)
-        #expect(brain.skills.map(\.name) == ["akit"])
-        #expect(brain.layers.first { $0.name == "core" }?.skills.map { "\($0.name):\($0.mode)" } == ["akit:manual"])
+        #expect(brain.skills.map(\.name) == ["akit", "akit-context"])
+        #expect(brain.layers.first { $0.name == "core" }?.skills.map { "\($0.name):\($0.mode)" } == ["akit:manual", "akit-context:auto"])
         #expect(await akit("init").code == 2)  // not over an existing brain
 
         let home = await akit("apply", "--home")
         #expect(home.code == 0)
         let skill = try String(contentsOf: self.home.appending(path: ".agents/skills/akit/SKILL.md"), encoding: .utf8)
         #expect(skill.contains("disable-model-invocation: true") && skill.contains("akit sync"))
+        // The agent finds the knowledge base and the notebook by itself: auto, no setup commands in it.
+        let context = try String(contentsOf: self.home.appending(path: ".agents/skills/akit-context/SKILL.md"), encoding: .utf8)
+        #expect(!context.contains("disable-model-invocation") && context.contains("akit kb context") && context.contains("akit notebook add"))
+        // Each command lives in one skill: the person-only ones in /akit, the ones for a task in /akit-context.
+        for setup in ["akit kb init", "akit kb new-note", "akit kb new-map", "akit kb set ", "akit kb rename", "akit kb accept ID",
+                      "akit kb reject", "akit kb rm ", "akit kb path [WORLD]", "akit kb add-folder", "akit kb pi-template", "akit kb seed",
+                      "akit kb check-model", "akit kb kinds add", "--set AREA"] {
+            #expect(!context.contains(setup), "\(setup) is in /akit-context")
+            #expect(skill.contains(setup), "\(setup) is missing from /akit")
+        }
+        for task in ["akit kb context [FOLDER]", "akit kb search QUERY", "akit kb show NOTE", "akit kb propose --note", "akit notebook add"] {
+            #expect(context.contains(task), "\(task) is missing from /akit-context")
+            #expect(!skill.contains(task), "\(task) is in /akit")
+        }
     }
 
     // MARK: Session insights

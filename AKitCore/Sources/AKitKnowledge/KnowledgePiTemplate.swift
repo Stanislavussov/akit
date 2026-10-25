@@ -17,7 +17,7 @@ public enum KnowledgePiTemplate {
     public static let text = """
         ## Knowledge base
         This Mac has a knowledge base of the systems around your repositories. At the start of a task that touches other services, events or repositories, run `akit kb context --json` and read the card; then `akit kb search QUERY --json` and `akit kb show NOTE --json` for details.
-        Never edit the base yourself: propose changes with `akit kb propose`, and follow the /akit skill for what you may run.
+        Never edit the base yourself: propose changes with `akit kb propose`, and follow the /akit-context skill for what you may run.
 
         """
 

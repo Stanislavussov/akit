@@ -142,7 +142,7 @@ struct SkillMoveTests {
 
         let outcome = try await SkillMove.apply(plan, brain: brain, env: f.env, trash: f.trash)
         #expect(!outcome.imported && outcome.coreChanged && outcome.home?.removed == [".agents/skills/deploy/SKILL.md"])
-        #expect(coreSkills() == ["akit"])
+        #expect(coreSkills() == ["akit", "akit-context"])
         #expect(try await f.git("log", "-1", "--format=%s", in: f.brainRoot).hasPrefix("Render the core layer into home/test"))
         #expect(try await f.git("log", "-3", "--format=%s", in: f.brainRoot).contains("Remove skill deploy from layer core"))
         #expect(!fm.fileExists(atPath: f.home.appending(path: ".agents/skills/deploy").path))

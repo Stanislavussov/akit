@@ -2,7 +2,7 @@ import AKitFoundation
 import Foundation
 
 /// Creates a new brain repo: the folder layout from docs/design/layers.md, a `core`
-/// layer with the `/akit` skill, the akit Claude plugin, and a git repo with a first commit.
+/// layer with the `/akit` and `/akit-context` skills, the akit Claude plugin, and a git repo with a first commit.
 public enum BrainSetup {
     public struct Failure: Error, LocalizedError {
         public let message: String
@@ -33,9 +33,12 @@ public enum BrainSetup {
             skills:
               - name: akit
                 mode: manual
+              - name: akit-context
+                mode: auto
 
             """,
         "skills/akit/SKILL.md": AKitSkill.text,
+        "skills/akit-context/SKILL.md": AKitContextSkill.text,
         "projects/.gitkeep": "",
         "machines/.gitkeep": "",
     ]

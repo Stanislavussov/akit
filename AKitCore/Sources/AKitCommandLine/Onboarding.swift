@@ -119,7 +119,7 @@ public enum Onboarding {
         } catch {
             throw Failure(message: error.message)
         }
-        io.say("Brain: \(root.path) (new: the core layer with the /akit skill)")
+        io.say("Brain: \(root.path) (new: the core layer with the /akit and /akit-context skills)")
         await offerGitHubRepo(root: root, env: env, io: io)
     }
 
