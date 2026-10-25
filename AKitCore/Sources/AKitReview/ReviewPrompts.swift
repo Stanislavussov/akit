@@ -484,6 +484,11 @@ public enum ReviewPrompts {
         4. Your own pending draft notes on it.
         5. The signed-in user (who you are on GitLab).
         6. \(items)
+
+        GitLab's own MCP server (`get_merge_request` with an `include` list) gives one part per call: call it once with no \
+        `include`, then with `include: ["diffs"]` and `detail: "full_patch"` (`diffs_first: 100`, then `diffs_after` for every \
+        further page), `include: ["commits"]`, `include: ["discussions"]` and `include: ["pipelines"]`; the user is \
+        `get_user` with `me: true`.
         7. The history of the changed files, after everything above: for up to 10 changed files, the merge requests merged \
         before this one that changed them (for example the file's recent commits, then each commit's merge requests), at most \
         3 per file and 10 in all, each with its discussion threads. Pass each merge request's own number in every call about \

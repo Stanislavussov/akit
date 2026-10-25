@@ -94,9 +94,13 @@ public struct GitLabPosition: Codable, Sendable, Hashable {
     }
 
     static func from(_ object: JSONObject?) -> GitLabPosition? {
-        guard let object, object.string("position_type") ?? "text" == "text",
-              let head = object.string("head_sha"), let path = object.string("new_path") ?? object.string("old_path") else { return nil }
-        return GitLabPosition(baseSHA: object.string("base_sha") ?? "", startSHA: object.string("start_sha") ?? "", headSHA: head,
+        // GraphQL's position (GitLab's own MCP server) keeps the commits in `diff_refs`.
+        let refs = object?.object("diff_refs")
+        guard let object, (object.string("position_type") ?? "text").lowercased() == "text",
+              let head = object.string("head_sha") ?? refs?.string("head_sha"),
+              let path = object.string("new_path") ?? object.string("old_path") else { return nil }
+        return GitLabPosition(baseSHA: object.string("base_sha") ?? refs?.string("base_sha") ?? "",
+                              startSHA: object.string("start_sha") ?? refs?.string("start_sha") ?? "", headSHA: head,
                               oldPath: object.string("old_path") ?? path, newPath: path, oldLine: object.int("old_line"),
                               newLine: object.int("new_line"))
     }
@@ -166,11 +170,14 @@ public enum GitLabJSON {
         let refs = object.object("diff_refs").flatMap { refs -> GitLabMergeRequest.DiffRefs? in
             guard let base = refs.string("base_sha"), let start = refs.string("start_sha"), let head = refs.string("head_sha") else { return nil }
             return GitLabMergeRequest.DiffRefs(baseSHA: base, startSHA: start, headSHA: head)
+        } ?? object.string("diff_head_sha").map { head in
+            // GraphQL's flat fields (GitLab's own MCP server).
+            GitLabMergeRequest.DiffRefs(baseSHA: object.string("diff_base_sha") ?? "", startSHA: object.string("diff_start_sha") ?? "", headSHA: head)
         }
         var mr = GitLabMergeRequest(iid: iid, title: object.string("title") ?? "", description: object.string("description") ?? "",
                                     state: object.string("state") ?? "", author: object.object("author")?.string("username") ?? "",
                                     sourceBranch: object.string("source_branch") ?? "", targetBranch: object.string("target_branch") ?? "",
-                                    labels: object["labels"] as? [String] ?? [], webURL: object.string("web_url") ?? "", diffRefs: refs,
+                                    labels: object["labels"] as? [String] ?? object.objects("labels").compactMap { $0.string("title") }, webURL: object.string("web_url") ?? "", diffRefs: refs,
                                     projectID: object.int("project_id"))
         if object["draft"] != nil || object["work_in_progress"] != nil {
             mr.draft = object.bool("draft") || object.bool("work_in_progress")
@@ -196,7 +203,15 @@ public enum GitLabJSON {
 
     public static func discussion(_ object: JSONObject) -> GitLabDiscussion? {
         guard let id = object.string("id"), let notes = object["notes"] as? [JSONObject] else { return nil }
-        return GitLabDiscussion(id: id, notes: notes.compactMap(note))
+        var parsed = notes.compactMap(note)
+        // GraphQL marks the thread resolvable and resolved, not its notes.
+        if object["resolvable"] != nil, !notes.contains(where: { $0["resolvable"] != nil }) {
+            for index in parsed.indices {
+                parsed[index].resolvable = object.bool("resolvable")
+                parsed[index].resolved = object.bool("resolved")
+            }
+        }
+        return GitLabDiscussion(id: id, notes: parsed)
     }
 
     static func note(_ object: JSONObject) -> GitLabNote? {
@@ -211,6 +226,56 @@ public enum GitLabJSON {
         guard let id = object.int("id"), let note = object.string("note") else { return nil }
         return GitLabDraft(id: id, note: note, position: GitLabPosition.from(object.object("position")),
                            discussionID: object.string("discussion_id"))
+    }
+}
+
+extension GitLabJSON {
+    /// An answer of GitLab's own MCP server (`/api/v4/mcp`) in REST's shape: GraphQL's lists
+    /// (`{nodes: [...], pageInfo}`) become arrays, camelCase keys snake_case (`sourceBranch` →
+    /// `source_branch`), global ids (`gid://gitlab/Note/12`) GitLab's own (`12`). Only answers
+    /// that carry such an id change: other servers' keys (Azure DevOps's `System.Title`) stay.
+    static func restShape(_ value: Any) -> Any {
+        hasGlobalID(value, depth: 0) ? graphQLToREST(value, depth: 0) : value
+    }
+
+    static func hasGlobalID(_ value: Any, depth: Int) -> Bool {
+        guard depth < 8 else { return false }
+        if let object = value as? JSONObject {
+            if (object["id"] as? String)?.hasPrefix("gid://gitlab/") == true { return true }
+            return object.values.contains { hasGlobalID($0, depth: depth + 1) }
+        }
+        if let list = value as? [Any] { return list.prefix(20).contains { hasGlobalID($0, depth: depth + 1) } }
+        return false
+    }
+
+    static func graphQLToREST(_ value: Any, depth: Int) -> Any {
+        guard depth < 12 else { return value }
+        if let list = value as? [Any] { return list.map { graphQLToREST($0, depth: depth + 1) } }
+        guard let object = value as? JSONObject else { return value }
+        if let nodes = object["nodes"] as? [Any], Set(object.keys).isSubset(of: ["nodes", "pageInfo", "count", "edges"]) {
+            return nodes.map { graphQLToREST($0, depth: depth + 1) }
+        }
+        var result: JSONObject = [:]
+        for (key, child) in object {
+            let name = snakeCase(key)
+            if name == "id", let text = child as? String, text.hasPrefix("gid://gitlab/") {
+                let tail = String(text.split(separator: "/").last ?? "")
+                result[name] = Int(tail).map { $0 as Any } ?? tail
+            } else if result[name] == nil || key == name {
+                result[name] = graphQLToREST(child, depth: depth + 1)
+            }
+        }
+        return result
+    }
+
+    /// `sourceBranch` → `source_branch`, `aMode` → `a_mode`; snake_case stays.
+    static func snakeCase(_ key: String) -> String {
+        var result = ""
+        for character in key {
+            if character.isUppercase, !result.isEmpty { result += "_" }
+            result += character.lowercased()
+        }
+        return result
     }
 }
 

@@ -163,6 +163,12 @@ Built the same day:
 - Azure DevOps MCP 2.x has one tool per area (`wit_work_item` with `action: get`, `repo_pull_request`,
   `wiki`, …); its server marks them read-only. AKit also knows their names (`knownReads`), so a
   Pi that doesn't pass the mark on doesn't block the work item. `*_write` tools stay blocked.
+- GitLab's own MCP server (`/api/v4/mcp`, 2026-10-25 on the work Mac) answers in GraphQL's shape:
+  camelCase keys, `{nodes, pageInfo}` lists, `gid://gitlab/...` ids, one part per `get_merge_request`
+  call (`include: diffs|commits|discussions|notes|pipelines`) and no `diff_refs`. AKit reads such an
+  answer as REST's (`GitLabJSON.restShape`, only answers with a `gid://gitlab/` id); the parts in it
+  are the merge request's; the head is `diff_head_sha`, else the newest commit (base empty: the diff
+  comes from the answers, no blame). It has no draft-note tools, so Send Drafts can't write through it.
 - `akit review check [--project P]` and Review Settings… → **Check Servers** run
   `pi mcp list --json` and sort each tool (read, write drafts, blocked); never a server's
   command line, environment or headers. `akit review token` and the token blocks are gone.
