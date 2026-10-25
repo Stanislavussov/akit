@@ -29,6 +29,22 @@ extension AKitCLITests {
         #expect(await review(["config", "show", "--project", "nope"]).err.contains("no project profile nope"))
     }
 
+    /// `--verifier-thinking`: a level alone keeps the configured verifier model; a wrong level stops.
+    @Test func reviewVerifierThinking() async throws {
+        try write(".akit/local/review/projects/app.yaml", """
+        gitlab: { host: https://gitlab.test, project_path: team/app }
+        review: { models: { verifier: fake/strong }, thinking: { verifier: high } }
+
+        """)
+        let none = home.appending(path: "none").path
+        let shown = await review(["config", "show", "--project", "app", "--brain", none, "--verifier-thinking", "low"])
+        #expect(shown.code == 0, "\(shown)")
+        #expect(shown.out.contains("fake/strong") && shown.out.contains("low") && !shown.out.contains("thinking high"), "\(shown.out)")
+        #expect(await review(["config", "show", "--project", "app", "--brain", none, "--verifier-thinking", "huge"]).err
+            .contains("--verifier-thinking is one of off, minimal"))
+        #expect(await review(["--help"]).out.contains("--verifier-thinking L"))
+    }
+
     /// `--note`, `--note-file`, `--link`, `--extra-server`: the run's own context.
     @Test func reviewContextOptions() async throws {
         try write(".akit/local/review/projects/app.yaml", """

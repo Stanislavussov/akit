@@ -233,6 +233,10 @@ does or why; `--json` for the data, `--mermaid` for the flow only. It is never p
 `akit review MR-URL --summary-language CODE` (also `akit review local`; `summary_language` in
 review.yaml or a profile's `review:`) sets the overview's language (`en`, `ru`, `cs`, …); the default
 is the Mac's preferred language, else English. GitLab text keeps `posting: language`.
+`akit review MR-URL --verifier-thinking LEVEL` (also `akit review local`; `thinking: verifier:` in
+review.yaml) sets how hard the verifier model thinks: off, minimal, low, medium,
+high, xhigh or max; alone it keeps the configured verifier model. The New Review sheet has the
+same menu (Verifier thinking).
 
 `akit review points [PATH] --find TEXT [--kind branches|tags|commits] [--json]` lists the branches, remote branches, tags and
 commits of a local workspace whose name, commit message, author or id start holds every word of

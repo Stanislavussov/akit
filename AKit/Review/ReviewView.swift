@@ -420,9 +420,11 @@ struct ReviewRunDetail: View {
                 Label(run.spec.roles.map(\.id).joined(separator: ", "), systemImage: "person.2")
                     .help("Roles of this run, each a SKILL.md")
                 if let passes = run.passes {
-                    Label(String(format: "%.1f of %d credits", passes.credits, run.spec.capCredits.value), systemImage: "gauge")
+                    Label(String(format: "%.1f of %d credits", passes.credits, run.spec.capCredits.value)
+                          + (passes.cost.map { " · " + ReviewRunLog.dollars($0) } ?? ""), systemImage: "gauge")
                         .help(String(format: "Recorded by Pi: 1 credit = 1,000 tokens (cached reads count a tenth). Estimated before the passes: %.0f.",
-                                     passes.estimate ?? 0))
+                                     passes.estimate ?? 0)
+                              + " Dollars: what Pi recorded from its model list; on a subscription that may not be what you pay.")
                 }
             }
             .font(.callout)
@@ -434,8 +436,8 @@ struct ReviewRunDetail: View {
                         Label(pass.name, systemImage: pass.error == nil ? (pass.ended == nil ? "circle.dotted" : "checkmark.circle") : "xmark.circle")
                             .font(.caption)
                             .foregroundStyle(pass.error == nil ? Color.secondary : Color.red)
-                            .help(pass.error ?? String(format: "%@ · %.1f credits · read %d files", pass.model.isEmpty ? "Pi's default model" : pass.model,
-                                                       pass.credits, pass.paths.count))
+                            .help(pass.error ?? String(format: "%@ · %.1f credits · %@ · read %d files", pass.model.isEmpty ? "Pi's default model" : pass.model,
+                                                       pass.credits, ReviewRunLog.dollars(pass.usage.cost), pass.paths.count))
                     }
                     Button("Log…") { showLog = true }
                         .buttonStyle(.link)

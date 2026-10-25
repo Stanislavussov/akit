@@ -33,6 +33,8 @@ public struct ReviewPassLog: Codable, Sendable, Hashable {
     public var brief: String?
 
     public var credits: Double { passes.map(\.credits).reduce(0, +) }
+    /// US dollars as Pi recorded them (`usage.cost`); nil when no pass recorded any.
+    public var cost: Double? { ReviewRunLog.sum(passes.map(\.usage.cost)) }
 }
 
 /// The findings of a run after the verifier (`<run>/findings.json`). Discuss in Pi… makes new

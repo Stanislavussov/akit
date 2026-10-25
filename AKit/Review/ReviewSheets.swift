@@ -31,6 +31,8 @@ struct NewReviewSheet: View {
     @State private var rolesOff: Set<String> = []
     @State private var passesModel = ""
     @State private var verifierModel = ""
+    /// Empty: from the configuration.
+    @State private var verifierThinking = ""
     @State private var cap = ""
     @State private var maxChangedLines = ""
     @State private var fullReview = false
@@ -70,7 +72,10 @@ struct NewReviewSheet: View {
         _links = State(initialValue: (again.links ?? []).joined(separator: "\n"))
         _extraServers = State(initialValue: Set((again.mcpServers ?? []).filter { $0.source == .run }.map(\.name)))
         if again.passes.source == .run { _passesModel = State(initialValue: again.passes.value.model) }
-        if again.verifier.source == .run { _verifierModel = State(initialValue: again.verifier.value.model) }
+        if again.verifier.source == .run {
+            _verifierModel = State(initialValue: again.verifier.value.model)
+            _verifierThinking = State(initialValue: again.verifier.value.thinking)
+        }
         if again.impact?.source == .run { _impact = State(initialValue: again.impact?.value) }
         if again.summaryLanguage?.source == .run { _summaryLanguage = State(initialValue: again.summaryLanguage?.value) }
         _fullReview = State(initialValue: true)
@@ -94,6 +99,11 @@ struct NewReviewSheet: View {
     /// The verifier's model from the configuration (brain, then the project profile); empty when none.
     private var configuredVerifier: String {
         [profile?.settings.verifier?.model, catalog?.brainDefaults.verifier?.model, catalog?.builtInDefaults.verifier?.model]
+            .compactMap { $0 }.first { !$0.isEmpty } ?? ""
+    }
+    /// The verifier's thinking from the configuration; empty = Pi's default.
+    private var configuredVerifierThinking: String {
+        [profile?.settings.verifier?.thinking, catalog?.brainDefaults.verifier?.thinking, catalog?.builtInDefaults.verifier?.thinking]
             .compactMap { $0 }.first { !$0.isEmpty } ?? ""
     }
     /// The passes' model from the configuration; empty = Pi's default.
@@ -174,6 +184,11 @@ struct NewReviewSheet: View {
                                   empty: configuredVerifier.isEmpty ? "Choose a model…" : "From the configuration (\(configuredVerifier))") {
                         if configuredVerifier.isEmpty { RequiredLabel("Verifier model") } else { Text("Verifier model") }
                     }
+                    Picker("Verifier thinking", selection: $verifierThinking) {
+                        Text("From the configuration (\(configuredVerifierThinking.isEmpty ? "Pi's default" : configuredVerifierThinking))").tag("")
+                        ForEach(ReviewModelChoice.thinkingLevels, id: \.self) { Text($0).tag($0) }
+                    }
+                    .help("How hard the verifier model thinks (Pi's --thinking). A model without thinking ignores it.")
                     if verifierModel.trimmingCharacters(in: .whitespaces).isEmpty, configuredVerifier.isEmpty {
                         Text("Required: no verifier model is configured. Choose one here, or set it in Review Settings… (models: verifier). A model of "
                              + "another family than the roles' checks their findings best.")
@@ -539,7 +554,9 @@ struct NewReviewSheet: View {
         choices.workItems = workItems.split(whereSeparator: { ", #".contains($0) }).compactMap { Int($0) }
         if !passesModel.isEmpty { choices.settings.passes = ReviewModelChoice(model: passesModel) }
         let verifier = verifierModel.trimmingCharacters(in: .whitespaces)
-        if !verifier.isEmpty { choices.settings.verifier = ReviewModelChoice(model: verifier) }
+        if !verifier.isEmpty || !verifierThinking.isEmpty {
+            choices.settings.verifier = ReviewModelChoice(model: verifier, thinking: verifierThinking)
+        }
         if let value = Int(cap), value > 0 { choices.settings.capCredits = value }
         if let value = Int(maxChangedLines), value > 0 { choices.settings.maxChangedLines = value }
         choices.fullReview = fullReview
@@ -1086,6 +1103,7 @@ struct ReviewRunLogSheet: View {
             }
             .width(min: 110, ideal: 125)
             TableColumn("Credits") { pass in Text(String(format: "%.1f", pass.credits)).monospacedDigit() }.width(55)
+            TableColumn("Cost") { pass in Text(ReviewRunLog.dollars(pass.usage.cost)).monospacedDigit() }.width(55)
             TableColumn("Files") { pass in Text("\(pass.filesRead)").monospacedDigit() }.width(40)
             TableColumn("MCP") { pass in
                 Text("\(pass.mcpCalls)" + (pass.mcpErrors > 0 ? " (\(pass.mcpErrors) failed)" : "") + (pass.blocked > 0 ? " · \(pass.blocked) blocked" : ""))
@@ -1160,6 +1178,7 @@ struct ReviewRunLogSheet: View {
     private func totals(_ log: ReviewRunLog) -> String {
         var parts = [String(format: "%.1f of %d credits", log.credits, log.cap)]
         if let estimate = log.estimate { parts[0] += String(format: " (estimated %.0f)", estimate) }
+        if let cost = log.cost { parts.append(ReviewRunLog.dollars(cost)) }
         parts.append("\(log.passes.count) passes")
         parts.append(ReviewRunLog.duration(log.seconds))
         parts.append("MCP: \(log.calls.count) calls" + (log.calls.isEmpty ? "" : " (\(log.callsByServer))"))
