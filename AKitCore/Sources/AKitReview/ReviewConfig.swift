@@ -97,6 +97,9 @@ public struct ReviewModelChoice: Codable, Sendable, Hashable {
         self.model = model
         self.thinking = thinking
     }
+
+    /// Pi's thinking levels, lowest first (`--thinking`).
+    public static let thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 }
 
 /// When a run looks for uses of the change in other GitLab repositories (R42, the `impact` pass):

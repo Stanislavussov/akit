@@ -147,6 +147,20 @@ public struct ReviewRunLog: Codable, Sendable {
         return whole >= 60 ? "\(whole / 60)m \(String(format: "%02d", whole % 60))s" : "\(whole)s"
     }
 
+    /// US dollars as Pi recorded them for the passes (`usage.cost`); nil when none recorded any.
+    public var cost: Double? { Self.sum(passes.map(\.usage.cost)) }
+
+    static func sum(_ costs: [Double?]) -> Double? {
+        let recorded = costs.compactMap { $0 }
+        return recorded.isEmpty ? nil : recorded.reduce(0, +)
+    }
+
+    /// `$0.42`, `$0.004`, `$12.30`; "—" when Pi recorded no cost. Never a price AKit made up.
+    public static func dollars(_ cost: Double?) -> String {
+        guard let cost else { return "—" }
+        return String(format: cost > 0 && cost < 0.1 ? "$%.3f" : "$%.2f", cost)
+    }
+
     public static func tokens(_ count: Int) -> String {
         count >= 1000 ? String(format: "%.1fk", Double(count) / 1000) : String(count)
     }
@@ -172,14 +186,15 @@ public struct ReviewRunLog: Codable, Sendable {
                      "- Passes model: " + Self.model(passesModel, passesThinking),
                      "- Verifier model: " + Self.model(verifierModel, verifierThinking),
                      String(format: "- Credits: %.1f of %d", credits, cap) + (estimate.map { String(format: " (estimated %.0f)", $0) } ?? ""),
+                     "- Cost: " + (cost.map { Self.dollars($0) + " (as Pi recorded it)" } ?? "Pi recorded none"),
                      "- Time: " + Self.duration(seconds), "",
                      "## Passes", "",
-                     "| Pass | Model | Thinking | Time | Input | Cached | Output | Credits | Files | MCP calls | Blocked | Error |",
-                     "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+                     "| Pass | Model | Thinking | Time | Input | Cached | Output | Credits | Cost | Files | MCP calls | Blocked | Error |",
+                     "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for pass in passes {
             let cells = [pass.name, pass.model.isEmpty ? "Pi's default" : pass.model, pass.thinking.isEmpty ? "—" : pass.thinking,
                          Self.duration(pass.seconds), Self.tokens(pass.usage.input), Self.tokens(pass.usage.cached), Self.tokens(pass.usage.output),
-                         String(format: "%.1f", pass.credits), String(pass.filesRead),
+                         String(format: "%.1f", pass.credits), Self.dollars(pass.usage.cost), String(pass.filesRead),
                          "\(pass.mcpCalls)" + (pass.mcpErrors > 0 ? " (\(pass.mcpErrors) failed)" : ""), String(pass.blocked),
                          pass.error ?? ""]
             lines.append("| " + cells.map { $0.replacingOccurrences(of: "|", with: "\\|").replacingOccurrences(of: "\n", with: " ") }

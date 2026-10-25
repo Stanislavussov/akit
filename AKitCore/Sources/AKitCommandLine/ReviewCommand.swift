@@ -12,7 +12,7 @@ extension AKitCLI {
 
     Usage:
       akit review MR-URL[@COMMIT] [MR-URL[@COMMIT]…] [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
-                         [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
+                         [--passes-model M] [--verifier-model M] [--verifier-thinking L] [--cap CREDITS] [--brain DIR]
                          [--note TEXT]… [--note-file PATH]… [--link URL]… [--extra-server NAME]…
                          [--impact auto|off|always] [--summary-language CODE] [--gather-only]
                          [--anyway] [--full]
@@ -42,7 +42,7 @@ extension AKitCLI {
                                         (branches: the remote ones too)
       akit review local [PATH] [--base REF] [--head REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
-                         [--verifier-model M] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
+                         [--verifier-model M] [--verifier-thinking L] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
                          [--link URL]… [--extra-server NAME]… [--gather-only]
                                         Review a local git workspace (an Orca or herdr worktree; PATH
                                         defaults to the current folder): the commits since the base
@@ -152,7 +152,14 @@ extension AKitCLI {
         let roleChanges = args.values("--role")
         var settings = ReviewSettingsPatch()
         if let model = args.value("--passes-model") { settings.passes = ReviewModelChoice(model: model) }
-        if let model = args.value("--verifier-model") { settings.verifier = ReviewModelChoice(model: model) }
+        let verifierThinking = args.value("--verifier-thinking")
+        if let level = verifierThinking, !ReviewModelChoice.thinkingLevels.contains(level) {
+            throw Failure(message: "--verifier-thinking is one of \(ReviewModelChoice.thinkingLevels.joined(separator: ", ")), not \(level).")
+        }
+        if args.value("--verifier-model") != nil || verifierThinking != nil {
+            // Field by field: a level alone keeps the configured model, and the other way round.
+            settings.verifier = ReviewModelChoice(model: args.value("--verifier-model") ?? "", thinking: verifierThinking ?? "")
+        }
         if let cap = try positiveNumber(args.value("--cap"), "--cap") { settings.capCredits = cap }
         if let lines = try positiveNumber(args.value("--max-changed-lines"), "--max-changed-lines") { settings.maxChangedLines = lines }
         if let text = args.value("--impact") {
