@@ -29,6 +29,14 @@ extension AKitCLITests {
         #expect(await review(["config", "show", "--project", "nope"]).err.contains("no project profile nope"))
     }
 
+    /// `ask RUN`: one of --question and --note; a run without passes has no session to fork.
+    @Test func reviewAskArguments() async throws {
+        try write(".akit/local/review/runs/r2/run.json", "{}")
+        #expect(await review(["ask", "r2"]).err.contains("Give one: --question TEXT or --note TEXT."))
+        #expect(await review(["ask", "r2", "--question", "a", "--note", "b"]).err.contains("Give one"))
+        #expect(await review(["--help"]).out.contains("akit review ask RUN [--finding ID]"))
+    }
+
     /// `kb-gaps RUN`: what the review missed in the knowledge base, each with its propose command.
     @Test func reviewKnowledgeGaps() async throws {
         let run = ".akit/local/review/runs/r1"

@@ -70,6 +70,7 @@ final class ReviewModel {
         }
         do {
             run = try ReviewWorkflow.load(ReviewPaths(home: home).run(id))
+            conversation = ReviewAsk.entries(ReviewPaths(home: home).run(id))
         } catch {
             problem = error.localizedDescription
         }
@@ -306,6 +307,30 @@ final class ReviewModel {
             if let id = run?.id { open(id) }
         } catch {
             problem = error.localizedDescription
+        }
+    }
+
+    // MARK: - Ask… and Add Note…
+
+    /// The run's questions and notes, oldest first.
+    private(set) var conversation: [ReviewConversationEntry] = []
+    /// What Pi is answering now: the finding's id, or "" for the whole review.
+    private(set) var asking: String?
+
+    func thread(_ finding: String?) -> [ReviewConversationEntry] { conversation.filter { $0.finding == finding } }
+
+    /// One question or note to Pi, about a finding or (nil) the whole review. The answer joins
+    /// the thread; a note that changes the findings makes a new version and plans the requests again.
+    func ask(finding: String?, kind: ReviewConversationEntry.Kind, text: String) {
+        guard let folder, asking == nil else { return }
+        asking = finding ?? ""
+        Task {
+            await attemptAsync {
+                let entry = try await ReviewAsk.ask(folder, finding: finding, kind: kind, text: text, env: self.env)
+                if entry.version != nil { self.discussChanges = nil }
+            }
+            self.asking = nil
+            self.conversation = ReviewAsk.entries(folder)
         }
     }
 

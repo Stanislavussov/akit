@@ -106,6 +106,10 @@ extension AKitCLI {
       akit review log RUN [--json]      What the run did, for analysis: each pass's model, thinking,
                                         time, usage and credits, the MCP calls and blocked calls,
                                         and what each role's findings became
+      akit review ask RUN [--finding ID] (--question TEXT | --note TEXT) [--json]
+                                        Ask Pi about a finding (or the whole review), or add what you
+                                        know: Pi answers with the review in mind; a note may change
+                                        the findings (a new version, requests planned again)
       akit review kb-gaps RUN [--json]  What the review missed in the knowledge base: searches with
                                         no answer, gaps reported with system knowledge, notes it used
                                         without a description; each with the akit kb propose command
@@ -380,6 +384,32 @@ extension AKitCLI {
                 out(log.markdown)
             }
             return 0
+        case "ask":
+            let json = args.flag("--json")
+            // `--note` was read above with the run's context notes.
+            let finding = args.value("--finding"), question = args.value("--question")
+            let note = choices.notes.isEmpty ? nil : choices.notes
+            guard let id = args.positional() else { throw Failure(message: "Which run? akit review ask RUN (--question TEXT | --note TEXT).") }
+            try args.finish()
+            guard (question == nil) != (note == nil), let text = question ?? note else {
+                throw Failure(message: "Give one: --question TEXT or --note TEXT.")
+            }
+            let folder = try runFolder(id, env: env)
+            let entry: ReviewConversationEntry
+            do {
+                entry = try await ReviewAsk.ask(folder, finding: finding, kind: question != nil ? .question : .note, text: text, env: env)
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            if json {
+                out(String(decoding: try ReviewJSON.encoder.encode(entry), as: UTF8.self))
+            } else {
+                out(entry.answer ?? "Pi gave no answer: \(entry.error ?? "unknown")")
+                if let version = entry.version {
+                    out("Version \(version) of the findings: " + (entry.changes ?? []).joined(separator: "; ") + ". The requests were planned again: akit review show \(id)")
+                }
+            }
+            return entry.error == nil ? 0 : 1
         case "kb-gaps":
             let json = args.flag("--json")
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review kb-gaps RUN.") }

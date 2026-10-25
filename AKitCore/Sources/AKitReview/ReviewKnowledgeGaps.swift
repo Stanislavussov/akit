@@ -28,6 +28,10 @@ public struct ReviewKnowledgeGap: Codable, Sendable, Hashable, Identifiable {
     public var area: String?
     /// The passes that met it.
     public var passes: [String]
+
+    public init(id: String, kind: Kind, subject: String, why: String = "", area: String? = nil, passes: [String] = []) {
+        (self.id, self.kind, self.subject, self.why, self.area, self.passes) = (id, kind, subject, why, area, passes)
+    }
 }
 
 public enum ReviewKnowledgeGaps {

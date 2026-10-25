@@ -245,6 +245,13 @@ invent facts. Every note needs `description:` (one line: agents read it first an
 only when needed; `akit kb lint` reports `missing-description`), so pass `--set description=…`
 when you propose a note. The Review screen has the same list (Missing in the knowledge base,
 Propose Note… / Propose Description…).
+`akit review ask RUN [--finding ID] (--question TEXT | --note TEXT) [--json]` asks Pi about a
+finding (or the whole review without --finding) or adds the user's knowledge; Pi forks the
+conversation's last session, so it remembers the review and the earlier questions. A note may
+change the findings: AKit makes a new version and plans the requests again (nothing is sent).
+Use it when the user wants an answer about a finding or tells you something the review should
+take into account; `--json` gives {id, finding, kind, text, answer, error, version, changes}. The
+Review screen has Ask… and Add Note… on each comment and an Ask… menu for the whole review.
 
 `akit review points [PATH] --find TEXT [--kind branches|tags|commits] [--json]` lists the branches, remote branches, tags and
 commits of a local workspace whose name, commit message, author or id start holds every word of

@@ -71,6 +71,8 @@ struct ReviewKnowledgeProposeSheet: View {
     let gap: ReviewKnowledgeGap
     let run: String
     let base: URL
+    /// The text the draft starts with; nil: `ReviewKnowledgeGaps.draftBody`.
+    var initialText: String? = nil
     let done: () -> Void
     @State private var area = ""
     @State private var name = ""
@@ -127,7 +129,7 @@ struct ReviewKnowledgeProposeSheet: View {
             let knowledge = KnowledgeBase(root: base)
             areas = knowledge.areas().map(\.name).sorted()
             if let suggested = gap.area, areas.contains(suggested) { area = suggested }
-            text = ReviewKnowledgeGaps.draftBody(gap)
+            text = initialText ?? ReviewKnowledgeGaps.draftBody(gap)
         }
     }
 

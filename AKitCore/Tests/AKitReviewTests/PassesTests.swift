@@ -64,6 +64,10 @@ struct ReviewRunFixture {
     echo "{\"type\":\"session\",\"version\":3,\"id\":\"$ID\"}"
     echo '{"type":"tool_execution_start","toolName":"read","args":{"path":"../context/diff.patch"}}'
     mkdir -p "$AKIT_REVIEW_RUN/passes"
+    if [ "$AKIT_REVIEW_PASS" = "discuss" ]; then
+      [ -f "$HOME/fake/discuss.json" ] && mv "$HOME/fake/discuss.json" "$AKIT_REVIEW_RUN/passes/discuss-$$.json"
+      cp "$HOME/fake/discuss-answer.txt" "$HOME/fake/answer.txt" 2>/dev/null
+    fi
     [ -f "$HOME/fake/$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/$AKIT_REVIEW_PASS.json"
     [ -f "$HOME/fake/boundaries-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/boundaries-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/boundaries.json"
     [ -f "$HOME/fake/consumers-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/consumers-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/consumers.json"

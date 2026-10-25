@@ -1029,6 +1029,10 @@ EOF
 file "$REVIEWRUN/mcp/calls/role-security-1760520100000-0001.json" <<'EOF'
 {"pass":"role-security","tool":"mcp__context7__query-docs","server":"context7","input":"{\"libraryId\":\"/dotnet/aspnetcore\",\"query\":\"ILogger structured logging sensitive data\"}","text":["Docs about logging."],"isError":false}
 EOF
+# Ask… on the whole review (Questions and notes of the run): a made-up question and Pi's answer.
+file "$REVIEWRUN/conversation.jsonl" <<'EOF'
+{"answer":"Ne. /health a /metrics middleware nepouští dál bez hlavičky; dostanou 401 jako ostatní cesty. Pokud mají zůstat anonymní, je to otázka f5.","asked":"2026-10-15T09:40:00Z","id":"a1","kind":"question","text":"Zůstane /health dostupný bez přihlášení?"}
+EOF
 # The knowledge base in the review passes: a search with no answer and an opened note without a
 # description ("Missing in the knowledge base" of the run).
 file "$REVIEWRUN/mcp/calls/role-security-1760520101000-0002.json" <<'EOF'

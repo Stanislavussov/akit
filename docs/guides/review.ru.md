@@ -37,7 +37,7 @@
 - «Хочу ревью своей ветки до MR» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree (см. [ревью локальной копии](#local)).
 - «Агенту нужен макет из Figma или страница вики» → поля **Context for this review**, **Links** и блок **Extra servers** в **New Review…** (см. [контекст ревью](#context)).
 
-![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier, кнопки Log… и Review Again…; свёрнутый блок Overview с меткой Russian и кнопкой Translate; переключатель Requests | Map; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) и строкой Verifier: confirmed; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
+![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier, кнопки Log… и Review Again…; свёрнутый блок Overview с меткой Russian и кнопкой Translate; переключатель Requests | Map; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) строкой Verifier: confirmed и кнопками Edit, Ask…, Add Note…, Reject и Undo Approve; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, меню Ask…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
 ### Зачем это нужно
 <!-- section: overview-why -->
@@ -1540,6 +1540,26 @@ AKit при сборе пишет пробел, когда:
 В терминале — `akit review kb-gaps RUN`: тот же список и у каждой строки готовая команда `akit kb propose …`. `--json` отдаёт список `[{id, kind, subject, why, area, passes}]`, где `kind` — `search`, `reported` или `no-description`.
 
 > **Совет:** заметка без описания видна и в **Lint** базы знаний как `missing-description`. Описание в одну строку экономит контекст каждого ревью.
+
+## Ask… и Add Note…: спросить и дополнить своими знаниями
+<!-- section: ask -->
+
+**Что это:** вопрос к Pi или ваше знание — о одном комментарии или о всём ревью. Pi отвечает прямо в AKit, без терминала. Он помнит brief, находки, проверку verifier и прошлые вопросы этого ревью.
+
+| Кнопка | Где | Что делает |
+|---|---|---|
+| **Ask…** | у комментария | вопрос о находке. Pi отвечает и находки не меняет, если вы не просите |
+| **Add Note…** | у комментария | ваше знание о находке. Pi считает его верным, если код не говорит обратное, и может подтвердить, отклонить, исправить находку или добавить новую |
+| меню **Ask…** → **Ask About the Review…** / **Add a Note to the Review…** | внизу, рядом с **Discuss in Pi…** | то же для всего ревью |
+
+![Окно Add a note to the whole review: подпись What you know that the review didn't: Pi takes it as true unless the code shows otherwise, and may confirm, reject or correct findings, or add one; пустое поле текста; внизу строка Pi uses the run's verifier model and the sending policy, as Discuss in Pi… does и кнопки Cancel и Add Note](images/review-ask.png)
+
+- Ответ появляется под комментарием, а для всего ревью — в блоке **Questions and notes (N)**. Пока Pi думает, видно «Pi is answering…».
+- Если заметка изменила находки, под ответом строка «Version N of the findings: …». AKit заново составляет запросы. В GitLab ничего не уходит, пока вы не одобрите.
+- У заметки есть ссылка **Propose to Knowledge Base…**: ваша заметка как черновик заметки базы знаний (окно из раздела [чего нет в базе знаний](#kb-gaps)). Так следующее ревью уже будет это знать.
+- Pi работает на модели verifier и по политике отправки, как **Discuss in Pi…**. Кредиты вопроса видны в **Log…** как проход `discuss`.
+
+В терминале: `akit review ask RUN [--finding ID] (--question TEXT | --note TEXT) [--json]`.
 
 ## Discuss in Pi…: обсудить ревью и сделать новую версию
 <!-- section: discuss -->

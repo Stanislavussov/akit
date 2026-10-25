@@ -169,6 +169,12 @@ Built the same day:
   answer as REST's (`GitLabJSON.restShape`, only answers with a `gid://gitlab/` id); the parts in it
   are the merge request's; the head is `diff_head_sha`, else the newest commit (base empty: the diff
   comes from the answers, no blame). It has no draft-note tools, so Send Drafts can't write through it.
+- Ask… and Add Note… (2026-10-25, the user's request): on each comment and on the whole review. A
+  one-shot `pi -p` with Discuss in Pi…'s setup (`ReviewDiscuss.setup`) forks the conversation's last
+  session (at first the verifier's); the thread is `<run>/conversation.jsonl`. A note may submit
+  verdicts or findings (`passes/discuss-*.json`), applied as a new version with Discuss's rules;
+  its tokens are logged as a `discuss` pass. A note can become a knowledge base proposal.
+  `akit review ask RUN [--finding ID] (--question T | --note T)`.
 - `akit review check [--project P]` and Review Settings… → **Check Servers** run
   `pi mcp list --json` and sort each tool (read, write drafts, blocked); never a server's
   command line, environment or headers. `akit review token` and the token blocks are gone.

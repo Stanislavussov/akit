@@ -33,11 +33,21 @@ public enum ReviewDiscuss {
     the developer what changed; nothing reaches GitLab without their approval.
     """
 
-    /// Writes `<run>/discuss.command`: the environment of a pass and `pi --fork <verifier session>`.
+    /// What Discuss in Pi… and Ask… start: Pi forking `session` (default: the verifier's), with the
+    /// run's roles, rules and reading tools, and the environment of a pass named `discuss`, so
+    /// what it hands back through `akit_submit_findings` lands in `passes/discuss-*.json`.
+    struct Setup {
+        let run: ReviewWorkflow.Run
+        let pi: URL
+        let cwd: URL
+        let arguments: [String]
+        let variables: [(String, String)]
+    }
+
     /// Checks the sending policy first: the discussion sends the run's context again.
-    public static func script(_ folder: URL, env: HarnessEnvironment) async throws -> URL {
+    static func setup(_ folder: URL, env: HarnessEnvironment, fork: String? = nil) async throws -> Setup {
         let run = try ReviewWorkflow.load(folder)
-        guard let log = run.passes, let session = log.verifierSessionFile ?? log.verifierSession.flatMap({
+        guard let log = run.passes, let session = fork ?? log.verifierSessionFile ?? log.verifierSession.flatMap({
             ReviewPasses.sessionFile(id: $0, in: folder.appending(path: "sessions"))?.path
         }) ?? ReviewPasses.sessionFile(id: log.mainSession, in: folder.appending(path: "sessions"))?.path else {
             throw Failure(message: "\(run.id) has no Pi session to discuss yet; run the passes first.")
@@ -45,7 +55,6 @@ public enum ReviewDiscuss {
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         _ = try await ReviewPasses.gate(model: run.spec.verifier.value.model, env: env)
         let worktree = run.worktree
-        let cwd = worktree ?? folder
         try ReviewPasses.write(ReviewPrompts.system(spec: run.spec, hasWorktree: worktree != nil) + "\n\n" + opening,
                                to: folder.appending(path: "prompts/discuss.md"))
         try ReviewPasses.write(ReviewExtension.source, to: folder.appending(path: "akit-review.ts"))
@@ -75,14 +84,21 @@ public enum ReviewDiscuss {
                 + ReviewLinked.worktrees(folder, spec: run.spec).map(\.path)).joined(separator: ":")),
             ("AKIT_REVIEW_SCENARIO", run.spec.scenario.value), ("AKIT_REVIEW_HEAD", run.spec.headSHA ?? ""),
         ] + knowledge.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+        return Setup(run: run, pi: pi, cwd: worktree ?? folder, arguments: arguments, variables: variables)
+    }
+
+    /// Writes `<run>/discuss.command`: the environment of a pass and `pi --fork <verifier session>`.
+    public static func script(_ folder: URL, env: HarnessEnvironment) async throws -> URL {
+        let setup = try await setup(folder, env: env)
+        let run = setup.run
         let text = """
         #!/bin/sh
         # Discuss in Pi… for AKit review run \(run.id). Written by AKit; it writes it again each time.
-        cd \(shellQuoted(cwd.path)) || exit 1
-        \(variables.map { "export \($0.0)=\(shellQuoted($0.1))" }.joined(separator: "\n"))
+        cd \(shellQuoted(setup.cwd.path)) || exit 1
+        \(setup.variables.map { "export \($0.0)=\(shellQuoted($0.1))" }.joined(separator: "\n"))
         echo "AKit review \(run.spec.mergeRequest.label): Pi has the brief, the findings and the verifier's checks. Ask about a finding, or ask it to look again."
         echo "Changes come back to AKit through akit_submit_findings; nothing reaches GitLab without your approval."
-        exec \(shellQuoted(pi.path)) \(arguments.map(shellQuoted).joined(separator: " "))
+        exec \(shellQuoted(setup.pi.path)) \(setup.arguments.map(shellQuoted).joined(separator: " "))
 
         """
         let url = folder.appending(path: "discuss.command")

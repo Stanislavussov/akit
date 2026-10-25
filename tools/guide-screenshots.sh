@@ -186,6 +186,7 @@ REVIEWMR="https://gitlab.example.com/shop/orders-service/-/merge_requests/42"
 shot review-run          1280x860 --section review --select 20261015-091500-orders-service-42 --tab requests
 shot review-overview     1280x900 --section review --select 20261015-091500-orders-service-42
 shot review-kb-propose   1280x860 --section review --select 20261015-091500-orders-service-42 --tab kb-propose
+shot review-ask          1280x860 --section review --select 20261015-091500-orders-service-42 --tab ask
 shot review-map          1440x900 --section review --select 20261015-091500-orders-service-42 --tab map --query consumer:shop/web-mfe:src/api/orders.ts
 # Open Larger on the Flow: a sheet of 90% of the screen, at Fit.
 shot review-flow-large   1440x900 --section review --select 20261015-091500-orders-service-42 --tab flow
