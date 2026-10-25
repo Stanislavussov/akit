@@ -106,7 +106,7 @@ public enum ReviewKnowledgeGaps {
         let where_ = base.map { " --base \(quoted($0))" } ?? ""
         switch gap.kind {
         case .noDescription:
-            return "akit kb propose --note \(gap.subject) --set 'description=<one line>' --reason \(quoted(reason(gap, run: run)))\(where_)"
+            return "akit kb propose --note \(quoted(gap.subject)) --set 'description=<one line>' --reason \(quoted(reason(gap, run: run)))\(where_)"
         case .search, .reported:
             return "akit kb propose --note AREA/NAME --set 'description=<one line>' --file NOTE.md --reason \(quoted(reason(gap, run: run)))\(where_)"
         }

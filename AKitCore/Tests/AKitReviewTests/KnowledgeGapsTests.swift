@@ -47,7 +47,7 @@ struct ReviewKnowledgeGapsTests {
         ], "a search another one answered (ledger) and gather's own gaps are not missing knowledge")
         #expect(gaps[1].why == "A field is removed" && gaps[1].area == "payments")
         #expect(ReviewKnowledgeGaps.proposeCommand(gaps[3], run: "r1", base: "/kb")
-            == "akit kb propose --note payments/billing --set 'description=<one line>' --reason 'AKit review r1 used this note; it had no description' --base '/kb'")
+            == "akit kb propose --note 'payments/billing' --set 'description=<one line>' --reason 'AKit review r1 used this note; it had no description' --base '/kb'")
         #expect(ReviewKnowledgeGaps.draftBody(gaps[1]).hasPrefix("# Who consumes order.created\n\nWhy a review needed it: A field is removed"))
         #expect(ReviewKnowledgeGaps.read(folder: home.url.appending(path: run), base: nil).allSatisfy { $0.kind != .noDescription })
     }

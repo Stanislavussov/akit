@@ -118,8 +118,8 @@ public enum ReviewDiscuss {
     /// Makes a new version of the findings from the pending submissions: verdicts change
     /// findings by id, new findings are checked and fingerprinted like a role's. The old
     /// version stays as `findings-v<N>.json`; the requests are planned again.
-    public static func apply(_ folder: URL, env: HarnessEnvironment) async throws -> Changes? {
-        let files = pending(folder)
+    public static func apply(_ folder: URL, env: HarnessEnvironment, only: ((URL) -> Bool)? = nil) async throws -> Changes? {
+        let files = pending(folder).filter { only?($0) ?? true }
         guard !files.isEmpty else { return nil }
         let run = try ReviewWorkflow.load(folder)
         guard var current = run.findings else { throw Failure(message: "\(run.id) has no findings yet.") }
@@ -163,16 +163,27 @@ public enum ReviewDiscuss {
     }
 
     /// The discussion's tokens go into `passes.json` and the send log once, read from the
-    /// forked sessions Pi saved.
-    static func logUsage(_ folder: URL, run: ReviewWorkflow.Run, env: HarnessEnvironment) throws {
+    /// forked sessions Pi saved. A fork starts with a copy of its parent's entries (same ids):
+    /// the files are read oldest first and an entry counts only where its id first appears, so
+    /// a chain of Ask… forks never counts the verifier or an earlier answer again. `only`: log
+    /// just this session (Ask…), so an interactive discussion still open is logged when it ends.
+    static func logUsage(_ folder: URL, run: ReviewWorkflow.Run, env: HarnessEnvironment, only: String? = nil) throws {
         guard var log = run.passes else { return }
         let known = Set(log.passes.compactMap(\.session) + [log.mainSession])
-        for file in FileWalk.children(of: folder.appending(path: "sessions")) where file.pathExtension == "jsonl" {
-            guard let data = try? Data(contentsOf: file), let entries = try? JSONLines.objects(in: data),
-                  let header = entries.first, header["type"] as? String == "session", let id = header["id"] as? String,
-                  !known.contains(id) else { continue }
+        let files = FileWalk.children(of: folder.appending(path: "sessions")).filter { $0.pathExtension == "jsonl" }
+            .compactMap { file -> (id: String, time: String, entries: [[String: Any]])? in
+                guard let data = try? Data(contentsOf: file), let entries = try? JSONLines.objects(in: data),
+                      let header = entries.first, header["type"] as? String == "session", let id = header["id"] as? String else { return nil }
+                return (id, header["timestamp"] as? String ?? file.lastPathComponent, entries)
+            }
+            .sorted { $0.time < $1.time }
+        var seen = Set<String>()
+        for (id, _, entries) in files {
+            let fresh = entries.filter { entry in (entry["id"] as? String).map { !seen.contains($0) } ?? true }
+            for entry in entries { if let entryID = entry["id"] as? String { seen.insert(entryID) } }
+            guard !known.contains(id), only.map({ $0 == id }) ?? true else { continue }
             var usage = SendUsage()
-            for entry in entries {
+            for entry in fresh {
                 guard let message = entry["message"] as? [String: Any], message["role"] as? String == "assistant",
                       let recorded = message["usage"] as? [String: Any] else { continue }
                 let tokens = PiLogFormat.tokens(fromPiUsage: recorded)

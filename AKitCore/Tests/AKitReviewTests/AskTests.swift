@@ -35,5 +35,37 @@ extension ReviewProcessTests {
             await #expect(throws: ReviewAsk.Failure.self) { try await ReviewAsk.ask(run.folder, finding: "f9", kind: .question, text: "x", env: run.home.env) }
             await #expect(throws: ReviewAsk.Failure.self) { try await ReviewAsk.ask(run.folder, finding: nil, kind: .note, text: "  ", env: run.home.env) }
         }
+    
+
+        /// A fork copies its parent's entries with their ids: each answer's tokens count once.
+        @Test func aForkChainCountsEachEntryOnce() async throws {
+            let run = try await ReviewRunFixture.make()
+            run.playTypicalRun()
+            _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            let sessions = run.folder.appending(path: "sessions")
+            func entry(_ id: String, _ input: Int) -> String {
+                #"{"type":"message","id":"\#(id)","message":{"role":"assistant","usage":{"input":\#(input),"output":0,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.5}}}}"#
+            }
+            func header(_ id: String, _ time: String) -> String { #"{"type":"session","id":"\#(id)","timestamp":"\#(time)"}"# }
+            let base = [entry("v1", 1000)]
+            try (["{\"type\":\"session\",\"id\":\"verifier-old\",\"timestamp\":\"2026-10-25T10:00:00Z\"}"] + base).joined(separator: "\n")
+                .write(to: sessions.appending(path: "2026-10-25T10-00-00-000Z_verifier-old.jsonl"), atomically: true, encoding: .utf8)
+            try ([header("ask-1", "2026-10-25T11:00:00Z")] + base + [entry("q1", 100)]).joined(separator: "\n")
+                .write(to: sessions.appending(path: "2026-10-25T11-00-00-000Z_ask-1.jsonl"), atomically: true, encoding: .utf8)
+            try ([header("ask-2", "2026-10-25T12:00:00Z")] + base + [entry("q1", 100), entry("q2", 10)]).joined(separator: "\n")
+                .write(to: sessions.appending(path: "2026-10-25T12-00-00-000Z_ask-2.jsonl"), atomically: true, encoding: .utf8)
+            try ReviewDiscuss.logUsage(run.folder, run: try ReviewWorkflow.load(run.folder), env: run.home.env, only: "ask-2")
+            let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
+            let asked = log.passes.filter { $0.name == "discuss" }
+            #expect(asked.map(\.session) == ["ask-2"] && asked.first?.usage.input == 10 && asked.first?.usage.cost == 0.5,
+                    "only q2: the verifier's v1 and ask-1's q1 are copies")
+        }
+
+        @Test func onlyThisAsksSubmissionsCount() {
+            let folder = URL(filePath: "/tmp/run/passes")
+            #expect(ReviewAsk.submitted(folder.appending(path: "discuss-1761400000500.json"), since: 1_761_400_000_000))
+            #expect(!ReviewAsk.submitted(folder.appending(path: "discuss-1761399999999.json"), since: 1_761_400_000_000), "an open discussion's")
+            #expect(!ReviewAsk.submitted(folder.appending(path: "discuss.json"), since: 0))
+        }
     }
 }

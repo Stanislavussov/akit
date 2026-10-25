@@ -33,7 +33,7 @@ struct ReviewAskSheet: View {
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.asking != nil)
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isBusy)
             }
         }
         .padding()
@@ -51,7 +51,7 @@ struct ReviewThreadView: View {
 
     var body: some View {
         let entries = model.thread(finding)
-        if !entries.isEmpty || model.asking == (finding ?? "") {
+        if !entries.isEmpty || model.isAsking(finding) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(entries) { entry in
                     VStack(alignment: .leading, spacing: 3) {
@@ -73,7 +73,7 @@ struct ReviewThreadView: View {
                         }
                     }
                 }
-                if model.asking == (finding ?? "") {
+                if model.isAsking(finding) {
                     HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Pi is answering…").font(.caption).foregroundStyle(.secondary) }
                 }
             }

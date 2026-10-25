@@ -76,7 +76,8 @@ final class ReviewModel {
         }
     }
 
-    var isBusy: Bool { activity != nil }
+    /// A pass, a send, or an Ask… answer: they all write the run's files.
+    var isBusy: Bool { activity != nil || asking != nil }
 
     // MARK: - Running
 
@@ -314,23 +315,26 @@ final class ReviewModel {
 
     /// The run's questions and notes, oldest first.
     private(set) var conversation: [ReviewConversationEntry] = []
-    /// What Pi is answering now: the finding's id, or "" for the whole review.
-    private(set) var asking: String?
+    /// What Pi is answering now: the run, and the finding's id or "" for the whole review.
+    private(set) var asking: (run: String, finding: String)?
 
     func thread(_ finding: String?) -> [ReviewConversationEntry] { conversation.filter { $0.finding == finding } }
+
+    /// Whether Pi is answering about this finding (nil: the whole review) of the open run.
+    func isAsking(_ finding: String?) -> Bool { asking.map { $0.run == run?.id && $0.finding == (finding ?? "") } ?? false }
 
     /// One question or note to Pi, about a finding or (nil) the whole review. The answer joins
     /// the thread; a note that changes the findings makes a new version and plans the requests again.
     func ask(finding: String?, kind: ReviewConversationEntry.Kind, text: String) {
-        guard let folder, asking == nil else { return }
-        asking = finding ?? ""
+        guard let folder, let id = run?.id, !isBusy else { return }
+        asking = (id, finding ?? "")
         Task {
             await attemptAsync {
-                let entry = try await ReviewAsk.ask(folder, finding: finding, kind: kind, text: text, env: self.env)
-                if entry.version != nil { self.discussChanges = nil }
+                _ = try await ReviewAsk.ask(folder, finding: finding, kind: kind, text: text, env: self.env)
             }
             self.asking = nil
-            self.conversation = ReviewAsk.entries(folder)
+            // Another run may be open by now: only the open run's thread is shown.
+            if self.folder == folder { self.conversation = ReviewAsk.entries(folder) }
         }
     }
 

@@ -62,6 +62,14 @@ public enum ReviewAsk {
         }
     }
 
+    /// A discussion submission written after `since` (ms): the extension names it
+    /// `discuss-<Date.now()>.json`.
+    static func submitted(_ file: URL, since: UInt64) -> Bool {
+        let name = file.deletingPathExtension().lastPathComponent
+        guard name.hasPrefix("discuss-"), let time = UInt64(name.dropFirst("discuss-".count)) else { return false }
+        return time >= since
+    }
+
     /// The prompt of one question or note: what it is about, the developer's text, and what Pi may do.
     static func prompt(_ kind: ReviewConversationEntry.Kind, text: String, finding: ReviewFinding?) -> String {
         let about = finding.map { finding in
@@ -110,14 +118,20 @@ public enum ReviewAsk {
             return found
         }
         let earlier = entries(folder)
-        // The thread goes on from the last answer that has a session, whatever it was about: Pi
-        // remembers the whole conversation.
-        let fork = earlier.last(where: { $0.session != nil }).flatMap { entry in
-            entry.session.flatMap { ReviewPasses.sessionFile(id: $0, in: folder.appending(path: "sessions"))?.path }
+        // The thread goes on from the last good answer, whatever it was about: Pi remembers the
+        // whole conversation. A failed or stopped answer's session may end mid-turn: never fork it.
+        var fork: String?
+        if let last = earlier.last(where: { $0.session != nil && $0.error == nil }), let session = last.session {
+            guard let file = ReviewPasses.sessionFile(id: session, in: folder.appending(path: "sessions")) else {
+                throw Failure(message: "The Pi session of \(last.id) is gone from \(run.id)'s sessions folder, so Pi can't go on with the thread.")
+            }
+            fork = file.path
         }
         let setup = try await ReviewDiscuss.setup(folder, env: env, fork: fork)
         let number = earlier.count + 1
-        var entry = ReviewConversationEntry(id: "a\(number)", finding: id, kind: kind, text: body, asked: .now)
+        // The saved copy is masked like the answers; Pi gets the text as written.
+        var entry = ReviewConversationEntry(id: "a\(number)", finding: id, kind: kind, text: SecretFilter.masked(body), asked: .now)
+        let started = UInt64(Date().timeIntervalSince1970 * 1000)
         var environment = await ReviewPasses.passEnvironment(env)
         for (key, value) in setup.variables { environment[key] = value }
         let arguments = ["-p", "--mode", "json", "--offline"] + setup.arguments + ["--", prompt(kind, text: body, finding: finding)]
@@ -127,11 +141,17 @@ public enum ReviewAsk {
         entry.session = output.session
         entry.answer = output.answer.map { SecretFilter.masked($0) }
         entry.error = output.error ?? (output.answer == nil ? "Pi gave no answer." : nil)
-        if let changes = try await ReviewDiscuss.apply(folder, env: env) {
-            entry.version = changes.version
-            entry.changes = changes.added.map { "new: \($0)" } + changes.changed
-        } else {
-            try ReviewDiscuss.logUsage(folder, run: try ReviewWorkflow.load(folder), env: env)
+        // Only what this answer submitted (an open Discuss in Pi… keeps its own), and only its
+        // tokens. The answer is kept even when making the new version fails.
+        do {
+            if let changes = try await ReviewDiscuss.apply(folder, env: env, only: { Self.submitted($0, since: started) }) {
+                entry.version = changes.version
+                entry.changes = changes.added.map { "new: \($0)" } + changes.changed
+            }
+            if let session = output.session { try ReviewDiscuss.logUsage(folder, run: try ReviewWorkflow.load(folder), env: env, only: session) }
+        } catch {
+            entry.error = [entry.error, "The answer came, but AKit couldn't apply it: \(SecretFilter.masked(error.localizedDescription))"]
+                .compactMap { $0 }.joined(separator: " ")
         }
         try append(entry, to: folder)
         return entry

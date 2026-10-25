@@ -238,6 +238,7 @@ struct ReviewRunDetail: View {
     /// What the overview and the map show: they are read again when the findings change.
     private var filesKey: String {
         "\(run.id)|\(run.status?.stage.rawValue ?? "")|\(run.findings?.version ?? 0)|\(run.findings?.created.timeIntervalSince1970 ?? 0)"
+            + "|\(model.conversation.count)"
     }
 
     private var requests: [ReviewRequest] { run.plan?.requests ?? [] }
@@ -555,7 +556,7 @@ struct ReviewRunDetail: View {
 
     @ViewBuilder private var reviewThread: some View {
         let count = model.thread(nil).count
-        if count > 0 || model.asking == "" {
+        if count > 0 || model.isAsking(nil) {
             DisclosureGroup("Questions and notes (\(count))") {
                 ReviewThreadView(run: run, finding: nil).padding(.top, 4)
             }
@@ -613,7 +614,7 @@ struct ReviewRunDetail: View {
                 Button("Add a Note to the Review…") { reviewAskKind = .note }
             }
             .fixedSize()
-            .disabled(run.passes == nil || model.asking != nil)
+            .disabled(run.passes == nil || model.isBusy)
             .help("A question about the whole review, or what you know that it missed: Pi answers here; a note may change the findings")
             .sheet(item: $reviewAskKind) { kind in ReviewAskSheet(finding: nil, kind: kind) }
             Button("Discuss in Pi…") { model.discuss() }
@@ -741,10 +742,10 @@ struct ReviewRequestCard: View {
                 .help("Change the text before it goes to GitLab; the change is kept to improve the roles")
                 if finding != nil {
                     Button("Ask…") { askKind = .question }
-                        .disabled(model.asking != nil)
+                        .disabled(model.isBusy)
                         .help("Ask Pi about this finding: it answers with the whole review in mind")
                     Button("Add Note…") { askKind = .note }
-                        .disabled(model.asking != nil)
+                        .disabled(model.isBusy)
                         .help("Add what you know about it: Pi may confirm, reject or correct the finding (a new version you approve)")
                 }
             }
