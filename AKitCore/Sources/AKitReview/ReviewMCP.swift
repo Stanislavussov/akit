@@ -281,7 +281,8 @@ public struct ReviewMCPCall: Codable, Sendable, Hashable {
                 result.append(value)
             }
         }
-        return result
+        // GitLab's own MCP server (`/api/v4/mcp`) answers in GraphQL's shape: read it as REST's.
+        return result.map(GitLabJSON.restShape)
     }
 
     var inputObject: JSONObject { Self.json(input) as? JSONObject ?? [:] }
@@ -329,6 +330,7 @@ public struct ReviewMCPData: Sendable {
             return mr.webURL.lowercased().contains("/\(project.lowercased())/-/merge_requests/")
         }
         var comments: [Int: [WorkItem.Comment]] = [:]
+        var headFromCommits: String?
         for call in calls {
             data.calls += 1
             if call.isError {
@@ -373,6 +375,24 @@ public struct ReviewMCPData: Sendable {
                 }
                 // `GET …/changes` and some servers carry the diffs in the merge request.
                 for change in object.objects("changes") { add(GitLabJSON.fileDiff(change)) }
+                // GitLab's own MCP server carries one part per call in the merge request (`include`):
+                // diffs, threads, notes, commits. They are this merge request's.
+                for diff in object.objects("diffs") { add(GitLabJSON.fileDiff(diff)) }
+                for thread in object.objects("discussions") { visit(thread, depth: depth + 1, aboutThis: true, trusted: trusted) }
+                var threads: [String: [GitLabNote]] = [:]
+                var order: [String] = []
+                for item in object.objects("notes") {
+                    guard let id = item.object("discussion")?.string("id") ?? item.string("discussion_id"), let note = GitLabJSON.note(item) else { continue }
+                    if threads[id] == nil { order.append(id) }
+                    threads[id, default: []].append(note)
+                }
+                for id in order where trusted && !data.discussions.contains(where: { $0.id == id }) {
+                    data.discussions.append(GitLabDiscussion(id: id, notes: threads[id] ?? []))
+                }
+                // Its commits come newest first: without diff refs, the first is the head.
+                if trusted, headFromCommits == nil, let first = object.objects("commits").first?.string("sha"), ReviewGather.isCommitID(first) {
+                    headFromCommits = first
+                }
                 return
             }
             // Versions and diffs of an earlier merge request are its own, not this one's.
@@ -415,10 +435,20 @@ public struct ReviewMCPData: Sendable {
             }
         }
         func add(_ diff: GitLabFileDiff?) {
-            guard let diff, !data.diffs.contains(where: { $0.newPath == diff.newPath && $0.oldPath == diff.oldPath }) else { return }
+            guard let diff else { return }
+            if let index = data.diffs.firstIndex(where: { $0.newPath == diff.newPath && $0.oldPath == diff.oldPath }) {
+                // A list with stats only comes before the patch: the patch wins.
+                if data.diffs[index].diff.isEmpty, !diff.diff.isEmpty { data.diffs[index] = diff }
+                return
+            }
             data.diffs.append(diff)
         }
         for index in data.workItems.indices { data.workItems[index].comments = comments[data.workItems[index].id] ?? [] }
+        // No answer had diff refs (GitLab's own MCP server sends none): the head commit is enough
+        // to review; the diff then comes from the answers or from git.
+        if data.mergeRequest != nil, data.mergeRequest?.diffRefs == nil, let headFromCommits {
+            data.mergeRequest?.diffRefs = .init(baseSHA: "", startSHA: "", headSHA: headFromCommits)
+        }
         // Threads of earlier merge requests count only for one the pass read as merged, in this
         // project: never a thread of any number a prompt-injected model asked for.
         data.pastDiscussions = data.pastDiscussions.filter { number, _ in
