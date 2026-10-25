@@ -144,6 +144,9 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var knowledgeBase: Sourced<String>?
     /// The knowledge card's size in tokens; nil in runs made before 2026-10-25.
     public var knowledgeBudget: Sourced<Int>?
+    /// Filled by Gather: the folder of the base the card came from, which the review passes'
+    /// `akit_kb_search` / `akit_kb_show` read (`AKIT_REVIEW_KB_BASE`); nil without a base.
+    public var knowledgeBasePath: String?
     public var gather: [ReviewProfile.GatherCommand]
     public var workItems: [Int]
     /// Filled by Gather: the commit the worktree and every finding refer to.

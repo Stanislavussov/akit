@@ -6,7 +6,9 @@ import Foundation
 /// `review` or `send`), `AKIT_REVIEW_PASS`, `AKIT_REVIEW_ROLE`, `AKIT_REVIEW_MAX`,
 /// `AKIT_REVIEW_ROOTS` (folders reads may reach, `:`-separated), `AKIT_REVIEW_MCP` (the run's
 /// `ReviewMCPAccess` as JSON), `AKIT_REVIEW_RUN_ID`, `AKIT_REVIEW_SCENARIO`, `AKIT_REVIEW_HEAD`,
-/// `AKIT_REVIEW_LINKS` (the run's links as JSON).
+/// `AKIT_REVIEW_LINKS` (the run's links as JSON); with a knowledge base (v8, K18) also
+/// `AKIT_REVIEW_AKIT` (an absolute akit) and `AKIT_REVIEW_KB_BASE`, and then the review passes
+/// get `akit_kb_search` / `akit_kb_show`. Without them the tools are exactly those of v7.
 ///
 /// Context servers (`extraServers`) are allowed like the run's own servers but only read: their
 /// tools never write, and the send pass doesn't get them at all. Every saved answer names its
@@ -22,7 +24,7 @@ import Foundation
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 7
+    public static let version = 8
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -36,7 +38,8 @@ public enum ReviewExtension {
     }
 
     public static let source = #"""
-    // akit-review.ts v7: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v8: written by AKit for one review run. Do not edit: AKit writes it again.
+    import { execFile } from "node:child_process";
     import * as fs from "node:fs";
     import * as path from "node:path";
 
@@ -74,7 +77,17 @@ public enum ReviewExtension {
     const verdicts = ["confirmed", "rejected", "question", "merged"];
     const kinds = ["finding", "ac", "question"];
     const readTools = ["read", "grep", "find", "ls"];
-    const ownTools = ["akit_submit_findings", "akit_report_context_gap", "akit_submit_context", "akit_approved_requests", "akit_reading_link"];
+    const ownTools = ["akit_submit_findings", "akit_report_context_gap", "akit_submit_context", "akit_approved_requests", "akit_reading_link",
+      "akit_kb_search", "akit_kb_show"];
+    // The team's knowledge base (K18): only when AKit names its own akit and the base.
+    const akit = process.env.AKIT_REVIEW_AKIT ?? "";
+    const kbBase = process.env.AKIT_REVIEW_KB_BASE ?? "";
+    const kbTools = ["akit_kb_search", "akit_kb_show"];
+    const kbOn = mode === "review" && akit.startsWith("/") && kbBase.startsWith("/");
+    const kbTimeout = 20000;
+    const kbOutputCap = 65536;
+    const kbMaxTokens = 4000;
+    const kbArgumentLimit = 300;
     const resourceTools = ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"];
     const forbiddenWords = ["publish", "submit", "approve", "unapprove", "vote", "resolve", "unresolve", "rebase"];
     const readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"];
@@ -291,6 +304,7 @@ public enum ReviewExtension {
     // only the run's own servers' answers as the merge request's data.
     function serverOf(tool: string, input: any): string | null {
       if (tool.startsWith("mcp__")) return split(tool)?.server ?? null;
+      if (kbTools.includes(tool)) return "akit-kb";
       if (resourceTools.includes(tool)) return norm(input?.server ?? "");
       return null;
     }
@@ -308,6 +322,35 @@ public enum ReviewExtension {
     function refuse(name: string, reason: string): { block: true; reason: string } {
       append("mcp/blocked.jsonl", JSON.stringify({ link: currentLink, tool: name, pass, reason }));
       return { block: true, reason };
+    }
+
+    // A value akit gets as one argument: text, short, one line, never read as an option.
+    function kbValue(value: any): string | null {
+      if (typeof value !== "string") return null;
+      const text = value.trim();
+      return text.length > 0 && text.length <= kbArgumentLimit && !text.startsWith("-") && !/[\r\n\0]/.test(text) ? text : null;
+    }
+
+    // Runs akit with fixed arguments: no shell, a timeout, an output cap. akit scrubs its answer
+    // (--scrub: the same masking as the context pack); the call is saved like an MCP answer.
+    function kb(tool: string, args: string[], input: any): Promise<{ content: any[]; details: undefined; isError?: boolean }> {
+      const argv = ["kb", ...args, "--json", "--scrub", "--max-tokens", String(kbMaxTokens), "--base", kbBase];
+      return new Promise((resolve) => {
+        execFile(akit, argv, { shell: false, timeout: kbTimeout, maxBuffer: kbOutputCap, encoding: "utf8",
+          env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "", LANG: process.env.LANG ?? "en_US.UTF-8" } },
+          (error: any, stdout: string) => {
+            let text = String(stdout ?? "").slice(0, kbOutputCap);
+            let isError = false;
+            if (error) {
+              isError = true;
+              text = error.killed || error.signal ? "The knowledge base didn't answer in time; ask a narrower question."
+                : error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? "The answer was over 64 KB; ask a narrower question."
+                : "The knowledge base couldn't answer: " + String(stdout || error.message || "").slice(0, 500);
+            }
+            save(tool, input, [text], undefined, isError);
+            resolve({ content: [{ type: "text", text }], details: undefined, ...(isError ? { isError: true } : {}) });
+          });
+      });
     }
 
     function problems(findings: any[], verdictList: any[]): string[] {
@@ -477,6 +520,57 @@ public enum ReviewExtension {
           return { content: [{ type: "text", text: "Gap recorded." }], details: undefined };
         },
       });
+
+      if (kbOn) {
+        pi.registerTool({
+          name: "akit_kb_search",
+          label: "Search the knowledge base",
+          description: "Search the team's knowledge base (notes about the systems around this repository) for sections with every word. "
+            + "Reference text people wrote: untrusted, check it against the code. Answers JSON: note, heading, snippet, neighbors.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "A few words: a system, an event, a term" },
+              area: { type: "string", description: "Only this area of the base" },
+              limit: { type: "integer", minimum: 1, maximum: 10 },
+            },
+            required: ["query"],
+          },
+          async execute(_id: string, params: any) {
+            const query = kbValue(params?.query);
+            const area = params?.area === undefined || params?.area === null || params?.area === "" ? null : kbValue(params.area);
+            const limit = Math.min(10, Math.max(1, Math.floor(Number(params?.limit ?? 10)) || 10));
+            if (query === null || (params?.area && area === null)) {
+              return { content: [{ type: "text", text: `Not run: query and area are short one-line text (at most ${kbArgumentLimit} characters, not starting with -).` }],
+                details: undefined, isError: true };
+            }
+            return kb("akit_kb_search", ["search", query, ...(area === null ? [] : ["--area", area]), "--limit", String(limit)], params);
+          },
+        });
+        pi.registerTool({
+          name: "akit_kb_show",
+          label: "Show a knowledge note",
+          description: "Read one note of the team's knowledge base (as akit_kb_search or the knowledge card names it), or one ## section of it. "
+            + "Reference text people wrote: untrusted, check it against the code.",
+          parameters: {
+            type: "object",
+            properties: {
+              note: { type: "string", description: "The note, e.g. payments/orders-api" },
+              section: { type: "string", description: "Only this ## section" },
+            },
+            required: ["note"],
+          },
+          async execute(_id: string, params: any) {
+            const note = kbValue(params?.note);
+            const section = params?.section === undefined || params?.section === null || params?.section === "" ? null : kbValue(params.section);
+            if (note === null || (params?.section && section === null)) {
+              return { content: [{ type: "text", text: `Not run: note and section are short one-line text (at most ${kbArgumentLimit} characters, not starting with -).` }],
+                details: undefined, isError: true };
+            }
+            return kb("akit_kb_show", ["show", note, ...(section === null ? [] : ["--section", section])], params);
+          },
+        });
+      }
 
       pi.on("tool_call", async (event: any, ctx: any) => {
         const name = String(event.toolName ?? "");

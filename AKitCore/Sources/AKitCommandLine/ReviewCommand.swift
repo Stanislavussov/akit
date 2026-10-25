@@ -371,7 +371,7 @@ extension AKitCLI {
                 throw error
             }
             lines.drain(out)
-            out(gatherSummary(result))
+            out(gatherSummary(result, env: env))
             if gatherOnly { return 0 }
             return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), anyway: anyway, env: env, out: out)
         case "pi":
@@ -407,7 +407,7 @@ extension AKitCLI {
                 throw error
             }
             lines.drain(out)
-            out(gatherSummary(result))
+            out(gatherSummary(result, env: env))
             if gatherOnly { return 0 }
             return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), anyway: anyway, env: env, out: out)
         case nil:
@@ -586,7 +586,7 @@ extension AKitCLI {
         return mr
     }
 
-    static func gatherSummary(_ result: ReviewGather.Result) -> String {
+    static func gatherSummary(_ result: ReviewGather.Result, env: HarnessEnvironment) -> String {
         let spec = result.spec
         var lines = ["Run \(spec.id): \(spec.mergeRequest.label) at \(spec.headSHA?.prefix(10) ?? "?"), scenario \(spec.scenario.value), "
                      + "roles \(spec.roles.map(\.id).joined(separator: ", ")).",
@@ -599,6 +599,13 @@ extension AKitCLI {
         }
         let extra = (spec.mcpServers ?? []).filter(\.readOnly).map { "\($0.name) [\($0.source.rawValue)]" }
         if !extra.isEmpty { lines.append("Context servers (read only): " + extra.joined(separator: ", ") + ".") }
+        if let base = spec.knowledgeBasePath {
+            let tools = ReviewPasses.knowledgeEnvironment(spec: spec, env: env)
+            lines.append("Knowledge card: context/knowledge-card.md, from \(FileWalk.tilde(URL(filePath: base), home: env.homeDirectory)).")
+            lines.append(tools.isEmpty ? "The review passes get no akit_kb_search / akit_kb_show: AKit found no akit to run."
+                         : "The review passes get akit_kb_search and akit_kb_show: "
+                         + tools.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ") + ".")
+        }
         if !result.scrubbed.isEmpty {
             lines.append("Masked before the agent sees it: " + result.scrubbed.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }.joined(separator: ", "))
         }

@@ -33,13 +33,15 @@ extension AKitCLI {
       akit kb relations NOTE [--json] [--base PATH|WORLD]
                                         The arrows to and from a note on every map: from, kind (the
                                         arrow's label), to, flow (the note the arrow links), map
-      akit kb search QUERY [--area A] [--limit 10] [--max-tokens N] [--json] [--base PATH|WORLD]
+      akit kb search QUERY [--area A] [--limit 10] [--max-tokens N] [--json] [--scrub] [--base PATH|WORLD]
                                         The best sections of notes with every word of QUERY (BM25:
                                         a lower score is better): note, heading, snippet and the
                                         notes one arrow away on a map. Only areas/, never inbox/
-      akit kb show NOTE [--section H] [--max-tokens N] [--json] [--base PATH|WORLD]
+      akit kb show NOTE [--section H] [--max-tokens N] [--json] [--scrub] [--base PATH|WORLD]
                                         A note: title, kind, repo, files and its sections (only H
-                                        with --section), cut to --max-tokens (default 4000)
+                                        with --section), cut to --max-tokens (default 4000).
+                                        --scrub masks secrets, e-mails and your own patterns as
+                                        AKit Review's context pack does (its kb tools use it)
       akit kb index [--rebuild] [--json] [--base PATH|WORLD]
                                         Bring the search index (.akit-index.sqlite in the base,
                                         git-ignored) up to the files, or build it again. search
@@ -473,6 +475,9 @@ extension AKitCLI {
         }
         let maxTokens = try number("--max-tokens", Budget.defaultTokens)
         let home = env.homeDirectory
+        // --scrub: what AKit Review's kb tools hand the model goes through the pack's scrubber.
+        let own = command != "index" && args.flag("--scrub") ? LabSettings.load(env: env).scrub : nil
+        func emit(_ text: String) { out(own.map { Scrubber.scrub(text, own: $0).text } ?? text) }
         func noBase() -> Int32 {
             out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
             return 0
@@ -490,7 +495,7 @@ extension AKitCLI {
                 throw Failure(message: error.message)
             }
             if json {
-                out(encode(answer))
+                emit(encode(answer))
             } else {
                 var lines = answer.results.isEmpty ? ["No section of \(FileWalk.tilde(base.root, home: home)) has every word of “\(query)”."]
                     : answer.results.map { hit in
@@ -498,7 +503,7 @@ extension AKitCLI {
                             + (hit.neighbors.isEmpty ? "" : "\n    next to: " + hit.neighbors.joined(separator: ", "))
                     }
                 if answer.stale { lines.append("(Another process is updating the index: these come from its last state.)") }
-                out(lines.joined(separator: "\n"))
+                emit(lines.joined(separator: "\n"))
             }
             return 0
         case "show":
@@ -513,7 +518,7 @@ extension AKitCLI {
                 throw Failure(message: error.message)
             }
             if json {
-                out(encode(answer))
+                emit(encode(answer))
             } else {
                 let front = answer.frontmatter
                 let facts = [front.kind.map { "kind: \($0)" }, front.repo.map { "repo: \($0)" },
@@ -521,7 +526,7 @@ extension AKitCLI {
                 var parts = ["# \(answer.title)  (\(answer.note))" + (facts.isEmpty ? "" : "\n" + facts.joined(separator: "  "))]
                 parts += answer.sections.map { section in (section.heading.map { "## \($0)\n" } ?? "") + section.text }
                 if answer.truncated { parts.append("(Cut to \(maxTokens) tokens: ask for one --section, or a larger --max-tokens.)") }
-                out(parts.joined(separator: "\n\n"))
+                emit(parts.joined(separator: "\n\n"))
             }
             return 0
         default:

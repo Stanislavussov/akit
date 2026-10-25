@@ -134,6 +134,8 @@ extension ReviewProcessTests {
             """)
             let (full, fullFolder) = try await gather(home, repo)
             #expect(full.spec.knowledgeBase == Sourced("work", .project) && full.spec.knowledgeBudget == Sourced(8000, .project))
+            #expect(full.spec.knowledgeBasePath == home.url.appending(path: ".akit/local/knowledge/work").standardized.path,
+                    "the passes' kb tools read this base")
             let card = try #require(pack(fullFolder)["knowledge-card.md"])
             #expect(card.contains("- shop/cart (Cart), touched: src/Cart.swift"))
             #expect(!card.contains("cut here") && Budget.tokens(card) <= 8000)
@@ -146,6 +148,28 @@ extension ReviewProcessTests {
             #expect(Budget.tokens(cut) <= 120 && cut.contains("knowledge_budget 120 tokens"))
             #expect(cut.hasPrefix("# Knowledge card"), "cut from the end")
             #expect(small.gaps.contains { $0.needed == "The whole knowledge card" })
+        }
+
+        /// With a base and an akit on the search paths, the review passes get the kb tools and
+        /// the two variables; the fetch-free local run's other settings stay as they were.
+        @Test func theReviewPassesGetTheKnowledgeTools() async throws {
+            let (home, repo, base) = try setUp(remote: "git@gitlab.test:team/shop.git", areaProject: "git@gitlab.test:team/shop.git",
+                                               base: "kb", profile: """
+            gitlab: { host: https://gitlab.test, project_path: team/shop }
+            knowledge_base: ~/kb
+            """)
+            let akit = home.write("bin/akit", "#!/bin/sh\nexit 0\n", executable: true)
+            let (result, folder) = try await gather(home, repo)
+            let run = try await ReviewRunFixture(home: home, head: result.spec.headSHA ?? "", folder: folder).playAndRun()
+            #expect(run.plan != nil)
+            for pass in ["brief", "role-bug-hunter", "role-contracts"] {
+                let args = ReviewRunFixture(home: home, head: "", folder: folder).args(pass)
+                let tools = try #require(args.firstIndex(of: "--tools").map { args[$0 + 1] }, "\(pass)")
+                #expect(tools.hasPrefix(ReviewPasses.tools + ",akit_kb_search,akit_kb_show,"), "\(pass): \(tools)")
+                let env = try String(contentsOf: home.url.appending(path: "fake/env-\(pass).txt"), encoding: .utf8)
+                #expect(env.contains("AKIT_REVIEW_AKIT=\(akit.resolvingSymlinksInPath().path)\n"), "\(pass)")
+                #expect(env.contains("AKIT_REVIEW_KB_BASE=\(base.standardized.path)\n"), "\(pass)")
+            }
         }
 
         /// A base that names no system of the repository gives a gap, not a guess.

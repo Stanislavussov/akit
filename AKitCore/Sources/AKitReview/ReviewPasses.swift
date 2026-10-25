@@ -202,6 +202,13 @@ public enum ReviewPasses {
         // The send pass gets only the run's own servers: context servers never reach it.
         let access = setup.mode == "send" ? spec.access.withoutExtras : spec.access
         var environment = passEnvironment(env)
+        // The knowledge base's tools (K18), only in the review passes and only with a base and akit.
+        var setup = setup
+        let knowledge = setup.mode == "review" ? knowledgeEnvironment(spec: spec, env: env) : [:]
+        if !knowledge.isEmpty {
+            setup.tools += "," + knowledgeTools.joined(separator: ",")
+            environment.merge(knowledge) { $1 }
+        }
         environment["AKIT_REVIEW_RUN"] = folder.path
         environment["AKIT_REVIEW_RUN_ID"] = spec.id
         environment["AKIT_REVIEW_MODE"] = setup.mode
@@ -217,7 +224,7 @@ public enum ReviewPasses {
                                       usage: SendUsage(), credits: 0, paths: [], error: nil)
         let output = await runPi(pi, arguments: arguments(setup, folder: folder, access: access), directory: setup.cwd,
                                  environment: environment, timeout: options.timeout, stream: folder.appending(path: "passes/\(setup.name).jsonl"),
-                                 progress: { line in options.progress("  \(setup.name) · \(line)") })
+                                 progress: { [name = setup.name] line in options.progress("  \(name) · \(line)") })
         ReviewMask.saved(in: folder)
         record.ended = .now
         record.session = output.session
@@ -498,6 +505,29 @@ public enum ReviewPasses {
         let gate = try await SendGate.open(agent: LabAgent(harness: .pi, model: model, effort: ""), env: env)
         try gate.check(.mergeRequest)
         return gate
+    }
+
+    /// The tools of the knowledge base in the review passes (`ReviewExtension`, v8).
+    public static let knowledgeTools = ["akit_kb_search", "akit_kb_show"]
+
+    /// `AKIT_REVIEW_AKIT` and `AKIT_REVIEW_KB_BASE` of a review pass: set only when Gather found a
+    /// base (`knowledgeBasePath`, an existing folder) and an akit to run (`akitExecutable`); else
+    /// empty, and the extension registers no kb tool, so the passes' requests stay those of v7.
+    public static func knowledgeEnvironment(spec: ReviewRunSpec, env: HarnessEnvironment, akit: URL? = nil) -> [String: String] {
+        guard let path = spec.knowledgeBasePath, path.hasPrefix("/"), FileWalk.isDirectory(URL(filePath: path)),
+              let akit = akit ?? akitExecutable(env: env), isRunnable(akit) else { return [:] }
+        return ["AKIT_REVIEW_AKIT": akit.path, "AKIT_REVIEW_KB_BASE": path]
+    }
+
+    /// The akit the kb tools run: this process when it is akit (the command line), else the
+    /// first `akit` on the search paths (the app). Resolved to an absolute, executable file.
+    static func akitExecutable(env: HarnessEnvironment) -> URL? {
+        if let me = Bundle.main.executableURL?.resolvingSymlinksInPath(), me.lastPathComponent == "akit", isRunnable(me) { return me }
+        return env.findExecutable("akit")?.resolvingSymlinksInPath()
+    }
+
+    static func isRunnable(_ url: URL) -> Bool {
+        url.path.hasPrefix("/") && FileWalk.isRegularFile(url) && FileManager.default.isExecutableFile(atPath: url.path)
     }
 
     /// What a pass may read (`AKIT_REVIEW_ROOTS`): the worktree and the scrubbed parts of the run

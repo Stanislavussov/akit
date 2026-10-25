@@ -95,6 +95,21 @@ struct KnowledgeCLITests {
         return folder.path
     }
 
+    /// `--scrub` (AKit Review's kb tools): the answer masked as the review's context pack is.
+    @Test func searchAndShowScrubOnRequest() async throws {
+        let base = try seedFolder()
+        let secret = "glpat-abcdefghijklmnopqrst"
+        try Data("# Vault\n\n## Access\n\nThe deploy token is \(secret) for now.\n".utf8)
+            .write(to: URL(filePath: base).appending(path: "areas/payments/vault.md"))
+        #expect(await akit("kb", "show", "vault", "--json", "--base", base).out.contains(secret), "plain reads stay as they are")
+        let shown = await akit("kb", "show", "vault", "--json", "--scrub", "--base", base)
+        #expect(shown.code == 0 && !shown.out.contains(secret) && shown.out.contains("deploy token"))
+        _ = try json(shown.out)
+        let found = await akit("kb", "search", "deploy token", "--json", "--scrub", "--base", base)
+        #expect(found.code == 0 && found.out.contains("payments/vault") && !found.out.contains(secret))
+        #expect(await akit("kb", "index", "--scrub", "--base", base).code == 2, "only search and show take --scrub")
+    }
+
     @Test func searchShowAndIndexAnswerInTheirJSONShapes() async throws {
         let base = try seedFolder()
         let search = await akit("kb", "search", "order-created: retry", "--json", "--base", base)

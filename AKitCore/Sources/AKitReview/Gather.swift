@@ -369,6 +369,8 @@ public enum ReviewGather {
                 files.append(("knowledge/\(folderURL.lastPathComponent)/\(relative)", "Knowledge note", text))
             }
         }
+        // The passes' kb tools read the first base: the profile's, else the first base folder.
+        spec.knowledgeBasePath = bases.first.map { $0.root.standardized.path }
         if !bases.isEmpty {
             progress("Making the knowledge card from \(bases.map(\.name).joined(separator: ", "))…")
             let remote: String?
