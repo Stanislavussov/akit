@@ -1822,7 +1822,7 @@ public enum AKitCLI {
     }
 
     /// `3 sessions`, `1 day`.
-    private static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+    static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 
     /// An owner kind as the text output says it.
     private static func ownerLabel(_ kind: String) -> String {

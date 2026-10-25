@@ -17,7 +17,7 @@ struct MapPanel: View {
                 Divider()
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(id.split(separator: "/").dropFirst(2).joined(separator: "/")).font(.headline).lineLimit(1)
+                        Text(KnowledgeModel.mapName(id)).font(.headline).lineLimit(1)
                         Text("areas/\(id).excalidraw").font(.caption).foregroundStyle(.secondary).lineLimit(1).textSelection(.enabled)
                     }
                     Spacer()
@@ -74,7 +74,7 @@ struct MapPanel: View {
                 ForEach(model.areaMapTabs, id: \.self) { id in
                     HStack(spacing: 4) {
                         Image(systemName: "point.3.connected.trianglepath.dotted").foregroundStyle(.secondary)
-                        Text(id.split(separator: "/").dropFirst(2).joined(separator: "/")).lineLimit(1)
+                        Text(KnowledgeModel.mapName(id)).lineLimit(1)
                         Button("Close Tab", systemImage: "xmark") { Task { await model.close(mapTab: id) } }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)

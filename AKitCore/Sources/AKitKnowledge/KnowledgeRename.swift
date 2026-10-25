@@ -306,9 +306,9 @@ extension KnowledgeBase {
             if !paths.contains(change.path) { paths.append(change.path) }
             if !paths.contains(change.newPath) { paths.append(change.newPath) }
         }
-        let links = plan.linkCount
+        let links = plan.linkCount, files = plan.files.filter { !$0.links.isEmpty }.count
         let message = "Rename \(plan.kind.rawValue) \(plan.from) to \(plan.to)"
-            + (links == 0 ? "" : ", \(links) link\(links == 1 ? "" : "s") in \(plan.files.filter { !$0.links.isEmpty }.count) file\(plan.files.filter { !$0.links.isEmpty }.count == 1 ? "" : "s")")
+            + (links == 0 ? "" : ", \(links) link\(links == 1 ? "" : "s") in \(files) file\(files == 1 ? "" : "s")")
         do { try await KnowledgeGit(base: root, env: env).commit(paths: paths, message: message) } catch {
             throw Failure(message: "The rename is written, but not committed: \(error.message)")
         }

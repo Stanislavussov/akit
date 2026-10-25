@@ -115,6 +115,11 @@ public struct KnowledgeGit: Sendable {
         !path.isEmpty && !path.hasPrefix("/") && !path.split(separator: "/").contains("..")
     }
 
+    /// Git tracks at least one of `paths`; false when git fails.
+    func isTracked(_ paths: [String]) async -> Bool {
+        !((try? await run(["ls-files", "--"] + paths)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// The base's remote names; empty when it has none. nil when it is not a git repo.
     public func remotes() async -> [String]? {
         guard FileManager.default.fileExists(atPath: base.appending(path: ".git").path) else { return nil }

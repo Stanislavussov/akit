@@ -16,16 +16,11 @@ enum TemplateBase {
     }()
 
     private static let made = Task { () throws -> (base: URL, seeded: URL) in
-        func env(_ home: URL) -> HarnessEnvironment {
-            HarnessEnvironment(homeDirectory: home,
-                               variables: ["HOME": home.path, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"],
-                               executableSearchPaths: [URL(filePath: "/usr/bin")])
-        }
         let plain = folder.appending(path: "plain"), sample = folder.appending(path: "sample")
         try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: sample, withIntermediateDirectories: true)
-        let base = try await KnowledgeBase.create(world: "work", env: env(plain))
-        let seeded = try await KnowledgeSeed.seed(env: env(sample)).base
+        let base = try await KnowledgeBase.create(world: "work", env: FakeHome.env(plain))
+        let seeded = try await KnowledgeSeed.seed(env: FakeHome.env(sample)).base
         return (base.root, seeded.root)
     }
 

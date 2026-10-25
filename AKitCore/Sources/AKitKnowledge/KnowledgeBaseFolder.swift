@@ -97,10 +97,7 @@ extension KnowledgeBase {
                 throw Failure(message: "\(root.path) is in a Dropbox folder (\(folder)), so its notes would leave this Mac. Pick a folder that isn't synced.")
             }
         }
-        var existing = URL(filePath: resolved(root))
-        while !FileManager.default.fileExists(atPath: existing.path), existing.pathComponents.count > 1 {
-            existing = existing.deletingLastPathComponent()
-        }
+        let existing = nearestExisting(URL(filePath: resolved(root)))
         if (try? existing.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal == false {
             throw Failure(message: "\(root.path) is not on a local disk (a network volume). Pick a folder on this Mac.")
         }
@@ -156,7 +153,7 @@ extension KnowledgeBase {
             _ = try await create(at: target, env: env, brainRoot: brainRoot)
             created = true
         }
-        set.bases[world] = KnowledgeBase(root: target) == KnowledgeBase(root: Self.world(world, home: home)) ? nil : FileWalk.tilde(target, home: home)
+        set.bases[world] = entry(for: target, world: world, home: home)
         do { try set.save(home: home) } catch {
             throw Failure(message: (created ? "The base was created in \(target.path), but " : "") + error.message)
         }
@@ -213,7 +210,7 @@ extension KnowledgeBase {
         defer { lock.release() }
         guard queue.pending().isEmpty else { throw Failure(message: "New edits wait for their commit; nothing was moved. Try again in a moment.") }
 
-        set.bases[world] = KnowledgeBase(root: target) == KnowledgeBase(root: Self.world(world, home: home)) ? nil : FileWalk.tilde(target, home: home)
+        set.bases[world] = entry(for: target, world: world, home: home)
         do {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
@@ -254,14 +251,24 @@ extension KnowledgeBase {
         return URL(filePath: folder.standardized.path, directoryHint: .notDirectory)
     }
 
+    /// The `bases.json` entry of a world's base in `target`: nil for the default folder.
+    private static func entry(for target: URL, world: String, home: URL) -> String? {
+        KnowledgeBase(root: target) == KnowledgeBase(root: Self.world(world, home: home)) ? nil : FileWalk.tilde(target, home: home)
+    }
+
+    /// `url`, or its nearest folder above that exists.
+    private static func nearestExisting(_ url: URL) -> URL {
+        var existing = url
+        while !FileManager.default.fileExists(atPath: existing.path), existing.pathComponents.count > 1 {
+            existing = existing.deletingLastPathComponent()
+        }
+        return existing
+    }
+
     /// Both folders are on one disk, so a rename moves the base.
     static func sameVolume(_ a: URL, _ b: URL) -> Bool {
         func volume(_ url: URL) -> NSObject? {
-            var existing = url
-            while !FileManager.default.fileExists(atPath: existing.path), existing.pathComponents.count > 1 {
-                existing = existing.deletingLastPathComponent()
-            }
-            return (try? existing.resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject
+            (try? nearestExisting(url).resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject
         }
         guard let first = volume(a), let second = volume(b) else { return false }
         return first.isEqual(second)

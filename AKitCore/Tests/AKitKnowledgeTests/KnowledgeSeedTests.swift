@@ -13,21 +13,13 @@ final class KnowledgeSeedTests {
     let fm = FileManager.default
 
     init() throws {
-        home = URL(filePath: FileWalk.realPath(fm.temporaryDirectory) ?? fm.temporaryDirectory.path)
-            .appending(path: "akit-kb-seed-\(UUID().uuidString)")
-        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        home = try FakeHome.make("akit-kb-seed")
     }
 
-    var env: HarnessEnvironment {
-        HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"],
-                           executableSearchPaths: [URL(filePath: "/usr/bin")])
-    }
+    var env: HarnessEnvironment { FakeHome.env(home) }
 
     func git(_ args: String..., in folder: URL) async throws -> String {
-        let result = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: args, directory: folder,
-                                                           environment: env.variables, timeout: 20))
-        #expect(result.succeeded, "git \(args.joined(separator: " ")): \(result.output)")
-        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await FakeHome.git(args, in: folder, env: env)
     }
 
     /// A Trash that moves into a folder of the fake home.

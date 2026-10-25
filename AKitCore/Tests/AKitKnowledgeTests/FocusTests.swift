@@ -21,10 +21,7 @@ final class FocusTests {
     var root: URL { home.appending(path: "kb") }
     var base: KnowledgeBase { KnowledgeBase(root: root) }
     var index: KnowledgeIndex { KnowledgeIndex(base: base) }
-    var env: HarnessEnvironment {
-        HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"],
-                           executableSearchPaths: [URL(filePath: "/usr/bin")])
-    }
+    var env: HarnessEnvironment { FakeHome.env(home) }
 
     func write(_ path: String, _ text: String) throws {
         let url = root.appending(path: path)

@@ -590,11 +590,11 @@ extension KnowledgeBase {
         do {
             if target.exists {
                 let file = noteFile(target.id)
-                guard let data = try? Data(contentsOf: file), let current = KnowledgeNote.load(file) else {
+                guard let data = try? Data(contentsOf: file), let text = String(data: data, encoding: .utf8) else {
                     throw Failure(message: "\(notePath(target.id)) isn't UTF-8 text, so AKit doesn't change it.")
                 }
                 original = data
-                note = current
+                note = KnowledgeNote(text: text)
                 let sections = draft.sections
                 let lead = sections.first.map { draft.text[..<$0.headingRange.lowerBound] } ?? draft.text[...]
                 guard draft.body.startIndex == draft.text.startIndex, draft.title == nil,
@@ -729,7 +729,7 @@ extension KnowledgeBase {
         let draftPath = KnowledgeInbox.draftPath(of: proposal.id)
         let draft = root.appending(path: draftPath)
         let paths = [proposal.path] + (FileWalk.isRegularFile(draft) ? [draftPath] : [])
-        let tracked = !((try? await git.run(["ls-files", "--"] + paths)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let tracked = await git.isTracked(paths)
         let place: URL?
         do {
             place = try trash(file)
@@ -807,13 +807,11 @@ extension KnowledgeBase {
         guard targets.maps.contains(map) else { throw Failure(message: "No map \(map) in the base.") }
         let graph = MapGraph.map(id: map, file: ExcalidrawFile.load(mapFile(map)), targets: targets)
         if let error = graph.error { throw Failure(message: "The map \(map) can't be read: \(error)") }
-        let titles = Dictionary(((try? notes()) ?? []).map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        let titles = noteTitles()
         func end(_ note: String) -> KnowledgeInbox.ArrowPlan.End {
-            let parts = note.split(separator: "/").map(String.init)
-            let forms = (1...parts.count).map { parts.suffix($0).joined(separator: "/") }
-            let link = forms.map { "[[\($0)]]" }.first { targets.resolve($0, from: mapPath(map)) == .note(note) } ?? "akit:note/\(note)"
-            return .init(note: note, element: graph.blocks.first { $0.note == note }?.element, link: link,
-                         label: titles[note] ?? parts.last ?? note)
+            .init(note: note, element: graph.blocks.first { $0.note == note }?.element,
+                  link: KnowledgeInbox.shortestLink(to: note, map: map, targets: targets),
+                  label: titles[note] ?? note.split(separator: "/").last.map(String.init) ?? note)
         }
         let exists = graph.edges.contains { $0.from == arrow.from && $0.to == arrow.to && $0.kind == arrow.kind }
         return KnowledgeInbox.ArrowPlan(proposal: proposal, map: map, from: end(arrow.from), to: end(arrow.to), kind: arrow.kind,
@@ -834,7 +832,7 @@ extension KnowledgeBase {
         }
         let file = root.appending(path: proposal.path)
         let git = KnowledgeGit(base: root, env: env)
-        let tracked = !((try? await git.run(["ls-files", "--", proposal.path])) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let tracked = await git.isTracked([proposal.path])
         do { try FileManager.default.removeItem(at: file) } catch {
             throw Failure(message: "Couldn't remove \(proposal.path): \(error.localizedDescription)")
         }
@@ -853,8 +851,4 @@ extension KnowledgeInbox {
         let map = arrow.map.map { "on map \($0)" } ?? "on a map of \(arrow.from.split(separator: "/").first.map(String.init) ?? arrow.from)"
         return "Add the arrow \(arrow.text) \(map) in the app (Knowledge → Inbox)."
     }
-}
-
-private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

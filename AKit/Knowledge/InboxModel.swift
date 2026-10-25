@@ -289,8 +289,9 @@ extension KnowledgeModel {
             readInbox()
             proposalID = outcome.proposals.last
             screenTab = .inbox
-            notice = "Proposed \(outcome.proposals.joined(separator: ", ")) from Pi's map: look at the draft, then Accept… or Reject…."
-            drawLog.append(notice ?? "")
+            let message = "Proposed \(outcome.proposals.joined(separator: ", ")) from Pi's map: look at the draft, then Accept… or Reject…."
+            notice = message
+            drawLog.append(message)
             return true
         case .failure(let error):
             drawLog.append(error is CancellationError ? "Stopped." : error.localizedDescription)
@@ -316,7 +317,7 @@ extension KnowledgeModel {
         }
         guard let entry = selectedProposal else { return lines + ["inbox: no proposals"] }
         if let reason = entry.reason { lines.append("reason: \(reason)") }
-        for check in entry.checks where check.message != nil { lines.append("check \(check.status.rawValue) \(check.name): \(check.message ?? "")") }
+        for check in entry.checks { if let message = check.message { lines.append("check \(check.status.rawValue) \(check.name): \(message)") } }
         if let check = entry.modelCheck {
             lines.append("model check: \(check.model), \(check.checked)" + (check.stale ? ", stale" : ""))
             for mark in check.marks {

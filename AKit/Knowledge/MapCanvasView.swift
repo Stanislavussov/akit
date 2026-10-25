@@ -94,7 +94,8 @@ struct MapCanvasView: NSViewRepresentable {
         /// The element count of the last `sceneLoaded`; nil until a scene is on the canvas.
         private(set) var loadedElements: Int?
 
-        /// The canvas on screen, for snapshots (one map at a time).
+        /// The canvas on screen (the map in view or the Inbox draft): the model saves and drops
+        /// through it, snapshots read it.
         private(set) static weak var current: Coordinator?
 
         init(scene: Scene, viewMode: Bool, onMessage: @escaping (MapCanvasMessage) -> Void) {

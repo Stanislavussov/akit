@@ -63,7 +63,7 @@ private struct LintRow: View {
             }
             Spacer()
             Button("Open") { Task { await model.open(finding: finding) } }
-                .help(finding.map != nil ? "Open the map \(finding.map ?? "")" : "Open the note \(finding.note ?? "")")
+                .help(finding.map.map { "Open the map \($0)" } ?? "Open the note \(finding.note ?? "")")
             if KnowledgeLint.newNote(for: finding) != nil {
                 Button("Create Note…") { model.createNote(for: finding) }
                     .help("Write the note this link points to, so the link works")

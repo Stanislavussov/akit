@@ -11,16 +11,10 @@ final class KnowledgeRenameTests {
     let fm = FileManager.default
 
     init() throws {
-        home = URL(filePath: FileWalk.realPath(fm.temporaryDirectory) ?? fm.temporaryDirectory.path)
-            .appending(path: "akit-kbr-\(UUID().uuidString)")
-        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        home = try FakeHome.make("akit-kbr")
     }
 
-    func env() -> HarnessEnvironment {
-        HarnessEnvironment(homeDirectory: home,
-                           variables: ["HOME": home.path, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"],
-                           executableSearchPaths: [URL(filePath: "/usr/bin")])
-    }
+    func env() -> HarnessEnvironment { FakeHome.env(home) }
 
     func git(_ base: KnowledgeBase, _ args: String...) async throws -> String {
         let result = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: args, directory: base.root,

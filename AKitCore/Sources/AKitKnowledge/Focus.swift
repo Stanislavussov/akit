@@ -269,8 +269,9 @@ extension KnowledgeIndex {
     /// A note's one line: its frontmatter `description`, else the first sentence of its first
     /// paragraph of text (the title left out), at most 200 characters.
     public static func line(of note: KnowledgeNote) -> String {
-        if let description = note.frontmatter["description"].map({ "\($0)".trimmingCharacters(in: .whitespacesAndNewlines) }),
-           !description.isEmpty, !(note.frontmatter["description"] is NSNull) {
+        let value = note.frontmatter["description"]
+        if let description = value.map({ "\($0)".trimmingCharacters(in: .whitespacesAndNewlines) }),
+           !description.isEmpty, !(value is NSNull) {
             return clip(description)
         }
         guard let text = chunks(of: note).map(\.text).first(where: { !$0.isEmpty }) else { return "" }

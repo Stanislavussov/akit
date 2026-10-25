@@ -284,7 +284,7 @@ struct KnowledgeView: View {
             if !model.maps.isEmpty {
                 Section("Maps") {
                     ForEach(model.maps, id: \.self) { id in
-                        Label(id.split(separator: "/").dropFirst(2).joined(separator: "/"), systemImage: "point.3.connected.trianglepath.dotted")
+                        Label(KnowledgeModel.mapName(id), systemImage: "point.3.connected.trianglepath.dotted")
                             .lineLimit(1)
                             .tag(Optional("map:" + id))
                             .help("areas/\(id).excalidraw: click to view the map; click a block on it to open its note")
@@ -502,8 +502,9 @@ struct KindsSheet: View {
                 TextField("Its fields", text: $newFields, prompt: Text("repo, owner"))
                 Button("Add Kind") {
                     do {
-                        draft = try draft.adding(newName.trimmingCharacters(in: .whitespaces), fields: Self.split(newFields))
-                        fields[newName.trimmingCharacters(in: .whitespaces)] = newFields
+                        let name = newName.trimmingCharacters(in: .whitespaces)
+                        draft = try draft.adding(name, fields: Self.split(newFields))
+                        fields[name] = newFields
                         (newName, newFields) = ("", "")
                     } catch {
                         model.problem = error.localizedDescription

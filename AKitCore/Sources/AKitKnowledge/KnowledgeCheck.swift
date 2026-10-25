@@ -210,7 +210,8 @@ extension KnowledgeBase {
             sections.append(.init(note: hit.note, heading: hit.heading, text: text))
         }
         var edges: [String] = []
-        for note in notes where linkTargets().notes.contains(note) {
+        let known = Set(linkTargets().notes)
+        for note in notes where known.contains(note) {
             for edge in (try? index.neighbors(note, depth: 1).edges) ?? [] {
                 let line = "\(edge.from) " + (edge.kind.map { "-\($0)-> " } ?? "-> ") + "\(edge.to) (\(edge.map))"
                 if !edges.contains(line) { edges.append(line) }

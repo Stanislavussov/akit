@@ -131,6 +131,11 @@ extension KnowledgeInbox {
 }
 
 extension KnowledgeBase {
+    /// Note titles by id, for block labels.
+    func noteTitles() -> [String: String] {
+        Dictionary(((try? notes()) ?? []).map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+    }
+
     // MARK: - Map proposals (5.4)
 
     /// The map a map proposal names: `AREA/NAME`, `AREA/maps/NAME`, with or without `areas/` and
@@ -200,7 +205,7 @@ extension KnowledgeBase {
         if target.exists, original == nil { throw Failure(message: "\(mapPath(target.id)) can't be read.") }
 
         let targets = linkTargets()
-        let titles = Dictionary(((try? notes()) ?? []).map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        let titles = noteTitles()
         let labels = MapGraph.labels(in: scene)
         var links: [KnowledgeInbox.MapPlan.Link] = [], unlinked: [KnowledgeInbox.MapPlan.Unlinked] = []
         for shape in scene.live where !["text", "arrow", "line", "freedraw"].contains(shape.type) {

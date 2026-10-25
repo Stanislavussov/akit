@@ -11,16 +11,10 @@ final class KnowledgeWriteTests {
     let fm = FileManager.default
 
     init() throws {
-        home = URL(filePath: FileWalk.realPath(fm.temporaryDirectory) ?? fm.temporaryDirectory.path)
-            .appending(path: "akit-kbw-\(UUID().uuidString)")
-        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        home = try FakeHome.make("akit-kbw")
     }
 
-    func env() -> HarnessEnvironment {
-        HarnessEnvironment(homeDirectory: home,
-                           variables: ["HOME": home.path, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"],
-                           executableSearchPaths: [URL(filePath: "/usr/bin")])
-    }
+    func env() -> HarnessEnvironment { FakeHome.env(home) }
 
     func makeMap() async throws -> (KnowledgeBase, String) {
         let base = try await TemplateBase.base(home: home)

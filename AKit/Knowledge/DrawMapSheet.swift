@@ -117,7 +117,8 @@ struct DrawMapSheet: View {
 
     private func run() {
         var agent = checkAgent
-        if !modelName.trimmingCharacters(in: .whitespaces).isEmpty { agent.model = modelName.trimmingCharacters(in: .whitespaces) }
+        let chosen = modelName.trimmingCharacters(in: .whitespaces)
+        if !chosen.isEmpty { agent.model = chosen }
         let request = KnowledgeMapDrawer.Request(area: chosenArea, name: trimmedName, prompt: prompt, agent: agent)
         running = true
         model.drawTask = Task {

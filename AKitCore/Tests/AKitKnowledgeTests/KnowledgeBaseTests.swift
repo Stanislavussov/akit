@@ -12,23 +12,13 @@ final class KnowledgeBaseTests {
     let fm = FileManager.default
 
     init() throws {
-        home = URL(filePath: FileWalk.realPath(fm.temporaryDirectory) ?? fm.temporaryDirectory.path)
-            .appending(path: "akit-kb-\(UUID().uuidString)")
-        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        home = try FakeHome.make("akit-kb")
     }
 
-    /// Git never reads the real user's config: the global one is /dev/null, the system one is off.
-    func env(_ extra: [String: String] = [:]) -> HarnessEnvironment {
-        HarnessEnvironment(homeDirectory: home,
-                           variables: ["HOME": home.path, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"].merging(extra) { $1 },
-                           executableSearchPaths: [URL(filePath: "/usr/bin")])
-    }
+    func env(_ extra: [String: String] = [:]) -> HarnessEnvironment { FakeHome.env(home, extra) }
 
     func git(_ args: String..., in folder: URL, env: HarnessEnvironment? = nil) async throws -> String {
-        let result = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: args, directory: folder,
-                                                           environment: (env ?? self.env()).variables, timeout: 20))
-        #expect(result.succeeded, "git \(args.joined(separator: " ")): \(result.output)")
-        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await FakeHome.git(args, in: folder, env: env ?? self.env())
     }
 
     func write(_ url: URL, _ text: String) throws {

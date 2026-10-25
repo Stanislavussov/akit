@@ -240,7 +240,6 @@ final class KnowledgeModel {
             watcher = KnowledgeWatcher(root: base.root) { [weak self] paths in self?.changed(paths) }
             sweep(base)
             noteHashes = [:]
-            inboxCount = WatchFilter.inboxCount(base.root)
             if loaded { Task { await refreshIndex() } }
         }
         do { kindsFile = try base.kinds() } catch {
@@ -301,11 +300,19 @@ final class KnowledgeModel {
         let area = String(id.split(separator: "/").first ?? "")
         if area != self.area { choose(area: area) }
         mapHashes[id] = KnowledgeWrite.hash(data)
-        mapScene = MapCanvasView.Scene(key: id, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
+        showScene(id, data)
         if !mapTabs.contains(id) { mapTabs.append(id) }
         map = id
         noteBesideMap = false
     }
+
+    /// Puts the map's bytes on the canvas as a new scene.
+    private func showScene(_ id: String, _ data: Data) {
+        mapScene = MapCanvasView.Scene(key: id, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
+    }
+
+    /// A map's name without its area: `payments/maps/overview` → `overview`.
+    static func mapName(_ id: String) -> String { id.split(separator: "/").dropFirst(2).joined(separator: "/") }
 
     /// The map tabs the tab bar shows: those of the area of the map in view.
     var areaMapTabs: [String] {
@@ -323,7 +330,7 @@ final class KnowledgeModel {
 
     /// Closes a map tab; for the map in view, its last change is saved first (N5).
     func close(mapTab id: String) async {
-        if id == map { _ = await forcePostDirty() }
+        if id == map { await forcePostDirty() }
         let others = areaMapTabs.filter { $0 != id }
         mapTabs.removeAll { $0 == id }
         if id == map {
@@ -348,12 +355,12 @@ final class KnowledgeModel {
     /// pixels from the canvas's top left). The link is the shortest one that resolves to the note
     /// from the map; the block is saved like any other change.
     func drop(note id: String, at point: CGPoint) async {
-        guard let map, let canvas = MapCanvasView.Coordinator.current, allNotes.contains(where: { $0.id == id }) else { return }
+        guard let map, let canvas = MapCanvasView.Coordinator.current, let entry = allNotes.first(where: { $0.id == id }) else { return }
         let path = "areas/\(map).excalidraw"
         let parts = id.split(separator: "/").map(String.init)
         let forms = (1...parts.count).reversed().map { parts.suffix($0).joined(separator: "/") }.reversed()
         let link = forms.map { "[[\($0)]]" }.first { targets.resolve($0, from: path) == .note(id) } ?? "akit:note/\(id)"
-        let label = allNotes.first { $0.id == id }?.title ?? parts.last ?? id
+        let label = entry.title
         mapEditing = true
         if let element = await canvas.addLinkedBlock(link: link, label: label, at: point) {
             notice = "Added a block for \(id) (\(link))."
@@ -447,7 +454,7 @@ final class KnowledgeModel {
                 if mapTabs.contains(change.new), let data = try? Data(contentsOf: base.mapFile(change.new)) {
                     mapHashes[change.new] = KnowledgeWrite.hash(data)
                     if change.new == visible {
-                        mapScene = MapCanvasView.Scene(key: change.new, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
+                        showScene(change.new, data)
                     }
                 }
             }
@@ -470,7 +477,7 @@ final class KnowledgeModel {
         }
         mapHashes[conflict.id] = KnowledgeWrite.hash(data)
         if map == conflict.id {
-            mapScene = MapCanvasView.Scene(key: conflict.id, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
+            showScene(conflict.id, data)
         }
         notice = "Reloaded \(conflict.id) from disk."
     }
@@ -556,11 +563,11 @@ final class KnowledgeModel {
             lintFindings = []
             return
         }
-        if rescan || lintProjects == nil {
-            lintProjects = KnowledgeLint.Projects.find(home: home, projectsRoot: projectsRoot ?? home.appending(path: "Projects"),
-                                                       brainRoot: brainRoot ?? Brain.defaultRoot(home: home))
-        }
-        lintFindings = KnowledgeLint.run(base, projects: lintProjects ?? .init(), home: home)
+        let projects = (rescan ? nil : lintProjects)
+            ?? KnowledgeLint.Projects.find(home: home, projectsRoot: projectsRoot ?? home.appending(path: "Projects"),
+                                           brainRoot: brainRoot ?? Brain.defaultRoot(home: home))
+        lintProjects = projects
+        lintFindings = KnowledgeLint.run(base, projects: projects, home: home)
     }
 
     /// The findings about one note (its links, `repo:`, `files:`, `kind:`).
@@ -952,7 +959,7 @@ final class KnowledgeModel {
         guard let base, let data = try? Data(contentsOf: base.mapFile(id)) else { return }
         mapHashes[id] = KnowledgeWrite.hash(data)
         if map == id {
-            mapScene = MapCanvasView.Scene(key: id, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
+            showScene(id, data)
         }
         notice = "\(id) changed on disk; showing that version."
     }

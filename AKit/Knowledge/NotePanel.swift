@@ -8,7 +8,6 @@ struct NotePanel: View {
     @State private var draft = ""
 
     var body: some View {
-        @Bindable var model = model
         VStack(spacing: 0) {
             if !model.tabs.isEmpty {
                 tabBar
@@ -342,7 +341,7 @@ struct RelationsView: View {
                             .help("The note the arrow links: \(flow)")
                     }
                     Spacer()
-                    Button(edge.map.split(separator: "/").dropFirst(2).joined(separator: "/")) { model.showRelation(map: edge.map) }
+                    Button(KnowledgeModel.mapName(edge.map)) { model.showRelation(map: edge.map) }
                         .buttonStyle(.link)
                         .help("Open the map \(edge.map)")
                 }

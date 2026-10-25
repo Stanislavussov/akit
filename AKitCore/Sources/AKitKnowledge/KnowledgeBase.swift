@@ -490,8 +490,8 @@ public struct KnowledgeBase: Sendable, Hashable {
             : "Bases: " + bases.map { "\($0.name) (\(FileWalk.tilde($0.root, home: home)))" }.joined(separator: ", ") + "."
     }
 
-    /// `~/.akit/local/knowledge/focus.json`: per project id, the base (a world or a path) and, later,
-    /// the area its sessions start from (K5). Written by AKit's Focus… (step 3), never in the brain.
+    /// `~/.akit/local/knowledge/focus.json`: per project id, the base (a world or a path) and the
+    /// area its sessions start from (K5). Written by AKit's Focus…, never in the brain.
     public struct Focus: Codable, Equatable, Sendable {
         public struct Entry: Codable, Equatable, Sendable {
             public var base: String?

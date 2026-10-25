@@ -116,6 +116,6 @@ public struct KnowledgeArea: Sendable, Equatable, Encodable {
     }
 }
 
-private extension String {
+extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }

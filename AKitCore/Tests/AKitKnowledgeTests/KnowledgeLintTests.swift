@@ -14,9 +14,7 @@ final class KnowledgeLintTests {
     let fm = FileManager.default
 
     init() throws {
-        home = URL(filePath: FileWalk.realPath(fm.temporaryDirectory) ?? fm.temporaryDirectory.path)
-            .appending(path: "akit-kb-lint-\(UUID().uuidString)")
-        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        home = try FakeHome.make("akit-kb-lint")
     }
 
     func write(_ text: String, _ path: String, in root: URL) throws {

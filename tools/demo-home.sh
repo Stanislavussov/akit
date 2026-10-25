@@ -1064,7 +1064,7 @@ file "$LOCAL/docs/export.md" <<<"Orders export as CSV: id and total."
 
 # Knowledge base (Knowledge screen, guide knowledge.ru.md): the work world built from the sample
 # base's content (KnowledgeSeed.swift, one source of made-up notes): two spaces with their
-# settings, a note of every kind, committed. Maps come with step 2.3.
+# settings, a note of every kind and maps, committed.
 "$AKIT" kb seed --world work >/dev/null
 
 # The repo that orders-api's note points at (repo: and files:), found under ~/Projects.

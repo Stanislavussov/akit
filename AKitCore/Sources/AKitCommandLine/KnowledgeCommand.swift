@@ -222,10 +222,7 @@ extension AKitCLI {
         case "areas", "notes":
             let area = command == "notes" ? args.positional() : nil
             try args.finish()
-            guard let base = try await chosen() else {
-                out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
-                return 0
-            }
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
             if command == "areas" {
                 let areas = base.areas()
                 if json {
@@ -284,10 +281,7 @@ extension AKitCLI {
         case "lint":
             let brain = args.value("--brain").map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
             try args.finish()
-            guard let base = try await chosen() else {
-                out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
-                return 0
-            }
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
             let projects = KnowledgeLint.Projects.find(home: env.homeDirectory, projectsRoot: projectsRoot, brainRoot: brain)
             let findings = KnowledgeLint.run(base, projects: projects, home: env.homeDirectory)
             if json {
@@ -430,10 +424,7 @@ extension AKitCLI {
         let name = args.positional()
         if command == "relations", name == nil { throw Failure(message: "Use: akit kb relations NOTE [--json] [--base PATH|WORLD]") }
         try args.finish()
-        guard let base = try await chosen() else {
-            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
-            return 0
-        }
+        guard let base = try await chosen() else { return noBase(json: json, out: out) }
         if command == "maps" {
             let graph: MapGraph
             do { graph = try base.mapGraph(area: name) } catch { throw Failure(message: error.message) }
@@ -458,9 +449,7 @@ extension AKitCLI {
         if json {
             out(encode(RelationsAnswer(base: base.root.path, note: note, relations: relations)))
         } else {
-            out(relations.isEmpty ? "No map has an arrow to or from \(note)." : relations.map { edge in
-                "\(edge.from) → \(edge.to)" + (edge.kind.map { "  \"\($0)\"" } ?? "") + (edge.flow.map { "  flow \($0)" } ?? "") + "  (\(edge.map))"
-            }.joined(separator: "\n"))
+            out(relations.isEmpty ? "No map has an arrow to or from \(note)." : relations.map(edgeLine).joined(separator: "\n"))
         }
         return 0
     }
@@ -478,10 +467,6 @@ extension AKitCLI {
         // --scrub: what AKit Review's kb tools hand the model goes through the pack's scrubber.
         let own = command != "index" && args.flag("--scrub") ? LabSettings.load(env: env).scrub : nil
         func emit(_ text: String) { out(own.map { Scrubber.scrub(text, own: $0).text } ?? text) }
-        func noBase() -> Int32 {
-            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
-            return 0
-        }
         switch command {
         case "search":
             let area = args.value("--area"), limit = try number("--limit", 10)
@@ -489,7 +474,7 @@ extension AKitCLI {
                 throw Failure(message: "Use: akit kb search QUERY [--area A] [--limit 10] [--max-tokens N] [--json] [--base PATH|WORLD]")
             }
             try args.finish()
-            guard let base = try await chosen() else { return noBase() }
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
             let answer: KnowledgeIndex.SearchAnswer
             do { answer = try KnowledgeIndex(base: base).search(query, area: area, limit: limit, maxTokens: maxTokens) } catch {
                 throw Failure(message: error.message)
@@ -512,7 +497,7 @@ extension AKitCLI {
                 throw Failure(message: "Use: akit kb show NOTE [--section H] [--max-tokens N] [--json] [--base PATH|WORLD]")
             }
             try args.finish()
-            guard let base = try await chosen() else { return noBase() }
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
             let answer: KnowledgeIndex.ShowAnswer
             do { answer = try KnowledgeIndex(base: base).show(name, section: section, maxTokens: maxTokens) } catch {
                 throw Failure(message: error.message)
@@ -532,7 +517,7 @@ extension AKitCLI {
         default:
             let rebuild = args.flag("--rebuild")
             try args.finish()
-            guard let base = try await chosen() else { return noBase() }
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
             let index = KnowledgeIndex(base: base)
             let status: KnowledgeIndex.Status
             do { status = try index.refresh(rebuild: rebuild) } catch { throw Failure(message: error.message) }
@@ -583,10 +568,7 @@ extension AKitCLI {
         } catch {
             throw Failure(message: error.message)
         }
-        guard let base = found else {
-            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
-            return 0
-        }
+        guard let base = found else { return noBase(json: json, out: out) }
         let index = KnowledgeIndex(base: base)
         switch command {
         case "neighbors":
@@ -595,9 +577,7 @@ extension AKitCLI {
             if json {
                 out(encode(answer))
             } else {
-                var lines = answer.edges.isEmpty ? ["No map has an arrow to or from \(answer.note)."] : answer.edges.map { edge in
-                    "\(edge.from) → \(edge.to)" + (edge.kind.map { "  \"\($0)\"" } ?? "") + (edge.flow.map { "  flow \($0)" } ?? "") + "  (\(edge.map))"
-                }
+                var lines = answer.edges.isEmpty ? ["No map has an arrow to or from \(answer.note)."] : answer.edges.map(edgeLine)
                 if answer.truncated { lines.append("(Cut to \(maxTokens) tokens: ask for a larger --max-tokens.)") }
                 if answer.stale { lines.append("(Another process is updating the index: these come from its last state.)") }
                 out(lines.joined(separator: "\n"))
@@ -815,7 +795,7 @@ extension AKitCLI {
                 change = .note(note!, body: body, set: settings)
             }
             // The harness, when the agent didn't name itself: Claude Code sets CLAUDECODE.
-            let harness = author ?? (env.variables["CLAUDECODE"].map { $0.isEmpty ? nil : "claude" } ?? nil)
+            let harness = author ?? (env.variables["CLAUDECODE"].flatMap { $0.isEmpty ? nil : "claude" })
             let base = try await writable(chosen)
             let proposal: KnowledgeProposal, checks: [KnowledgeInbox.Check]
             do { (proposal, checks) = try base.propose(.init(change, reason: reason, author: harness)) } catch { throw Failure(message: error.message) }
@@ -830,10 +810,7 @@ extension AKitCLI {
             return 0
         case "inbox":
             try args.finish()
-            guard let base = try await chosen() else {
-                out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
-                return 0
-            }
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
             let entries = base.proposals()
             if json {
                 out(encode(InboxAnswer(base: base.root.path, proposals: entries)))
@@ -928,10 +905,7 @@ extension AKitCLI {
         let modelOption = args.value("--model")
         guard let id = args.positional() else { throw Failure(message: "Use: akit kb check ID [--model provider/model] [--json] [--base PATH|WORLD]") }
         try args.finish()
-        guard let base = try await chosen() else {
-            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
-            return 0
-        }
+        guard let base = try await chosen() else { return noBase(json: json, out: out) }
         let proposal: KnowledgeProposal
         do { proposal = try base.proposal(id) } catch { throw Failure(message: error.message) }
         var agent = KnowledgeCheckModel.agent(settings: try LabSettings.loadForSending(env: env))
@@ -1049,10 +1023,7 @@ extension AKitCLI {
         func fields(_ text: String?) -> [String] { (text ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
         guard let action else {
             if fieldsOption != nil { throw Failure(message: "--fields goes with akit kb kinds add NAME.") }
-            guard let base = try await chosen() else {
-                out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
-                return 0
-            }
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
             let kinds: KnowledgeKinds
             do { kinds = try base.kinds() } catch { throw Failure(message: error.message) }
             let defaults = !FileManager.default.fileExists(atPath: base.root.appending(path: KnowledgeKinds.fileName).path)
@@ -1156,10 +1127,7 @@ extension AKitCLI {
         let changes = title != nil || description != nil || !add.isEmpty || !remove.isEmpty
         let found: KnowledgeBase?
         if changes { found = try await writable(chosen) } else { found = try await chosen() }
-        guard let base = found else {
-            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
-            return 0
-        }
+        guard let base = found else { return noBase(json: json, out: out) }
         var settings: KnowledgeArea
         do {
             settings = try base.settings(area: name)
@@ -1184,7 +1152,16 @@ extension AKitCLI {
         return 0
     }
 
-    private static func count(_ number: Int, _ word: String) -> String { "\(number) \(word)\(number == 1 ? "" : "s")" }
+    /// What the read commands print when this Mac has no base (exit 0).
+    private static func noBase(json: Bool, out: (String) -> Void) -> Int32 {
+        out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
+        return 0
+    }
+
+    /// One arrow as `kb relations` and `kb neighbors` print it.
+    private static func edgeLine(_ edge: MapGraph.Edge) -> String {
+        "\(edge.from) → \(edge.to)" + (edge.kind.map { "  \"\($0)\"" } ?? "") + (edge.flow.map { "  flow \($0)" } ?? "") + "  (\(edge.map))"
+    }
 
     struct PiTemplateAnswer: Encodable {
         let brain: String
