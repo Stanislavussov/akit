@@ -4,7 +4,7 @@ import Foundation
 import Testing
 
 extension ReviewProcessTests {
-    /// The knowledge base's tools in the review extension (v13, K18): `akit_kb_search` and
+    /// The knowledge base's tools in the review extension (v13+, K18): `akit_kb_search` and
     /// `akit_kb_show`, only with `AKIT_REVIEW_AKIT` and `AKIT_REVIEW_KB_BASE`. Without them, the
     /// tools Pi declares to the model are exactly those of v12 (the version before the knowledge
     /// tools), so the requests stay the same.
@@ -72,9 +72,9 @@ extension ReviewProcessTests {
             home.write("bin/akit", "#!/bin/sh\nfor a in \"$@\"; do echo \"[$a]\"; done\n", executable: true)
         }
 
-        @Test func versionThirteen() {
-            #expect(ReviewExtension.version == 13)
-            #expect(ReviewExtension.source.hasPrefix("// akit-review.ts v13:"))
+        @Test func versionFourteen() {
+            #expect(ReviewExtension.version == 14)
+            #expect(ReviewExtension.source.hasPrefix("// akit-review.ts v14:"))
             #expect(ReviewExtension.source.contains("const kbTimeout = 20000;") && ReviewExtension.source.contains("const kbOutputCap = 65536;"))
             #expect(ReviewExtension.source.contains("execFile(akit, argv, { shell: false, timeout: kbTimeout, maxBuffer: kbOutputCap"))
             #expect(!ReviewExtension.source.contains("execSync") && !ReviewExtension.source.contains("spawn("), "no shell")

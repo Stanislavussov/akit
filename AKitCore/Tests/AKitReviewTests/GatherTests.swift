@@ -392,6 +392,10 @@ extension ReviewProcessTests {
             #expect(kind("get_merge_request") == .read && kind("get_merge_request_diffs") == .read, "merge after a reading verb is fine")
             #expect(kind("mr_discussions") == .read && kind("list_draft_notes") == .read)
             #expect(kind("wit_get_work_item", server: "azure-devops") == .read && kind("repo_list_pull_requests", server: "ado") == .read)
+            // Azure DevOps MCP 2.x: one tool per area, read by name also without Pi's read-only mark.
+            #expect(kind("wit_work_item", server: "azuredeps") == .read && kind("repo_pull_request_thread", server: "azuredeps") == .read)
+            #expect(kind("wit_work_item_write", server: "azuredeps") == .blocked && kind("wit_work_item_comment_write", server: "azuredeps") == .blocked)
+            #expect(kind("wit_backlog", server: "azuredeps") == .blocked)
             #expect(kind("create_draft_note") == .write && kind("update_draft_note") == .write && kind("delete_draft_note") == .write)
             for blocked in ["bulk_publish_draft_notes", "publish_draft_note", "merge_merge_request", "gitlab_merge_merge_request", "mr_merge",
                             "repo_vote_pull_request", "create_note", "execute_graphql", "squash_commits", "new_issue", "cherry_pick",

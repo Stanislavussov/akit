@@ -197,9 +197,12 @@ public enum ReviewMCPPolicy {
     /// The verbs a draft note tool may have in the send pass.
     public static let writeVerbs = ["create", "add", "post", "new", "update", "edit", "modify", "put", "patch", "delete", "remove", "destroy"]
     /// Reading tools of common servers whose names carry no reading verb: GitLab's
-    /// `mr_discussions`, and context7's `resolve-library-id`, which resolves a library's name,
-    /// not a thread (exact names only, so the forbidden `resolve` still blocks the rest).
-    public static let knownReads = ["mr_discussions"]
+    /// `mr_discussions`; Azure DevOps MCP 2.x's one-tool-per-area reads (`wit_work_item` with
+    /// `action: get`), which its server marks read-only, also for a Pi that doesn't pass the
+    /// mark on; and context7's `resolve-library-id`, which resolves a library's name, not a
+    /// thread (exact names only, so the forbidden `resolve` still blocks the rest).
+    public static let knownReads = ["mr_discussions", "wit_work_item", "wit_query", "wit_work_item_attachment", "repo_pull_request",
+                                    "repo_pull_request_thread", "repo_file", "repo_repository", "repo_branch", "wiki"]
     public static let knownExactReads = ["resolve-library-id", "resolve_library_id", "query-docs", "query_docs", "get-library-docs",
                                          "get_library_docs"]
     /// Words that run or change something anywhere in a tool's name: an open server's tool with
@@ -487,12 +490,12 @@ public enum ReviewMCPCheck {
         public var errorDescription: String? { message }
     }
 
-    /// Runs `pi mcp list --json` (it connects to every enabled server) and sorts each tool by
-    /// the run's rules. Tools Pi lists without annotations are sorted by their names; a tool a
+    /// Runs `pi mcp list --json` (it connects to every enabled server) with the environment a
+    /// pass gets, so the check sees what a run sees, and sorts each tool by the run's rules. Tools Pi lists without annotations are sorted by their names; a tool a
     /// server marks read-only reads in a run even when its name doesn't say so.
     public static func run(env: HarnessEnvironment, access: ReviewMCPAccess, timeout: TimeInterval = 120) async throws -> Report {
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
-        let result = await ProcessRunner.run(pi, arguments: ["mcp", "list", "--json"], environment: ChildProcess.harnessEnvironment(env),
+        let result = await ProcessRunner.run(pi, arguments: ["mcp", "list", "--json"], environment: await ReviewPasses.passEnvironment(env),
                                              timeout: timeout)
         guard let result else { throw Failure(message: "pi mcp list didn't start.") }
         guard result.output.contains("{") else {
