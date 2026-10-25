@@ -5,6 +5,9 @@ import Foundation
 /// - `areas/…` (notes, maps, `area.yaml`): the index is refreshed, and an outside change goes to
 ///   the commit queue (U2).
 /// - `kb.yaml`: the kinds are read again; queued like an area file.
+/// - `notebook/…` (a tab, an image): queued like an area file, not indexed (NB9); the Notebook
+///   screen reads its tabs again. The tab order (`notebook/.tabs.json`) is hidden: AKit commits it
+///   itself.
 /// - `inbox/…` (a proposal, or its hidden `.<id>.check.json` marks): only the Inbox count and list
 ///   are refreshed. Never queued: only Accept and Reject
 ///   change `inbox/` in git (P3).
@@ -17,6 +20,7 @@ public enum WatchFilter {
     public enum Change: Equatable, Sendable {
         case ignore
         case area(String)
+        case notebook(String)
         case inbox(String)
         case baseConfig(String)
         case other(String)
@@ -40,6 +44,7 @@ public enum WatchFilter {
         if parts.contains(where: { $0.hasPrefix(".") }) { return .ignore }
         switch top {
         case "areas" where parts.count > 1: return .area(path)
+        case KnowledgeNotebook.folderName where parts.count > 1: return .notebook(path)
         case "inbox" where parts.count > 1: return .inbox(path)
         case KnowledgeKinds.fileName where parts.count == 1: return .baseConfig(path)
         default: return .other(path)
@@ -63,6 +68,8 @@ public enum WatchFilter {
         public var reloadKinds = false
         /// Something under `inbox/` changed: count it again.
         public var inbox = false
+        /// Something under `notebook/` changed: read the tabs again.
+        public var notebook = false
         /// Outside changes to queue for the batch commit; never a path under `inbox/`.
         public var enqueue: [String] = []
         /// Changed paths whose bytes are not AKit's last write: an open note or map among them
@@ -84,6 +91,11 @@ public enum WatchFilter {
                 continue
             case .inbox:
                 batch.inbox = true
+            case .notebook(let path):
+                batch.notebook = true
+                if let mine = own[path], mine == diskHash(path) { continue }
+                batch.enqueue.append(path)
+                batch.outside.append(path)
             case .area(let path), .baseConfig(let path):
                 batch.reindex = true
                 if path == KnowledgeKinds.fileName { batch.reloadKinds = true }

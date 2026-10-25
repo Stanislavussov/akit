@@ -194,7 +194,7 @@ enum DebugSnapshot {
             exit(1)
         }
         while let sheet = window.attachedSheet { window = sheet }
-        guard let view = window.contentView?.superview ?? window.contentView else {
+        guard var view = window.contentView?.superview ?? window.contentView else {
             FileHandle.standardError.write(Data("snapshot: window not found\n".utf8))
             exit(1)
         }
@@ -388,6 +388,57 @@ enum DebugSnapshot {
         if options.section == .knowledge, let manifest = KnowledgeModel.current?.manifest {
             print(manifest)
         }
+        // The notebook waits for its editor. `--tab notebook-tick` clicks the first check box,
+        // `--tab notebook-today --query <date>` presses Today; both wait past the save.
+        let notebookOpen = options.section == .notebook && NotebookEditorView.Coordinator.current != nil
+        if notebookOpen, let editor = NotebookEditorView.Coordinator.current, let model = NotebookModel.current {
+            for _ in 0..<100 where model.tab == nil { try? await Task.sleep(for: .milliseconds(100)) }
+            _ = await editor.waitForTab(model.document.key)
+            if options.tab == "notebook-tick" { print("notebook: tick: \(await editor.debugTick(0))") }
+            if options.tab == "notebook-today" { await model.today() }
+            // `--tab notebook-draw` opens Draw… with a rectangle on the canvas; `notebook-draw-done` also presses Done;
+            // `notebook-draw-open --query <name>` opens that drawing as a double click on its picture does.
+            if let tab = options.tab, tab.hasPrefix("notebook-draw") {
+                if tab == "notebook-draw-open" {
+                    model.openDrawing(KnowledgeNotebook.pictureLink(options.query ?? ""))
+                } else {
+                    model.newDrawing()
+                }
+                let key = NotebookDrawingSheet.keyPrefix + (model.drawingRequest?.name ?? "")
+                var canvas: MapCanvasView.Coordinator?
+                for _ in 0..<100 {
+                    if let current = MapCanvasView.Coordinator.current, await current.waitForScene(key, timeout: 0.1) { canvas = current; break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                let count = tab == "notebook-draw-open" ? nil : (try? await canvas?.call("akitDebugAddRectangle")) as? NSNumber
+                print("notebook: drawing \(key), \(count?.intValue ?? -1) elements")
+                if tab == "notebook-draw-done", let canvas {
+                    let scene = (try? await canvas.call("akitSerialize")) as? String ?? ""
+                    let svg = (try? await canvas.call("akitExportSVG")) as? String ?? ""
+                    print("notebook: saved drawing: \(await model.saveDrawing(scene: scene, svg: svg)), svg \(svg.utf8.count) bytes")
+                    try? await Task.sleep(for: .milliseconds(1600))
+                    if let notebook = model.notebook, let tab = model.tab { print("notebook file: \((try? notebook.text(tab)) ?? "-")") }
+                    if let notebook = model.notebook {
+                        print("notebook pending commit: " + KnowledgeCommitQueue(base: notebook.base.root, env: .current).pending().joined(separator: ", "))
+                    }
+                }
+            }
+            if ["notebook-tick", "notebook-today"].contains(options.tab) {
+                try? await Task.sleep(for: .milliseconds(1600))
+                if let notebook = model.notebook, let tab = model.tab {
+                    print("notebook file: \((try? notebook.text(tab)) ?? "-")")
+                    print("notebook pending commit: " + KnowledgeCommitQueue(base: notebook.base.root, env: .current).pending().joined(separator: ", "))
+                }
+            }
+            await NotebookEditorView.Coordinator.waitAndPrint()
+            // The drawing sheet is captured alone.
+            if let sheet = window.attachedSheet, let content = sheet.contentView {
+                window = sheet
+                view = content.superview ?? content
+            }
+            print("notebook tabs: \(model.tabs.joined(separator: ", ")); in view: \(model.tab ?? "-")" + (model.notice.map { "; notice: \($0)" } ?? "")
+                  + (model.problem.map { "; problem: \($0)" } ?? ""))
+        }
         if options.settings, options.tab == "knowledge" || options.tab == "knowledge-check" {
             print(KnowledgeSettingsSection.manifest())
             print(KnowledgeCheckModelSection.manifest())
@@ -395,12 +446,14 @@ enum DebugSnapshot {
         let bounds = view.bounds
         guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { exit(1) }
         view.cacheDisplay(in: bounds, to: rep)
-        // cacheDisplay draws no web view: draw the map canvas's own snapshot over its place.
-        if mapOpen, let webView = MapCanvasView.Coordinator.current?.webView, webView.window == window,
+        // cacheDisplay draws no web view: draw the map canvas's or the notebook editor's own snapshot over its place.
+        let drawingOpen = notebookOpen && NotebookModel.current?.drawingRequest != nil
+        let pageView = mapOpen || drawingOpen ? MapCanvasView.Coordinator.current?.webView : notebookOpen ? NotebookEditorView.Coordinator.current?.webView : nil
+        if let webView = pageView, webView.window == window,
            let image = try? await webView.takeSnapshot(configuration: nil) {
             var frame = webView.convert(webView.bounds, to: view)
             if view.isFlipped { frame.origin.y = bounds.height - frame.maxY }
-            print("map canvas: \(Int(frame.minX)),\(Int(bounds.height - frame.maxY)),\(Int(frame.width)),\(Int(frame.height))")
+            print("\(mapOpen || drawingOpen ? "map canvas" : "notebook editor"): \(Int(frame.minX)),\(Int(bounds.height - frame.maxY)),\(Int(frame.width)),\(Int(frame.height))")
             if let context = NSGraphicsContext(bitmapImageRep: rep) {
                 NSGraphicsContext.saveGraphicsState()
                 NSGraphicsContext.current = context

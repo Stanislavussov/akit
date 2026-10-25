@@ -273,6 +273,9 @@ public enum AKitCLI {
                 | search QUERY | show NOTE | index | neighbors NOTE | context [FOLDER] [--json] [--base PATH|WORLD]
                                           What the base holds, search in it, and the card of a project's focus area. akit kb --help lists the rest, with
                                           the commands for a person only
+          akit notebook tabs | show TAB [--open] | add TAB TEXT [--task] [--today] | done TAB TEXT [--json] [--base PATH|WORLD]
+                                          The notebook of plans and to-dos in the base (one tab per Markdown file). An agent
+                                          runs add and done only when the user asked. akit notebook --help lists the rest
 
         Translate (model-written output in another language; the original stays):
           akit translate --to LANG FILE|-|--notes SESSION|--lab-run ID|--review RUN
@@ -363,6 +366,9 @@ public enum AKitCLI {
             if arguments.first == "kb" {
                 return try await knowledge(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, trash: trash,
                                             input: input)
+            }
+            if arguments.first == "notebook" {
+                return try await notebook(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
             }
             if arguments.first == "translate" {
                 return try await translate(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, input: input)

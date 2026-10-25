@@ -14,6 +14,7 @@
 //   akitLoadScene(json, key)  shows a .excalidraw file's text (key: the map id the saves carry); a
 //                             change still waiting for its post is posted first; returns the element count
 //   akitSerialize()      the scene as .excalidraw text (serializeAsJSON, "local")
+//   akitExportSVG()      the scene as SVG text, "" when empty (a notebook drawing's picture)
 //   akitTakeUnsaved()    a change still waiting for its post, now ({key, json}), or null; for AKit's flushes
 //   akitSetViewMode(on)  view mode on or off (Edit in AKit)
 //   akitPosts()          how many saves were handed to AKit (posts and akitTakeUnsaved)
@@ -251,6 +252,21 @@ window.EXCALIDRAW_ASSET_PATH = new URL("vendor/", location.href).href;
   window.akitSerialize = function () {
     if (!api) throw new Error("The canvas is not ready yet.");
     return serialize();
+  };
+
+  // A notebook drawing's picture: the scene as SVG text (white background, 16 px padding), or ""
+  // when nothing is drawn. Text uses Excalidraw's fonts here and the system font elsewhere.
+  window.akitExportSVG = async function () {
+    if (!api) throw new Error("The canvas is not ready yet.");
+    const elements = api.getSceneElements();
+    if (!elements.length) return "";
+    const svg = await window.ExcalidrawLib.exportToSvg({
+      elements,
+      appState: { ...api.getAppState(), exportBackground: true, viewBackgroundColor: "#ffffff", exportWithDarkMode: false },
+      files: api.getFiles(),
+      exportPadding: 16,
+    });
+    return svg.outerHTML;
   };
 
   window.akitDiagnostics = async function () {

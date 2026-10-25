@@ -28,7 +28,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .setup: "What the agents should have: your brain of skills and layers, rendered into projects"
         case .activity: "How the agents worked: their saved sessions, tokens and cost"
         case .improve: "What the setup costs unused, why sessions went wrong and whether a fix helped"
-        case .work: "Agents that help with your daily work: review of merge requests, a knowledge base of your services and flows"
+        case .work: "Agents that help with your daily work: review of merge requests, a knowledge base of your services and flows, a notebook of plans and to-dos"
         }
     }
 
@@ -38,7 +38,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .setup: [.brain]
         case .activity: [.sessions, .usage]
         case .improve: [.insights, .lab, .analysis]
-        case .work: [.review, .knowledge]
+        case .work: [.review, .knowledge, .notebook]
         }
     }
 }
@@ -58,6 +58,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case brain
     case review
     case knowledge
+    case notebook
     var id: Self { self }
 
     var title: String {
@@ -75,6 +76,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .brain: "Brain"
         case .review: "Review"
         case .knowledge: "Knowledge"
+        case .notebook: "Notebook"
         }
     }
 
@@ -94,6 +96,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .brain: "Your git repo of skills and layers; Set Up Project… renders them into a project"
         case .review: "AI review of GitLab merge requests: Pi proposes comments, you approve each, AKit adds them as your drafts"
         case .knowledge: "Notes about your services, flows and teams by space, in a local git repo that agents read; edits are committed by AKit"
+        case .notebook: "Short notes, plans, to-dos and what you did today, one tab per Markdown file in the knowledge base; check boxes, images, links"
         }
     }
 
@@ -112,6 +115,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .brain: "brain"
         case .review: "checklist"
         case .knowledge: "books.vertical"
+        case .notebook: "note.text"
         }
     }
 }
@@ -129,7 +133,15 @@ struct RootView: View {
     /// Review state lives as long as the window: a review keeps running when you leave the section.
     @State private var review = ReviewModel()
     /// Knowledge state lives as long as the window: open note tabs and the commit queue's timer.
-    @State private var knowledge = KnowledgeModel()
+    @State private var knowledge: KnowledgeModel
+    /// The notebook's tab in view; its base is the Knowledge screen's.
+    @State private var notebook: NotebookModel
+
+    init() {
+        let knowledge = KnowledgeModel()
+        _knowledge = State(initialValue: knowledge)
+        _notebook = State(initialValue: NotebookModel(knowledge: knowledge))
+    }
 
     var body: some View {
         @Bindable var model = model
@@ -182,10 +194,12 @@ struct RootView: View {
             case .brain: BrainView()
             case .review: ReviewView()
             case .knowledge: KnowledgeView()
+            case .notebook: NotebookView()
             }
         }
         .environment(review)
         .environment(knowledge)
+        .environment(notebook)
         // Ask AKit: a chat beside every screen (Help → Ask AKit, ⌥⌘/).
         .inspector(isPresented: $ask.isOpen) {
             AskAKitPanel()

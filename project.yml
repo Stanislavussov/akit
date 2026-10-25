@@ -27,6 +27,11 @@ targets:
       - path: web/excalidraw
         type: folder
         buildPhase: resources
+      # The Notebook's editor: Crepe bundled offline (tools/build-notebook-editor.sh), served by
+      # NotebookEditorView's akit-web: scheme from the bundle's notebook folder.
+      - path: web/notebook
+        type: folder
+        buildPhase: resources
     dependencies:
       # One product per module the app imports (see AKitCore/Package.swift).
       - package: AKitCore

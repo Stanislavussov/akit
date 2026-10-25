@@ -237,7 +237,7 @@ Help → **Copy Diagnostics** кладёт в буфер обмена отчёт
 - **Setup**: [Brain](#brain). Что у агентов должно быть.
 - **Activity**: [Sessions](#sessions), [Usage](#usage). Как агенты работали.
 - **Improve**: [Insights](#insights), [Lab](#lab), [Error Analysis](#analysis). Что лишнее, что ломается и помог ли фикс.
-- **Work**: [Review](#review), [Knowledge](#knowledge). Агенты, которые помогают в ежедневной работе: ревью merge request'ов и база знаний.
+- **Work**: [Review](#review), [Knowledge](#knowledge), [Notebook](#notebook). Агенты, которые помогают в ежедневной работе: ревью merge request'ов, база знаний и блокнот планов и дел.
 
 Что ещё есть в боковом меню:
 
@@ -4027,6 +4027,32 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 - Где лежит база, задаёт [Settings](#settings) → **Knowledge**, например папка в вашем vault Obsidian: [Папка базы и Obsidian](knowledge#folder).
 - Все надписи экрана: [словарь](terms#terms-knowledge).
+
+### Notebook
+<!-- section: notebook -->
+
+**Что это:** блокнот базы знаний: короткие заметки, планы, задачи с флажками и «что я сделал сегодня». Одна вкладка — один файл Markdown в папке `notebook/` базы, рядом с `areas/`. Obsidian видит эти файлы. AKit сам делает коммиты правок. Агент читает блокнот командами `akit notebook` и пишет в него, только если вы попросили.
+
+У этого экрана есть своё руководство: кнопка **Guide** на экране или Help → **Notebook Guide**.
+
+**Когда пригодится:**
+
+- «Хочу видеть план дня рядом с агентами» → вкладка **Inbox**, задачи `[ ] `.
+- «Что я сделал за день?» → **Today** ставит наверх заголовок с датой.
+- «Агент, добавь это в мой список» → агент запускает `akit notebook add`.
+
+![Экран Notebook: вкладки Inbox и Plans, путь notebook/Inbox.md, заголовок 2026-10-25 с задачами, одна отмечена, ссылка [[billing]], ссылка https://example.com/retries и картинка схемы orders-api → billing](images/notebook.png)
+
+#### Что на экране
+<!-- section: notebook-screen -->
+
+- Вкладки и **+**. Правый щелчок по вкладке: **Rename…**, **Delete…**. Вкладку можно перетащить на другую.
+- Путь файла вкладки и кнопка **Show in Finder**.
+- Редактор: меню блоков по `/`, панель оформления при выделении, флажки задач, вставка картинок, ⌘-щелчок открывает ссылку.
+- Панель инструментов: **Today**, **Draw…** (рисунок Excalidraw во вкладке; двойной щелчок по рисунку меняет его), **New Tab…**, **Guide**. Если баз несколько — список **Base**.
+- Если базы нет: «No knowledge base» и кнопка **Open Knowledge**.
+
+Подробно: [писать](notebook#write), [задачи](notebook#tasks), [картинки и ссылки](notebook#images-links), [рисунки](notebook#drawings), [Today](notebook#today), [вкладки](notebook#tabs), [файлы и Obsidian](notebook#files), [агент](notebook#agents). Надписи: [словарь](terms#terms-notebook).
 
 ## Settings
 <!-- section: settings -->

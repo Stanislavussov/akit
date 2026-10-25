@@ -1,0 +1,63 @@
+/* AKit's look for Crepe: the system font and colours, light and dark like the app. */
+:root { color-scheme: light dark; }
+html, body { margin: 0; padding: 0; height: 100%; background: var(--crepe-color-background); }
+#root { min-height: 100%; }
+.milkdown {
+  --crepe-color-background: #ffffff;
+  --crepe-color-on-background: #1d1d1f;
+  --crepe-color-surface: #f5f5f7;
+  --crepe-color-surface-low: #f0f0f2;
+  --crepe-color-on-surface: #1d1d1f;
+  --crepe-color-on-surface-variant: #6e6e73;
+  --crepe-color-outline: #a1a1a6;
+  --crepe-color-primary: #0a64d6;
+  --crepe-color-secondary: #dbe8fb;
+  --crepe-color-on-secondary: #0b2a52;
+  --crepe-color-inverse: #2c2c2e;
+  --crepe-color-on-inverse: #f5f5f7;
+  --crepe-color-inline-code: #c41a16;
+  --crepe-color-error: #d70015;
+  --crepe-color-hover: #f0f0f2;
+  --crepe-color-selected: #e3e3e8;
+  --crepe-color-inline-area: #ececf0;
+  --crepe-base-font-size: 15px;
+  --crepe-font-title: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  --crepe-font-default: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  --crepe-font-code: ui-monospace, "SF Mono", Menlo, monospace;
+  --crepe-shadow-1: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.18);
+  --crepe-shadow-2: 0 3px 8px rgba(0, 0, 0, 0.14), 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+@media (prefers-color-scheme: dark) {
+  .milkdown {
+    --crepe-color-background: #1e1e1e;
+    --crepe-color-on-background: #e8e8ed;
+    --crepe-color-surface: #2a2a2c;
+    --crepe-color-surface-low: #252527;
+    --crepe-color-on-surface: #e8e8ed;
+    --crepe-color-on-surface-variant: #98989d;
+    --crepe-color-outline: #6e6e73;
+    --crepe-color-primary: #4c9aff;
+    --crepe-color-secondary: #1f3a5f;
+    --crepe-color-on-secondary: #dbe8fb;
+    --crepe-color-inverse: #e8e8ed;
+    --crepe-color-on-inverse: #1e1e1e;
+    --crepe-color-inline-code: #ff8a80;
+    --crepe-color-error: #ff6961;
+    --crepe-color-hover: #2c2c2e;
+    --crepe-color-selected: #3a3a3c;
+    --crepe-color-inline-area: #333336;
+    --crepe-shadow-1: 0 1px 3px rgba(0, 0, 0, 0.5);
+    --crepe-shadow-2: 0 3px 8px rgba(0, 0, 0, 0.55);
+  }
+}
+html, body { background: #ffffff; }
+@media (prefers-color-scheme: dark) { html, body { background: #1e1e1e; } }
+.milkdown .ProseMirror { padding: 24px 56px 120px 72px; max-width: 860px; }
+.milkdown .ProseMirror h2 { margin-top: 1.2em; }
+/* [[links]]: like a link; ⌘-click opens them. */
+.milkdown .akit-wikilink { color: var(--crepe-color-primary); text-decoration: underline; text-decoration-style: dotted; cursor: pointer; }
+/* Headings sized for short notes, not articles. */
+.milkdown .ProseMirror h1 { font-size: 26px; line-height: 34px; margin-top: 12px; }
+.milkdown .ProseMirror h2 { font-size: 20px; line-height: 28px; }
+.milkdown .ProseMirror h3 { font-size: 17px; line-height: 24px; }
+.milkdown .ProseMirror h4, .milkdown .ProseMirror h5, .milkdown .ProseMirror h6 { font-size: 15px; line-height: 22px; }

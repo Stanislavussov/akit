@@ -435,7 +435,7 @@ extension AKitCLI {
 
     /// The base for a write, or the error that says to create one. A folder with `areas/` but no
     /// git, which the read commands accept, is refused: every write commits.
-    private static func writable(_ base: () async throws -> KnowledgeBase?) async throws -> KnowledgeBase {
+    static func writable(_ base: () async throws -> KnowledgeBase?) async throws -> KnowledgeBase {
         guard let base = try await base() else {
             throw Failure(message: "No knowledge base on this Mac. Create one first: akit kb init [--world NAME]")
         }
@@ -1225,7 +1225,7 @@ extension AKitCLI {
     }
 
     /// What the read commands print when this Mac has no base (exit 0).
-    private static func noBase(json: Bool, out: (String) -> Void) -> Int32 {
+    static func noBase(json: Bool, out: (String) -> Void) -> Int32 {
         out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
         return 0
     }
