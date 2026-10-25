@@ -99,7 +99,7 @@ final class KnowledgeSettingsTests {
     @Test func kindsDefaultsReadAndWrite() async throws {
         let base = try await TemplateBase.base(home: home)
         #expect(try base.kinds() == KnowledgeKinds.defaults)
-        #expect(KnowledgeKinds.defaults.names == ["service", "flow", "team", "database", "queue", "external"])
+        #expect(KnowledgeKinds.defaults.names == ["service", "flow", "team", "database", "queue", "external", "folder"])
         #expect(try await git("ls-files", in: base.root).split(separator: "\n").contains("kb.yaml"))
         // A base without the file reads the defaults.
         try fm.removeItem(at: base.root.appending(path: "kb.yaml"))

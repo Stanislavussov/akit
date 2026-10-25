@@ -196,6 +196,10 @@ final class KnowledgeSeedTests {
         let file = folder.appending(path: "orders-api/src/events/order-created.ts")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("export {}\n".utf8).write(to: file)
+        // orders-api's path: ~/Projects/orders-api, the same clone.
+        let projects = folder.appending(path: "home/Projects")
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: projects.appending(path: "orders-api"), withDestinationURL: folder.appending(path: "orders-api"))
         let copies = Dictionary(uniqueKeysWithValues: ["orders-api", "billing", "orders-db", "lint-examples"].map { ("example.com/shop/\($0)", folder.appending(path: $0)) })
         return KnowledgeLint.run(base, projects: KnowledgeLint.Projects(copies: copies), home: folder.appending(path: "home"))
     }

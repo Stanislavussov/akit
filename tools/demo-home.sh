@@ -1122,6 +1122,13 @@ git -C "$ORDERS" add -A && git -C "$ORDERS" commit -qm "Add the order created ev
 echo "export const retries = 3;" >> "$ORDERS/src/events/order-created.ts"
 git -C "$ORDERS" add -A && git -C "$ORDERS" commit -qm "Retry a failed publish three times"
 
+# A folder without git for Add Folder… (K27): a team handbook, as a local wiki would be.
+file "$DEMO/Documents/payments-handbook/README.md" <<'EOF'
+# Payments handbook
+
+How the payments team deploys, rolls back and answers a failed charge.
+EOF
+
 # The other repos the notes name (repo:): billing and orders-db of payments, lint-examples of the
 # space's missing-file example (an empty copy), so akit kb lint finds only the findings the space
 # lint-examples has on purpose. No harness files: no screen lists them as projects.

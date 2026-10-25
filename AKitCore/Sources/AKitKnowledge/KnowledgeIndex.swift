@@ -100,14 +100,19 @@ public struct KnowledgeIndex {
         public let kind: String?
         public let repo: String?
         public let files: [String]
+        public var path: String? = nil
+        /// The system's folder on this Mac (K27, `KnowledgeLocal`): `~/Projects/orders-api`.
+        public var local: String? = nil
 
-        private enum CodingKeys: String, CodingKey { case kind, repo, files }
+        private enum CodingKeys: String, CodingKey { case kind, repo, path, files, local }
 
         public func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(kind, forKey: .kind)
             try container.encode(repo, forKey: .repo)
+            try container.encode(path, forKey: .path)
             try container.encode(files, forKey: .files)
+            try container.encode(local, forKey: .local)
         }
     }
 
@@ -185,9 +190,11 @@ public struct KnowledgeIndex {
         return answer
     }
 
-    /// A note's title, `kind` / `repo` / `files` and sections (one with `section`), read from its
-    /// file. Sections are cut from the end to stay under `maxTokens`, then marked `truncated`.
-    public func show(_ name: String, section: String? = nil, maxTokens: Int = Budget.defaultTokens) throws(Failure) -> ShowAnswer {
+    /// A note's title, `kind` / `repo` / `path` / `files`, its folder on this Mac (with `local`)
+    /// and sections (one with `section`), read from its file. Sections are cut from the end to
+    /// stay under `maxTokens`, then marked `truncated`.
+    public func show(_ name: String, section: String? = nil, maxTokens: Int = Budget.defaultTokens,
+                     local: KnowledgeLocal? = nil) throws(Failure) -> ShowAnswer {
         let id: String
         do { id = try base.noteID(name) } catch { throw Failure(message: error.message) }
         guard let note = KnowledgeNote.load(base.noteFile(id)) else {
@@ -205,7 +212,8 @@ public struct KnowledgeIndex {
             }
         }
         var answer = ShowAnswer(note: id, title: note.title ?? id.split(separator: "/").last.map(String.init) ?? id,
-                                frontmatter: Frontmatter(kind: note.kind, repo: note.repo, files: note.files),
+                                frontmatter: Frontmatter(kind: note.kind, repo: note.repo, files: note.files, path: note.path,
+                                                         local: local?.label(of: note)),
                                 sections: sections, truncated: false, stale: false)
         while true {
             let over = Budget.measure(&answer, field: \.tokens) - maxTokens

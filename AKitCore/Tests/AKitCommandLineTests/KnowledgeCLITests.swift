@@ -56,7 +56,7 @@ struct KnowledgeCLITests {
         let help = await akit("kb", "--help")
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
-        for command in ["akit kb init", "akit kb new-note", "akit kb new-map", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
+        for command in ["akit kb init", "akit kb new-note", "akit kb add-folder", "akit kb new-map", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
                         "akit kb rm", "akit kb rename", "akit kb accept", "akit kb reject", "akit kb check-model", "akit kb pi-template", "akit kb seed [", "akit kb seed --remove", "akit kb focus [FOLDER] --set"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
@@ -128,7 +128,7 @@ struct KnowledgeCLITests {
 
         let show = try json(await akit("kb", "show", "orders-api", "--section", "Events", "--json", "--base", base).out)
         #expect(Set(show.keys) == ["note", "title", "frontmatter", "sections", "truncated", "stale", "tokens"])
-        #expect(Set((show["frontmatter"] as? [String: Any] ?? [:]).keys) == ["kind", "repo", "files"])
+        #expect(Set((show["frontmatter"] as? [String: Any] ?? [:]).keys) == ["kind", "repo", "path", "files", "local"])
         let sections = try #require(show["sections"] as? [[String: Any]])
         #expect(sections.count == 1 && sections[0]["heading"] as? String == "Events" && Set(sections[0].keys) == ["heading", "text"])
         let text = await akit("kb", "show", "billing", "--base", base).out
@@ -327,6 +327,40 @@ struct KnowledgeCLITests {
         #expect(await akit("kb", "areas").out == "payments  0 notes, 1 map")
     }
 
+    @Test func addFolderShowsTheNoteThenCommitsAndAgentsSeeTheFolder() async throws {
+        #expect(await akit("kb", "init", "--world", "work").code == 0)
+        // A kb.yaml without the folder kind: add-folder adds it in the same commit.
+        try Data("kinds:\n  service:\n    fields: [repo, files]\n".utf8).write(to: base.appending(path: "kb.yaml"))
+        _ = try await git("add", "kb.yaml")
+        _ = try await git("commit", "-qm", "kinds")
+        let wiki = home.appending(path: "Documents/wiki")
+        try fm.createDirectory(at: wiki, withIntermediateDirectories: true)
+        try Data("# Wiki\n\nHow we deploy.\n".utf8).write(to: wiki.appending(path: "README.md"))
+
+        let preview = await akit("kb", "add-folder", "~/Documents/wiki", "--area", "shop")
+        #expect(preview.code == 0, "\(preview.err)")
+        #expect(preview.out == "Would create areas/shop/wiki.md and commit it:\n\n---\nkind: folder\npath: ~/Documents/wiki\n---\n# wiki\n\nHow we deploy.\n\nRun again with --yes to do it.")
+        #expect(!fm.fileExists(atPath: base.appending(path: "areas/shop/wiki.md").path))
+
+        let added = try json(await akit("kb", "add-folder", "~/Documents/wiki", "--area", "shop", "--yes", "--json").out)
+        #expect(Set(added.keys) == ["base", "note", "file", "folder", "kind", "repo", "description", "text", "written", "kindAdded"])
+        #expect(added["note"] as? String == "shop/wiki" && added["written"] as? Bool == true && added["kindAdded"] as? Bool == true)
+        #expect(try await git("show", "--name-only", "--format=%s", "HEAD") == "Add note shop/wiki for ~/Documents/wiki\n\nareas/shop/wiki.md\nkb.yaml")
+        #expect(try await git("status", "--porcelain").isEmpty)
+        #expect(await akit("kb", "add-folder", "~/Documents/wiki", "--area", "shop", "--yes").code == 2)
+
+        // A frontend whose area is shop: kb context and kb show give the wiki's folder.
+        try Data("projects: [~/Projects/front]\n".utf8).write(to: base.appending(path: "areas/shop/area.yaml"))
+        let front = home.appending(path: "Projects/front")
+        try fm.createDirectory(at: front, withIntermediateDirectories: true)
+        let context = try json(await akit("kb", "context", front.path, "--json").out)
+        let systems = context["systems"] as? [[String: Any]]
+        #expect(systems?.first?["local"] as? String == "~/Documents/wiki")
+        #expect(await akit("kb", "context", front.path).out.contains("shop/wiki  wiki: How we deploy.  [~/Documents/wiki]"))
+        let show = try json(await akit("kb", "show", "shop/wiki", "--json").out)
+        #expect((show["frontmatter"] as? [String: Any])?["local"] as? String == "~/Documents/wiki")
+    }
+
     @Test func renameShowsThePlanThenRenamesWithYes() async throws {
         #expect(await akit("kb", "init", "--world", "work").code == 0)
         #expect(await akit("kb", "new-note", "payments", "billing").code == 0)
@@ -368,10 +402,10 @@ struct KnowledgeCLITests {
         #expect(Set(kinds.keys) == ["base", "file", "defaults", "kinds"])
         #expect(kinds["defaults"] as? Bool == false && kinds["file"] as? String == "kb.yaml")
         let list = try #require(kinds["kinds"] as? [[String: Any]])
-        #expect(list.map { $0["name"] as? String } == ["service", "flow", "team", "database", "queue", "external"])
+        #expect(list.map { $0["name"] as? String } == ["service", "flow", "team", "database", "queue", "external", "folder"])
         #expect(Set(list[0].keys) == ["name", "fields", "color", "shape"])
-        #expect(list[0]["fields"] as? [String] == ["repo", "files", "owner"] && list[0]["color"] is NSNull)
-        #expect(await akit("kb", "kinds").out.hasPrefix("service  repo, files, owner\nflow  owner"))
+        #expect(list[0]["fields"] as? [String] == ["repo", "path", "files", "owner"] && list[0]["color"] is NSNull)
+        #expect(await akit("kb", "kinds").out.hasPrefix("service  repo, path, files, owner\nflow  owner"))
 
         // kb set: one line added, one commit, one file.
         let set = await akit("kb", "set", "orders-api", "owner=team-a", "files=[a.ts, b.ts]", "--json")
@@ -402,7 +436,7 @@ struct KnowledgeCLITests {
         #expect(await akit("kb", "kinds", "add", "widget").code == 2)
         #expect(await akit("kb", "kinds", "explode").code == 2)
         let names = try json(await akit("kb", "kinds", "--json").out)["kinds"] as? [[String: Any]]
-        #expect(names?.map { $0["name"] as? String } == ["flow", "team", "database", "queue", "external", "widget"])
+        #expect(names?.map { $0["name"] as? String } == ["flow", "team", "database", "queue", "external", "folder", "widget"])
         #expect(try await git("status", "--porcelain").isEmpty)
 
         // kb area: read, then change and commit.

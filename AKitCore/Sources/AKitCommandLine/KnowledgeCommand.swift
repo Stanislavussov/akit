@@ -38,8 +38,10 @@ extension AKitCLI {
                                         a lower score is better): note, heading, snippet and the
                                         notes one arrow away on a map. Only areas/, never inbox/
       akit kb show NOTE [--section H] [--max-tokens N] [--json] [--scrub] [--base PATH|WORLD]
-                                        A note: title, kind, repo, files and its sections (only H
-                                        with --section), cut to --max-tokens (default 4000).
+                                        A note: title, kind, repo, path, files, its folder on this
+                                        Mac (local: path:, a ~/ repo:, or the clone of repo:'s
+                                        remote) and its sections (only H with --section), cut to
+                                        --max-tokens (default 4000).
                                         --scrub masks secrets, e-mails and your own patterns as
                                         AKit Review's context pack does (its kb tools use it)
       akit kb index [--rebuild] [--json] [--base PATH|WORLD]
@@ -53,9 +55,10 @@ extension AKitCLI {
       akit kb context [FOLDER] [--max-tokens N] [--json] [--base PATH|WORLD]
                                         The card to read at the start of a task about systems:
                                         the project's focus area (FOLDER, default the current one),
-                                        its notes with a title and one line, the arrows touching
-                                        them and their neighbours in other areas; at most 4000
-                                        tokens unless --max-tokens
+                                        its notes with a title, one line and their folder on this
+                                        Mac ([~/…], local in JSON), the arrows touching them and
+                                        their neighbours in other areas; at most 4000 tokens
+                                        unless --max-tokens
       akit kb focus [FOLDER] [--json] [--base PATH|WORLD]
                                         The focus area of a project and why: the choice in
                                         focus.json, an area.yaml that names its remote or folder,
@@ -125,6 +128,14 @@ extension AKitCLI {
       akit kb new-note AREA NAME [--kind K] [--base PATH|WORLD]
                                         For a person only. Create areas/AREA/NAME.md (# NAME, and
                                         kind: K in the frontmatter) and commit it at once
+      akit kb add-folder FOLDER --area AREA [--name NAME] [--description T] [--yes] [--json] [--base PATH|WORLD]
+                                        For a person only. A note for a folder on this Mac: another
+                                        repository (kind service, repo: its origin remote) or a folder
+                                        without git like a local wiki (kind folder), with path: ~/…
+                                        and a line from --description, else the README's first line.
+                                        Agents find the folder in kb context and kb show ("on this
+                                        Mac"). Without --yes it shows the note; --yes writes it and
+                                        commits at once (kb.yaml gets the kind when it lacks it)
       akit kb new-map AREA NAME [--base PATH|WORLD]
                                         For a person only. Create areas/AREA/maps/NAME.excalidraw
                                         (an empty map) and commit it at once
@@ -281,6 +292,31 @@ extension AKitCLI {
             do { path = try await base.newNote(area: area, name: name, kind: kind, env: env) } catch { throw Failure(message: error.message) }
             out("Created \(FileWalk.tilde(base.root.appending(path: path), home: env.homeDirectory)), committed.")
             return 0
+        case "add-folder":
+            let area = args.value("--area"), name = args.value("--name"), description = args.value("--description")
+            let yes = args.flag("--yes")
+            guard let folder = args.positional(), let area else {
+                throw Failure(message: "Use: akit kb add-folder FOLDER --area AREA [--name NAME] [--description T] [--yes] [--json] [--base PATH|WORLD]")
+            }
+            try args.finish()
+            let base = try await writable(chosen)
+            let plan: KnowledgeFolderNote
+            var kindAdded = false
+            do {
+                plan = try base.plan(folder: resolve(folder, cwd: cwd, env: env), area: area, name: name, description: description,
+                                     home: env.homeDirectory)
+                if yes { kindAdded = try await base.addFolder(plan, env: env).kindAdded }
+            } catch {
+                throw Failure(message: error.message)
+            }
+            if json {
+                out(encode(AddFolderAnswer(base: base.root.path, file: base.notePath(plan.note), plan: plan, written: yes, kindAdded: kindAdded)))
+            } else if yes {
+                out("Created \(base.notePath(plan.note)) for \(plan.path), committed." + (kindAdded ? " kb.yaml got the kind \(plan.kind)." : ""))
+            } else {
+                out("Would create \(base.notePath(plan.note)) and commit it:\n\n\(plan.text)\nRun again with --yes to do it.")
+            }
+            return 0
         case "lint":
             let brain = args.value("--brain").map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
             try args.finish()
@@ -300,7 +336,7 @@ extension AKitCLI {
             }
             return 0
         case "search", "show", "index":
-            return try await knowledgeSearch(command!, &args, json: json, base: chosen, env: env, out: out)
+            return try await knowledgeSearch(command!, &args, json: json, base: chosen, env: env, projectsRoot: projectsRoot, out: out)
         case "maps", "relations", "new-map":
             return try await knowledgeMaps(command!, &args, json: json, base: chosen, env: env, out: out)
         case "neighbors", "context", "focus":
@@ -459,7 +495,7 @@ extension AKitCLI {
 
     /// `kb search QUERY`, `kb show NOTE` and `kb index` (read, for agents; K19, K20).
     private static func knowledgeSearch(_ command: String, _ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
-                                        env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+                                        env: HarnessEnvironment, projectsRoot: URL, out: (String) -> Void) async throws -> Int32 {
         func number(_ name: String, _ fallback: Int) throws -> Int {
             guard let text = args.value(name) else { return fallback }
             guard let value = Int(text), value > 0 else { throw Failure(message: "\(name) takes a whole number above 0, not “\(text)”.") }
@@ -502,15 +538,16 @@ extension AKitCLI {
             try args.finish()
             guard let base = try await chosen() else { return noBase(json: json, out: out) }
             let answer: KnowledgeIndex.ShowAnswer
-            do { answer = try KnowledgeIndex(base: base).show(name, section: section, maxTokens: maxTokens) } catch {
+            do { answer = try KnowledgeIndex(base: base).show(name, section: section, maxTokens: maxTokens, local: local(env: env, projectsRoot: projectsRoot)) } catch {
                 throw Failure(message: error.message)
             }
             if json {
                 emit(encode(answer))
             } else {
                 let front = answer.frontmatter
-                let facts = [front.kind.map { "kind: \($0)" }, front.repo.map { "repo: \($0)" },
-                             front.files.isEmpty ? nil : "files: " + front.files.joined(separator: ", ")].compactMap(\.self)
+                let facts = [front.kind.map { "kind: \($0)" }, front.repo.map { "repo: \($0)" }, front.path.map { "path: \($0)" },
+                             front.files.isEmpty ? nil : "files: " + front.files.joined(separator: ", "),
+                             front.local.map { "on this Mac: \($0)" }].compactMap(\.self)
                 var parts = ["# \(answer.title)  (\(answer.note))" + (facts.isEmpty ? "" : "\n" + facts.joined(separator: "  "))]
                 parts += answer.sections.map { section in (section.heading.map { "## \($0)\n" } ?? "") + section.text }
                 if answer.truncated { parts.append("(Cut to \(maxTokens) tokens: ask for one --section, or a larger --max-tokens.)") }
@@ -533,6 +570,12 @@ extension AKitCLI {
             }
             return 0
         }
+    }
+
+    /// Where the notes' systems are on this Mac (K27): the projects lint knows, found once per command.
+    private static func local(env: HarnessEnvironment, projectsRoot: URL) -> KnowledgeLocal {
+        let projects = KnowledgeLint.Projects.find(home: env.homeDirectory, projectsRoot: projectsRoot, brainRoot: Brain.defaultRoot(home: env.homeDirectory))
+        return KnowledgeLocal(projects: projects, home: env.homeDirectory)
     }
 
     /// `kb neighbors NOTE`, `kb context [FOLDER]` (read, for agents; K5, K19) and `kb focus
@@ -589,7 +632,9 @@ extension AKitCLI {
         case "context":
             let focus = await base.focus(folder: folder, env: env, projectsRoot: projectsRoot)
             let answer: KnowledgeIndex.ContextAnswer
-            do { answer = try index.context(focus: focus.choice.area, maxTokens: maxTokens) } catch { throw Failure(message: error.message) }
+            do { answer = try index.context(focus: focus.choice.area, maxTokens: maxTokens, local: local(env: env, projectsRoot: projectsRoot)) } catch {
+                throw Failure(message: error.message)
+            }
             if json {
                 out(encode(answer))
             } else {
@@ -598,7 +643,7 @@ extension AKitCLI {
                     return 0
                 }
                 var lines = ["Focus: \(area) (\(focus.choice.source?.rawValue ?? "-"))"]
-                lines += answer.systems.map { "\($0.note)  \($0.title)" + ($0.line.isEmpty ? "" : ": \($0.line)") }
+                lines += answer.systems.map { "\($0.note)  \($0.title)" + ($0.line.isEmpty ? "" : ": \($0.line)") + ($0.local.map { "  [\($0)]" } ?? "") }
                 lines += answer.relations.map { "\($0.from) → \($0.to)" + ($0.kind.map { "  \"\($0)\"" } ?? "") }
                 if answer.truncated { lines.append("(Cut to \(maxTokens) tokens: ask for a larger --max-tokens.)") }
                 if answer.stale { lines.append("(Another process is updating the index: these come from its last state.)") }
@@ -1342,6 +1387,32 @@ extension AKitCLI {
         let rename: KnowledgeRename
         /// false without --yes: nothing was written.
         let renamed: Bool
+    }
+
+    struct AddFolderAnswer: Encodable {
+        let base: String
+        /// The note's base-relative path: `areas/shop/shop-api.md`.
+        let file: String
+        let plan: KnowledgeFolderNote
+        /// false without --yes: nothing was written.
+        let written: Bool
+        let kindAdded: Bool
+
+        private enum CodingKeys: String, CodingKey { case base, note, file, folder, kind, repo, description, text, written, kindAdded }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(base, forKey: .base)
+            try container.encode(plan.note, forKey: .note)
+            try container.encode(file, forKey: .file)
+            try container.encode(plan.path, forKey: .folder)
+            try container.encode(plan.kind, forKey: .kind)
+            try container.encode(plan.repo, forKey: .repo)
+            try container.encode(plan.description, forKey: .description)
+            try container.encode(plan.text, forKey: .text)
+            try container.encode(written, forKey: .written)
+            try container.encode(kindAdded, forKey: .kindAdded)
+        }
     }
 
     struct RemoveAnswer: Encodable {

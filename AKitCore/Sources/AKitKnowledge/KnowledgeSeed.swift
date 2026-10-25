@@ -19,7 +19,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 7
+    public static let version = 8
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -229,11 +229,12 @@ public enum KnowledgeSeed {
             projects: [git@example.com:shop/warehouse.git, ~/Projects/shipping-*]
 
             """),
-        // service: repo, files and sections; its repo is $HOME/Projects/orders-api in the demo home.
+        // service: repo, path, files and sections; its repo is $HOME/Projects/orders-api in the demo home.
         File(path: "areas/payments/orders-api.md", text: """
             ---
             kind: service
             repo: git@example.com:shop/orders-api.git
+            path: ~/Projects/orders-api
             files: [src/events/order-created.ts]
             ---
             # orders-api
@@ -444,15 +445,16 @@ public enum KnowledgeSeed {
             A file that the local copy of lint-examples doesn't have.
 
             """),
-        // missing-home-path.
+        // missing-home-path; a folder note (K27): a folder without git, like a local wiki.
         File(path: "areas/lint-examples/home-path.md", text: """
             ---
-            kind: service
-            files: [~/akit-lint-examples/notes.txt]
+            kind: folder
+            path: ~/akit-lint-examples/wiki
+            owner: checkout-team
             ---
             # home-path
 
-            A ~/ path that doesn't exist.
+            A path: folder that doesn't exist.
 
             """),
         // unknown-kind (a hint, K24).

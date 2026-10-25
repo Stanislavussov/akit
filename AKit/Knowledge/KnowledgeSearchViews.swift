@@ -259,6 +259,9 @@ struct AgentContextSheet: View {
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     Text(system.note).fontWeight(.semibold)
                                     Text(system.title + (system.line.isEmpty ? "" : ": \(system.line)"))
+                                    if let local = system.local {
+                                        Text(local).foregroundStyle(.secondary).help("This system's folder on this Mac: the agent reads its code or documents there")
+                                    }
                                 }
                             }
                             if !answer.relations.isEmpty {

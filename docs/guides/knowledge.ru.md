@@ -34,7 +34,7 @@
 - «Где код этого сервиса?» → поле `repo:` в начале заметки, например `repo: git@example.com:shop/orders-api.git`.
 - «Как данные идут от заказа до счёта?» → заметка вида `flow` в папке `flows/`.
 
-![Экран Knowledge: слева список Spaces с пространствами lint-examples с числом заметок 7, logistics с числом заметок 4 и payments с числом заметок 6; в середине часть Maps с картой overview и заметки пространства payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева список Spaces с пространствами lint-examples с числом заметок 7, logistics с числом заметок 4 и payments с числом заметок 6; в середине часть Maps с картой overview и заметки пространства payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service, path ~/Projects/orders-api и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
 
 ### Главные слова
 <!-- section: overview-terms -->
@@ -67,7 +67,7 @@ AKit создаёт папку мира, `areas/`, `inbox/`, файлы `.gitign
 ## Пример базы: Sample Base
 <!-- section: sample -->
 
-**Что это:** пример базы — отдельная база мира `sample` с выдуманными заметками о магазине. В ней видно всё, что умеет экран: два несвязанных пространства `payments` и `logistics` с настройками `area.yaml`, заметка каждого вида из `kb.yaml` (`service`, `flow`, `team`, `database`, `queue`, `external`) с полями и разделами `##`, ссылки `[[…]]` внутри пространства и в другое пространство, карты и пространство `lint-examples` с нарочными ошибками для вкладки **Lint** ([Проверка](#lint)). Каждая новая возможность AKit добавляет сюда свой пример. Ваши базы пример не трогает.
+**Что это:** пример базы — отдельная база мира `sample` с выдуманными заметками о магазине. В ней видно всё, что умеет экран: два несвязанных пространства `payments` и `logistics` с настройками `area.yaml`, заметка каждого вида из `kb.yaml` (`service`, `flow`, `team`, `database`, `queue`, `external`, `folder`) с полями и разделами `##`, ссылки `[[…]]` внутри пространства и в другое пространство, карты и пространство `lint-examples` с нарочными ошибками для вкладки **Lint** ([Проверка](#lint)). Каждая новая возможность AKit добавляет сюда свой пример. Ваши базы пример не трогает.
 
 **Когда пригодится:**
 
@@ -279,12 +279,52 @@ payments/billing  billing: Bills each order once.
 
 1. Нажмите **New Note…**.
 2. Выберите **Area** в списке. Впишите **Name**, например `orders-api`. Оба поля обязательные.
-3. Выберите **Kind**: **None** или вид из списка. Список берётся из `kb.yaml` базы: `service`, `flow`, `team`, `database`, `queue`, `external` и виды, которые вы добавили в **Kinds…**.
+3. Выберите **Kind**: **None** или вид из списка. Список берётся из `kb.yaml` базы: `service`, `flow`, `team`, `database`, `queue`, `external`, `folder` и виды, которые вы добавили в **Kinds…**.
 4. Нажмите **Add Note**.
 
 AKit создаёт файл `areas/<пространство>/<имя>.md` с заголовком `# <имя>` и, если выбран вид, строкой `kind:` в начале. Заметку AKit сразу коммитит отдельным коммитом «Add note …». В этот коммит попадает только новый файл, даже если другие правки ещё ждут своего коммита.
 
 То же делает `akit kb new-note payments orders-api --kind service`.
+
+### Средне: подключить репозиторий или папку: Add Folder…
+<!-- section: spaces-add-folder -->
+
+**Что это:** заметка о папке на этом Mac: о другом репозитории (например, бэкенде вашего фронтенда) или о папке без git (например, о локальной вики). Агент находит такую папку через базу, поэтому точка входа одна: харнес → `akit kb`.
+
+**Когда пригодится:** вы работаете во фронтенде и хотите, чтобы агент знал, где лежит бэкенд и что в нём. Или у команды есть локальная вики, и агент должен в неё заглядывать.
+
+1. Нажмите **Add Folder…** в панели инструментов (значок со скрепкой и плюсом).
+2. **Choose…** — выберите папку. В окне выбора **⇧⌘G** принимает путь, набранный руками, а **⇧⌘.** показывает скрытые папки.
+3. Выберите **Area**. **Name** по умолчанию — имя папки.
+4. **Description** — одна строка о том, что это. AKit подставляет первую строку README. Поле можно очистить: тогда описания нет.
+5. Ниже видно заметку целиком. Нажмите **Add Note**: AKit пишет её и сразу коммитит («Add note … for ~/…»).
+
+Что пишет AKit:
+
+| Папка | `kind:` | Поля |
+|---|---|---|
+| Репозиторий git | `service` | `repo:` — адрес `origin` (имя и пароль из адреса AKit убирает), `path:` — папка |
+| Папка без git | `folder` | `path:` — папка |
+
+Если в `kb.yaml` вашей базы нет вида `folder`, AKit добавляет его в том же коммите. Строка README с токеном или паролем в заметку не попадает.
+
+**Что видит агент.** `akit kb context` пишет у каждой системы её папку на этом Mac в скобках, а `akit kb show` — строку «on this Mac: …». AKit берёт папку из `path:`. Если `path:` нет, AKit берёт `repo:` (путь `~/…` или копию репозитория в папке проектов).
+
+Пример. Во фронтенде `~/Projects/front` пространство `shop` выбрано через **Area Settings…** (`projects: [~/Projects/front]`). В базе есть заметки `shop/shop-api` (бэкенд) и `shop/wiki`. Агент во фронтенде запускает `akit kb context` и получает:
+
+```
+Focus: shop (area.yaml)
+shop/shop-api  shop-api: Orders and payments API.  [~/Projects/shop-api]
+shop/wiki  wiki: How we deploy.  [~/Documents/wiki]
+```
+
+Дальше агент читает код бэкенда в `~/Projects/shop-api`.
+
+В терминале то же делает `akit kb add-folder ~/Projects/shop-api --area shop`: без `--yes` команда только показывает заметку, а с `--yes` пишет её и делает коммит. `--name` задаёт другое имя, `--description` — свою строку, `--json` отдаёт `{base, note, file, folder, kind, repo, description, text, written, kindAdded}`. Команду запускает человек. Агент вместо неё предлагает заметку через `akit kb propose`.
+
+Если папку перенесли или удалили, Lint пишет `missing-home-path`. Исправьте `path:` в **Properties**.
+
+![Окно Add Folder: Folder ~/Documents/payments-handbook и кнопка Choose…, Area payments, пустое Name с подсказкой payments-handbook, Description «How the payments team deploys, rolls back and answers a failed charge.»; ниже заметка payments/payments-handbook вида folder с kind: folder и path: ~/Documents/payments-handbook, внизу Cancel и Add Note](images/knowledge-add-folder.png)
 
 ### Средне: удалить заметку или пространство
 <!-- section: spaces-delete -->
@@ -310,7 +350,7 @@ AKit создаёт файл `areas/<пространство>/<имя>.md` с �
 
 AKit пишет файл целиком и атомарно: сначала во временный файл, потом подменяет. Байты, которые вы не меняли, остаются как были: переносы строк, начало заметки, порядок полей.
 
-![Панель заметки orders-api в режиме Edit: нажатая кнопка Edit, рядом Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations и Markdown заметки моноширинным шрифтом: строки kind: service, repo: git@example.com:shop/orders-api.git, files: [src/events/order-created.ts] между линиями ---, заголовок # orders-api и раздел ## Events со строками order created и retry](images/knowledge-note.png)
+![Панель заметки orders-api в режиме Edit: нажатая кнопка Edit, рядом Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations и Markdown заметки моноширинным шрифтом: строки kind: service, repo: git@example.com:shop/orders-api.git, path: ~/Projects/orders-api, files: [src/events/order-created.ts] между линиями ---, заголовок # orders-api и раздел ## Events со строками order created и retry](images/knowledge-note.png)
 
 ### Просто: Copy и Paste
 <!-- section: note-copy -->
@@ -507,7 +547,7 @@ AKit сначала коммитит правки из очереди ([Комм
 ## Виды и свойства
 <!-- section: kinds -->
 
-**Что это:** у каждой заметки есть вид (`kind:`) и свойства — строки в начале заметки, например `repo:`, `files:`, `owner:`. Какие виды есть и какие поля у каждого, решаете вы. Это не список в коде AKit, а файл `kb.yaml` в базе. По умолчанию в нём шесть видов: `service`, `flow`, `team`, `database`, `queue`, `external`.
+**Что это:** у каждой заметки есть вид (`kind:`) и свойства — строки в начале заметки, например `repo:`, `files:`, `owner:`. Какие виды есть и какие поля у каждого, решаете вы. Это не список в коде AKit, а файл `kb.yaml` в базе. По умолчанию в нём семь видов: `service`, `flow`, `team`, `database`, `queue`, `external`, `folder`.
 
 **Когда пригодится:**
 
@@ -532,7 +572,7 @@ AKit сначала коммитит правки из очереди ([Комм
 
 Ключи, которых нет у вида, форма показывает ниже полей вида: AKit их не трогает. **Add Field…** добавляет свой ключ: впишите **Name** (например, `url`) и **Value** и нажмите **Add**.
 
-![Панель заметки orders-api с нажатой кнопкой Properties: над частью Relations и текстом форма со списком Kind со значением service, полями repo со значением git@example.com:shop/orders-api.git, files со значением [src/events/order-created.ts], пустым полем owner и кнопкой Add Field…](images/knowledge-properties.png)
+![Панель заметки orders-api с нажатой кнопкой Properties: над частью Relations и текстом форма со списком Kind со значением service, полями repo со значением git@example.com:shop/orders-api.git, path со значением ~/Projects/orders-api, files со значением [src/events/order-created.ts], пустым полем owner и кнопкой Add Field…](images/knowledge-properties.png)
 
 > **Почему так:** AKit меняет одну строку начала заметки, а все остальные байты оставляет как были: порядок полей, комментарии, переносы строк Windows (CRLF), текст заметки. Строка `owner:` в тексте заметки, ниже начала, тоже не меняется. Если у заметки нет начала, AKit добавляет его.
 
@@ -550,7 +590,7 @@ AKit сначала коммитит правки из очереди ([Комм
 - Кнопка с минусом убирает вид из `kb.yaml`. Заметки этого вида не меняются: их вид просто станет «неизвестным», и они работают как раньше.
 - **Save** записывает `kb.yaml`. Коммит ждёт в очереди, как правка заметки. **Cancel** ничего не меняет.
 
-![Окно Kinds: список видов service, flow, team, database, queue и external с полями каждого, например repo, files, owner у service, кнопки Rename… и минус у каждого вида, поля для нового вида и кнопка Add Kind, внизу Cancel и Save](images/knowledge-kinds.png)
+![Окно Kinds: список видов service, flow, team, database, queue, external и folder с полями каждого, например repo, path, files, owner у service и path, owner у folder, кнопки Rename… и минус у каждого вида, поля для нового вида и кнопка Add Kind, внизу Cancel и Save](images/knowledge-kinds.png)
 
 То же в терминале: `akit kb kinds` (список), `akit kb kinds add library --fields repo,version`, `akit kb kinds fields library repo,owner`, `akit kb kinds remove library`.
 
@@ -665,14 +705,14 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 ## Что видит агент
 <!-- section: context -->
 
-**Что это:** в начале задачи агент читает карточку базы: `akit kb context <папка проекта>`. В карточке — заметки пространства-фокуса (имя и одна строка), стрелки между ними и их соседи в других пространствах. Карточка не длиннее 4000 токенов. **Preview Agent Context…** показывает ровно её.
+**Что это:** в начале задачи агент читает карточку базы: `akit kb context <папка проекта>`. В карточке — заметки пространства-фокуса (имя, одна строка и папка системы на этом Mac, если она есть: [Add Folder…](#spaces-add-folder)), стрелки между ними и их соседи в других пространствах. Карточка не длиннее 4000 токенов. **Preview Agent Context…** показывает ровно её.
 
 **Когда пригодится:**
 
 - «Почему агент не знает про `billing`?» → посмотрите, есть ли `billing` в карточке.
 - «Карточка не помещается?» → число токенов и пометка **cut** покажут, что AKit обрезал.
 
-![Preview Agent Context… для проекта orders-api: сверху выбор Project orders-api и Show List или JSON; строка Focus: payments (a note's repo:) и 346 of 4000 tokens; список заметок payments/billing, payments/checkout-team, payments/flows/order-to-billing, payments/order-events, payments/orders-api и payments/orders-db с одной строкой о каждой; часть Relations со стрелкой payments/orders-api → payments/billing «events»; ниже Neighbors of payments/orders-api со стрелкой на карте overview; кнопка Done](images/knowledge-context.png)
+![Preview Agent Context… для проекта orders-api: сверху выбор Project orders-api и Show List или JSON; строка Focus: payments (a note's repo:) и 347 of 4000 tokens; список заметок payments/billing, payments/checkout-team, payments/flows/order-to-billing, payments/order-events, payments/orders-api и payments/orders-db с одной строкой о каждой, у billing, orders-api и orders-db серым их папка на этом Mac, например ~/Projects/orders-api; часть Relations со стрелкой payments/orders-api → payments/billing «events»; ниже Neighbors of payments/orders-api со стрелкой на карте overview; кнопка Done](images/knowledge-context.png)
 
 ### Просто: Preview Agent Context…
 <!-- section: context-preview -->
@@ -755,7 +795,7 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 | `unbound-arrow` | Warning | стрелка не привязана к блокам обоими концами, поэтому это не связь |
 | `unknown-repo` | Warning | `repo:` заметки — не известный проект |
 | `missing-file` | Warning | пути из `files:` нет в локальной копии репозитория |
-| `missing-home-path` | Warning | путь `~/…` в `repo:` или `files:` не существует |
+| `missing-home-path` | Warning | путь `~/…` в `repo:` или `files:` не существует, или папки из `path:` нет |
 | `unknown-kind` | Hint | вида из `kind:` нет в `kb.yaml` |
 | `unrelated-area` | Hint | на карте пространства блок заметки другого пространства, а карты этих пространств не ссылаются друг на друга |
 

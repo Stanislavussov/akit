@@ -15,7 +15,7 @@ import Foundation
 /// | `unbound-arrow` | warning | an arrow not bound to a block at both ends (no relation) |
 /// | `unknown-repo` | warning | a note's `repo:` remote that isn't among the known projects (K12) |
 /// | `missing-file` | warning | a `files:` path that the local copy of the note's repo doesn't have |
-/// | `missing-home-path` | warning | a `~/` path in `repo:` or `files:` that doesn't exist |
+/// | `missing-home-path` | warning | a `~/` path in `repo:` or `files:`, or a `path:` folder, that doesn't exist |
 /// | `unrelated-area` | hint | a block for a note of another area that no map of this area jumps to or from (R-SEP) |
 /// | `unknown-kind` | hint | a note's `kind:` that `kb.yaml` doesn't list (K24) |
 ///
@@ -272,6 +272,17 @@ public enum KnowledgeLint {
                 findings.append(Finding(rule: .unknownRepo, file: path, link: repo,
                                         message: "The repo: \(repo) is not among the known projects (the repos in your projects folder, AKit's project records, the areas' projects).",
                                         fix: "Clone it into your projects folder, add it to the area's projects (Area Settings…), or correct repo:."))
+            }
+        }
+        if let value = note.path {
+            if let url = KnowledgeLocal.url(value, home: home), FileWalk.isDirectory(url) {
+                copy = url
+            } else {
+                let absolute = KnowledgeLocal.url(value, home: home) != nil
+                findings.append(Finding(rule: .missingHomePath, file: path, link: value,
+                                        message: absolute ? "The path: folder \(value) doesn't exist on this Mac."
+                                            : "The path: \(value) is not a folder path: write it as ~/… or /….",
+                                        fix: "Correct path: (Properties, or akit kb set NOTE path=~/…), or remove it."))
             }
         }
         for file in note.files where !file.contains("*") {

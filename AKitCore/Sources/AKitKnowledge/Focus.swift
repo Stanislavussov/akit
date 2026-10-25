@@ -130,6 +130,8 @@ extension KnowledgeIndex {
         public let title: String
         /// The frontmatter `description`, else the first sentence of the note's text.
         public let line: String
+        /// The system's folder on this Mac (K27), left out when it has none.
+        public var local: String? = nil
     }
 
     public struct ContextRelation: Encodable, Equatable, Sendable {
@@ -202,9 +204,10 @@ extension KnowledgeIndex {
     }
 
     /// The card an agent reads at the start of a task (K19): the notes of `focus` (title and one
-    /// line), the arrows touching them, and their neighbours in other areas. Cut to `maxTokens`:
+    /// line, and with `local` its folder on this Mac), the arrows touching them, and their
+    /// neighbours in other areas. Cut to `maxTokens`:
     /// first the other areas' notes, then relations, then the focus area's notes, from the end.
-    public func context(focus: String?, maxTokens: Int = Budget.defaultTokens) throws(Failure) -> ContextAnswer {
+    public func context(focus: String?, maxTokens: Int = Budget.defaultTokens, local: KnowledgeLocal? = nil) throws(Failure) -> ContextAnswer {
         let opened = try prepare(rebuild: false)
         var systems: [ContextSystem] = [], others: [ContextSystem] = [], relations: [ContextRelation] = []
         if let database = opened.database, let focus = focus.map(KnowledgeBase.nfc) {
@@ -212,7 +215,9 @@ extension KnowledgeIndex {
                 var titles: [String: String] = [:]
                 for row in try database.rows("SELECT id, title FROM notes") { titles[row[0].text ?? ""] = row[1].text ?? "" }
                 func system(_ id: String) -> ContextSystem {
-                    ContextSystem(note: id, title: titles[id] ?? id, line: KnowledgeNote.load(base.noteFile(id)).map(Self.line) ?? "")
+                    let note = KnowledgeNote.load(base.noteFile(id))
+                    return ContextSystem(note: id, title: titles[id] ?? id, line: note.map(Self.line) ?? "",
+                                         local: note.flatMap { local?.label(of: $0) })
                 }
                 systems = titles.keys.filter { Self.area(of: $0) == focus }.sorted().map(system)
                 var neighbours: Set<String> = []

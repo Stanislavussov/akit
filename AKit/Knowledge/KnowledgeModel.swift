@@ -518,6 +518,23 @@ final class KnowledgeModel {
     }
 
     /// New Map…: `akit kb new-map AREA NAME`, committed at once; then it opens in Edit.
+    /// Add Folder… (K27): writes and commits the planned note, then shows it.
+    func addFolder(_ plan: KnowledgeFolderNote) async -> Bool {
+        guard let base else { return false }
+        do {
+            let added = try await base.addFolder(plan, env: env)
+            reload()
+            await closeMap()
+            choose(area: plan.area)
+            open(plan.note)
+            notice = "Added \(plan.note) for \(plan.path)" + (added.kindAdded ? "; kb.yaml got the kind \(plan.kind)." : ".")
+            return true
+        } catch {
+            problem = error.message
+            return false
+        }
+    }
+
     func newMap(area: String, name: String) async -> Bool {
         guard let base else { return false }
         do {
@@ -1057,7 +1074,7 @@ final class KnowledgeModel {
     /// Preview Agent Context…: `akit kb context FOLDER` exactly (the base the CLI picks for the
     /// folder, the folder's focus, the 4000-token cap), and `akit kb neighbors` of the note in view.
     func loadContext(folder: URL, projectsRoot: URL) async {
-        let env = env, note = note
+        let env = env, note = note, brain = brainRoot ?? Brain.defaultRoot(home: home)
         agentContext = await Task.detached {
             var context = AgentContext(folder: folder, project: "", choice: .none)
             do {
@@ -1069,7 +1086,10 @@ final class KnowledgeModel {
                 context.base = base
                 (context.project, context.choice) = await base.focus(folder: folder, env: env, projectsRoot: projectsRoot)
                 let index = KnowledgeIndex(base: base)
-                context.answer = try index.context(focus: context.choice.area)
+                // The systems' folders as akit kb context finds them (K27).
+                let local = KnowledgeLocal(projects: KnowledgeLint.Projects.find(home: env.homeDirectory, projectsRoot: projectsRoot, brainRoot: brain),
+                                           home: env.homeDirectory)
+                context.answer = try index.context(focus: context.choice.area, local: local)
                 if let note { context.neighbors = try? index.neighbors(note) }
             } catch let error as KnowledgeIndex.Failure {
                 context.problem = error.message
@@ -1280,7 +1300,7 @@ final class KnowledgeModel {
                 if let answer = context.answer {
                     lines.append("context card: \(answer.systems.count) systems, \(answer.relations.count) relations, \(answer.tokens) of \(Budget.defaultTokens) tokens"
                         + (answer.truncated ? ", cut" : ""))
-                    for system in answer.systems { lines.append("system: \(system.note): \(system.line)") }
+                    for system in answer.systems { lines.append("system: \(system.note): \(system.line)" + (system.local.map { " [\($0)]" } ?? "")) }
                     for relation in answer.relations { lines.append("relation: \(relation.from) → \(relation.to)" + (relation.kind.map { " \"\($0)\"" } ?? "")) }
                 }
                 if let neighbors = context.neighbors {

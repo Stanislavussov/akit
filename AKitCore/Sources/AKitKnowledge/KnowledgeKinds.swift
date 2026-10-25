@@ -47,12 +47,13 @@ public struct KnowledgeKinds: Sendable, Equatable {
 
     /// What `kb init` writes and what a base without `kb.yaml` reads.
     public static let defaults = KnowledgeKinds(kinds: [
-        Kind(name: "service", fields: ["repo", "files", "owner"]),
+        Kind(name: "service", fields: ["repo", "path", "files", "owner"]),
         Kind(name: "flow", fields: ["owner"]),
         Kind(name: "team", fields: ["members", "channel"]),
         Kind(name: "database", fields: ["repo", "owner"]),
         Kind(name: "queue", fields: ["owner"]),
         Kind(name: "external", fields: ["url", "owner"]),
+        Kind(name: "folder", fields: ["path", "owner"]),
     ])
 
     public var kinds: [Kind]

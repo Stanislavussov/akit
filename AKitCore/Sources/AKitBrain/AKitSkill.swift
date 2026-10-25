@@ -253,9 +253,13 @@ Read it when a task is about systems. Start with the card of the project's focus
 ```
 akit kb context [FOLDER] [--max-tokens N] [--json] [--base PATH|WORLD]
                                                    # run it at the start of a task about systems:
-                                                   # {base, focus, systems: [{note, title, line}],
-                                                   # relations: [{from, kind, to}], truncated};
-                                                   # FOLDER defaults to the current project
+                                                   # {base, focus, systems: [{note, title, line,
+                                                   # local}], relations: [{from, kind, to}],
+                                                   # truncated}; local = the system's folder on
+                                                   # this Mac (another repo, a local wiki): read
+                                                   # its code or documents there when the task
+                                                   # needs them; FOLDER defaults to the current
+                                                   # project
 akit kb neighbors NOTE [--depth 1|2] [--max-tokens N] [--json] [--base PATH|WORLD]
                                                    # the arrows to and from a note (depth 2: also
                                                    # its neighbours'): {note, edges: [{from, kind,
@@ -278,7 +282,8 @@ akit kb search QUERY [--area A] [--limit 10] [--max-tokens N] [--json] [--base P
                                                    # {note, heading, score, snippet, neighbors};
                                                    # score is BM25, lower is better
 akit kb show NOTE [--section H] [--max-tokens N] [--json] [--base PATH|WORLD]
-                                                   # one note: title, kind, repo, files, sections
+                                                   # one note: title, kind, repo, path, files,
+                                                   # local (its folder on this Mac), sections
 akit kb index [--rebuild] [--json] [--base PATH|WORLD]
                                                    # bring the search index up to the files
 akit kb lint [--json] [--base PATH|WORLD]          # check the base: {base, findings: [{rule, severity,
@@ -407,6 +412,13 @@ akit kb check-model [MODEL [THINKING]] [--harness pi|claude-code]
                                                    # pi; each keeps its own model) and a model from
                                                    # that harness's list only (no MODEL: shows the
                                                    # list); default the GPT-6 Luna Pi lists, low
+akit kb add-folder FOLDER --area AREA [--name N] [--description T] [--yes] [--json]
+                                                   # a note for another repo (kind service, repo:
+                                                   # its remote) or a folder without git (kind
+                                                   # folder), path: the folder, the README's first
+                                                   # line; without --yes it shows the note, --yes
+                                                   # writes and commits it. Only when the user asked
+                                                   # for it; otherwise propose the note
 akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
                                                    # commit; without --yes it only shows what goes
 akit kb pi-template [--yes] [--json]               # the core layer's section about the base, for Pi

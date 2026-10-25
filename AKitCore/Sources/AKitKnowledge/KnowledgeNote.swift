@@ -73,6 +73,9 @@ public struct KnowledgeNote: Sendable, Equatable {
     public var kind: String? { string("kind") }
     /// The repository's git remote URL, or a `~/` path (K12).
     public var repo: String? { string("repo") }
+    /// The system's folder on this Mac, a `~/` or absolute path (K27): a repository's local
+    /// copy, or a folder without git like a local wiki.
+    public var path: String? { string("path") }
     /// Paths inside the repository (K12); one string counts as a list of one.
     public var files: [String] {
         switch frontmatter["files"] {

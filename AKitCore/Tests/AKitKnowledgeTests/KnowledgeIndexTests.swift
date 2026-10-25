@@ -55,7 +55,7 @@ final class KnowledgeIndexTests {
     @Test func showReadsTheNoteAndItsSections() throws {
         let note = try index.show("orders-api")
         #expect(note.note == "payments/orders-api" && note.title == "orders-api")
-        #expect(note.frontmatter == .init(kind: "service", repo: "git@example.com:shop/orders-api.git", files: ["src/events/order-created.ts"]))
+        #expect(note.frontmatter == .init(kind: "service", repo: "git@example.com:shop/orders-api.git", files: ["src/events/order-created.ts"], path: "~/Projects/orders-api"))
         #expect(note.sections.map(\.heading) == [nil, "Events", "Owners"])
         #expect(note.sections[2].text == "The checkout team.")
         #expect(note.truncated == false && note.stale == false)

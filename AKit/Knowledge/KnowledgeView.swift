@@ -11,7 +11,7 @@ import SwiftUI
 struct KnowledgeView: View {
     @Environment(KnowledgeModel.self) private var model
     @Environment(AppModel.self) private var app
-    /// Snapshots: `--tab new-area|new-note|new-map|create-base|kinds|area-settings|focus|context|pi-template|draw-map`.
+    /// Snapshots: `--tab new-area|new-note|add-folder|new-map|create-base|kinds|area-settings|focus|context|pi-template|draw-map`.
     @State private var sheet: Sheet? = DebugSnapshot.options?.tab.flatMap(Sheet.init(rawValue:))
     @State private var areaToDelete: String?
     /// Add Sample Base… / Remove Sample Base… waiting for confirmation. Snapshots: `--tab sample-remove`.
@@ -20,7 +20,8 @@ struct KnowledgeView: View {
     enum SampleRequest { case add, remove }
 
     enum Sheet: String, Identifiable {
-        case createBase = "create-base", newArea = "new-area", newNote = "new-note", newMap = "new-map", kinds, areaSettings = "area-settings"
+        case createBase = "create-base", newArea = "new-area", newNote = "new-note", addFolder = "add-folder", newMap = "new-map", kinds
+        case areaSettings = "area-settings"
         case focus, context, piTemplate = "pi-template", homeSetup = "home-setup", drawMap = "draw-map"
         var id: Self { self }
     }
@@ -163,10 +164,14 @@ struct KnowledgeView: View {
                 .disabled(model.base == nil)
                 .help("Add a space: a folder in areas/ for one part of your work, like payments or logistics")
         }
-        ToolbarItem {
+        // One group: a toolbar takes at most 10 items.
+        ToolbarItemGroup {
             Button("New Note…", systemImage: "square.and.pencil") { sheet = .newNote }
                 .disabled(model.base == nil)
                 .help("Write a new note in a space; it is committed at once")
+            Button("Add Folder…", systemImage: "link.badge.plus") { sheet = .addFolder }
+                .disabled(model.base == nil)
+                .help("A note for another repository or a local folder, like the backend or a wiki: agents find the folder through it (akit kb add-folder)")
         }
         ToolbarItem {
             Button("New Map…", systemImage: "point.3.connected.trianglepath.dotted") { sheet = .newMap }
@@ -214,6 +219,7 @@ struct KnowledgeView: View {
         case .createBase: CreateBaseSheet()
         case .newArea: NewAreaSheet()
         case .newNote: NewNoteSheet()
+        case .addFolder: AddFolderSheet()
         case .newMap: NewMapSheet()
         case .kinds: KindsSheet()
         case .areaSettings: AreaSettingsSheet(area: model.area ?? "")
