@@ -152,7 +152,13 @@ Built the same day:
   change and threads to reply in are checked against what the run's fetch pass read (a fresh
   read is a new run: Refresh from GitLab is gone). The send pass is never stopped by the cap.
 - Pass environments keep the user's variables, so Pi's MCP servers find the `${VAR}` their
-  `mcp.json` names; the model has no shell or environment tool.
+  `mcp.json` names; the model has no shell or environment tool. Since 2026-10-25 the passes and
+  `akit review check` take the login shell's environment (as the MCP check does): AKit.app
+  started from the Dock has none of `~/.zshrc`'s variables and not its PATH (`az`, `npx`), so
+  a check passed in a terminal while a run in the app found no GitLab server.
+- Azure DevOps MCP 2.x has one tool per area (`wit_work_item` with `action: get`, `repo_pull_request`,
+  `wiki`, …); its server marks them read-only. AKit also knows their names (`knownReads`), so a
+  Pi that doesn't pass the mark on doesn't block the work item. `*_write` tools stay blocked.
 - `akit review check [--project P]` and Review Settings… → **Check Servers** run
   `pi mcp list --json` and sort each tool (read, write drafts, blocked); never a server's
   command line, environment or headers. `akit review token` and the token blocks are gone.

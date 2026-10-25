@@ -24,7 +24,7 @@ import Foundation
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 13
+    public static let version = 14
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -139,7 +139,7 @@ public enum ReviewExtension {
     """#
 
     public static let source = #"""
-    // akit-review.ts v13: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v14: written by AKit for one review run. Do not edit: AKit writes it again.
     import { execFile } from "node:child_process";
     import * as fs from "node:fs";
     import * as path from "node:path";
@@ -194,7 +194,8 @@ public enum ReviewExtension {
     const forbiddenWords = ["publish", "submit", "approve", "unapprove", "vote", "resolve", "unresolve", "rebase"];
     const readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"];
     const writeVerbs = ["create", "add", "post", "new", "update", "edit", "modify", "put", "patch", "delete", "remove", "destroy"];
-    const knownReads = ["mr_discussions"];
+    const knownReads = ["mr_discussions", "wit_work_item", "wit_query", "wit_work_item_attachment", "repo_pull_request",
+      "repo_pull_request_thread", "repo_file", "repo_repository", "repo_branch", "wiki"];
     const knownExactReads = ["resolve-library-id", "resolve_library_id", "query-docs", "query_docs", "get-library-docs", "get_library_docs"];
     const defaultServerWords = ["gitlab", "azure", "devops"];
     const approved: any[] = mode === "send" ? (parse(readText(path.join(run, "send/approved.json"))) ?? []) : [];

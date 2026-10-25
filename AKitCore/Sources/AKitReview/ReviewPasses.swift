@@ -201,7 +201,7 @@ public enum ReviewPasses {
         try FileManager.default.createDirectory(at: folder.appending(path: "sessions"), withIntermediateDirectories: true)
         // The send pass gets only the run's own servers: context servers never reach it.
         let access = setup.mode == "send" ? spec.access.withoutExtras : spec.access
-        var environment = passEnvironment(env)
+        var environment = await passEnvironment(env)
         // The knowledge base's tools (K18), only in the review passes and only with a base and akit.
         var setup = setup
         let knowledge = setup.mode == "review" ? knowledgeEnvironment(spec: spec, env: env) : [:]
@@ -689,11 +689,26 @@ public enum ReviewPasses {
             .map(\.path).joined(separator: ":")
     }
 
-    /// The environment of a pass or a discussion: the user's, so Pi's MCP servers find the
-    /// variables their `mcp.json` entries name (`${GITLAB_TOKEN}`). The model has no shell and no
-    /// tool that reads the environment. Values of an earlier run's `AKIT_REVIEW_*` never leak in.
-    static func passEnvironment(_ env: HarnessEnvironment) -> [String: String] {
-        ChildProcess.harnessEnvironment(env).filter { key, _ in !key.uppercased().hasPrefix("AKIT_REVIEW") }
+    /// The environment of a pass or a discussion: the user's login shell, as in the MCP check,
+    /// so Pi's MCP servers find the variables their `mcp.json` entries name (`${GITLAB_TOKEN}`)
+    /// and the programs they start (`az`, `npx`) also when AKit.app was started from the Dock.
+    /// The model has no shell and no tool that reads the environment. Values of an earlier
+    /// run's `AKIT_REVIEW_*` never leak in.
+    static func passEnvironment(_ env: HarnessEnvironment) async -> [String: String] {
+        shellEnvironment(await LoginShell.variables(in: env), env: env).filter { key, _ in !key.uppercased().hasPrefix("AKIT_REVIEW") }
+    }
+
+    /// AKit's child environment with the login shell's variables over it; the shell's PATH
+    /// comes first, AKit's usual places after it.
+    static func shellEnvironment(_ shell: LoginShell.Variables, env: HarnessEnvironment) -> [String: String] {
+        var variables = ChildProcess.harnessEnvironment(env).merging(shell.values) { $1 }
+        let paths = (shell.values["PATH"] ?? "").split(separator: ":").map { URL(filePath: String($0), directoryHint: .isDirectory) }
+        var lookup = env
+        lookup.executableSearchPaths = paths + env.executableSearchPaths
+        variables["PATH"] = lookup.pathForChildProcesses
+        variables["HOME"] = env.homeDirectory.path
+        for key in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"] { variables[key] = nil }
+        return variables
     }
 
     /// Gaps of Gather and of every pass, numbered again: `gaps.json`. A code-only run (no work
