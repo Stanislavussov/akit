@@ -270,12 +270,28 @@ public struct ReviewMCPCall: Codable, Sendable, Hashable {
     /// The server that answered, as the extension split the tool's name; nil in older runs.
     public var server: String? = nil
 
+    /// The answer's text blocks as the server sent them. Pi cuts a text answer over 20 KB in the
+    /// middle for the model (a large merge request with its diffs), so the saved `text` is no JSON
+    /// any more; Pi's MCP tools put the whole `CallToolResult` in `structured`, uncut.
+    var fullText: [String] {
+        guard let result = structured.flatMap(Self.json) as? JSONObject, let content = result["content"] as? [Any] else { return text }
+        let blocks = content.compactMap { ($0 as? JSONObject).flatMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil } }
+        return blocks.isEmpty ? text : blocks
+    }
+
     /// The JSON values in the answer: the structured content, and each text block that is JSON
     /// (or holds JSON after a line of text).
     var values: [Any] {
         var result: [Any] = []
-        if let structured, let value = Self.json(structured), !((value as? JSONObject)?["content"] is [Any]) { result.append(value) }
-        for block in text {
+        if let structured, let value = Self.json(structured) {
+            if let call = value as? JSONObject, call["content"] is [Any] {
+                // Pi's whole `CallToolResult`: the server's own structured content, if any.
+                if let inner = call["structuredContent"], inner is JSONObject || inner is [Any] { result.append(inner) }
+            } else {
+                result.append(value)
+            }
+        }
+        for block in fullText {
             if let value = Self.json(block) { result.append(value) }
             else if let start = block.firstIndex(where: { $0 == "{" || $0 == "[" }), let value = Self.json(String(block[start...])) {
                 result.append(value)
@@ -299,6 +315,8 @@ public struct ReviewMCPData: Sendable {
     public var mergeRequest: GitLabMergeRequest?
     public var versions: [GitLabVersion] = []
     public var diffs: [GitLabFileDiff] = []
+    /// Answers Pi cut for the model (over 20 KB) with no whole copy saved: AKit can't read them.
+    public var cut = 0
     public var discussions: [GitLabDiscussion] = []
     public var drafts: [GitLabDraft] = []
     public var user: String?
@@ -333,6 +351,7 @@ public struct ReviewMCPData: Sendable {
         var headFromCommits: String?
         for call in calls {
             data.calls += 1
+            if call.fullText.contains(where: { $0.hasPrefix("Warning: truncated output") && $0.contains(" chars truncated…") }) { data.cut += 1 }
             if call.isError {
                 data.failures.append("\(call.tool): " + SecretFilter.masked(String(call.text.joined(separator: " ").prefix(200))))
                 continue

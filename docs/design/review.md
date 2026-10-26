@@ -169,6 +169,11 @@ Built the same day:
   answer as REST's (`GitLabJSON.restShape`, only answers with a `gid://gitlab/` id); the parts in it
   are the merge request's; the head is `diff_head_sha`, else the newest commit (base empty: the diff
   comes from the answers, no blame). It has no draft-note tools, so Send Drafts can't write through it.
+- Pi cuts every MCP text answer over 20 KB in the middle for the model (`MCP_OUTPUT_MAX_BYTES`)
+  and keeps the whole `CallToolResult` in the result's structured content (2026-10-26, `!7612` on
+  the work Mac: the merge request with its diffs came as 20 415 cut characters, no JSON, so "no
+  diff"). AKit reads the answers from that whole copy (`ReviewMCPCall.fullText`); an answer saved
+  only cut counts in `ReviewMCPData.cut` and the no-diff error names it.
 - Ask… and Add Note… (2026-10-25, the user's request): on each comment and on the whole review. A
   one-shot `pi -p` with Discuss in Pi…'s setup (`ReviewDiscuss.setup`) forks the conversation's last
   session (at first the verifier's); the thread is `<run>/conversation.jsonl`. A note may submit

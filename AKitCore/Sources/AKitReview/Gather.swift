@@ -210,8 +210,13 @@ public enum ReviewGather {
             gap("repository", "The diff of \(secret.map(\.newPath).joined(separator: ", "))", "Files that usually hold secrets are left out of the review.")
         }
         guard !snapshot.diffs.isEmpty else {
-            throw Failure(message: local != nil ? "There is no diff in \(ref.label): git made none for this range."
-                          : "There is no diff of \(ref.label): the fetch pass read none, and there is no checkout to make it with git.")
+            if local != nil { throw Failure(message: "There is no diff in \(ref.label): git made none for this range.") }
+            if data.cut > 0 {
+                throw Failure(message: "There is no diff of \(ref.label): Pi cut \(data.cut) answer(s) of the fetch pass over 20 KB, so AKit couldn't read "
+                              + "them, and there is no checkout to make the diff with git. Update Pi, or add checkout: <path of your clone> to the profile.")
+            }
+            throw Failure(message: "There is no diff of \(ref.label): the fetch pass read none, and there is no checkout to make it with git. "
+                          + "Add checkout: <path of your clone> to the profile.")
         }
         try ReviewJSON.write(snapshot, to: folder.appending(path: "gitlab/snapshot.json"))
         let diffs = snapshot.diffs

@@ -78,7 +78,7 @@ public struct ReviewRunLog: Codable, Sendable {
         let spec = run.spec
         let calls = ReviewMCPData.calls(in: folder).map { call in
             Call(pass: call.pass, server: call.server ?? Self.server(of: call.tool), tool: call.tool, isError: call.isError,
-                 input: String(SecretFilter.masked(call.input).prefix(300)), answer: call.text.map(\.count).reduce(0, +))
+                 input: String(SecretFilter.masked(call.input).prefix(300)), answer: call.fullText.map(\.count).reduce(0, +))
         }
         let blocked = Self.blocked(in: folder)
         let passes = (run.passes?.passes ?? []).map { record in
