@@ -179,6 +179,25 @@ akit notebook done Inbox "bank"            # отметить первую по�
 
 **Пример:** вы пишете агенту «добавь в мой блокнот: проверить ретраи». Агент запускает `akit notebook add Inbox "проверить ретраи" --task --today`. Если вкладка **Inbox** открыта в AKit без ваших правок, AKit сразу покажет новую строку.
 
+## Открыть ссылкой: Raycast
+<!-- section: links -->
+
+**Что это:** ссылка `akit://` открывает AKit сразу на нужном экране и вкладке. Её можно поставить в Raycast, в закладки браузера или вызвать из терминала.
+
+| Ссылка | Что открывает |
+|---|---|
+| `akit://notebook` | экран **Notebook**, вкладка, что была открыта |
+| `akit://notebook/Inbox` | вкладку **Inbox**. Регистр букв не важен |
+| `akit://notebook/Plans%20Q4` | вкладку `Plans Q4`: пробел пишется как `%20` |
+| `akit://review`, `akit://knowledge` | другой экран: имя экрана из боковой панели, без пробелов |
+
+**Пример: Raycast.** Raycast → **Create Quicklink**. **Name:** `Notebook`, **Link:** `akit://notebook/Inbox`. Теперь Raycast → `Notebook` → Enter открывает блокнот на вкладке **Inbox**.
+
+Из терминала: `open akit://notebook/Inbox`.
+
+- Если AKit закрыт, ссылка его запускает.
+- Если такой вкладки нет, AKit остаётся на экране **Notebook** и пишет «The notebook has no tab …».
+
 ## Тонкости
 <!-- section: details -->
 

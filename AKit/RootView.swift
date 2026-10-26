@@ -212,6 +212,13 @@ struct RootView: View {
             }
         }
         .onChange(of: model.section ?? .overview, initial: true) { _, section in ask.section = section }
+        // `akit://notebook/Inbox` from Raycast or a browser: this window shows the screen and tab.
+        .onOpenURL { url in
+            guard let link = AppLink(url) else { return }
+            model.section = link.section
+            if let tab = link.tab { notebook.request(tab) }
+        }
+        .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         // Mode names and definitions, and the ids made from them or from prompts, come from
         // sessions: never sent as screen data.
         .onAppear {
