@@ -75,10 +75,30 @@ final class NotebookModel {
 
     // MARK: - Loading
 
+    /// A tab an `akit://notebook/<tab>` link asked for before the tabs were read.
+    private var requested: String?
+
+    /// Shows the tab a link names, any case; before the tabs are read it waits for `load`.
+    func request(_ name: String) {
+        guard !tabs.isEmpty else {
+            requested = name
+            return
+        }
+        if let match = tabs.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            show(match)
+        } else {
+            problem = "The notebook has no tab \(name)."
+        }
+    }
+
     /// The screen appears: the bases are read (once), then the tabs.
     func load() async {
         await knowledge.loadIfNeeded()
         refresh()
+        if let requested {
+            self.requested = nil
+            request(requested)
+        }
         // Snapshots: `--select <tab>` shows that tab; `--tab notebook-rename` / `notebook-delete` asks for it.
         if let select = DebugSnapshot.options?.select, tabs.contains(select) { open(select) }
         switch DebugSnapshot.options?.tab {

@@ -97,6 +97,14 @@ targets:
           # index.lock blocks the next commit in this checkout.
           stamp AKitGitDirty "$([ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$SRCROOT" status --porcelain --untracked-files=no 2>/dev/null)" ] && echo yes || echo no)"
           stamp AKitBuildDate "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # akit://notebook/<tab> and akit://<screen> links (AppLink); Xcode merges these keys into
+    # the generated Info.plist.
+    info:
+      path: AKit/Info.plist
+      properties:
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.ussov.akit
+            CFBundleURLSchemes: [akit]
     settings:
       base:
         PRODUCT_NAME: AKit

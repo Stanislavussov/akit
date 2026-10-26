@@ -66,6 +66,10 @@ Work → **Notebook** (its own section; the Knowledge screen stays as it is):
 
 The base is the Knowledge screen's (the Base picker when there are several worlds).
 
+- Links (2026-10-26, the user's request: open the notebook from Raycast): the app registers the
+  `akit` URL scheme; `akit://<screen>` shows a sidebar screen, `akit://notebook/<tab>` a tab (any
+  case; it waits until the tabs are read). The open window takes the link (`AppLink`, `RootView`).
+
 ## Steps
 
 | # | Step | Done when |
