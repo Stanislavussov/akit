@@ -72,6 +72,33 @@ struct GraphQLShapeTests {
         #expect(elsewhere.mergeRequest == nil)
     }
 
+    /// Pi cuts a text answer over 20 KB in the middle for the model and keeps the whole
+    /// `CallToolResult` in the structured content: AKit reads the whole one.
+    @Test func readsTheWholeAnswerPiCutForTheModel() throws {
+        let files = (1...60).map { index -> [String: Any] in
+            ["newPath": "src/file\(index).ts", "oldPath": "src/file\(index).ts", "newFile": false, "deletedFile": false, "renamedFile": false,
+             "tooLarge": false, "diff": "@@ -1 +1 @@\n-a\n+" + String(repeating: "b", count: 600) + "\n"]
+        }
+        let object = Self.base.merging(["diffs": ["nodes": files, "pageInfo": Self.page]]) { $1 }
+        let whole = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        #expect(whole.utf8.count > 20 * 1024)
+        let shown = "Warning: truncated output (original token count: 9000)\nTotal output lines: 1\n\n" + whole.prefix(10_000)
+            + "…20000 chars truncated…" + whole.suffix(10_000) + "\n\n[Full output: /tmp/pi-mcp-1.txt (read it with offset/limit)]"
+        let result = String(decoding: try JSONSerialization.data(withJSONObject: ["content": [["type": "text", "text": whole]], "isError": false]),
+                            as: UTF8.self)
+        let call = ReviewMCPCall(pass: "fetch", tool: "mcp__gitlab__get_merge_request", input: Self.input, text: [shown], structured: result,
+                                 isError: false)
+        let data = ReviewMCPData.read([call], iid: 7, project: "team/app")
+        #expect(data.mergeRequest?.title == "Login")
+        #expect(data.diffs.count == 60 && data.cut == 0)
+
+        // An older Pi saved only the cut text: AKit says so instead of "read none".
+        let cut = ReviewMCPCall(pass: "fetch", tool: "mcp__gitlab__get_merge_request", input: Self.input, text: [shown], structured: nil,
+                                isError: false)
+        let lost = ReviewMCPData.read([cut], iid: 7, project: "team/app")
+        #expect(lost.diffs.isEmpty && lost.cut == 1)
+    }
+
     @Test func otherServersKeepTheirKeys() {
         let item: [String: Any] = ["id": 305489, "fields": ["System.Title": "Login", "System.WorkItemType": "Task"]]
         #expect(GitLabJSON.restShape(item) as? NSDictionary == item as NSDictionary)
