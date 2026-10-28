@@ -820,6 +820,8 @@ public enum ReviewExtension {
 
       pi.on("tool_call", async (event: any, ctx: any) => {
         const name = String(event.toolName ?? "");
+        // Debug… reads the run's log and writes nothing: no AKit tool, no MCP.
+        if (pass.startsWith("debug-") && !readTools.includes(name)) return refuse(name, "The debug pass only reads files.");
         if (ownTools.includes(name)) return undefined;
         if (name === "codemode" || name === "tool_search") {
           // Every tool a script or a search reaches comes back through this check.

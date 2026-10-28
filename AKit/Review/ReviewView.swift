@@ -220,6 +220,8 @@ struct ReviewRunDetail: View {
     @State private var reviewAskKind: ReviewConversationEntry.Kind? = DebugSnapshot.options?.tab == "ask" ? .note : nil
     /// Snapshots: `--tab log` opens it.
     @State private var showLog = DebugSnapshot.options?.tab == "log"
+    /// Debug…: gaps in the run's process. Snapshots: `--tab debug` opens it.
+    @State private var showDebug = DebugSnapshot.options?.tab == "debug"
     /// Translate of the brief, the overview and the requests; what goes to GitLab stays the original.
     @State private var translator = Translator()
     /// The requests or the map. Snapshots: `--tab map`.
@@ -255,6 +257,10 @@ struct ReviewRunDetail: View {
                     discussBanner
                     if let message = run.status?.message, run.status?.stage == .failed || run.status?.stage == .stopped {
                         Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled)
+                        if run.passes?.passes.isEmpty ?? true {
+                            Button("Debug…") { showDebug = true }
+                                .help("Find what went wrong: AKit's checks, the full log to copy, and Pi's analysis of the run")
+                        }
                     }
                     if let brief = run.passes?.brief {
                         DisclosureGroup("Brief") {
@@ -297,6 +303,7 @@ struct ReviewRunDetail: View {
         }
         .sheet(isPresented: $showSend) { SendDraftsSheet(run: run, approved: approved) }
         .sheet(isPresented: $showLog) { ReviewRunLogSheet(folder: run.folder) }
+        .sheet(isPresented: $showDebug) { ReviewDebugSheet(folder: run.folder) }
         .task(id: run.id) {
             // Discuss in Pi… writes into the run folder from a terminal: look every few seconds.
             while !Task.isCancelled {
@@ -454,6 +461,11 @@ struct ReviewRunDetail: View {
                         .buttonStyle(.link)
                         .font(.caption)
                         .help("What the run did: each pass's model, thinking, time, tokens and credits, the MCP calls, and what each role's findings became")
+                    Button("Debug…") { showDebug = true }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .disabled(model.activity?.runID == run.id)
+                        .help("Find gaps in the review process: AKit's checks, the full log to copy (prompts, transcripts, MCP answers), and Pi's analysis of what went wrong and what to change")
                     Button("Review Again…") { model.again = run.spec }
                         .buttonStyle(.link)
                         .font(.caption)

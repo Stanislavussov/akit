@@ -1041,6 +1041,7 @@ struct ReviewRunLogSheet: View {
     @State private var log: ReviewRunLog?
     @State private var problem: String?
     @State private var copied = false
+    @State private var copiedFull = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1063,6 +1064,21 @@ struct ReviewRunLogSheet: View {
                 }
                 .disabled(log == nil)
                 .help("The log as Markdown, without secrets, MCP arguments or the servers' answers: paste it to a model or a note")
+                Button(copiedFull ? "Copied" : "Copy Full Log") {
+                    let folder = folder
+                    Task {
+                        let result = await Task.detached { Result { try ReviewDebug.fullLog(folder, cut: nil) } }.value
+                        switch result {
+                        case .success(let text):
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(text, forType: .string)
+                            copiedFull = true
+                        case .failure(let error): problem = error.localizedDescription
+                        }
+                    }
+                }
+                .disabled(log == nil)
+                .help("Everything to debug the run, masked and uncut: prompts, each pass's transcript, MCP calls with arguments and whole answers, findings, plan. It holds work data (code, merge request texts): paste it only where that may go.")
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }

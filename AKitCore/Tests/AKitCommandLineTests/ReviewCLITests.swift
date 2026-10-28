@@ -37,6 +37,17 @@ extension AKitCLITests {
         #expect(await review(["--help"]).out.contains("akit review ask RUN [--finding ID]"))
     }
 
+    /// `log RUN --full` and `debug RUN`: `--full` is read with the run choices, before the subcommand.
+    @Test func reviewLogFullAndDebugArguments() async throws {
+        #expect(await review(["log", "r9", "--no-cut"]).err.contains("--no-cut goes with --full."))
+        let full = await review(["log", "r9", "--full", "--no-cut"])
+        #expect(full.code != 0 && !full.err.contains("--no-cut goes with --full"), "\(full)")
+        #expect(await review(["log", "r9", "--full", "--json"]).err.contains("--full is Markdown"))
+        #expect(await review(["debug"]).err.contains("Which run? akit review debug RUN."))
+        let help = await review(["--help"]).out
+        #expect(help.contains("akit review log RUN --full [--no-cut]") && help.contains("akit review debug RUN [--checks] [--json]"))
+    }
+
     /// `kb-gaps RUN`: what the review missed in the knowledge base, each with its propose command.
     @Test func reviewKnowledgeGaps() async throws {
         let run = ".akit/local/review/runs/r1"
