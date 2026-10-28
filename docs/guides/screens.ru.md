@@ -4056,6 +4056,33 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 Подробно: [писать](notebook#write), [задачи](notebook#tasks), [картинки и ссылки](notebook#images-links), [рисунки](notebook#drawings), [Today](notebook#today), [вкладки](notebook#tabs), [файлы и Obsidian](notebook#files), [агент](notebook#agents). Надписи: [словарь](terms#terms-notebook).
 
+### Work Log
+<!-- section: worklog -->
+
+**Что это:** журнал работы. Вы пишете пару слов о том, что делаете, и нажимаете Return. День и время AKit ставит сам. Один день — файл `worklog/<дата>.md` в базе знаний. По записям видно, сколько времени ушло на каждый вид работы.
+
+У этого экрана есть своё руководство: кнопка **Guide** на экране или Help → **Work Log Guide**.
+
+**Когда пригодится:**
+
+- «Много задач, к вечеру не помню, что делал» → запись при каждом переключении.
+- «Сколько ушло на баги?» → время по видам у каждого дня.
+- «Записать, не открывая окно» → Raycast со ссылкой `akit://worklog/add?text=…`.
+- «Что я делал вчера весь день?» → вкладка **Auto-Fill**.
+
+![Экран Work Log: кнопки видов, поле записи, дни с записями и временем по видам](images/worklog.png)
+
+#### Что на экране
+<!-- section: worklog-screen -->
+
+- Кнопки видов (**Agent** … **Break**, ⌘1…⌘8), поле записи и **Add**. ⌘L открывает экран с любого места.
+- Дни, новый сверху: `work` и время по видам. Запись: время, вид, текст, длина.
+- Правый щелчок по записи: **Again Now**, **Edit…**, **Copy**, **Delete…**.
+- Вверху: **Log** и **Auto-Fill** — восстановить день по запросам к агентам, отрезками 15 или 30 минут, с веткой и задачей.
+- Панель инструментов: **Show in Finder**, **Guide**. Если баз несколько — список **Base**.
+
+Подробно: [записать](worklog#write), [Auto-Fill](worklog#autofill), [длина записи](worklog#time), [исправить](worklog#edit), [ссылки и Raycast](worklog#links), [файлы](worklog#files), [агент](worklog#agents).
+
 ## Settings
 <!-- section: settings -->
 

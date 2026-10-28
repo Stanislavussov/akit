@@ -957,6 +957,7 @@ final class KnowledgeModel {
         for (id, hash) in noteHashes { own[base.notePath(id)] = hash }
         for (id, hash) in mapHashes { own[base.mapPath(id)] = hash }
         for (path, hash) in NotebookModel.current?.ownHashes ?? [:] { own[path] = hash }
+        for (path, hash) in WorkLogModel.current?.ownHashes ?? [:] { own[path] = hash }
         let root = base.root
         let batch = WatchFilter.batch(paths, own: own) { KnowledgeWrite.hash(of: root.appending(path: $0)) }
         if DebugSnapshot.options != nil {
@@ -965,6 +966,7 @@ final class KnowledgeModel {
         if batch.inbox { readInbox() }
         for path in batch.enqueue { enqueue(path, in: base) }
         if batch.notebook { NotebookModel.current?.changedOnDisk(batch.outside) }
+        if batch.worklog { WorkLogModel.current?.changedOnDisk() }
         if let note, editing, batch.outside.contains(base.notePath(note)), FileWalk.isRegularFile(base.noteFile(note)) {
             noteConflict = note
         }

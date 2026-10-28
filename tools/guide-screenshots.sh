@@ -213,6 +213,10 @@ shot notebook-today      $MAIN --section notebook --tab notebook-today --query 2
 shot notebook-new-tab    $MAIN --section notebook --tab notebook-new --query Ideas
 shot notebook-plans      $MAIN --section notebook --select Plans
 shot notebook-drawing    $MAIN --section notebook --tab notebook-draw-open --query 2026-10-24-retry
+# The work log (worklog.ru.md): the sample base's two days, Bug chosen and a line typed; Edit… of an entry.
+shot worklog             $MAIN --section worklog --tab worklog-kind-bug --query "order-created: retry test"
+shot worklog-edit        $MAIN --section worklog --tab worklog-edit
+shot worklog-fill        $MAIN --section worklog --tab worklog-fill --query 2026-10-05
 shot knowledge-obsidian-setup 900x600 --section knowledge --select payments/orders-api --tab obsidian-setup
 shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties
 shot knowledge-kinds     $MAIN --section knowledge --select payments/orders-api --tab kinds

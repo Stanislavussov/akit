@@ -19,7 +19,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 10
+    public static let version = 11
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -545,6 +545,26 @@ public enum KnowledgeSeed {
             | --- | --- |
             | Faster refunds | billing |
             | Track parcels live | shipping |
+
+            """),
+        // The work log (docs/design/worklog.md): two days, kinds, a break, a link.
+        File(path: "worklog/2026-10-24.md", text: """
+            - 09:05 #reply Answered logistics about the warehouse
+            - 09:30 #agent Pi drew the order flow map
+            - 11:10 #meeting Checkout team planning
+            - 12:00 #break
+            - 13:00 #task Order flow map: names and arrows
+            - 15:20 #research Retry policy https://example.com/retries
+
+            """),
+        File(path: "worklog/2026-10-25.md", text: """
+            - 08:50 #reply Refunds question in billing
+            - 09:20 #bug order-created arrives twice
+            - 10:40 #agent Review of COL-123 with Pi
+            - 11:30 #review COL-124: two comments sent
+            - 12:15 #break
+            - 13:00 #bug order-created: duplicate key in the outbox
+            - 16:30 #task Release notes
 
             """),
         // A drawing (NB10): its Excalidraw scene and the picture the tab shows.
