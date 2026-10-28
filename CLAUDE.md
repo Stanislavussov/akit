@@ -14,10 +14,17 @@ Pi and other harnesses read this file too.
   tag `vYYYY.MM.DD` (`-2`, `-3` … for more on the same day), message = what the
   feature does:
   `git tag -a v2026.09.27 -m "Session insights: stats and recommendations"`.
+- Then, as the last step of a finished feature (the user's standing request, 2026-10-28):
+  `make install`, then release it: on master at the tag with a clean tree, `make release`,
+  `git push origin master <tag>`, and
+  `gh release create <tag> dist/AKit.zip --generate-notes --title "<tag>: <what it does>"`.
+  The in-app Update button and `install.sh` read these releases. A fix or step that isn't
+  merged into master gets no release.
 - Message: imperative summary line in English (≤ 72 chars), optional body with the why.
   Example: `Add Trash-based skill deletion with confirmation`.
 - Never commit build output, `.omc/`, secrets or tokens (see .gitignore).
-- Don't push, rewrite history or force anything unless the user asks.
+- Don't push, rewrite history or force anything unless the user asks. The release step above
+  is the one standing exception: it pushes master and the tag.
 
 ## Project conventions
 
