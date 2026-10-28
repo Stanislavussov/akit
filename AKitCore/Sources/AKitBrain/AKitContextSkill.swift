@@ -178,8 +178,9 @@ akit worklog show [today|yesterday|YYYY-MM-DD] [--days N] [--json]
 akit worklog add TEXT [--kind KIND] [--at HH:MM] [--json]
                                                    # today, now (--at: earlier today); committed
 akit worklog kinds                                 # agent task bug research reply meeting review break
-akit worklog fill [DAY] [--slot 15|30] [--language cs] [--harness claude|pi|all] [--model M] [--add] [--json]
-                                                   # proposals from that day's prompts (a Pi model
+akit worklog fill [DAY] [--slot 15|30] [--language cs] [--thinking low] [--harness claude|pi|all] [--model M] [--add] [--json]
+                                                   # proposals with 2-3 sentence summaries ("  > …"
+                                                   # under each) from that day's prompts (a Pi model
                                                    # under the sending policy); --add only when asked
 ```
 

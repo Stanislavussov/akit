@@ -19,7 +19,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 11
+    public static let version = 12
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -560,7 +560,9 @@ public enum KnowledgeSeed {
         File(path: "worklog/2026-10-25.md", text: """
             - 08:50 #reply Refunds question in billing
             - 09:20 #bug order-created arrives twice
+              > The order-created event reached billing twice for some orders. The outbox wrote it again after a retry, so the fix is a unique key on the event id.
             - 10:40 #agent Review of COL-123 with Pi
+              > Pi reviewed the merge request of COL-123 and found a missing null check in the refund path. Two comments went out as drafts.
             - 11:30 #review COL-124: two comments sent
             - 12:15 #break
             - 13:00 #bug order-created: duplicate key in the outbox

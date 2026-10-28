@@ -88,6 +88,10 @@ struct WorkLogView: View {
             }
         }
         ToolbarItem {
+            WorkLogGoToDay()
+                .disabled(knowledge.base == nil)
+        }
+        ToolbarItem {
             Button("Show in Finder", systemImage: "folder") {
                 guard let worklog = model.worklog else { return }
                 let today = worklog.file(KnowledgeWorkLog.stamp(.now).day)
@@ -165,31 +169,49 @@ private struct WorkLogDays: View {
     @Environment(WorkLogModel.self) private var model
 
     var body: some View {
-        TimelineView(.everyMinute) { context in
-            let days = model.days.map { KnowledgeWorkLog.day($0.date, text: $0.text, now: context.date) }
-            let today = KnowledgeWorkLog.stamp(context.date).day
+        // Past days are parsed once per change of their file; only today follows the clock.
+        let days = (model.today.map { [$0] } ?? []) + model.pastDays
+        let today = model.days.first?.date
+        ScrollViewReader { proxy in
             List {
                 ForEach(days, id: \.date) { day in
                     Section {
                         if day.entries.isEmpty, day.date == today {
                             Text("Nothing yet today. Write what you are doing and press Return.").foregroundStyle(.secondary)
                         }
-                        ForEach(Array(zip(day.entries, day.minutes)), id: \.0) { entry, minutes in
-                            WorkLogRow(date: day.date, entry: entry, minutes: minutes,
-                                       running: minutes != nil && entry == day.entries.last && day.date == KnowledgeWorkLog.stamp(context.date).day)
+                        // Ids by content, not line number: an entry added above keeps the others' open summaries.
+                        ForEach(rows(day), id: \.id) { row in
+                            WorkLogRow(date: day.date, entry: row.entry, minutes: row.minutes,
+                                       running: row.minutes != nil && row.entry == day.entries.last && day.date == today)
                         }
                     } header: {
-                        WorkLogDayHeader(day: day, today: KnowledgeWorkLog.stamp(context.date).day)
+                        WorkLogDayHeader(day: day, today: today ?? "")
                     }
+                    .id(day.date)
                 }
-                if model.moreDays {
-                    Button("Show More Days") { model.showMore() }
+                if model.remainingDays > 0 {
+                    Button("Show \(min(WorkLogModel.pageSize, model.remainingDays)) More Days (\(model.remainingDays) left)") { model.showMore() }
                         .buttonStyle(.link)
+                        .help("Days are shown \(WorkLogModel.pageSize) at a time; Go to Day… jumps to one")
                 }
             }
-            // After midnight the new day gets its section without waiting for a write.
-            .onChange(of: today) { model.reload() }
+            .onChange(of: model.scrollTarget) { _, target in
+                guard let target else { return }
+                withAnimation { proxy.scrollTo(target, anchor: .top) }
+                model.scrollTarget = nil
+            }
         }
+        .task { await model.tick() }
+    }
+}
+
+/// A day's rows with ids that don't move when lines do: time, kind, text, and which repeat it is.
+private func rows(_ day: KnowledgeWorkLog.Day) -> [(id: String, entry: KnowledgeWorkLog.Entry, minutes: Int?)] {
+    var seen: [String: Int] = [:]
+    return zip(day.entries, day.minutes).map { entry, minutes in
+        let key = "\(entry.time)|\(entry.kind ?? "")|\(entry.text)"
+        seen[key, default: 0] += 1
+        return ("\(key)|\(seen[key]!)", entry, minutes)
     }
 }
 
@@ -230,26 +252,30 @@ private struct WorkLogRow: View {
 
     var body: some View {
         let kind = entry.kind.map(KnowledgeWorkLog.kind)
-        HStack(spacing: 10) {
-            Text(entry.time).monospacedDigit().foregroundStyle(.secondary)
-            Label(kind?.title ?? "—", systemImage: kind?.symbol ?? "circle")
-                .frame(width: 110, alignment: .leading)
-                .foregroundStyle(kind?.isWork == false ? .secondary : .primary)
-            Text(linked(entry.text)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            if let minutes {
-                Text((running ? "now · " : "") + KnowledgeWorkLog.duration(minutes))
-                    .monospacedDigit()
-                    .foregroundStyle(running ? Color.accentColor : .secondary)
+        // An Auto-Fill entry's summary opens under it with the chevron (W9).
+        WorkLogSummaryDisclosure(summary: entry.summary) {
+            HStack(spacing: 10) {
+                Text(entry.time).monospacedDigit().foregroundStyle(.secondary)
+                Label(kind?.title ?? "—", systemImage: kind?.symbol ?? "circle")
+                    .frame(width: 110, alignment: .leading)
+                    .foregroundStyle(kind?.isWork == false ? .secondary : .primary)
+                Text(linked(entry.text)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                if let minutes {
+                    Text((running ? "now · " : "") + KnowledgeWorkLog.duration(minutes))
+                        .monospacedDigit()
+                        .foregroundStyle(running ? Color.accentColor : .secondary)
+                }
             }
+            // On the line only: a double click on the chevron just opens and closes the summary.
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { model.editRequest = .init(date: date, entry: entry) }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { model.editRequest = .init(date: date, entry: entry) }
         .contextMenu {
             Button("Again Now") { model.again(entry) }
             Button("Edit…") { model.editRequest = .init(date: date, entry: entry) }
             Button("Copy") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(entry.markdown, forType: .string)
+                NSPasteboard.general.setString(entry.markdownLines.joined(separator: "\n"), forType: .string)
             }
             Divider()
             Button("Delete…", role: .destructive) { model.deleteRequest = .init(date: date, entry: entry) }
@@ -279,6 +305,7 @@ private struct WorkLogEditSheet: View {
     @State private var time = ""
     @State private var kind = ""
     @State private var text = ""
+    @State private var summary = ""
 
     var body: some View {
         let validTime = KnowledgeWorkLog.minute(time) != nil
@@ -296,6 +323,8 @@ private struct WorkLogEditSheet: View {
                     }
                 }
                 TextField("Text", text: $text, prompt: Text("What you did"))
+                TextField("Summary", text: $summary, prompt: Text("Optional: two or three sentences of what you did"), axis: .vertical)
+                    .lineLimit(3...8)
             }
             if !validTime {
                 Label("Write the time as HH:MM.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
@@ -304,14 +333,40 @@ private struct WorkLogEditSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                 Button("Save") {
-                    if model.replace(request, with: .init(time: time, kind: kind.isEmpty ? nil : kind, text: text)) { dismiss() }
+                    if model.replace(request, with: .init(time: time, kind: kind.isEmpty ? nil : kind, text: text,
+                                                       summary: summary)) { dismiss() }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!validTime || (text.trimmingCharacters(in: .whitespaces).isEmpty && kind.isEmpty))
             }
         }
         .padding(20)
-        .frame(width: 440)
-        .onAppear { (time, kind, text) = (request.entry.time, request.entry.kind ?? "", request.entry.text) }
+        .frame(width: 480)
+        .onAppear { (time, kind, text, summary) = (request.entry.time, request.entry.kind ?? "", request.entry.text, request.entry.summary ?? "") }
+    }
+}
+
+/// Go to Day…: a calendar; the log jumps to the chosen day, loading pages up to it.
+private struct WorkLogGoToDay: View {
+    @Environment(WorkLogModel.self) private var model
+    @State private var open = false
+    @State private var date = Date.now
+
+    var body: some View {
+        Button("Go to Day…", systemImage: "calendar") { open = true }
+            .help("Jump to a day of the log, however far back")
+            .popover(isPresented: $open) {
+                VStack(alignment: .trailing, spacing: 8) {
+                    DatePicker("Day", selection: $date, in: ...Date.now, displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                    Button("Go") {
+                        model.goTo(date)
+                        open = false
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+                .padding(12)
+            }
     }
 }

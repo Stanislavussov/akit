@@ -20,7 +20,7 @@ public enum WorkLogFill {
     /// The timeline sent to the model has at most about this many characters.
     public static let maxCharacters = 24_000
     /// One prompt is cut to this many characters.
-    static let promptCharacters = 240
+    static let promptCharacters = 400
 
     /// One prompt of the day: when, in which project, harness and git branch, and its start.
     public struct Moment: Sendable, Equatable {
@@ -150,8 +150,11 @@ public enum WorkLogFill {
     named below: start with the ticket when there is one (COL-123), then what was solved or \
     done, and the branch in parentheses when it is not the main branch. Kinds: agent (working with an agent on code), \
     task, bug, research, reply, meeting, review, break. Use break only for a gap of more than \
-    45 minutes without prompts. Leave out times the existing entries already cover. Never put \
-    secrets, tokens or personal data in the text.
+    45 minutes without prompts. Each entry also has a summary: 2 to 3 sentences, in the same \
+    language, of what the person did in that stretch: the problem or goal, what they tried, found \
+    or decided, and the result when the prompts show it. Write only what the prompts support; no \
+    guesses. Leave out times the existing entries already cover. Never put secrets, tokens or \
+    personal data in the text or the summary.
     """
 
     /// The system prompt with the entries' language (Czech by default, the user's choice).
@@ -161,8 +164,8 @@ public enum WorkLogFill {
 
     public static let schema = """
     {"type":"object","properties":{"entries":{"type":"array","items":{"type":"object","properties":\
-    {"time":{"type":"string"},"kind":{"type":"string"},"text":{"type":"string"}},\
-    "required":["time","kind","text"]}}},"required":["entries"]}
+    {"time":{"type":"string"},"kind":{"type":"string"},"text":{"type":"string"},"summary":{"type":"string"}},\
+    "required":["time","kind","text","summary"]}}},"required":["entries"]}
     """
 
     /// The proposed entries of the model's answer, checked: a valid time, a kind that can be a tag
@@ -178,7 +181,9 @@ public enum WorkLogFill {
             let kind = (try? KnowledgeWorkLog.checkedKind(item["kind"] as? String)) ?? nil
             let text = ((item["text"] as? String) ?? "").replacing(/\s+/, with: " ").trimmingCharacters(in: .whitespaces)
             guard !text.isEmpty || kind != nil else { return nil }
-            return KnowledgeWorkLog.Entry(time: String(format: "%02d:%02d", minute / 60, minute % 60), kind: kind, text: String(text.prefix(300)))
+            let summary = ((item["summary"] as? String) ?? "").replacing(/\s+/, with: " ").trimmingCharacters(in: .whitespaces)
+            return KnowledgeWorkLog.Entry(time: String(format: "%02d:%02d", minute / 60, minute % 60), kind: kind, text: String(text.prefix(300)),
+                                          summary: summary.isEmpty ? nil : String(summary.prefix(KnowledgeWorkLog.maxSummary)))
         }
         return entries.sorted { $0.minute < $1.minute }
     }
@@ -191,6 +196,9 @@ public enum WorkLogFill {
         KnowledgeCheckModel.defaultModel(for: .pi, available: available)
     }
 
+    /// Pi's thinking level when none is chosen: summaries read better with some thought than with none.
+    public static let defaultThinking = "low"
+
     /// The models the picker offers: GitHub Copilot's when Pi lists any, else all of Pi's.
     public static func offered(_ available: [String]) -> [String] {
         let copilot = available.filter { $0.hasPrefix("github-copilot/") }
@@ -200,7 +208,8 @@ public enum WorkLogFill {
     /// Reads the day's prompts, asks the model, returns the proposals (nothing is written).
     /// `model` "" is the default. Throws when there are no prompts, the gate refuses or the call fails.
     public static func propose(day: String, sessions: [SessionSummary], existing: [KnowledgeWorkLog.Entry], model: String,
-                               slotMinutes: Int = 30, language: LabLanguage = .czech, env: HarnessEnvironment) async throws(Failure)
+                               slotMinutes: Int = 30, language: LabLanguage = .czech, thinking: String = defaultThinking,
+                               env: HarnessEnvironment) async throws(Failure)
         -> (entries: [KnowledgeWorkLog.Entry], prompts: Int, model: String) {
         let moments = moments(sessions, day: day)
         guard !moments.isEmpty else {
@@ -209,7 +218,8 @@ public enum WorkLogFill {
         do {
             let available = await LabRuns.models(for: .pi, env: env)
             let agent = try KnowledgeCheckModel.resolved(LabAgent(harness: .pi, model: model.isEmpty ? (defaultModel(available: available) ?? "") : model,
-                                                                  effort: "low", mode: .call), available: available)
+                                                                  effort: LabHarness.pi.efforts.contains(thinking) ? thinking : defaultThinking,
+                                                                  mode: .call), available: available)
             // Only sessions that gave prompts; the log's own entries are knowledge base text.
             let used = Set(moments.map(\.source))
             var origins: [SendOrigin] = sessions.filter { used.contains($0.file.path) }

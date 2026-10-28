@@ -22,9 +22,9 @@ extension AKitCLI {
                                         The entries of a day (default today), with how long each
                                         lasted and the minutes per kind. --days N: the last N days
                                         with entries. --json: {base, days: [{date, path, entries:
-                                        [{time, kind, text, minutes}], totals: {KIND: minutes},
+                                        [{time, kind, text, minutes, summary}], totals: {KIND: minutes},
                                         work_minutes}]}
-      akit worklog fill [DAY|today|yesterday] [--slot 15|30] [--language cs] [--harness claude|pi|all] [--model M] [--add] [--json]
+      akit worklog fill [DAY|today|yesterday] [--slot 15|30] [--language cs] [--thinking LEVEL] [--harness claude|pi|all] [--model M] [--add] [--json]
                                         Auto-Fill: the user's prompts of that day in the harness's
                                         sessions (default all), in slots of --slot minutes (default
                                         30) with the project, git branch and ticket (COL-123) of
@@ -32,8 +32,11 @@ extension AKitCLI {
                                         --model from pi --list-models) under the sending policy and
                                         the send log (worklog-fill); prints the proposed entries.
                                         --language: the entries' language (default cs, Czech).
+                                        --thinking: Pi's thinking level (off, minimal, low, medium,
+                                        high, xhigh, max; default low). Each entry gets a summary of
+                                        2-3 sentences, kept as "  > …" under it.
                                         --add (only when the user asked) adds them, one commit.
-                                        --json: {day, model, prompts, entries: [{time, kind, text}]}
+                                        --json: {day, model, prompts, entries: [{time, kind, text, summary}]}
       akit worklog kinds [--json]       The preset kinds: agent, task, bug, research, reply,
                                         meeting, review, break. Any other #tag works too.
 
@@ -45,6 +48,7 @@ extension AKitCLI {
         let kind: String?
         let text: String
         let minutes: Int?
+        var summary: String? = nil
     }
 
     struct WorkLogDayAnswer: Encodable {
@@ -134,6 +138,10 @@ extension AKitCLI {
                     out("Added to \(path): \(entry.markdown), committed.")
                 }
             case "fill":
+                let thinking = args.value("--thinking") ?? WorkLogFill.defaultThinking
+                guard LabHarness.pi.efforts.contains(thinking) else {
+                    throw Failure(message: "--thinking takes one of \(LabHarness.pi.efforts.joined(separator: ", ")).")
+                }
                 let languageCode = args.value("--language") ?? LabLanguage.czech.rawValue
                 guard let language = LabLanguage(rawValue: languageCode) else {
                     throw Failure(message: "--language takes one of \(LabLanguage.codes).")
@@ -156,14 +164,14 @@ extension AKitCLI {
                 let sessions = WorkLogFill.sessions(SessionScanner.scan(installations: HarnessCatalog.detectAll(in: env), in: env),
                                                     day: date, harnesses: harnesses)
                 let proposal: (entries: [KnowledgeWorkLog.Entry], prompts: Int, model: String)
-                do { proposal = try await WorkLogFill.propose(day: date, sessions: sessions, existing: existing, model: model, slotMinutes: slot, language: language, env: env) } catch {
+                do { proposal = try await WorkLogFill.propose(day: date, sessions: sessions, existing: existing, model: model, slotMinutes: slot, language: language, thinking: thinking, env: env) } catch {
                     throw Failure(message: error.message)
                 }
                 if add, let base {
                     let log = KnowledgeWorkLog(base: base)
                     var paths: Set<String> = []
                     for (index, entry) in proposal.entries.enumerated() {
-                        do { paths.insert(try log.add(entry.text, kind: entry.kind, day: date, time: entry.time).path) } catch {
+                        do { paths.insert(try log.add(entry.text, kind: entry.kind, day: date, time: entry.time, summary: entry.summary).path) } catch {
                             throw Failure(message: "\(index) of \(proposal.entries.count) entries were written to worklog/\(date).md but not committed; then: \(error.message)")
                         }
                     }
@@ -175,10 +183,10 @@ extension AKitCLI {
                 }
                 if json {
                     out(encode(WorkLogFillAnswer(day: date, model: proposal.model, prompts: proposal.prompts, added: add,
-                                                 entries: proposal.entries.map { WorkLogEntryAnswer(time: $0.time, kind: $0.kind, text: $0.text, minutes: nil) })))
+                                                 entries: proposal.entries.map { WorkLogEntryAnswer(time: $0.time, kind: $0.kind, text: $0.text, minutes: nil, summary: $0.summary) })))
                 } else {
                     out((["\(proposal.entries.count) entries from \(proposal.prompts) prompts on \(date) (\(proposal.model))"
-                          + (add ? ", added and committed:" : ":")] + proposal.entries.map(\.markdown)).joined(separator: "\n"))
+                          + (add ? ", added and committed:" : ":")] + proposal.entries.flatMap(\.markdownLines)).joined(separator: "\n"))
                 }
             case "show":
                 let daysOption = args.value("--days")
@@ -198,7 +206,7 @@ extension AKitCLI {
                     out(encode(WorkLogShowAnswer(base: base.root.path, days: days.map { day in
                         WorkLogDayAnswer(date: day.date, path: log.path(day.date),
                                          entries: zip(day.entries, day.minutes).map {
-                                             WorkLogEntryAnswer(time: $0.time, kind: $0.kind, text: $0.text, minutes: $1)
+                                             WorkLogEntryAnswer(time: $0.time, kind: $0.kind, text: $0.text, minutes: $1, summary: $0.summary)
                                          },
                                          totals: Dictionary(day.totals.map { ($0.kind.isEmpty ? "none" : $0.kind, $0.minutes) }, uniquingKeysWith: +),
                                          work_minutes: day.workMinutes)
@@ -232,6 +240,7 @@ extension AKitCLI {
     static func describe(_ day: KnowledgeWorkLog.Day) -> String {
         let lines = zip(day.entries, day.minutes).map { entry, minutes in
             "\(entry.time)  \(entry.kind.map { "#\($0)" } ?? "-")  \(entry.text)" + (minutes.map { "  (\(KnowledgeWorkLog.duration($0)))" } ?? "")
+                + (entry.summary.map { "\n       " + $0.replacingOccurrences(of: "\n", with: "\n       ") } ?? "")
         }
         let totals = day.totals.map { "\($0.kind.isEmpty ? "none" : "#\($0.kind)") \(KnowledgeWorkLog.duration($0.minutes))" }
         return (["## \(day.date)  work \(KnowledgeWorkLog.duration(day.workMinutes))"] + lines

@@ -4079,7 +4079,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Дни, новый сверху: `work` и время по видам. Запись: время, вид, текст, длина.
 - Правый щелчок по записи: **Again Now**, **Edit…**, **Copy**, **Delete…**.
 - Вверху: **Log** и **Auto-Fill** — восстановить день по запросам к агентам, отрезками 15 или 30 минут, с веткой и задачей.
-- Панель инструментов: **Show in Finder**, **Guide**. Если баз несколько — список **Base**.
+- Панель инструментов: **Go to Day…**, **Show in Finder**, **Guide**. Если баз несколько — список **Base**.
 
 Подробно: [записать](worklog#write), [Auto-Fill](worklog#autofill), [длина записи](worklog#time), [исправить](worklog#edit), [ссылки и Raycast](worklog#links), [файлы](worklog#files), [агент](worklog#agents).
 

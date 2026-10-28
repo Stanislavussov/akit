@@ -84,3 +84,36 @@ extension KnowledgeWorkLogTests {
         #expect(try log.text("2026-10-28") == "- 09:00 #task a\n- 09:30 x y z\n- 10:00 b\n")
     }
 }
+
+extension KnowledgeWorkLogTests {
+    @Test func aSummaryStaysWithItsEntryThroughAddEditAndDelete() async throws {
+        let log = try await worklog()
+        _ = try log.add("COL-1 outbox", kind: "bug", day: "2026-10-28", time: "09:00", summary: "Found the retry.\nFixed the key.")
+        _ = try log.add("notes", kind: nil, day: "2026-10-28", time: "09:30")
+        // An earlier-or-equal time goes after the summary, not between entry and summary.
+        _ = try log.add("same minute", kind: nil, day: "2026-10-28", time: "09:00")
+        #expect(try log.text("2026-10-28") == "- 09:00 #bug COL-1 outbox\n  > Found the retry.\n  > Fixed the key.\n- 09:00 same minute\n- 09:30 notes\n")
+        let first = try log.day("2026-10-28").entries[0]
+        #expect(first.summary == "Found the retry.\nFixed the key.")
+        // Edit moves the entry with its summary.
+        _ = try log.replace(first, on: "2026-10-28", with: .init(time: "10:00", kind: "bug", text: "COL-1 outbox", summary: "Done."))
+        #expect(try log.text("2026-10-28") == "- 09:00 same minute\n- 09:30 notes\n- 10:00 #bug COL-1 outbox\n  > Done.\n")
+        let moved = try log.day("2026-10-28").entries[2]
+        _ = try log.remove(moved, on: "2026-10-28")
+        #expect(try log.text("2026-10-28") == "- 09:00 same minute\n- 09:30 notes\n")
+    }
+}
+
+extension KnowledgeWorkLogTests {
+    @Test func aSummaryTypedInParagraphsKeepsThemThroughAnEdit() async throws {
+        let log = try await worklog()
+        try FileManager.default.createDirectory(at: log.folder, withIntermediateDirectories: true)
+        try Data("- 09:00 #task a\n  > one\n  >\n  > two\n- 10:00 b\n".utf8).write(to: log.file("2026-10-28"))
+        let entry = try log.day("2026-10-28").entries[0]
+        #expect(entry.summary == "one\n\ntwo")
+        var moved = entry
+        moved.time = "09:15"
+        _ = try log.replace(entry, on: "2026-10-28", with: moved)
+        #expect(try log.text("2026-10-28") == "- 09:15 #task a\n  > one\n  >\n  > two\n- 10:00 b\n")
+    }
+}

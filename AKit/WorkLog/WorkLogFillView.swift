@@ -31,6 +31,10 @@ struct WorkLogFillView: View {
                         ForEach(LabLanguage.allCases, id: \.self) { Text($0.name).tag($0) }
                     }
                     .help("The language the model writes the entries in; Czech unless you choose another")
+                    Picker("Thinking", selection: $model.fillThinking) {
+                        ForEach(LabHarness.pi.efforts, id: \.self) { Text($0).tag($0) }
+                    }
+                    .help("Pi's thinking level for the model: more thinking gives better summaries, takes longer and costs more (default low)")
                     PiModelPicker(selection: $model.fillModel, models: model.fillModels,
                                   empty: "Default (\(model.defaultModel ?? (model.fillModels.isEmpty ? "reading the list…" : "none")))",
                                   help: "Pi's models (pi --list-models); GitHub Copilot's when Pi has them", allowsOther: false) {
@@ -92,16 +96,21 @@ struct WorkLogFillView: View {
         List {
             ForEach(Array(model.proposals.enumerated()), id: \.offset) { index, entry in
                 let kind = entry.kind.map(KnowledgeWorkLog.kind)
-                Toggle(isOn: Binding(get: { model.chosen.contains(index) },
-                                     set: { if $0 { model.chosen.insert(index) } else { model.chosen.remove(index) } })) {
-                    HStack(spacing: 10) {
-                        Text(entry.time).monospacedDigit().foregroundStyle(.secondary)
-                        Label(kind?.title ?? "—", systemImage: kind?.symbol ?? "circle").frame(width: 110, alignment: .leading)
-                        Text(entry.text).textSelection(.enabled)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Toggle("", isOn: Binding(get: { model.chosen.contains(index) },
+                                             set: { if $0 { model.chosen.insert(index) } else { model.chosen.remove(index) } }))
+                        .labelsHidden()
+                    WorkLogSummaryDisclosure(summary: entry.summary, startsOpen: true) {
+                        HStack(spacing: 10) {
+                            Text(entry.time).monospacedDigit().foregroundStyle(.secondary)
+                            Label(kind?.title ?? "—", systemImage: kind?.symbol ?? "circle").frame(width: 110, alignment: .leading)
+                            Text(entry.text).textSelection(.enabled)
+                        }
                     }
                 }
             }
         }
+        .id(model.proposalGeneration)
     }
 }
 
@@ -134,6 +143,50 @@ private struct WorkLogSlotList: View {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// An entry line with its summary as an accordion (W9): a chevron opens and closes the 2–3
+/// sentences under it. Without a summary, just the line.
+struct WorkLogSummaryDisclosure<Line: View>: View {
+    let summary: String?
+    var startsOpen = false
+    @ViewBuilder let line: () -> Line
+    @State private var open: Bool?
+
+    var body: some View {
+        if let summary {
+            // Snapshots: `--tab worklog-open` shows every summary open.
+            let isOpen = open ?? (startsOpen || DebugSnapshot.options?.tab == "worklog-open")
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { open = !isOpen }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .rotationEffect(.degrees(isOpen ? 90 : 0))
+                            .frame(width: 12)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help(isOpen ? "Hide the summary" : "Show the summary: what you did, in a few sentences")
+                    line()
+                }
+                if isOpen {
+                    Text(summary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 18)
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                Color.clear.frame(width: 12, height: 1)
+                line()
             }
         }
     }
