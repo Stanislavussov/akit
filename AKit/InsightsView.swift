@@ -566,6 +566,8 @@ struct InsightsView: View {
         generation += 1
         let mine = generation
         isLoading = true
+        // The old window's loops would show under the new window's label until the scan ends.
+        loops = nil
         do {
             let result = try await Recommender.load(env: env, brain: model.brain, project: project, days: days, range: range,
                                                     projectsRoot: model.projectsRoot, projectFolder: project.flatMap { model.brainProjectFolders[$0] })

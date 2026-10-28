@@ -125,7 +125,8 @@ public struct CaptureInstaller {
     /// After a run it also asks `akit loop-check` whether the session ends in a stuck loop (the same ask
     /// 3+ times, almost the same answer) and then shows a line with the advice; ⌥T raises the thinking
     /// level one step for this session (`docs/design/repeat-loops.md`). Nothing reaches the model: no
-    /// messages, tools or prompt changes, so the next request's cache is untouched.
+    /// messages, tools or prompt changes, so the next request's cache is untouched; only ⌥T, when
+    /// pressed, changes the thinking of the next request.
     static let piExtensionText = """
         // \(marker) (akit insights install); AKit replaces or removes this file.
         // On session start, hands the session id, folder and log path to `akit record-session`,
@@ -135,7 +136,8 @@ public struct CaptureInstaller {
         // Option+U removes it.
         // After a run that ends a stuck loop (the same ask 3+ times, almost the same answer; `akit
         // loop-check`), a line says so; Option+T raises the thinking level one step for this session.
-        // Nothing of this reaches the model: no messages, tools or prompt changes.
+        // Nothing of this reaches the model: no messages, tools or prompt changes. Only Option+T, when
+        // pressed, changes the thinking level of the next request.
         import { spawn } from "node:child_process";
         import { existsSync } from "node:fs";
         import { homedir } from "node:os";
@@ -329,7 +331,9 @@ public struct CaptureInstaller {
               const started = generation;
               loopCheck(akitPath, session(ctx)).then((loop) => {
                 // A newer prompt or session meanwhile: the answer is about a run that is no longer the last.
-                if (loop && generation === started) showLoop(ctx, loop);
+                if (generation !== started) return;
+                if (loop) showLoop(ctx, loop);
+                else ctx?.ui?.setWidget?.(LOOP, undefined);
               });
             }
             // Taken before the queued entries are written: they are not part of the run.
@@ -440,6 +444,11 @@ public struct CaptureInstaller {
               }
               pi.setThinkingLevel(LEVELS[index + 1]);
               const after = pi.getThinkingLevel?.();
+              // An older Pi that doesn't know the level may clamp it down (even to off): undo that.
+              if (LEVELS.indexOf(after) < index) {
+                pi.setThinkingLevel(before);
+                return ctx.ui.notify(`Thinking stays ${before}: this Pi has no higher level. Ctrl+P switches the model.`, "info");
+              }
               if (after === before) return ctx.ui.notify(`Thinking stays ${before}: the model has no higher level. Ctrl+P switches the model.`, "info");
               ctx.ui.setWidget(LOOP, undefined);
               ctx.ui.notify(`Thinking: ${before} → ${after} (this session)`, "info");

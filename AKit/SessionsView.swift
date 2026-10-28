@@ -315,6 +315,7 @@ private struct SessionDetailView: View {
             } catch {
                 guard !Task.isCancelled else { return }
                 self.error = error.localizedDescription
+                if model.revealSession?.path == session.file.path { model.revealSession = nil }
             }
         }
     }
