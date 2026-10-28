@@ -1019,7 +1019,7 @@ To review: commits and uncommitted changes.
 
 Кнопка **Log…** стоит справа от меток проходов в заголовке ревью. Она открывает окно **Run Log**: что ревью сделало и сколько это стоило.
 
-![Окно Run Log: строка shop/orders-service!42 at 4f2c9e1b7a · scenario bugfix, строка Passes: github-copilot/gpt-5.4-mini · verifier: github-copilot/claude-opus-5-5, thinking high, строка 62.1 of 150 credits (estimated 64) · 7 passes · 9m 00s · MCP: 4 calls (gitlab 2, ado 1, context7 1) · 1 blocked; таблица проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier с колонками Model, Thinking, Time, In / cached / out, Credits, Files, MCP, Session; таблица Findings by role; список Blocked by AKit с вызовом mcp__gitlab__create_note; список MCP calls; кнопки Show in Finder, Copy for Analysis и Done](images/review-log.png)
+![Окно Run Log: строка shop/orders-service!42 at 4f2c9e1b7a · scenario bugfix, строка Passes: github-copilot/gpt-5.4-mini · verifier: github-copilot/claude-opus-5-5, thinking high, строка 62.1 of 150 credits (estimated 64) · 7 passes · 9m 00s · MCP: 4 calls (gitlab 2, ado 1, context7 1) · 1 blocked; таблица проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier с колонками Model, Thinking, Time, In / cached / out, Credits, Files, MCP, Session; таблица Findings by role; список Blocked by AKit с вызовом mcp__gitlab__create_note; список MCP calls; кнопки Show in Finder, Copy for Analysis, Copy Full Log и Done](images/review-log.png)
 
 - Вверху: MR и коммит, сценарий, модели проходов и verifier с уровнем thinking, кредиты (и оценка до проходов), число проходов, общее время, вызовы MCP по серверам.
 - Таблица проходов: модель, thinking, время, токены (вход / из кэша / выход), кредиты, сколько файлов прочитано, вызовы MCP (сколько упало и сколько заблокировано) и **Show** — файл сессии Pi этого прохода: все промпты, ответы и вызовы инструментов.
@@ -1027,8 +1027,25 @@ To review: commits and uncommitted changes.
 - **Blocked by AKit** — вызовы, которые AKit не пропустил, с причиной.
 - **MCP calls** — каждый вызов: проход, инструмент, размер ответа и аргументы (секреты скрыты).
 - **Copy for Analysis** копирует всё это как Markdown, без секретов, без аргументов MCP (в них имена проектов, номера задач и запросы — рабочие данные) и без ответов серверов. Его можно вставить модели или в заметку. Аргументы видны только в окне и в `--json`.
+- **Copy Full Log** копирует полный лог для отладки: промпты, ход каждого прохода (вызовы инструментов с аргументами, ответы, текст и thinking модели), каждый вызов MCP с аргументами и ответом, находки, план. Секреты скрыты, но рабочие данные (код, тексты MR) в нём есть: вставляйте его только туда, куда им можно.
 - **Show in Finder** открывает папку ревью: там `passes.json`, сессии Pi, `mcp/calls`, промпты и контекст.
 - В терминале: `akit review log RUN` (Markdown) или `akit review log RUN --json`.
+
+### Средне: найти пробелы в процессе ревью
+<!-- section: run-debug -->
+
+Пример: ревью не заметило очевидную ошибку или упало. Вы хотите понять, где сломался процесс: не пришли данные, роль ничего не прочитала, AKit заблокировал вызов.
+
+1. Нажмите **Debug…** справа от **Log…** в заголовке ревью. Если ревью упало до проходов, кнопка **Debug…** стоит под сообщением об ошибке.
+2. Откроется окно **Debug the Run**. Блок **AKit's checks** заполняется сразу, без модели: упавшие проходы, нет diff, упавшие и заблокированные вызовы MCP, ответы, которые Pi обрезал для модели, роли, которые не прочитали ни одного файла, роли, чьи находки verifier почти все отклонил, пробелы контекста.
+3. Нажмите **Debug with Pi**. Pi на модели verifier прочитает полный лог, промпты и контекст ревью и напишет в блок **Pi's analysis**: что пошло не так, почему это важно и что поменять (профиль проекта, SKILL.md роли, сценарий, серверы MCP, модель). Pi только читает: без MCP и без доступа к GitLab.
+4. **Copy Report** копирует проверки и ответ Pi. **Copy Full Log** копирует полный лог (как в **Log…**). **Show in Finder** открывает папку `debug/` ревью: там отчёты и `full-log.md`.
+
+![Окно Debug the Run: подпись Gaps in the review process; блок AKit's checks с пунктами AKit blocked a call (role-bug-hunter · mcp__gitlab__create_note), Pass role-requirements read no file, Pass role-security read no file и 3 context gaps; блок Pi's analysis с отчётом d1 на github-copilot/claude-opus-5-5, разделами Gaps (requirements and security read no file, role-bug-hunter tried to write a note) и Worked well; кнопки Show in Finder, Copy Full Log, Copy Report, Debug Again with Pi и Done](images/review-debug.png)
+
+- Отладка смотрит на процесс, а не на код MR. В GitLab ничего не уходит.
+- Pi работает по политике отправки, как **Ask…**. Кредиты отладки не входят в кредиты ревью.
+- В терминале: `akit review debug RUN` (проверки и ответ Pi), `akit review debug RUN --checks` (только проверки, без модели), `akit review log RUN --full` (полный лог; `--no-cut` — без сокращения длинных ответов).
 
 ### Просто: прочитать ревью на другом языке
 <!-- section: screen-translate -->

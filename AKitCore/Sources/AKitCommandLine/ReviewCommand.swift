@@ -106,6 +106,16 @@ extension AKitCLI {
       akit review log RUN [--json]      What the run did, for analysis: each pass's model, thinking,
                                         time, usage and credits, the MCP calls and blocked calls,
                                         and what each role's findings became
+      akit review log RUN --full [--no-cut]
+                                        Everything to debug the run, masked: prompts, each pass's
+                                        transcript, MCP calls with arguments and answers, findings,
+                                        plan, send log. Holds work data. Long items lose their
+                                        middle unless --no-cut
+      akit review debug RUN [--checks] [--json]
+                                        Find gaps in the review process: AKit's checks without a
+                                        model, then Pi (the run's verifier model) reads the full
+                                        log and says what went wrong and what to change. --checks:
+                                        only the checks, no model
       akit review ask RUN [--finding ID] (--question TEXT | --note TEXT) [--json]
                                         Ask Pi about a finding (or the whole review), or add what you
                                         know: Pi answers with the review in mind; a note may change
@@ -371,9 +381,16 @@ extension AKitCLI {
             }
             return 0
         case "log":
-            let json = args.flag("--json")
+            // `--full` was read above with the run choices.
+            let json = args.flag("--json"), full = choices.fullReview, noCut = args.flag("--no-cut")
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review log RUN.") }
             try args.finish()
+            if noCut && !full { throw Failure(message: "--no-cut goes with --full.") }
+            if full {
+                if json { throw Failure(message: "--full is Markdown; --json gives the short log.") }
+                out(try ReviewDebug.fullLog(try runFolder(id, env: env), cut: noCut ? nil : ReviewDebug.defaultCut))
+                return 0
+            }
             let log = try ReviewRunLog.load(try runFolder(id, env: env))
             if json {
                 let encoder = JSONEncoder()
@@ -384,6 +401,35 @@ extension AKitCLI {
                 out(log.markdown)
             }
             return 0
+        case "debug":
+            let json = args.flag("--json"), only = args.flag("--checks")
+            guard let id = args.positional() else { throw Failure(message: "Which run? akit review debug RUN.") }
+            try args.finish()
+            let folder = try runFolder(id, env: env)
+            if only {
+                let checks = try ReviewDebug.checks(folder)
+                if json {
+                    out(String(decoding: try ReviewJSON.encoder.encode(checks), as: UTF8.self))
+                } else {
+                    out(checks.isEmpty ? "AKit's checks found no gap in run \(id)." : checks.map { "\($0.level.rawValue): \($0.title): \($0.detail)" }.joined(separator: "\n"))
+                }
+                return 0
+            }
+            let lines = LineBox()
+            let report: ReviewDebug.Report
+            do {
+                report = try await ReviewDebug.run(folder, env: env, progress: { line in if !json { lines.add(line) } })
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            if json {
+                out(String(decoding: try ReviewJSON.encoder.encode(report), as: UTF8.self))
+            } else {
+                lines.drain(out)
+                out(report.markdown)
+                out("Saved: \(folder.appending(path: "debug/report-\(report.id.dropFirst()).md").path)")
+            }
+            return report.answer == nil || report.error != nil ? 1 : 0
         case "ask":
             let json = args.flag("--json")
             // `--note` was read above with the run's context notes.

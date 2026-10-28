@@ -1044,6 +1044,18 @@ EOF
 file "$REVIEWRUN/mcp/blocked.jsonl" <<'EOF'
 {"tool":"mcp__gitlab__create_note","pass":"role-bug-hunter","reason":"a review pass only reads"}
 EOF
+file "$REVIEWRUN/context/diff.patch" <<'EOF'
+--- a/src/Auth/AuthMiddleware.cs
++++ b/src/Auth/AuthMiddleware.cs
+@@ -6,3 +6,4 @@
++        logger.LogInformation("Auth: {Header}", header);
+EOF
+# Debug… of the run: one made-up report of Pi's analysis (Review → a run → Debug…).
+file "$REVIEWRUN/debug/report-1.json" <<EOF
+{"id":"d1","created":"$(rago 160M)","model":"github-copilot/claude-opus-5-5","thinking":"high","checks":[],"credits":9.4,
+ "usage":{"input":8200,"cached":0,"output":1200,"cost":0.11},
+ "answer":"## Gaps\n\n### 1. requirements and security read no file\n**What happened:** role-requirements and role-security made no read call (passes.json: paths []); they reviewed from the brief alone.\n**Why it matters:** f5 asks about /health without the route table in Startup.cs.\n**Fix:** add Startup.cs to the profile's gather, or a rule in the requirements role: read the routes before asking about them.\n\n### 2. role-bug-hunter tried to write a note\n**What happened:** AKit blocked mcp__gitlab__create_note in role-bug-hunter.\n**Why it matters:** nothing was lost, but the model spent a call on it.\n**Fix:** none in the profile; AKit bug if it repeats.\n\n## Worked well\n\n- The verifier rejected f6 with a reason.\n\n## Next run\n\n- Give the requirements role the route table."}
+EOF
 file "$REVIEWRUN/gitlab/snapshot.json" <<EOF
 {"mergeRequest":{"iid":42,"title":"Stop logging the Authorization header (AB#4512)","description":"Fixes AB#4512.","state":"opened","author":"alice",
   "sourceBranch":"fix/4512-auth-log","targetBranch":"main","labels":["backend","security"],"webURL":"https://gitlab.example.com/shop/orders-service/-/merge_requests/42",

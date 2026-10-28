@@ -1,6 +1,6 @@
 # AKit Review: AI review of merge requests
 
-Status: 2026-10-15, built on branch `akit-review`; MCP change (R2, R3 revised, below) on branch
+Status: 2026-10-15, built on branch `akit-review`; R53 (Debug… and the full log) built 2026-10-28; MCP change (R2, R3 revised, below) on branch
 `review-mcp`. Grilled with the user on 2026-10-15 from a
 research plan (Pi with the `github-copilot` provider, GitLab, Azure DevOps). The decisions
 below are agreed. The user's employer allows both parts: Copilot from a third-party harness
@@ -15,6 +15,8 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 `akit-review:v1` is still read. The fingerprint drops the title (Findings, below). AC rows
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
+
+Added 2026-10-28 (branch `review-debug`): R53, debugging a run (section "Debugging a run").
 
 Added 2026-10-25 (branch `review-linked-mrs`): R49–R52, one review of several linked merge
 requests (a frontend and its API in other repositories) and "from commit" (section "Linked
@@ -736,6 +738,31 @@ merge base, where the branch's changes start". The user chose one review over al
 Later: reruns, Sync Outcomes, outcomes and the eval set for linked merge requests (now only the
 first; a linked one is reviewed whole each time, its drafts matched by fingerprint so none
 repeat); the map and the overview of linked changes; the linked profile's path rules in the plan.
+
+## Debugging a run
+
+Asked by the user on 2026-10-28: the review screen must let them copy the full logs to debug a
+run, and run a debug of its sessions to find gaps in the process, next to the result.
+
+- **R53. Debug… and the full log.** `ReviewDebug.fullLog` (`akit review log RUN --full
+  [--no-cut]`, **Copy Full Log** in Log… and in Debug…) is everything a person or a model needs:
+  the short log, the status, AKit's checks, `run.json`, the context pack's file list, the
+  prompts, each pass's transcript from `passes/*.jsonl` (tool calls with arguments, results,
+  the model's text and thinking, errors, usage), what each pass submitted, every MCP call with
+  its arguments and whole answer, findings, plan, gaps, the conversation and the send log.
+  Masked again with `SecretFilter`; it holds work data, unlike Copy for Analysis, so it goes
+  only where the user pastes it. The app copies it uncut; `akit review log --full` cuts items
+  over 8,000 characters in the middle unless `--no-cut`. **Debug…** (next to Log…, or under a failed run's message) shows AKit's checks without
+  a model (failed or unfinished passes, no diff, failed and blocked MCP calls, answers Pi cut at
+  20 KB, role passes that read no file, roles whose findings the verifier mostly rejected,
+  context gaps, credits over the cap) and **Debug with Pi**: one Pi with the run's verifier
+  model and thinking, `--no-mcp`, tools `read,grep,find,ls`, `akit-review.ts` keeping reads in
+  `debug/`, `context/`, `roles/`, `prompts/` (never `gitlab/`, `tracker/` or the worktree), reads
+  `debug/full-log.md` (scrubbed like the context pack: it holds the raw MCP answers; the pass
+  refuses every tool but the four reading ones) and answers Gaps (what happened, why it matters, fix in AKit terms),
+  Worked well, Next run. Through the sending policy (`review-debug` in the send log); its
+  credits stay out of the run's. Reports in `debug/report-<N>.json|md`; `akit review debug RUN
+  [--checks] [--json]`.
 
 ## One run
 
