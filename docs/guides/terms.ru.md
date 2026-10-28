@@ -1341,3 +1341,21 @@ Friction («трение») — места, где агент спотыкалс
 - **⌘-click opens a link** (Notebook): ⌘-щелчок по `https://…` открывает браузер, по `[[заметка]]` — заметку на экране Knowledge. Подробнее: [Картинки и ссылки](notebook#images-links)
 - **Changed on disk** (Notebook): вкладку изменили снаружи, пока у вас была несохранённая правка. **Reload** берёт версию с диска, **Keep Mine** сохраняет вашу, а версию с диска кладёт в `~/.akit/backups`. Подробнее: [Файлы и Obsidian](notebook#files)
 - **akit notebook** (терминал): `tabs`, `show TAB [--open]`, `add TAB TEXT [--task] [--today]`, `done TAB TEXT`. Агент пишет, только если вы попросили. Подробнее: [Агент и блокнот](notebook#agents)
+
+## Work Log
+<!-- section: terms-worklog -->
+
+- **Work Log** (боковое меню, группа Work): журнал работы. Одна строка — что вы делали; день и время AKit ставит сам. Один день — файл `worklog/<дата>.md`. Подробнее: [Журнал работы](worklog#overview)
+- **Agent**, **Task**, **Bug**, **Research**, **Reply**, **Meeting**, **Review**, **Break** (Work Log): виды записи, ⌘1…⌘8. **Break** — перерыв, не входит в `work`. Подробнее: [Записать](worklog#write)
+- **Add** (Work Log): добавляет запись с датой и временем «сейчас», как Return. Подробнее: [Записать](worklog#write)
+- **work** (день в Work Log): сумма времени записей дня без перерывов. Подробнее: [Сколько длилась запись](worklog#time)
+- **now · 25 min** (Work Log): последняя запись сегодня, идёт до сих пор. Подробнее: [Сколько длилась запись](worklog#time)
+- **Again Now** (запись, правый щелчок): та же запись со временем «сейчас». Подробнее: [Исправить и повторить](worklog#edit)
+- **Edit…** (запись, правый щелчок или двойной щелчок): окно **Edit Entry**: время, вид, текст. Подробнее: [Исправить и повторить](worklog#edit)
+- **Show More Days** (Work Log): ещё неделя дней с записями. Подробнее: [Что на экране](worklog#overview)
+- **New Work Log Entry** (меню View, ⌘L): открывает Work Log, курсор в поле. Подробнее: [Записать](worklog#write)
+- **Log** / **Auto-Fill** (Work Log, вверху): записи и восстановление дня по запросам к агентам. Подробнее: [Auto-Fill](worklog#autofill)
+- **Day**, **Sessions**, **Slot**, **Language**, **Model** (Auto-Fill): день; чьи сессии читать; длина отрезка 15 или 30 минут; язык записей, по умолчанию чешский; модель Pi, по умолчанию GPT-6 Luna. Подробнее: [Auto-Fill](worklog#autofill)
+- **Propose Entries** (Auto-Fill): отправляет отрезки дня модели; записи приходят с флажками. Подробнее: [Auto-Fill](worklog#autofill)
+- **Add Selected** / **Discard** (Auto-Fill): добавить отмеченные записи в день / убрать предложения. Подробнее: [Auto-Fill](worklog#autofill)
+- **akit worklog** (терминал): `add TEXT [--kind] [--at]`, `show [ДЕНЬ] [--days N]`, `kinds`, `fill [ДЕНЬ] [--slot] [--add]`. Подробнее: [Агент и журнал](worklog#agents)

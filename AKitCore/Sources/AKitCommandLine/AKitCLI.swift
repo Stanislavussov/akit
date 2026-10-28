@@ -276,6 +276,9 @@ public enum AKitCLI {
           akit notebook tabs | show TAB [--open] | add TAB TEXT [--task] [--today] | done TAB TEXT [--json] [--base PATH|WORLD]
                                           The notebook of plans and to-dos in the base (one tab per Markdown file). An agent
                                           runs add and done only when the user asked. akit notebook --help lists the rest
+          akit worklog add TEXT [--kind KIND] | show [DAY] [--days N] | kinds [--json] [--base PATH|WORLD]
+                                          The work log: what you did, a line at a time, with the day and time added
+                                          for you; one file per day. akit worklog --help lists the rest
 
         Translate (model-written output in another language; the original stays):
           akit translate --to LANG FILE|-|--notes SESSION|--lab-run ID|--review RUN
@@ -369,6 +372,9 @@ public enum AKitCLI {
             }
             if arguments.first == "notebook" {
                 return try await notebook(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
+            }
+            if arguments.first == "worklog" {
+                return try await worklog(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
             }
             if arguments.first == "translate" {
                 return try await translate(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, input: input)

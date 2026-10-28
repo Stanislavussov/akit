@@ -28,7 +28,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .setup: "What the agents should have: your brain of skills and layers, rendered into projects"
         case .activity: "How the agents worked: their saved sessions, tokens and cost"
         case .improve: "What the setup costs unused, why sessions went wrong and whether a fix helped"
-        case .work: "Agents that help with your daily work: review of merge requests, a knowledge base of your services and flows, a notebook of plans and to-dos"
+        case .work: "Agents that help with your daily work: review of merge requests, a knowledge base of your services and flows, a notebook of plans and to-dos, a log of what you did"
         }
     }
 
@@ -38,7 +38,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .setup: [.brain]
         case .activity: [.sessions, .usage]
         case .improve: [.insights, .lab, .analysis]
-        case .work: [.review, .knowledge, .notebook]
+        case .work: [.review, .knowledge, .notebook, .worklog]
         }
     }
 }
@@ -59,6 +59,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case review
     case knowledge
     case notebook
+    case worklog
     var id: Self { self }
 
     var title: String {
@@ -77,6 +78,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .review: "Review"
         case .knowledge: "Knowledge"
         case .notebook: "Notebook"
+        case .worklog: "Work Log"
         }
     }
 
@@ -97,6 +99,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .review: "AI review of GitLab merge requests: Pi proposes comments, you approve each, AKit adds them as your drafts"
         case .knowledge: "Notes about your services, flows and teams by space, in a local git repo that agents read; edits are committed by AKit"
         case .notebook: "Short notes, plans, to-dos and what you did today, one tab per Markdown file in the knowledge base; check boxes, images, links"
+        case .worklog: "What you did, one short line at a time: the day and time are added for you; a file per day in the knowledge base, with time per kind"
         }
     }
 
@@ -116,6 +119,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .review: "checklist"
         case .knowledge: "books.vertical"
         case .notebook: "note.text"
+        case .worklog: "clock.badge.checkmark"
         }
     }
 }
@@ -136,11 +140,14 @@ struct RootView: View {
     @State private var knowledge: KnowledgeModel
     /// The notebook's tab in view; its base is the Knowledge screen's.
     @State private var notebook: NotebookModel
+    /// The work log's days and entry field; its base is the Knowledge screen's.
+    @State private var worklog: WorkLogModel
 
     init() {
         let knowledge = KnowledgeModel()
         _knowledge = State(initialValue: knowledge)
         _notebook = State(initialValue: NotebookModel(knowledge: knowledge))
+        _worklog = State(initialValue: WorkLogModel(knowledge: knowledge))
     }
 
     var body: some View {
@@ -195,11 +202,13 @@ struct RootView: View {
             case .review: ReviewView()
             case .knowledge: KnowledgeView()
             case .notebook: NotebookView()
+            case .worklog: WorkLogView()
             }
         }
         .environment(review)
         .environment(knowledge)
         .environment(notebook)
+        .environment(worklog)
         // Ask AKit: a chat beside every screen (Help → Ask AKit, ⌥⌘/).
         .inspector(isPresented: $ask.isOpen) {
             AskAKitPanel()
@@ -217,6 +226,7 @@ struct RootView: View {
             guard let link = AppLink(url) else { return }
             model.section = link.section
             if let tab = link.tab { notebook.request(tab) }
+            if link.section == .worklog { worklog.open(kind: link.kind, add: link.add) }
         }
         .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         // Mode names and definitions, and the ids made from them or from prompts, come from

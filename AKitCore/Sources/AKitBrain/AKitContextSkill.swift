@@ -5,7 +5,7 @@ enum AKitContextSkill {
     static let text = #"""
 ---
 name: akit-context
-description: Read the user's knowledge base of the systems around this repository (other services, events, repositories, who owns what) and propose additions; read the user's notebook of plans and to-dos, and add or tick a line when asked. Use at the start of a task that touches other services, events or repositories, when the user asks what a system does or who talks to whom, and when the user asks about their notebook.
+description: Read the user's knowledge base of the systems around this repository (other services, events, repositories, who owns what) and propose additions; read the user's notebook of plans and to-dos and their work log, and add or tick a line when asked. Use at the start of a task that touches other services, events or repositories, when the user asks what a system does or who talks to whom, and when the user asks about their notebook or what they did.
 ---
 
 # AKit: knowledge base and notebook
@@ -166,9 +166,26 @@ akit notebook done TAB TEXT [--json]               # ticks the first open task c
 Drawings (`![](drawings/NAME.excalidraw.svg)` in a tab) are made and changed in the app (Draw…, a
 double click); the scene is `notebook/drawings/NAME.excalidraw`. Don't edit them by hand.
 
+## Work log
+
+What the user did, one line per entry with the day and time added by AKit, one file per day in
+the base's `worklog/` folder (the Work Log screen). Read it when the user asks what they did or
+how long something took; add an entry only when the user asked ("log that I fixed the bug").
+
+```
+akit worklog show [today|yesterday|YYYY-MM-DD] [--days N] [--json]
+                                                   # entries with minutes, totals per kind
+akit worklog add TEXT [--kind KIND] [--at HH:MM] [--json]
+                                                   # today, now (--at: earlier today); committed
+akit worklog kinds                                 # agent task bug research reply meeting review break
+akit worklog fill [DAY] [--slot 15|30] [--language cs] [--harness claude|pi|all] [--model M] [--add] [--json]
+                                                   # proposals from that day's prompts (a Pi model
+                                                   # under the sending policy); --add only when asked
+```
+
 ## Rules
 
-- Write to the base only with `kb propose`, and to the notebook only when the user asked.
+- Write to the base only with `kb propose`, and to the notebook and the work log only when the user asked.
 - Never put secrets (tokens, passwords, keys) in a proposal or a notebook line.
 """#
 }

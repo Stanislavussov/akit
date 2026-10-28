@@ -76,6 +76,12 @@ struct AKitApp: App {
             CommandGroup(after: .toolbar) {
                 Button("Refresh") { Task { await model.refresh() } }
                     .keyboardShortcut("r")
+                Button("New Work Log Entry") {
+                    model.section = .worklog
+                    WorkLogModel.current?.focusRequest += 1
+                }
+                .keyboardShortcut("l")
+                .help("Show the Work Log with the cursor in its entry field")
             }
             CommandGroup(replacing: .help) {
                 Button(ask.isOpen ? "Hide Ask AKit" : "Ask AKit") { ask.toggle() }

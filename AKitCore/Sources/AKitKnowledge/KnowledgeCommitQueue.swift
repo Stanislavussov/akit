@@ -74,7 +74,7 @@ public struct KnowledgeCommitQueue: Sendable {
         return .queued(refused: refused)
     }
 
-    /// The startup sweep (when a base opens): every path under `areas/`, `notebook/` and `kb.yaml` that differs
+    /// The startup sweep (when a base opens): every path under `areas/`, `notebook/`, `worklog/` and `kb.yaml` that differs
     /// from the last commit is queued, so an edit whose enqueue was lost (the app quit while the
     /// lock was held, a crash, an edit made while AKit didn't run) still gets its commit. Never
     /// `inbox/`. `.failed` when git can't read the status.
@@ -110,6 +110,10 @@ public struct KnowledgeCommitQueue: Sendable {
     /// Notes only: "Edit payments/orders-api" or "Edit 3 notes: a, b, c". Maps only: "Edit maps:
     /// payments/maps/overview". Both: "Edit notes and maps: a, b".
     static func message(for paths: [String]) -> String {
+        let worklog = KnowledgeWorkLog.folderName + "/"
+        if paths.allSatisfy({ $0.hasPrefix(worklog) }) {
+            return "Work log: " + paths.map { String($0.dropFirst(worklog.count).dropLast(".md".count)) }.joined(separator: ", ")
+        }
         let notebook = KnowledgeNotebook.folderName + "/"
         if paths.allSatisfy({ $0.hasPrefix(notebook) }) {
             let names = paths.map { path in
