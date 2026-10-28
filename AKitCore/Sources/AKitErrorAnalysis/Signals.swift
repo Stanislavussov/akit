@@ -22,12 +22,13 @@ public enum SignalScanner {
     }
 
     /// The signals and the stuck loops they count.
-    public static func scan(_ items: [TranscriptItem], fallbackModel: String? = nil) -> (signals: SessionSignals, loops: [RepeatLoop]) {
+    /// Stuck loops are looked for only in Pi sessions (`repeat-loops.md`, R7: the user's choice).
+    public static func scan(_ items: [TranscriptItem], fallbackModel: String? = nil, harness: String? = nil) -> (signals: SessionSignals, loops: [RepeatLoop]) {
         let facts = TranscriptFacts(items)
         let users = facts.userTurns
         let shared = FailureSignals(items)
         let pushbacks = users.filter { !FailureSignals.isInterrupt($0.text) && isPushback($0.text) }.count
-        let loops = RepeatLoops.find(items, fallbackModel: fallbackModel)
+        let loops = harness == RepeatLoops.harness ? RepeatLoops.find(items, fallbackModel: fallbackModel) : []
         let signals = SessionSignals(interrupts: shared.interrupts, pushbacks: pushbacks, rejected: shared.rejected,
                                      toolErrors: shared.toolErrors, repeatedCalls: shared.repeatedCalls, repeatLoops: loops.count,
                                      unverifiedDone: unverifiedDone(facts), userTurns: users.count, steps: items.count)
@@ -81,7 +82,7 @@ public enum SignalScanner {
                 continue
             }
             computed += 1
-            let scanned = scan(transcript.items, fallbackModel: transcript.models.last)
+            let scanned = scan(transcript.items, fallbackModel: transcript.models.last, harness: session.harness)
             fresh[session.key] = StoredSignals(signals: scanned.signals, fileSize: info.size, fileModified: modified,
                                                version: version, loops: scanned.loops)
             // Written in chunks so a long first run keeps what it has done.

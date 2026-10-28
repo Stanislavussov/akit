@@ -12,9 +12,8 @@ import Foundation
 public struct LoopsReport: Encodable, Equatable, Sendable {
     public struct Loop: Encodable, Equatable, Sendable, Identifiable {
         public var id: String { "\(sessionKey)#\(firstStep)" }
-        /// The index's key: `claude:<id>` or `pi:<id>`.
+        /// The index's key: `pi:<id>`.
         public let sessionKey: String
-        public let harness: String
         /// The session's log file, while the index knows it (local only).
         public let file: String?
         /// The folder the session ran in.
@@ -24,7 +23,7 @@ public struct LoopsReport: Encodable, Equatable, Sendable {
         /// How many times the user asked (3 or more).
         public let asks: Int
         public let model: String?
-        /// Thinking level (Pi) or effort (Claude Code's `/effort`); nil: not recorded.
+        /// Pi's thinking level; nil: not recorded.
         public let thinking: String?
         /// When the first ask was sent (ISO 8601).
         public let started: String?
@@ -63,27 +62,21 @@ public struct LoopsReport: Encodable, Equatable, Sendable {
     /// Thinking levels from which "raise thinking" is no longer the advice.
     static let highThinking: Set<String> = ["high", "xhigh", "max"]
 
-    /// One sentence per model and thinking level. Pi's keys are its own in-session keys and AKit's
-    /// extension key (⌥T raises thinking); Claude Code's are its slash commands in the session.
-    public static func advice(harnesses: Set<String>, thinking: String?) -> String {
-        let pi = harnesses.contains("pi"), claude = harnesses.contains("claude")
+    /// One sentence per thinking level: Pi's own keys and AKit's extension key (⌥T raises thinking).
+    public static func advice(thinking: String?) -> String {
         if let thinking, highThinking.contains(thinking) {
-            return "Thinking was already \(thinking): at the 2nd repeat switch to another model"
-                + (pi ? " (Pi: Ctrl+P)" : "") + (claude ? " (Claude Code: /model)" : "")
-                + ", or start a new session with a short summary of what was tried."
+            return "Thinking was already \(thinking): at the 2nd repeat switch to another model (Ctrl+P), "
+                + "or start a new session with a short summary of what was tried."
         }
-        var keys: [String] = []
-        if pi { keys.append("Pi: ⌥T or Shift+Tab, Ctrl+P for the model") }
-        if claude { keys.append("Claude Code: /effort high or /model") }
-        return "At the 2nd repeat raise thinking or switch to a stronger model" + (keys.isEmpty ? "." : " (\(keys.joined(separator: "; "))).")
+        return "At the 2nd repeat raise thinking (⌥T or Shift+Tab) or switch to a stronger model (Ctrl+P)."
     }
 
     public static func report(_ database: IndexDatabase, days: Int = InsightsStats.defaultDays, range: DayRange? = nil,
-                              project: String? = nil, bindings: BindingSet = .default, harness: String? = nil,
-                              now: Date = Date()) throws -> LoopsReport {
+                              project: String? = nil, bindings: BindingSet = .default, now: Date = Date()) throws -> LoopsReport {
         let (from, to) = range?.bounds(now: now) ?? (now.addingTimeInterval(-Double(days) * 86_400), now)
         let days = range?.days() ?? days
-        let scope = InsightsStats.Scope(project: project, bindings: bindings, from: from, to: to, harness: harness)
+        // Only Pi sessions are checked for loops; the rate counts only them.
+        let scope = InsightsStats.Scope(project: project, bindings: bindings, from: from, to: to, harness: RepeatLoops.harness)
         let (scoped, values) = scope.cte
         let counts = try database.rows("""
             WITH \(scoped) SELECT COUNT(*), SUM(CASE WHEN g.repeat_loops > 0 THEN 1 ELSE 0 END)
@@ -91,22 +84,22 @@ public struct LoopsReport: Encodable, Equatable, Sendable {
             """, values).first
         var loops: [Loop] = []
         for row in try database.rows("""
-            WITH \(scoped) SELECT l.session_key, x.harness, src.path, x.cwd, l.first_step, l.last_step, l.asks, l.model, l.thinking, l.ts
+            WITH \(scoped) SELECT l.session_key, src.path, x.cwd, l.first_step, l.last_step, l.asks, l.model, l.thinking, l.ts
             FROM repeat_loops l JOIN scoped s ON s.key = l.session_key JOIN sessions x ON x.key = l.session_key
             LEFT JOIN sources src ON src.id = x.source_id
             ORDER BY l.ts DESC, l.session_key, l.first_step
             """, values) {
-            guard let key = row[0].text, let harness = row[1].text else { continue }
-            loops.append(Loop(sessionKey: key, harness: harness, file: row[2].text, cwd: row[3].text, firstStep: row[4].int ?? 0,
-                              lastStep: row[5].int ?? 0, asks: row[6].int ?? 0, model: row[7].text, thinking: row[8].text,
-                              started: row[9].double.map { ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: $0)) }))
+            guard let key = row[0].text else { continue }
+            loops.append(Loop(sessionKey: key, file: row[1].text, cwd: row[2].text, firstStep: row[3].int ?? 0,
+                              lastStep: row[4].int ?? 0, asks: row[5].int ?? 0, model: row[6].text, thinking: row[7].text,
+                              started: row[8].double.map { ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: $0)) }))
         }
         var groups: [Group] = []
         for (_, members) in Dictionary(grouping: loops, by: { "\($0.model ?? "")|\($0.thinking ?? "")" }) {
             let first = members[0]
             groups.append(Group(model: first.model, thinking: first.thinking, loops: members.count,
                                 sessions: Set(members.map(\.sessionKey)).count, maxAsks: members.map(\.asks).max() ?? 0,
-                                advice: advice(harnesses: Set(members.map(\.harness)), thinking: first.thinking)))
+                                advice: advice(thinking: first.thinking)))
         }
         groups.sort { ($0.loops, $1.model ?? "", $1.thinking ?? "") > ($1.loops, $0.model ?? "", $0.thinking ?? "") }
         return LoopsReport(version: 1, days: days, project: project, sessionsScanned: counts?[0].int ?? 0,
@@ -115,7 +108,7 @@ public struct LoopsReport: Encodable, Equatable, Sendable {
 
     /// Lines for the terminal.
     public var text: String {
-        var lines = ["Stuck loops, last \(days) days\(project.map { " in \($0)" } ?? ""): "
+        var lines = ["Stuck loops in Pi sessions, last \(days) days\(project.map { " in \($0)" } ?? ""): "
                      + "\(sessionsWithLoops) of \(sessionsScanned) scanned sessions."]
         if loops.isEmpty {
             lines.append("No session where the same ask got almost the same answer 3 times in a row.")
@@ -154,11 +147,11 @@ public struct LoopCheck: Encodable, Equatable, Sendable {
     public let version: Int
     public let loop: Loop?
 
-    public init(loop: RepeatLoop?, harness: String) {
+    public init(loop: RepeatLoop?) {
         version = 1
         self.loop = loop.map {
             Loop(firstStep: $0.firstStep, lastStep: $0.lastStep, asks: $0.asks, model: $0.model, thinking: $0.thinking,
-                 advice: LoopsReport.advice(harnesses: [harness], thinking: $0.thinking))
+                 advice: LoopsReport.advice(thinking: $0.thinking))
         }
     }
 
@@ -167,9 +160,9 @@ public struct LoopCheck: Encodable, Equatable, Sendable {
         public var errorDescription: String? { message }
     }
 
-    /// Only Pi has the live warning (`docs/design/repeat-loops.md`, R4).
+    /// Only Pi sessions are checked (`docs/design/repeat-loops.md`, R4, R7).
     public static func run(harness: String?, stdin: Data) throws(Failure) -> LoopCheck {
-        guard harness == "pi" else { throw Failure(message: "use --harness pi (only Pi has the live warning).") }
+        guard harness == "pi" else { throw Failure(message: "use --harness pi (only Pi sessions are checked).") }
         guard let object = (try? JSONSerialization.jsonObject(with: stdin)) as? [String: Any],
               let path = object["transcript_path"] as? String, !path.isEmpty else {
             throw Failure(message: "expected JSON with transcript_path on stdin.")
@@ -183,7 +176,7 @@ public struct LoopCheck: Encodable, Equatable, Sendable {
         } catch {
             throw Failure(message: "can't read \(path): \(error.localizedDescription)")
         }
-        return LoopCheck(loop: RepeatLoops.ongoing(transcript.items, fallbackModel: transcript.models.last), harness: "pi")
+        return LoopCheck(loop: RepeatLoops.ongoing(transcript.items, fallbackModel: transcript.models.last))
     }
 }
 

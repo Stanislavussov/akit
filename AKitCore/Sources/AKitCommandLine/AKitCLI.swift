@@ -205,7 +205,7 @@ public enum AKitCLI {
                                           wins), the share over budget, and the fraction that would keep
                                           every description, before and after the recommendations
           akit stats loops [--project ID|PATH | --all] [--days N | --from DAY [--to DAY]] [--bindings LIST] [--json]
-                                          Stuck loops: sessions where the user asked the same thing 3+
+                                          Stuck loops in Pi sessions: the user asked the same thing 3+
                                           times in a row and the agent answered almost the same, by
                                           model and thinking level, with when to raise thinking or
                                           switch the model. Default: last 30 days

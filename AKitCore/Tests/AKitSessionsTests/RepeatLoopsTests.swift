@@ -83,18 +83,18 @@ struct RepeatLoopsTests {
         #expect(RepeatLoops.ongoing(s.items) == nil)
     }
 
-    @Test func claudeCommandsSetModelAndEffortAndAreNotAsks() {
+    @Test func slashCommandsAreNotAsksAndAModelChangeCounts() {
         var s = Script()
-        s.event("Command", "/model sonnet")
-        s.event("Command", "/effort low")
+        s.event("Model", "openrouter/qwen")
         s.user("the test testLogin fails with a nil token"); s.edit("/p/Auth.swift"); s.answer("Fixed the nil token in Auth.swift.")
         s.user("still fails"); s.edit("/p/Auth.swift"); s.answer("Fixed the nil token in Auth.swift by a default.")
         s.user("/compact")
+        s.event("Model", "anthropic/claude-sonnet-5-5")
         s.user("still fails, same error"); s.edit("/p/Auth.swift"); s.answer("Fixed the nil token in Auth.swift with a guard.")
-        let loop = RepeatLoops.find(s.items, fallbackModel: "claude-opus-5-5").first
+        let loop = RepeatLoops.find(s.items, fallbackModel: "openrouter/qwen").first
         #expect(loop?.asks == 3)
-        #expect(loop?.model == "sonnet")
-        #expect(loop?.thinking == "low")
+        #expect(loop?.model == "anthropic/claude-sonnet-5-5")
+        #expect(loop?.thinking == nil)
     }
 
     @Test func fallbackModelWhenTheLogHasNone() {
@@ -102,8 +102,8 @@ struct RepeatLoopsTests {
         s.user(error); s.answer("Added IF NOT EXISTS. Try again.")
         s.user(error); s.answer("Added IF NOT EXISTS again. Try again.")
         s.user(error); s.answer("Added IF NOT EXISTS once more. Try again.")
-        let loop = RepeatLoops.find(s.items, fallbackModel: "claude-opus-5-5").first
-        #expect(loop?.model == "claude-opus-5-5")
+        let loop = RepeatLoops.find(s.items, fallbackModel: "MiniMax-M2.7").first
+        #expect(loop?.model == "MiniMax-M2.7")
         #expect(loop?.thinking == nil)
     }
 

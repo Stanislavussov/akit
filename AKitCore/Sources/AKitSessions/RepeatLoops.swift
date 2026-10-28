@@ -10,11 +10,9 @@ public struct RepeatLoop: Codable, Sendable, Hashable {
     public let lastStep: Int
     /// How many times the user asked: the first ask and its repeats (3 or more).
     public let asks: Int
-    /// The model when the last repeat was sent, when the log says it: Pi's model change, Claude
-    /// Code's `/model`, else the session's last model.
+    /// The model when the last repeat was sent: Pi's last model change, else the session's last model.
     public let model: String?
-    /// The thinking level (Pi) or effort (Claude Code's `/effort`) at the last repeat; nil when
-    /// the log doesn't record it.
+    /// Pi's thinking level when the last repeat was sent; nil when the log has no change of it.
     public let thinking: String?
     /// When the first ask was sent.
     public let started: Date?
@@ -27,6 +25,9 @@ public struct RepeatLoop: Codable, Sendable, Hashable {
 
 /// Finds `RepeatLoop`s in the main conversation of a transcript.
 public enum RepeatLoops {
+    /// The only harness whose sessions are checked (the user's choice, 2026-10-28): the index's `pi`.
+    public static let harness = "pi"
+
     /// Word overlap from which two asks, or two answers, count as the same.
     public static let sameText = 0.5
     /// How many earlier asks a new ask is compared with.
@@ -47,7 +48,7 @@ public enum RepeatLoops {
     }
 
     /// The loops of a transcript, in order. `fallbackModel`: the model when the log has no
-    /// model change (Claude Code: the session's last model).
+    /// model change (the session's last model).
     public static func find(_ items: [TranscriptItem], fallbackModel: String? = nil) -> [RepeatLoop] {
         let turns = self.turns(items, fallbackModel: fallbackModel)
         var loops: [RepeatLoop] = []
@@ -103,11 +104,6 @@ public enum RepeatLoops {
                 switch title {
                 case "Model": model = item.text
                 case "Thinking level": thinking = item.text
-                case "Command":
-                    // Claude Code: `/model opus`, `/effort high`.
-                    let words = item.text.split(separator: " ").map(String.init)
-                    guard words.count >= 2 else { break }
-                    if words[0] == "/model" { model = words[1] } else if words[0] == "/effort" { thinking = words[1] }
                 default: break
                 }
             default:
