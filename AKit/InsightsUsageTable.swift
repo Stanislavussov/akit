@@ -75,7 +75,8 @@ struct InsightsUsageTable: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(6)
         } label: {
-            Text("\(kind.title), Last \(stats.window.days) Days").font(.headline)
+            Text("\(kind.title), \(stats.window.range.map { "\($0.first) – \($0.last)" } ?? "Last \(stats.window.days) Days")")
+                .font(.headline)
         }
         .help(kind == .skills ? "The same numbers as akit stats --details" : "The same numbers as akit stats tools --details")
         .sheet(item: $moving) { MoveSkillSheet(name: $0.name) }

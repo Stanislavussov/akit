@@ -10,9 +10,27 @@ import Foundation
 /// counts and first-request context are recorded.
 public struct StatsReport: Encodable, Equatable, Sendable {
     public struct Window: Encodable, Equatable, Sendable {
+        /// A date range's first and last local day (`yyyy-MM-dd`).
+        public struct Days: Encodable, Hashable, Sendable {
+            public let first: String
+            public let last: String
+        }
+
         let from: String
         let to: String
         public let days: Int
+        /// Set for a date range (`--from`/`--to`, Date Range…); nil: the last `days` days up to now. Left out of the JSON when nil.
+        public let range: Days?
+
+        init(from: String, to: String, days: Int, range: Days? = nil) {
+            self.from = from
+            self.to = to
+            self.days = days
+            self.range = range
+        }
+
+        /// "Last 30 days" or "2026-10-01 – 2026-10-15", as the text and the Insights table title show it.
+        public var title: String { range.map { "\($0.first) – \($0.last)" } ?? "Last \(days) days" }
     }
 
     public struct Scope: Encodable, Equatable, Sendable {
@@ -195,14 +213,17 @@ public enum InsightsStats {
         var top: Int? = InsightsStats.defaultTop
         /// Only skills without a call in the window (`akit stats --unused`); applied before `top`.
         var unusedOnly = false
+        /// Whole days instead of the last `days` (`--from`/`--to`): calls after its last day don't count.
+        var range: DayRange?
 
         public init(days: Int = InsightsStats.defaultDays, project: String? = nil, bindings: BindingSet = .default,
-                    top: Int? = InsightsStats.defaultTop, unusedOnly: Bool = false) {
+                    top: Int? = InsightsStats.defaultTop, unusedOnly: Bool = false, range: DayRange? = nil) {
             self.days = days
             self.project = project
             self.bindings = bindings
             self.top = top
             self.unusedOnly = unusedOnly
+            self.range = range
         }
     }
 
@@ -363,6 +384,8 @@ public enum InsightsStats {
                         calibration: ContextSize.Calibration) throws -> [String: Tally] {
         let (ctes, values) = try scope.cte(starts: starts)
         let with = "WITH \(ctes)"
+        // Requests and calls up to the window's end: a date range in the past leaves out what came after it.
+        let end = scope.to.timeIntervalSince1970
 
         var tallies: [String: Tally] = [:]
         // Main sessions: first described listing, own description size, main requests from then on.
@@ -371,8 +394,8 @@ public enum InsightsStats {
               FROM skill_listings l JOIN scoped s ON s.key = l.session_key JOIN starts st ON st.skill = l.skill
               WHERE l.is_subagent = 0 AND l.desc_hash IS NOT NULL AND l.ts >= st.start GROUP BY l.session_key, l.skill)
             SELECT f.skill, f.session_key, f.first, f.chars, (SELECT COUNT(*) FROM requests r
-              WHERE r.session_key = f.session_key AND r.is_subagent = 0 AND r.ts >= f.first) FROM firsts f
-            """, values) {
+              WHERE r.session_key = f.session_key AND r.is_subagent = 0 AND r.ts >= f.first AND r.ts <= ?) FROM firsts f
+            """, values + [end]) {
             guard let skill = row[0].text, let session = row[1].text, let first = row[2].double else { continue }
             let script = descriptions[skill].map(ContextSize.script) ?? .latin
             let tokens = ContextSize.approxTokens(chars: row[3].int ?? 0, script: script, calibration: calibration).tokens
@@ -397,8 +420,8 @@ public enum InsightsStats {
               WHERE l.ts >= st.start GROUP BY l.session_key, l.skill)
             SELECT c.skill, c.session_key, c.by, COUNT(*) FROM skill_calls c
             JOIN firsts f ON f.session_key = c.session_key AND f.skill = c.skill
-            WHERE c.harness != 'pi' AND c.ts >= f.first AND \(countedCallsSQL) GROUP BY c.skill, c.session_key, c.by
-            """, values) {
+            WHERE c.harness != 'pi' AND c.ts >= f.first AND c.ts <= ? AND \(countedCallsSQL) GROUP BY c.skill, c.session_key, c.by
+            """, values + [end]) {
             guard let skill = row[0].text, let session = row[1].text, let count = row[3].int else { continue }
             var tally = tallies[skill] ?? Tally()
             if row[2].text == "model" {
@@ -412,8 +435,9 @@ public enum InsightsStats {
         // Pi: no listing, so every call from the start on.
         for row in try database.rows("""
             \(with) SELECT c.skill, c.by, COUNT(*) FROM skill_calls c JOIN scoped s ON s.key = c.session_key
-            JOIN starts st ON st.skill = c.skill WHERE c.harness = 'pi' AND c.ts >= st.start AND \(countedCallsSQL) GROUP BY c.skill, c.by
-            """, values) {
+            JOIN starts st ON st.skill = c.skill WHERE c.harness = 'pi' AND c.ts >= st.start AND c.ts <= ? AND \(countedCallsSQL)
+            GROUP BY c.skill, c.by
+            """, values + [end]) {
             guard let skill = row[0].text, let count = row[2].int else { continue }
             if row[1].text == "model" {
                 tallies[skill, default: Tally()].piModelCalls += count
@@ -453,9 +477,10 @@ public enum InsightsStats {
 
     public static func report(_ database: IndexDatabase, options: Options = Options(), inputs: Inputs = Inputs(),
                        now: Date = Date()) throws -> StatsReport {
-        let from = now.addingTimeInterval(-Double(options.days) * 86_400)
+        let (from, to) = options.range?.bounds(now: now) ?? (now.addingTimeInterval(-Double(options.days) * 86_400), now)
+        let days = options.range?.days() ?? options.days
         // Sessions in scope: started in the window; for a project, bound to it at a confidence of the set.
-        let scope = Scope(project: options.project, bindings: options.bindings, from: from, to: now)
+        let scope = Scope(project: options.project, bindings: options.bindings, from: from, to: to)
         let (scoped, scopeValues) = scope.cte
         let names = try listedNames(database, scope: scope)
         let hashStarts = try DescriptionWindow.hashStarts(database, otherMacs: inputs.otherMacHashes)
@@ -466,13 +491,13 @@ public enum InsightsStats {
         let tallies = try tallies(database, scope: scope, starts: windowStarts.mapValues { max($0, from) },
                                   descriptions: inputs.descriptions, calibration: calibration)
 
-        // The last call also looks before the window, in the scope's sessions.
-        let (ever, everValues) = Scope(project: options.project, bindings: options.bindings, from: .distantPast, to: now).cte(as: "ever")
+        // The last call also looks before the window, in the scope's sessions; never after its end.
+        let (ever, everValues) = Scope(project: options.project, bindings: options.bindings, from: .distantPast, to: to).cte(as: "ever")
         var lastCalls: [String: Double] = [:]
         for row in try database.rows("""
             WITH \(ever) SELECT c.skill, MAX(c.ts) FROM skill_calls c JOIN ever s ON s.key = c.session_key
-            WHERE \(countedCallsSQL) GROUP BY c.skill
-            """, everValues) {
+            WHERE c.ts <= ? AND \(countedCallsSQL) GROUP BY c.skill
+            """, everValues + [to.timeIntervalSince1970]) {
             if let skill = row[0].text, let ts = row[1].double { lastCalls[skill] = ts }
         }
 
@@ -520,7 +545,7 @@ public enum InsightsStats {
         notes.append(piNote)
         return StatsReport(
             version: 1, generated: now.formatted(.iso8601),
-            window: .init(from: from.formatted(.iso8601), to: now.formatted(.iso8601), days: options.days),
+            window: .init(from: from.formatted(.iso8601), to: to.formatted(.iso8601), days: days, range: options.range?.label()),
             scope: .init(project: options.project, bindings: options.bindings.names),
             importState: .init(last: last.map { Date(timeIntervalSince1970: $0).formatted(.iso8601) }, running: inputs.importRunning),
             summary: .init(sessions: sessions, requests: requests,

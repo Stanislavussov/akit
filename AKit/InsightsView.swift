@@ -14,6 +14,10 @@ struct InsightsView: View {
     @State private var days = InsightsStats.defaultDays
     /// The Window picker's Custom… popover.
     @State private var choosingDays = false
+    /// Whole days for the table instead of the last `days` (Date Range…); nil: the last `days` days.
+    @State private var range: DayRange?
+    /// The Window picker's Date Range… popover.
+    @State private var choosingRange = false
     /// The Changes list shows the newest `shortChanges` until Show All.
     @State private var allChanges = false
     @State private var loaded: Recommender.Loaded?
@@ -82,15 +86,26 @@ struct InsightsView: View {
                 Picker("Window", selection: windowChoice) {
                     ForEach(Self.windowPresets, id: \.self) { Text("\($0) Days").tag($0) }
                     if !Self.windowPresets.contains(days) { Text("\(days) Days").tag(days) }
+                    if let range { Text(Self.rangeTitle(range)).tag(Self.rangeWindow) }
                     Divider()
                     Text("Custom…").tag(Self.customWindow)
+                    Text("Date Range…").tag(Self.chooseRange)
                 }
                 .fixedSize()
-                .help("The days the Skills, MCP Servers and Tools table counts; recommendations always use their rule's own window")
+                .help("The days the Skills, MCP Servers and Tools table counts: the last N days, or a date range that can end in the past; recommendations always use their rule's own window")
                 .popover(isPresented: $choosingDays, arrowEdge: .bottom) {
                     CustomWindowPopover(days: days) { chosen in
-                        if let chosen { days = chosen }
+                        if let chosen {
+                            days = chosen
+                            range = nil
+                        }
                         choosingDays = false
+                    }
+                }
+                .popover(isPresented: $choosingRange, arrowEdge: .bottom) {
+                    DateRangePopover(range: range) { chosen in
+                        if let chosen { range = chosen }
+                        choosingRange = false
                     }
                 }
             }
@@ -108,7 +123,7 @@ struct InsightsView: View {
             }
         }
         // Every rescan (launch, ⌘R, a commit made here) loads again: the brain decides who owns a skill.
-        .task(id: LoadKey(project: project, days: days, scan: model.lastScan)) { await load() }
+        .task(id: LoadKey(project: project, days: days, range: range, scan: model.lastScan)) { await load() }
         // Its status runs `claude` and `launchctl`: off the main thread, each time the screen appears
         // or the brain changes (the Claude plugin lives there).
         .task(id: CaptureKey(brain: model.brain?.root, checks: captureChecks)) {
@@ -149,12 +164,32 @@ struct InsightsView: View {
     static let windowPresets = [7, 30, 90]
     /// The Window picker's tag for Custom…: never a real number of days.
     static let customWindow = 0
+    /// The Window picker's tag for Date Range…, which opens its popover.
+    static let chooseRange = -1
+    /// The Window picker's tag for the chosen date range.
+    static let rangeWindow = -2
 
-    /// The window, or Custom…, which opens the popover and keeps the window until a number is applied.
+    /// The window, or Custom… / Date Range…, which open their popover and keep the window until one is applied.
     private var windowChoice: Binding<Int> {
-        Binding(get: { days }, set: { choice in
-            if choice == Self.customWindow { choosingDays = true } else { days = choice }
+        Binding(get: { range == nil ? days : Self.rangeWindow }, set: { choice in
+            switch choice {
+            case Self.customWindow: choosingDays = true
+            case Self.chooseRange: choosingRange = true
+            case Self.rangeWindow: break
+            default:
+                days = choice
+                range = nil
+            }
         })
+    }
+
+    /// "Oct 1 – Oct 15", with the year when it isn't this year's.
+    static func rangeTitle(_ range: DayRange) -> String {
+        let thisYear = Calendar.current.isDate(range.first, equalTo: Date(), toGranularity: .year)
+            && Calendar.current.isDate(range.last, equalTo: Date(), toGranularity: .year)
+        let style: Date.FormatStyle = thisYear ? .dateTime.month(.abbreviated).day() : .dateTime.year().month(.abbreviated).day()
+        return range.first == range.last ? range.first.formatted(style)
+            : "\(range.first.formatted(style)) – \(range.last.formatted(style))"
     }
 
     /// The loaded projects, plus the chosen one while its report is still loading.
@@ -503,6 +538,7 @@ struct InsightsView: View {
     private struct LoadKey: Equatable {
         let project: String?
         let days: Int
+        let range: DayRange?
         let scan: Date?
     }
 
@@ -521,7 +557,7 @@ struct InsightsView: View {
         let mine = generation
         isLoading = true
         do {
-            let result = try await Recommender.load(env: env, brain: model.brain, project: project, days: days,
+            let result = try await Recommender.load(env: env, brain: model.brain, project: project, days: days, range: range,
                                                     projectsRoot: model.projectsRoot, projectFolder: project.flatMap { model.brainProjectFolders[$0] })
             guard mine == generation else { return }
             loaded = result
@@ -976,6 +1012,48 @@ struct AddMarkSheet: View {
 extension ChangesReport.Change {
     /// One change in the list: its time, kind and project or note.
     var key: String { "\(date.timeIntervalSince1970)|\(anchor)|\(project ?? note ?? "")" }
+}
+
+/// The Window picker's Date Range…: a first and a last day, both included, up to today.
+struct DateRangePopover: View {
+    @State private var first: Date
+    @State private var last: Date
+    /// The chosen range, or nil for Cancel.
+    let done: (DayRange?) -> Void
+
+    init(range: DayRange?, done: @escaping (DayRange?) -> Void) {
+        // A one-time seed: the last 30 days, or the range already chosen.
+        let today = Calendar.current.startOfDay(for: Date())
+        _first = State(initialValue: range?.first ?? Calendar.current.date(byAdding: .day, value: -29, to: today) ?? today)
+        _last = State(initialValue: range?.last ?? today)
+        self.done = done
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Date Range").font(.headline)
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
+                GridRow {
+                    Text("From")
+                    DatePicker("From", selection: $first, in: ...last, displayedComponents: .date).labelsHidden()
+                }
+                GridRow {
+                    Text("To")
+                    DatePicker("To", selection: $last, in: first...Date(), displayedComponents: .date).labelsHidden()
+                }
+            }
+            Text("Both days included. Calls after the last day don't count.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { done(nil) }
+                    .keyboardShortcut(.cancelAction)
+                Button("Apply") { done(DayRange(first: first, last: last)) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(width: 260)
+    }
 }
 
 /// The Window picker's Custom…: any number of days from 1 to 365.

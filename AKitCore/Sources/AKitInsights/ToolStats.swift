@@ -96,14 +96,16 @@ public enum ToolStats {
     /// The report of `days` up to `now`, for `project` (nil: every session on this Mac). `importNotes`
     /// (what the import before it said) come first in its notes.
     /// `harness`: only that harness's sessions (`pi` for Pi doctor); nil: all.
-    public static func report(_ database: IndexDatabase, days: Int = InsightsStats.defaultDays, project: String? = nil,
-                              bindings: BindingSet = .default, harness: String? = nil, importNotes: [String] = [],
-                              now: Date = Date()) throws -> ToolsReport {
-        let from = now.addingTimeInterval(-Double(days) * 86_400)
-        let scope = InsightsStats.Scope(project: project, bindings: bindings, from: from, to: now, harness: harness)
+    /// `range`: whole days instead of the last `days`; calls after its last day don't count.
+    public static func report(_ database: IndexDatabase, days: Int = InsightsStats.defaultDays, range: DayRange? = nil,
+                              project: String? = nil, bindings: BindingSet = .default, harness: String? = nil,
+                              importNotes: [String] = [], now: Date = Date()) throws -> ToolsReport {
+        let (from, to) = range?.bounds(now: now) ?? (now.addingTimeInterval(-Double(days) * 86_400), now)
+        let days = range?.days() ?? days
+        let scope = InsightsStats.Scope(project: project, bindings: bindings, from: from, to: to, harness: harness)
         let (scoped, values) = scope.cte
-        // The last call also looks before the window: "unused for 30 days, last called 52 days ago".
-        let (ever, everValues) = InsightsStats.Scope(project: project, bindings: bindings, from: .distantPast, to: now,
+        // The last call also looks before the window: "unused for 30 days, last called 52 days ago"; never after its end.
+        let (ever, everValues) = InsightsStats.Scope(project: project, bindings: bindings, from: .distantPast, to: to,
                                                      harness: harness).cte(as: "ever")
 
         let fullList = """
@@ -130,8 +132,9 @@ public enum ToolStats {
         // Calls made in the window, in any of the scope's sessions: a resumed older session's call today is a use.
         for row in try database.rows("""
             WITH \(ever) SELECT c.name, GROUP_CONCAT(DISTINCT c.harness), COUNT(*), COUNT(DISTINCT c.session_key)
-            FROM tool_calls c JOIN ever s ON s.key = c.session_key WHERE c.name IS NOT NULL AND c.ts >= ? GROUP BY c.name
-            """, everValues + [from.timeIntervalSince1970]) {
+            FROM tool_calls c JOIN ever s ON s.key = c.session_key WHERE c.name IS NOT NULL AND c.ts >= ? AND c.ts <= ?
+            GROUP BY c.name
+            """, everValues + [from.timeIntervalSince1970, to.timeIntervalSince1970]) {
             guard let tool = row[0].text else { continue }
             var entry = rows[tool] ?? Row(server: MCPServers.server(ofTool: tool))
             entry.harnesses.formUnion(split(row[1]))
@@ -141,8 +144,8 @@ public enum ToolStats {
         }
         for row in try database.rows("""
             WITH \(ever) SELECT c.name, MAX(c.ts) FROM tool_calls c JOIN ever s ON s.key = c.session_key
-            WHERE c.name IS NOT NULL GROUP BY c.name
-            """, everValues) {
+            WHERE c.name IS NOT NULL AND c.ts <= ? GROUP BY c.name
+            """, everValues + [to.timeIntervalSince1970]) {
             guard let tool = row[0].text, rows[tool] != nil else { continue }
             rows[tool]?.lastCall = row[1].double
         }
@@ -185,7 +188,7 @@ public enum ToolStats {
         notes.append(subagentNote)
         return ToolsReport(
             version: 1, generated: now.formatted(.iso8601),
-            window: .init(from: from.formatted(.iso8601), to: now.formatted(.iso8601), days: days),
+            window: .init(from: from.formatted(.iso8601), to: to.formatted(.iso8601), days: days, range: range?.label()),
             scope: .init(project: project, bindings: bindings.names),
             summary: .init(sessions: sessions, sessionsWithToolList: listed, calls: tools.reduce(0) { $0 + $1.calls }),
             tools: tools, servers: servers, notes: notes)

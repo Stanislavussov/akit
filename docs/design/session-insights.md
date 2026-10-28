@@ -67,6 +67,12 @@ Checked against the code on 2026-10-03:
   Insights screen's table switches between **Skills**, **MCP Servers** and **Tools**, with
   **Unused Only**, a sort, and a **Custom…** window of 1–365 days. See "Tools and MCP servers
   over time".
+- Date range (2026-10-28): the window can also be whole days that end in the past
+  (`DayRange`): Insights → Window → **Date Range…**, `akit stats`, `stats tools` and
+  `stats listing` with `--from YYYY-MM-DD [--to YYYY-MM-DD]` (not with `--days`). Sessions in
+  scope started in the range; calls, requests and the last call stop at its last day, so a call
+  after the range doesn't make a skill or tool used in it. The JSON window gets
+  `range: {first, last}` only for a range; version 1 stays.
 - Calls per project (2026-10-11): `akit stats skill NAME [--days N] [--bindings LIST] [--json]`
   (`SkillCalls.report`) counts one skill's calls in a window, per project: model calls in any
   harness (Pi's included, subagents included), the user's skill calls, sessions and the last
@@ -404,8 +410,8 @@ Subagents are left out, as decided with the user.
 - **Screen.** The Insights table (`InsightsUsageTable`) switches between **Skills**, **MCP
   Servers** and **Tools**; **Unused Only** keeps the rows without a call in the window; **Sort**
   offers Context Space (skills only), Fewest Calls, Most Calls, Least Recently Used and Name. A
-  server row opens to the tools it never called. The Window picker has 7 / 30 / 90 Days and
-  **Custom…**, any number of days from 1 to 365. Every number has a tooltip saying what it counts.
+  server row opens to the tools it never called. The Window picker has 7 / 30 / 90 Days,
+  **Custom…**, any number of days from 1 to 365, and **Date Range…**, a first and a last day. Every number has a tooltip saying what it counts.
 - **Skills.** `akit stats` gives each skill `lastCall` (the latest counted model or user call in
   the scope's sessions, also before the window) and `unused` (no such call made in the window);
   new fields, the JSON keeps version 1. `--unused` keeps only unused skills. `unused` follows the
