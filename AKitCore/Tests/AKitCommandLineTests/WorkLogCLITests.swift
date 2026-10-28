@@ -42,6 +42,7 @@ struct WorkLogCLITests {
         #expect(await akit("worklog", "show", "today").out.contains("#break  lunch"))
         #expect(await akit("worklog", "add", "x", "--at", "25:00").code != 0)
         #expect(await akit("worklog", "kinds").out.contains("#break  Break  (not work)"))
+        #expect(await akit("worklog", "fill", "--thinking", "lots").err.contains("--thinking takes one of off, minimal, low"))
         #expect(await akit("worklog", "--help").out.contains("akit worklog add TEXT"))
     }
 }

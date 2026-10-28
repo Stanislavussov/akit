@@ -72,3 +72,12 @@ extension WorkLogFillTests {
         #expect(WorkLogFill.system(.english).contains("in English"))
     }
 }
+
+extension WorkLogFillTests {
+    @Test func eachProposalCarriesItsSummary() throws {
+        let answer = #"{"entries": [{"time": "09:00", "kind": "bug", "text": "COL-12 outbox", "summary": "Hledal duplicitní události.\nOpravil klíč."}]}"#
+        let entries = try WorkLogFill.entries(fromAnswer: answer)
+        #expect(entries.first?.summary == "Hledal duplicitní události. Opravil klíč.")
+        #expect(WorkLogFill.schema.contains(#""summary""#) && WorkLogFill.system.contains("2 to 3 sentences"))
+    }
+}

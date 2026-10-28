@@ -17,9 +17,25 @@ final class WorkLogModel {
 
     /// The days on screen, newest first, with their file's text; today is always first.
     private(set) var days: [(date: String, text: String)] = []
-    /// How many days with entries are shown; Show More adds a week.
-    var shownDays = 14
-    private(set) var moreDays = false
+    /// The days before today, parsed once per change of their file (their lengths don't move).
+    private(set) var pastDays: [KnowledgeWorkLog.Day] = []
+    /// The minute the screen shows: today's last entry runs until it (`tick`).
+    private(set) var now = Date.now
+    /// Today with its lengths up to `now`: the only day redrawn every minute.
+    var today: KnowledgeWorkLog.Day? {
+        days.first.map { KnowledgeWorkLog.day($0.date, text: $0.text, now: now) }
+    }
+    /// Days are shown a page at a time: today and the latest `shownDays` days with entries.
+    static let pageSize = 14
+    var shownDays = pageSize
+    /// Days with entries not shown yet (Show More Days, Go to Day…).
+    private(set) var remainingDays = 0
+    /// The day Go to Day… asked for: the list scrolls to it.
+    var scrollTarget: String?
+    /// File texts as last read, by path, with the file's change date and size: a reload reads
+    /// only files that changed, so many days stay cheap.
+    private var fileCache: [String: (modified: Date?, size: Int?, text: String)] = [:]
+    private var dayCache: [String: KnowledgeWorkLog.Day] = [:]
     /// The entry field and the chosen kind (nil: none, or a `#tag` typed in the text).
     var text = ""
     var kind: String?
@@ -82,22 +98,72 @@ final class WorkLogModel {
     /// The days again from disk: today first (empty or not), then the latest days with a file.
     func reload() {
         guard let worklog else {
-            days = []
+            (days, pastDays) = ([], [])
             return
         }
-        let today = KnowledgeWorkLog.stamp(.now).day
+        now = .now
+        let today = KnowledgeWorkLog.stamp(now).day
         let found = worklog.days().filter { $0 != today }
-        moreDays = found.count > shownDays
+        remainingDays = max(0, found.count - shownDays)
         var read: [(date: String, text: String)] = []
         for date in [today] + found.prefix(shownDays) {
-            do { read.append((date, try worklog.text(date))) } catch { problem = error.message }
+            do { read.append((date, try cachedText(date, in: worklog))) } catch { problem = error.message }
         }
         days = read
+        // Only the days on screen stay in the parse cache.
+        var kept: [String: KnowledgeWorkLog.Day] = [:]
+        pastDays = read.dropFirst().map { date, text in
+            let key = worklog.base.root.path + "\n" + date + "\n" + KnowledgeWrite.hash(Data(text.utf8))
+            let day = dayCache[key] ?? KnowledgeWorkLog.day(date, text: text, now: now)
+            kept[key] = day
+            return day
+        }
+        dayCache = kept
     }
 
+    /// A day's text, read again only when its file's change date or size moved.
+    private func cachedText(_ date: String, in worklog: KnowledgeWorkLog) throws(KnowledgeBase.Failure) -> String {
+        let file = worklog.file(date)
+        let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        if let cached = fileCache[file.path], values != nil, cached.modified == values?.contentModificationDate, cached.size == values?.fileSize {
+            return cached.text
+        }
+        let text = try worklog.text(date)
+        fileCache[file.path] = (values?.contentModificationDate, values?.fileSize, text)
+        return text
+    }
+
+    /// Show More Days: the next page.
     func showMore() {
-        shownDays += 7
+        shownDays += Self.pageSize
         reload()
+    }
+
+    /// Go to Day…: that day's section, loading pages up to it; a notice when it has no entries.
+    func goTo(_ date: Date) {
+        let day = KnowledgeWorkLog.stamp(date).day
+        guard let worklog else { return }
+        let today = KnowledgeWorkLog.stamp(.now).day
+        let found = worklog.days().filter { $0 != today }
+        if day != today {
+            guard let index = found.firstIndex(of: day) else {
+                notice = "No entries on \(day)."
+                return
+            }
+            if index >= shownDays { shownDays = (index / Self.pageSize + 1) * Self.pageSize }
+        }
+        reload()
+        scrollTarget = day
+        tab = .log
+    }
+
+    /// Every minute: today's running entry grows; after midnight the new day gets its section.
+    func tick() async {
+        while !Task.isCancelled {
+            let seconds = 60 - Calendar.current.component(.second, from: .now)
+            try? await Task.sleep(for: .seconds(seconds))
+            if KnowledgeWorkLog.stamp(.now).day != days.first?.date { reload() } else { now = .now }
+        }
     }
 
     // MARK: - Writing
@@ -200,6 +266,10 @@ final class WorkLogModel {
     }
 
     var fillDay = Date.now
+    /// Pi's thinking level for Auto-Fill (low by default), remembered between launches.
+    var fillThinking = UserDefaults.standard.string(forKey: "worklogFillThinking") ?? WorkLogFill.defaultThinking {
+        didSet { UserDefaults.standard.set(fillThinking, forKey: "worklogFillThinking") }
+    }
     /// The entries' language: Czech by default (the user's choice), remembered between launches.
     var fillLanguage = LabLanguage(rawValue: UserDefaults.standard.string(forKey: "worklogFillLanguage") ?? "") ?? .czech {
         didSet { UserDefaults.standard.set(fillLanguage.rawValue, forKey: "worklogFillLanguage") }
@@ -224,6 +294,8 @@ final class WorkLogModel {
     /// The model and day of the proposals on screen; `proposalDay` is the day they go into.
     private(set) var proposalNote: String?
     private(set) var proposalDay: String?
+    /// Bumped by each answer: the list starts fresh (every summary open again).
+    private(set) var proposalGeneration = 0
 
     /// What the proposals depend on: a new day, source or slot drops them.
     var fillKey: String { "\(fillDayString) \(fillSource.rawValue) \(fillSlot)" }
@@ -263,7 +335,8 @@ final class WorkLogModel {
         let existing = (try? worklog?.day(day).entries) ?? []
         do {
             let result = try await WorkLogFill.propose(day: day, sessions: fillSessions, existing: existing, model: fillModel,
-                                                       slotMinutes: fillSlot, language: fillLanguage, env: .current)
+                                                       slotMinutes: fillSlot, language: fillLanguage,
+                                                       thinking: fillThinking, env: .current)
             // The day, source or slot changed during the call: the answer is for another view.
             guard key == fillKey else {
                 notice = "The answer for \(day) came after you changed the day; nothing is shown. Propose again."
@@ -271,6 +344,7 @@ final class WorkLogModel {
             }
             proposals = result.entries
             proposalDay = day
+            proposalGeneration += 1
             chosen = Set(proposals.indices)
             proposalNote = "\(result.entries.count) entries for \(day) from \(result.prompts) prompts, by \(result.model)."
         } catch {
@@ -291,7 +365,7 @@ final class WorkLogModel {
             // The same entry is in the log already: not added twice.
             if present.contains(plain(entry)) { skipped += 1; continue }
             do {
-                let result = try worklog.add(entry.text, kind: entry.kind, day: day, time: entry.time)
+                let result = try worklog.add(entry.text, kind: entry.kind, day: day, time: entry.time, summary: entry.summary)
                 saved(result.path, result.hash, in: worklog)
                 added += 1
             } catch {

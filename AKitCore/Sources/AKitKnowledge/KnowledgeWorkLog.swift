@@ -11,6 +11,9 @@ import Foundation
 /// - 10:05 #break
 /// ```
 ///
+/// An entry may have a summary of a few sentences (Auto-Fill writes one; Edit… changes it) on the
+/// next line, indented as a quote: `  > Found that the outbox wrote the event twice; …` (W9).
+///
 /// An entry lasts until the next one of its day; the last one of today lasts until now (W4). Other
 /// lines (a note typed in Obsidian) are kept as they are. Search, lint and the agent card leave the
 /// log out, as the notebook (NB9).
@@ -58,9 +61,17 @@ public struct KnowledgeWorkLog: Sendable {
         /// The tag without `#`, lowercased; nil for an entry without one.
         public var kind: String?
         public var text: String
+        /// A few sentences of what was done, on the quoted line under the entry (W9).
+        public var summary: String?
 
-        public init(line: Int = 0, time: String, kind: String?, text: String) {
-            (self.line, self.time, self.kind, self.text) = (line, time, kind, text)
+        public init(line: Int = 0, time: String, kind: String?, text: String, summary: String? = nil) {
+            (self.line, self.time, self.kind, self.text, self.summary) = (line, time, kind, text, summary)
+        }
+
+        /// The entry's lines in the file: the entry, then its summary, one quoted line per line of
+        /// it (an empty one as `  >`, so paragraphs typed in Obsidian or Edit… stay).
+        public var markdownLines: [String] {
+            [markdown] + (summary?.split(separator: "\n", omittingEmptySubsequences: false).map { $0.isEmpty ? "  >" : "  > \($0)" } ?? [])
         }
 
         /// The Markdown line: `- 09:14 #bug text`.
@@ -142,10 +153,11 @@ public struct KnowledgeWorkLog: Sendable {
     }
 
     /// The same at a given day and `HH:mm`.
-    public func add(_ text: String, kind: String?, day: String, time: String) throws(Failure) -> (entry: Entry, path: String, hash: String) {
+    public func add(_ text: String, kind: String?, day: String, time: String, summary: String? = nil) throws(Failure)
+        -> (entry: Entry, path: String, hash: String) {
         guard Self.isDate(day) else { throw Failure(message: "“\(day)” is no day: use YYYY-MM-DD.") }
         guard let minute = Self.minute(time) else { throw Failure(message: "“\(time)” is no time: use HH:MM.") }
-        var entry = try Self.checkedEntry(text, kind: kind, time: Self.time(minute))
+        var entry = try Self.checkedEntry(text, kind: kind, time: Self.time(minute), summary: summary)
         let old = try self.text(day)
         let (new, line) = Self.inserting(entry, into: old)
         entry.line = line
@@ -165,7 +177,7 @@ public struct KnowledgeWorkLog: Sendable {
     /// moves to its place in time order. Returns the path and the file's new hash.
     public func replace(_ old: Entry, on date: String, with new: Entry) throws(Failure) -> (path: String, hash: String) {
         guard let newMinute = Self.minute(new.time) else { throw Failure(message: "“\(new.time)” is no time: use HH:MM.") }
-        let checked = try Self.checkedEntry(new.text, kind: new.kind, time: Self.time(newMinute), takeTag: false)
+        let checked = try Self.checkedEntry(new.text, kind: new.kind, time: Self.time(newMinute), takeTag: false, summary: new.summary)
         let text = try self.text(date)
         let without = try Self.removing(old, from: text, path: path(date))
         let (result, _) = Self.inserting(checked, into: without)
@@ -248,17 +260,48 @@ public struct KnowledgeWorkLog: Sendable {
 
     /// The text on one line, a leading `#tag` taken as the kind when none is given.
     /// `takeTag` false (Edit… with Kind None): a leading `#tag` stays text.
-    static func checkedEntry(_ text: String, kind: String?, time: String, takeTag: Bool = true) throws(Failure) -> Entry {
-        // Every line break (CR, LF, U+2028…) becomes a space: an entry is one line.
-        var text = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+    static func checkedEntry(_ text: String, kind: String?, time: String, takeTag: Bool = true, summary: String? = nil) throws(Failure) -> Entry {
+        var text = oneLine(text)
         var kind = try checkedKind(kind)
         if kind == nil, takeTag, let match = text.prefixMatch(of: /#([\p{L}\p{N}][\p{L}\p{N}_-]*)(\s+|$)/) {
             kind = try checkedKind(String(match.1))
             text = String(text[match.range.upperBound...])
         }
         guard !text.isEmpty || kind != nil else { throw Failure(message: "Write what you did, or choose a kind.") }
-        return Entry(time: time, kind: kind, text: text)
+        let summary = summary.flatMap(checkedSummary)
+        return Entry(time: time, kind: kind, text: text, summary: summary)
+    }
+
+    /// A summary as kept: its lines trimmed, blank lines at its ends dropped, at most `maxSummary`
+    /// characters; nil when nothing is left.
+    static func checkedSummary(_ text: String) -> String? {
+        var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+        while lines.first == "" { lines.removeFirst() }
+        while lines.last == "" { lines.removeLast() }
+        let joined = String(lines.joined(separator: "\n").prefix(maxSummary)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return joined.isEmpty ? nil : joined
+    }
+
+    /// A summary has at most this many characters.
+    public static let maxSummary = 1200
+
+    /// Every line break (CR, LF, U+2028…) becomes a space: an entry and its summary are one line each.
+    static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+    }
+
+    /// A summary line under an entry (`  > text`): its text, or nil.
+    static func summaryLine(_ line: Substring) -> String? {
+        guard let match = line.wholeMatch(of: /[ \t]+>\s?(.*)/) else { return nil }
+        return String(match.1).trimmingCharacters(in: .whitespaces)
+    }
+
+    /// How many lines the entry on `line` takes: itself and its summary lines.
+    static func span(_ line: Int, in lines: [Substring]) -> Int {
+        var end = line + 1
+        while end < lines.count, summaryLine(lines[end]) != nil { end += 1 }
+        return end - line
     }
 
     /// The entry a line holds (`- 09:14 #bug text`, `*` too), or nil.
@@ -276,7 +319,13 @@ public struct KnowledgeWorkLog: Sendable {
     }
 
     public static func entries(in text: String) -> [Entry] {
-        lines(text).enumerated().compactMap { entry($1, number: $0) }
+        let lines = lines(text)
+        return lines.enumerated().compactMap { number, line in
+            guard var entry = entry(line, number: number) else { return nil }
+            let parts = lines[(number + 1)..<(number + span(number, in: lines))].compactMap(summaryLine)
+            entry.summary = checkedSummary(parts.joined(separator: "\n"))
+            return entry
+        }
     }
 
     /// A day from its file's text: entries in time order (the file's order for the same minute),
@@ -305,25 +354,25 @@ public struct KnowledgeWorkLog: Sendable {
         let present = entries(in: text)
         let at: Int
         if let last = present.last(where: { $0.minute <= entry.minute }) {
-            at = last.line + 1
+            at = last.line + span(last.line, in: Self.lines(text))
         } else if let first = present.first {
             at = first.line
         } else {
             at = lines.count
         }
-        lines.insert(entry.markdown, at: at)
+        lines.insert(contentsOf: entry.markdownLines, at: at)
         return (lines.joined(separator: "\n") + "\n", at)
     }
 
     /// The text without the entry's line; throws when that line no longer holds the entry.
     static func removing(_ entry: Entry, from text: String, path: String) throws(Failure) -> String {
         var lines = Self.lines(text)
-        guard entry.line < lines.count, var found = Self.entry(lines[entry.line], number: entry.line) else {
+        guard entry.line < lines.count, var found = Self.entries(in: text).first(where: { $0.line == entry.line }) else {
             throw Failure(message: "\(path) changed: the entry \(entry.time) isn't on its line any more. Look again.")
         }
         found.line = entry.line
         guard found == entry else { throw Failure(message: "\(path) changed: the entry \(entry.time) isn't on its line any more. Look again.") }
-        lines.remove(at: entry.line)
+        lines.removeSubrange(entry.line..<(entry.line + span(entry.line, in: lines)))
         var result = lines.joined(separator: "\n")
         if !result.isEmpty, !result.hasSuffix("\n") { result += "\n" }
         return result == "\n" ? "" : result
