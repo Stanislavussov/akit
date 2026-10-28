@@ -979,6 +979,14 @@ write only with `--yes` (a brain save is committed; reset moves the project's co
 `new` starts from the same template as New Role…, New Scenario… and New Profile… in the app
 (`ReviewTemplates`).
 
+Write with AI… (Roles page; `akit review role write ID --describe TEXT [--skill NAME|PATH] [--model M]
+[--thinking T] [--project P] [--yes]`, `akit review role skills`): the user describes the role and picks a
+writing skill (AKit's built-in `review-role-writer`, or one from the brain, `~/.claude/skills`,
+`~/.pi/agent/skills`, `~/.agents/skills`); one Pi pass with no tools, no MCP and no session reads only
+the words, AKit's role format, the list of existing roles and the skill, under SendGate (send-log
+purpose `review-role-writer`; files in `~/.akit/local/review/role-writer/`). The draft is checked as a
+role and opens as the usual diff; nothing is saved before the user approves (`ReviewRoleWriter`).
+
 On a work Mac, saving a brain role shows the diff first and marks work words: the GitLab
 hosts, project paths, organisation names and e-mail addresses from the work profiles (R17).
 

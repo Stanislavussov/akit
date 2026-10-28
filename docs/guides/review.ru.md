@@ -1722,6 +1722,7 @@ AKit проверяет папку ревью каждые несколько с
 - «`security` придирается к мелочам» → поднимите `min_severity` или допишите `do_not_comment`.
 - «В нашем проекте свои правила для доменного слоя» → копия роли `domain` для проекта.
 - «Нужна роль про производительность» → **New Role…**.
+- «Нужна роль про переводы, но не хочу писать YAML» → **Write with AI…**.
 - «Хочу видеть, откуда взялась каждая настройка» → `akit review config show`.
 
 ### Три уровня
@@ -1749,7 +1750,7 @@ AKit проверяет папку ревью каждые несколько с
 2. **Level** = **Brain**.
 3. Выберите роль в списке. Справа откроется её `SKILL.md`.
 
-![Страница Roles: Level = Brain; список ролей contracts, architecture, domain, requirements, tests, bug-hunter, upgrade-risk, security, performance, concurrency, data-migrations, observability, history, у каждой метка built-in и описание; выбрана security, справа её SKILL.md: name review-security, блок akit-review с min_severity medium, max_findings 3, needs и do_not_comment, ниже список проверок; кнопки New Role…, Add to Brain, Revert и Save…; подпись Built into AKit. Edit it to save it into the brain, or Add to Brain first.](images/review-roles.png)
+![Страница Roles: Level = Brain; список ролей contracts, architecture, domain, requirements, tests, bug-hunter, upgrade-risk, security, performance, concurrency, data-migrations, observability, history, у каждой метка built-in и описание; выбрана security, справа её SKILL.md: name review-security, блок akit-review с min_severity medium, max_findings 3, needs и do_not_comment, ниже список проверок; кнопки New Role…, Write with AI…, Add to Brain, Revert и Save…; подпись Built into AKit. Edit it to save it into the brain, or Add to Brain first.](images/review-roles.png)
 
 Как читать роль:
 
@@ -1824,6 +1825,30 @@ AKit проверяет папку ревью каждые несколько с
 5. Сохраните, потом допишите проверки и сохраните снова.
 
 Новая роль сама в ревью не попадёт. Добавьте её в сценарий (`roles.required` или `roles.optional`), в `roles.add` профиля или включите в **New Review…**.
+
+### Средне: написать роль с AI
+<!-- section: config-write -->
+
+Опишите роль своими словами. Pi напишет `SKILL.md` по скиллу, который вы выберете.
+
+1. На странице **Roles** выберите **Level**: brain или проект.
+2. Нажмите **Write with AI…**.
+3. **Id** — id роли. Пример: `i18n`. Скилл будет называться `review-i18n`. Если роль с таким id уже есть, Pi улучшит её текст.
+4. **What it checks** — что роль ищет, в каком коде и что не трогает. Пример: «Текст для пользователя берётся из файлов перевода `src/i18n/*.json`, а не из строк в компонентах. Формулировки не трогать».
+5. **Writing skill** — по какому скиллу Pi пишет роль:
+   - **review-role-writer (built-in)** — скилл AKit: одна тема, проверки, которые видно в diff, «что не находка», мало находок.
+   - ниже — скиллы из brain и из папок Claude Code, Pi и `~/.agents/skills`. Например, ваш скилл с правилами команды.
+6. **Model** и **Thinking** — по умолчанию модель проходов ревью на этом уровне (`models: passes` в `review.yaml` или в блоке `review` профиля).
+7. Нажмите **Write**. Внизу видно, что делает Pi.
+8. Откроется окно с diff. Нажмите **Save**: роль сохранится на уровне из **Saved in**. В brain — с коммитом.
+
+![Окно Write a role with AI: Id = i18n, в What it checks текст про файлы перевода src/i18n/*.json и формулировки дизайнеров; Writing skill = review-role-writer (built-in) с подписью AKit's guide to writing a review role; Saved in = Brain; Model и Thinking = From the configuration; внизу подпись, что Pi получает ваши слова, формат роли, имена ролей и скилл, и кнопки Cancel и Write](images/review-role-writer.png)
+
+- Pi получает ваши слова, формат роли AKit, имена и описания ролей, которые уже есть (и текст этой роли, если она есть), и текст скилла. Секреты замаскированы. Без инструментов, без MCP, без кода.
+- **Cancel** останавливает Pi.
+- AKit проверяет ответ как роль: `name: review-<id>`, блок `akit-review`, `max_findings` 1–20. Если ответ не роль, окно показывает ошибку и черновик. Ничего не сохраняется.
+- Запрос попадает в журнал отправок Lab с целью `review-role-writer`.
+- Из терминала: `akit review role write i18n --describe "…"` (или `--describe-file ПУТЬ`) `[--skill ИМЯ|ПАПКА] [--project P] [--yes]`. `--skill` принимает только скилл: его папку или `SKILL.md`. Список скиллов: `akit review role skills`.
 
 ### Сложно: рабочие слова на рабочем Mac
 <!-- section: config-work-words -->

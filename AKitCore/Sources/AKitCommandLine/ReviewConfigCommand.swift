@@ -18,13 +18,20 @@ extension AKitCLI {
       akit review role save ID --file PATH|- [--project P] [--yes]
       akit review role duplicate ID --project P [--yes]
       akit review role reset ID --project P [--yes]
+      akit review role write ID (--describe TEXT | --describe-file PATH|-) [--skill NAME|PATH]
+                         [--model M] [--thinking T] [--project P] [--yes]
+      akit review role skills [--json]
                                         new: a role from the template (or from --file; - reads
                                         stdin) as skills/review-ID/SKILL.md. save: replace its text.
                                         Without --project it goes to the brain layer review
                                         (committed); with it, to the project's own copy on this
                                         Mac. duplicate: the brain's text as the project's copy.
                                         reset: the project's copy goes to the Trash. Each prints
-                                        the diff; --yes does it
+                                        the diff; --yes does it. write: Pi drafts the role from
+                                        your words with a writing skill (default: AKit's own
+                                        review-role-writer; role skills lists the others), the
+                                        review's passes model unless --model, no tools, no MCP;
+                                        AKit checks the draft is a role and prints the diff
       akit review scenario show|new|save|duplicate|reset ID …
                                         The same for a scenario (scenarios/ID.yaml)
       akit review defaults show | save --file PATH|- [--yes]
@@ -86,6 +93,31 @@ extension AKitCLI {
         let home = env.homeDirectory
         let name = kind.rawValue
         guard let action = args.positional() else { throw Failure(message: "akit review \(name) show|new|save… (akit review --help).") }
+        // Write with AI…: its own flags.
+        let describe = args.values("--describe")
+        let describeFile = args.value("--describe-file")
+        let skillName = args.value("--skill")
+        let modelName = args.value("--model")
+        let thinking = args.value("--thinking")
+        let json = args.flag("--json")
+        if action != "write", !describe.isEmpty || describeFile != nil || skillName != nil || modelName != nil || thinking != nil {
+            throw Failure(message: "--describe, --describe-file, --skill, --model and --thinking go with akit review role write.")
+        }
+        if action == "skills" {
+            guard kind == .role else { throw Failure(message: "akit review role skills lists the skills that can write a role.") }
+            try args.finish()
+            let skills = ReviewRoleWriter.skills(brain: brain, home: home)
+            if json {
+                let rows = skills.map { ["name": $0.name, "description": $0.description, "place": $0.place, "file": $0.file?.path ?? ""] }
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+                out(String(decoding: try encoder.encode(rows), as: UTF8.self))
+            } else {
+                for skill in skills { out("\(skill.name)  [\(skill.place)]  \(skill.description)") }
+            }
+            return 0
+        }
+        if json { throw Failure(message: "--json goes with akit review roles, scenarios and role skills.") }
         // The item's id: none for defaults; a profile's id is its slug.
         let id: String
         if kind == .defaults {
@@ -190,6 +222,45 @@ extension AKitCLI {
                         + "akit review \(name) show \(id), edit that text, then akit review \(name) save \(id) --file PATH.")
                 }
                 return try await finishSave(try ReviewConfigEditor.plan(kind, id: id, text: text, level: level, home: home, brain: brain))
+            case "write":
+                guard kind == .role else { throw Failure(message: "Only a role can be written with AI: akit review role write ID --describe TEXT.") }
+                if file != nil { throw Failure(message: "write drafts the text itself; use save --file for your own.") }
+                var words = describe
+                if let describeFile {
+                    if describeFile == "-" {
+                        guard let text = String(data: input(), encoding: .utf8) else { throw Failure(message: "The text on stdin isn't UTF-8.") }
+                        words.append(text)
+                    } else {
+                        let url = resolve(describeFile, cwd: cwd, env: env)
+                        guard let text = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(message: "Can't read \(url.path).") }
+                        words.append(text)
+                    }
+                }
+                guard !words.isEmpty else { throw Failure(message: "Say what the role checks: --describe TEXT or --describe-file PATH|-.") }
+                let skill: ReviewRoleWriter.Skill
+                do {
+                    skill = try skillName.map { try ReviewRoleWriter.skill(named: $0, brain: brain, home: home, cwd: cwd) } ?? .builtIn
+                } catch let failure as ReviewRoleWriter.Failure {
+                    throw Failure(message: failure.message)
+                }
+                let model = modelName.map { ReviewModelChoice(model: $0, thinking: thinking ?? "") }
+                    ?? thinking.map { ReviewModelChoice(model: "", thinking: $0) }
+                let request = ReviewRoleWriter.Request(id: id, description: words.joined(separator: "\n\n"), skill: skill, level: level, model: model)
+                let lines = LineBox()
+                let result: ReviewRoleWriter.Result
+                do {
+                    result = try await ReviewRoleWriter.write(request, brain: brain, env: env, progress: { lines.add($0) })
+                } catch let failure as ReviewRoleWriter.Failure {
+                    lines.drain(out)
+                    if let draft = failure.draft { out(draft) }
+                    throw Failure(message: failure.message)
+                } catch {
+                    lines.drain(out)
+                    throw Failure(message: error.localizedDescription)
+                }
+                lines.drain(out)
+                out(String(format: "Pi wrote it with %@ (%@, ≈ %.1f credits).", skill.name, result.model.isEmpty ? "Pi's default model" : result.model, result.credits))
+                return try await finishSave(result.save)
             case "save":
                 guard let text = try readText() else { throw Failure(message: "Give the new text: --file PATH, or --file - for stdin.") }
                 return try await finishSave(try ReviewConfigEditor.plan(kind, id: id, text: text, level: level, home: home, brain: brain))

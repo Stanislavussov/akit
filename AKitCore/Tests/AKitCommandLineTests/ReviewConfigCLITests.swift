@@ -105,5 +105,15 @@ extension AKitCLITests {
         let onlyHere = await reviewConfig(["scenario", "reset", "hotfix", "--project", "orders"], brain: brain)
         #expect(onlyHere.out.contains("orders has no scenario hotfix any more"), "\(onlyHere)")
         #expect(await reviewConfig(["role", "new", "security"], brain: brain).out.contains("built into AKit"))
+
+        // Write with AI…: the skills to pick, and the flags it needs.
+        try write(".claude/skills/house-style/SKILL.md", "---\nname: house-style\ndescription: Our rules\n---\n")
+        let skills = await reviewConfig(["role", "skills"], brain: brain)
+        #expect(skills.out.contains("review-role-writer  [built-in]") && skills.out.contains("house-style  [Claude Code]"), "\(skills)")
+        #expect(await reviewConfig(["role", "skills", "--json"], brain: brain).out.contains("\"place\" : \"Claude Code\""))
+        #expect(await reviewConfig(["role", "write", "i18n"], brain: brain).err.contains("--describe TEXT"))
+        #expect(await reviewConfig(["role", "write", "i18n", "--describe", "x", "--skill", "nope"], brain: brain).err.contains("There is no skill nope"))
+        #expect(await reviewConfig(["role", "new", "i18n", "--describe", "x"], brain: brain).err.contains("go with akit review role write"))
+        #expect(await reviewConfig(["scenario", "write", "x", "--describe", "y"], brain: brain).err.contains("Only a role"))
     }
 }

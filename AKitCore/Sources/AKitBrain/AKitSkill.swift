@@ -300,6 +300,9 @@ akit review role new ID [--project P] [--file PATH|-] [--yes]
 akit review role save ID --file PATH|- [--project P] [--yes]
 akit review role duplicate ID --project P [--yes] # the brain's role as the project's own copy
 akit review role reset ID --project P [--yes]     # the project's copy to the Trash
+akit review role write ID --describe TEXT|--describe-file PATH|- [--skill NAME|PATH] [--model M] [--thinking T] [--project P] [--yes]
+                                                  # Pi drafts the role from the user's words
+akit review role skills [--json]                  # the skills that can write a role
 akit review scenario show|new|save|duplicate|reset ID …   # the same for scenarios
 akit review defaults show | save --file PATH|- [--yes]    # the brain's review.yaml
 akit review profile show SLUG | new SLUG [--yes] | save SLUG --file PATH|- [--yes]
@@ -329,6 +332,14 @@ akit-review:
 - New UI strings written in code instead of the translation files.
 - …
 ```
+
+When the user describes a role and wants Pi (with a writing skill) to write it, or asks for
+"Write with AI", use `akit review role write ID --describe "<the user's words>"`: Pi drafts it with
+`--skill` (default `review-role-writer`, AKit's own guide; `role skills` lists the brain's and
+harnesses' skills, or give a skill folder or its SKILL.md), the review's passes model unless `--model`, with no
+tools and no MCP. AKit checks the draft is a role and prints the diff; `--yes` saves it. It costs
+credits; pass the user's words as they gave them. When you write the role yourself, use
+`role new ID --file -` instead.
 
 A new role runs only when a scenario names it (`roles: { required: [...], optional: [...] }`),
 when a profile adds it (`roles: { add: [...] }`), or for one run with `akit review MR-URL --role +ID`.

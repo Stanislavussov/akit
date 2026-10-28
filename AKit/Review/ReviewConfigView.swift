@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitLab
 import AKitReview
 import SwiftUI
 
@@ -15,6 +16,8 @@ struct ReviewConfigView: View {
     @State private var text = ""
     @State private var save: ReviewConfigEditor.Save?
     @State private var showNew = false
+    /// Snapshots: `--tab roles --add` opens Write with AI….
+    @State private var showWriter = DebugSnapshot.options?.add == true && DebugSnapshot.options?.tab == "roles"
     @State private var message: String?
 
     struct Item: Identifiable, Hashable {
@@ -74,6 +77,10 @@ struct ReviewConfigView: View {
                 }
                 HStack {
                     Button("New \(kind == .role ? "Role" : "Scenario")…") { showNew = true }
+                    if kind == .role {
+                        Button("Write with AI…") { showWriter = true }
+                            .help("Describe the role; Pi writes it with a writing skill you pick. You see the diff before it is saved")
+                    }
                     Spacer()
                     if hasBuiltIns, project == nil {
                         Button("Add to Brain") { addBuiltIns() }
@@ -96,6 +103,12 @@ struct ReviewConfigView: View {
             ReviewSaveSheet(save: box.save, brain: brain) { done in
                 save = nil
                 if done { reload() }
+            }
+        }
+        .sheet(isPresented: $showWriter) {
+            ReviewRoleWriterSheet(brain: brain, level: level, roleIDs: items.map(\.id)) { written in
+                save = written
+                selection = written.id
             }
         }
         .sheet(isPresented: $showNew) {
@@ -452,6 +465,149 @@ struct ReviewQualityView: View {
                         Text("\(row.approved) approved, \(row.rejected) rejected").foregroundStyle(.secondary)
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Write with AI…: the user's words and a writing skill; Pi drafts the role, AKit checks it,
+/// and the diff opens in the save sheet.
+struct ReviewRoleWriterSheet: View {
+    @Environment(ReviewModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let brain: URL
+    let level: ReviewConfigEditor.Level
+    let roleIDs: [String]
+    let written: (ReviewConfigEditor.Save) -> Void
+    // Snapshots: `--tab roles --add --select ID --query TEXT` fills them.
+    @State private var id = DebugSnapshot.options?.select ?? ""
+    @State private var words = DebugSnapshot.options?.query ?? ""
+    @State private var skills: [ReviewRoleWriter.Skill] = [.builtIn]
+    @State private var skill = ReviewRoleWriter.Skill.builtIn.id
+    @State private var piModels: [String] = []
+    @State private var passesModel = ""
+    @State private var thinking = ""
+    @State private var running: Task<Void, Never>?
+    @State private var status: String?
+    @State private var problem: String?
+    @State private var draft: String?
+
+    private var validID: Bool { id.range(of: "^[a-z0-9][a-z0-9-]{0,62}$", options: .regularExpression) != nil }
+    private var ready: Bool { validID && !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && running == nil }
+    /// The passes model and thinking a review at this level uses (loaded once).
+    @State private var configured = ReviewModelChoice(model: "")
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Write a role with AI").font(.title3.weight(.semibold))
+            Form {
+                TextField(text: $id, prompt: Text("e.g. i18n (the skill is review-i18n)")) { RequiredLabel("Id") }
+                if roleIDs.contains(id) {
+                    Text("Role \(id) exists: Pi improves its text.").font(.caption).foregroundStyle(.secondary)
+                }
+                LabeledContent {
+                    TextEditor(text: $words)
+                        .font(.body)
+                        .multilineTextAlignment(.leading)
+                        .frame(minHeight: 110)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
+                } label: {
+                    RequiredLabel("What it checks")
+                }
+                .help("In your words: what the role looks for, in which code, what it must leave alone. Pi keeps your terms and limits")
+                Picker("Writing skill", selection: $skill) {
+                    ForEach(skills) { item in
+                        Text(item.name + "  (" + item.place + ")").tag(item.id)
+                    }
+                }
+                .help("The skill Pi follows to write the role. review-role-writer is AKit's own; your brain's and harnesses' skills are below it")
+                if let picked = skills.first(where: { $0.id == skill }), !picked.description.isEmpty {
+                    Text(picked.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                PiModelPicker(selection: $passesModel, models: piModels,
+                              empty: "From the configuration (\(configured.model.isEmpty ? "Pi's default" : configured.model))") {
+                    Text("Model")
+                }
+                Picker("Thinking", selection: $thinking) {
+                    Text("From the configuration (\(configured.thinking.isEmpty ? "Pi's default" : configured.thinking))").tag("")
+                    ForEach(ReviewModelChoice.thinkingLevels, id: \.self) { Text($0).tag($0) }
+                }
+                LabeledContent("Saved in", value: level.title)
+            }
+            .formStyle(.grouped)
+            Text("Pi gets your words, AKit's role format, the names of the existing roles (and this role's text when it exists) and the skill, masked: no tools, no MCP, no code. Nothing is saved before you see the diff.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let status, running != nil {
+                HStack { ProgressView().controlSize(.small); Text(status).font(.caption).lineLimit(1) }
+            }
+            if let problem { Text(problem).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
+            if let draft {
+                ScrollView { Text(draft).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                    .frame(maxHeight: 160)
+                    .padding(6)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            }
+            HStack {
+                Text("* Required.").font(.caption).foregroundStyle(.red)
+                Spacer()
+                Button("Cancel") {
+                    running?.cancel()
+                    dismiss()
+                }
+                Button("Write") { write() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!ready)
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
+        .task {
+            let home = model.home
+            let level = level
+            let brain = brain
+            let loaded = await Task.detached {
+                let catalog = ReviewCatalog.load(home: home, brain: brain)
+                let profile = level.slug.flatMap { slug in catalog.profiles.first { $0.slug == slug } }
+                return (ReviewRoleWriter.skills(brain: brain, home: home), ReviewRoleWriter.configuredModel(catalog: catalog, profile: profile))
+            }.value
+            skills = loaded.0
+            configured = loaded.1
+            piModels = await LabRuns.models(for: .pi, env: model.env)
+        }
+        // Closing the sheet any way stops Pi.
+        .onDisappear { running?.cancel() }
+    }
+
+    private func write() {
+        let chosen = skills.first { $0.id == skill } ?? .builtIn
+        let choice: ReviewModelChoice? = passesModel.isEmpty && thinking.isEmpty ? nil : ReviewModelChoice(model: passesModel, thinking: thinking)
+        let request = ReviewRoleWriter.Request(id: id, description: words, skill: chosen, level: level, model: choice)
+        problem = nil
+        draft = nil
+        status = "Starting Pi…"
+        let env = model.env
+        let brain = brain
+        running = Task {
+            do {
+                // Cancel stops the Pi process, not only this task.
+                let result = try await Cancellation.followingTask {
+                    try await ReviewRoleWriter.write(request, brain: brain, env: env) { line in
+                        Task { @MainActor in status = line.trimmingCharacters(in: .whitespaces) }
+                    }
+                }
+                running = nil
+                guard !Task.isCancelled else { return }
+                dismiss()
+                written(result.save)
+            } catch is CancellationError {
+                running = nil
+            } catch let failure as ReviewRoleWriter.Failure {
+                problem = failure.message
+                draft = failure.draft
+                running = nil
+            } catch {
+                problem = error.localizedDescription
+                running = nil
             }
         }
     }
