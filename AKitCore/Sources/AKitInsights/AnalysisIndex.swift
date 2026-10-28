@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitSessions
 import Foundation
 
 /// One session of the index, as error analysis samples it.
@@ -52,6 +53,9 @@ public struct SessionSignals: Codable, Sendable, Hashable {
     public var toolErrors: Int
     /// Runs of 3 or more calls of the same tool with the same input in a row, each run once.
     public var repeatedCalls: Int
+    /// Stuck loops: the user asked the same thing 3 or more times in a row and the agent answered
+    /// almost the same (`RepeatLoops`).
+    public var repeatLoops: Int
     /// "Done" with no test run or check after the last edit.
     public var unverifiedDone: Bool
     public var userTurns: Int
@@ -59,19 +63,20 @@ public struct SessionSignals: Codable, Sendable, Hashable {
     public var steps: Int
 
     public init(interrupts: Int = 0, pushbacks: Int = 0, rejected: Int = 0, toolErrors: Int = 0, repeatedCalls: Int = 0,
-                unverifiedDone: Bool = false, userTurns: Int = 0, steps: Int = 0) {
+                repeatLoops: Int = 0, unverifiedDone: Bool = false, userTurns: Int = 0, steps: Int = 0) {
         self.interrupts = interrupts
         self.pushbacks = pushbacks
         self.rejected = rejected
         self.toolErrors = toolErrors
         self.repeatedCalls = repeatedCalls
+        self.repeatLoops = repeatLoops
         self.unverifiedDone = unverifiedDone
         self.userTurns = userTurns
         self.steps = steps
     }
 
     /// Whether any signal says something went wrong.
-    public var raised: Bool { interrupts > 0 || pushbacks > 0 || rejected > 0 || toolErrors > 0 || repeatedCalls > 0 || unverifiedDone }
+    public var raised: Bool { interrupts > 0 || pushbacks > 0 || rejected > 0 || toolErrors > 0 || repeatedCalls > 0 || repeatLoops > 0 || unverifiedDone }
 }
 
 /// The signals of one session and the file state they were computed from.
@@ -81,9 +86,12 @@ public struct StoredSignals: Sendable, Hashable {
     public let fileModified: Double
     /// The code version that computed them: a newer one recomputes.
     public let version: Int
+    /// The session's stuck loops, in order (`signals.repeatLoops` of them).
+    public let loops: [RepeatLoop]
 
-    public init(signals: SessionSignals, fileSize: Int, fileModified: Double, version: Int) {
+    public init(signals: SessionSignals, fileSize: Int, fileModified: Double, version: Int, loops: [RepeatLoop] = []) {
         self.signals = signals
+        self.loops = loops
         self.fileSize = fileSize
         self.fileModified = fileModified
         self.version = version
@@ -118,12 +126,13 @@ public enum AnalysisIndex {
         var result: [String: StoredSignals] = [:]
         for row in try database.rows("""
             SELECT session_key, file_size, file_mtime, version, interrupts, pushbacks, tool_errors, repeated_calls,
-              unverified_done, user_turns, steps, rejected FROM signals
+              unverified_done, user_turns, steps, rejected, repeat_loops FROM signals
             """) {
             guard let key = row[0].text else { continue }
             let signals = SessionSignals(interrupts: row[4].int ?? 0, pushbacks: row[5].int ?? 0, rejected: row[11].int ?? 0,
                                          toolErrors: row[6].int ?? 0,
-                                         repeatedCalls: row[7].int ?? 0, unverifiedDone: (row[8].int ?? 0) != 0,
+                                         repeatedCalls: row[7].int ?? 0, repeatLoops: row[12].int ?? 0,
+                                         unverifiedDone: (row[8].int ?? 0) != 0,
                                          userTurns: row[9].int ?? 0, steps: row[10].int ?? 0)
             result[key] = StoredSignals(signals: signals, fileSize: row[1].int ?? 0, fileModified: row[2].double ?? 0,
                                         version: row[3].int ?? 0)
@@ -137,14 +146,23 @@ public enum AnalysisIndex {
                 let s = stored.signals
                 try database.run("""
                     INSERT INTO signals(session_key, file_size, file_mtime, version, interrupts, pushbacks, tool_errors,
-                      repeated_calls, unverified_done, user_turns, steps, rejected) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      repeated_calls, unverified_done, user_turns, steps, rejected, repeat_loops)
+                      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(session_key) DO UPDATE SET file_size = excluded.file_size, file_mtime = excluded.file_mtime,
                       version = excluded.version, interrupts = excluded.interrupts, pushbacks = excluded.pushbacks,
                       tool_errors = excluded.tool_errors, repeated_calls = excluded.repeated_calls,
                       unverified_done = excluded.unverified_done, user_turns = excluded.user_turns, steps = excluded.steps,
-                      rejected = excluded.rejected
+                      rejected = excluded.rejected, repeat_loops = excluded.repeat_loops
                     """, key, stored.fileSize, stored.fileModified, stored.version, s.interrupts, s.pushbacks, s.toolErrors,
-                                 s.repeatedCalls, s.unverifiedDone, s.userTurns, s.steps, s.rejected)
+                                 s.repeatedCalls, s.unverifiedDone, s.userTurns, s.steps, s.rejected, s.repeatLoops)
+                _ = try database.run("DELETE FROM repeat_loops WHERE session_key = ?", key)
+                for loop in stored.loops {
+                    _ = try database.run("""
+                        INSERT OR REPLACE INTO repeat_loops(session_key, first_step, last_step, asks, model, thinking, ts)
+                        VALUES(?, ?, ?, ?, ?, ?, ?)
+                        """, key, loop.firstStep, loop.lastStep, loop.asks, loop.model, loop.thinking,
+                                         loop.started?.timeIntervalSince1970)
+                }
             }
         }
     }
@@ -152,7 +170,10 @@ public enum AnalysisIndex {
     /// Forgets the signals of these sessions.
     public static func deleteSignals(_ keys: Set<String>, in database: IndexDatabase) throws {
         try database.transaction {
-            for key in keys { _ = try database.run("DELETE FROM signals WHERE session_key = ?", key) }
+            for key in keys {
+                _ = try database.run("DELETE FROM signals WHERE session_key = ?", key)
+                _ = try database.run("DELETE FROM repeat_loops WHERE session_key = ?", key)
+            }
         }
     }
 

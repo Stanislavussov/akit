@@ -17,6 +17,10 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "record-session"
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "rate" {
     exit(RateRun.main(arguments: Array(CommandLine.arguments.dropFirst(2))))
 }
+// The Pi extension's live loop check after each run: also first, read only.
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "loop-check" {
+    exit(LoopCheck.main(arguments: Array(CommandLine.arguments.dropFirst(2))))
+}
 if getuid() == 0 {
     FileHandle.standardError.write(Data("akit: don't run akit with sudo; it works in your own home folder.\n".utf8))
     exit(2)

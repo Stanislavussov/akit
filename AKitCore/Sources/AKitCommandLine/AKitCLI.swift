@@ -204,6 +204,11 @@ public enum AKitCLI {
                                           skillListingBudgetFraction, default 1%; SLASH_COMMAND_TOOL_CHAR_BUDGET
                                           wins), the share over budget, and the fraction that would keep
                                           every description, before and after the recommendations
+          akit stats loops [--project ID|PATH | --all] [--days N | --from DAY [--to DAY]] [--bindings LIST] [--json]
+                                          Stuck loops: sessions where the user asked the same thing 3+
+                                          times in a row and the agent answered almost the same, by
+                                          model and thinking level, with when to raise thinking or
+                                          switch the model. Default: last 30 days
           akit stats bindings [--days N] [--bindings LIST] [--json]
                                           How sessions are bound to projects: per method and
                                           confidence, the last N (30) days' share bound in LIST (default
@@ -358,6 +363,16 @@ public enum AKitCLI {
                 return 0
             } catch {
                 err("akit rate: \(error.message)")
+                return 1
+            }
+        }
+        // Run by the Pi extension after each run; the akit binary also runs it first (main.swift).
+        if arguments.first == "loop-check" {
+            do {
+                out(try LoopCheck.run(arguments: Array(arguments.dropFirst()), stdin: input()).json)
+                return 0
+            } catch {
+                err("akit loop-check: \(error.message)")
                 return 1
             }
         }
@@ -901,8 +916,9 @@ public enum AKitCLI {
         let subcommand = args.positional()
         let note = subcommand == "mark" || subcommand == "skill" ? args.positional() : nil
         try args.finish()
-        if let subcommand, !["bindings", "changes", "listing", "mark", "skill", "tools"].contains(subcommand) {
+        if let subcommand, !["bindings", "changes", "listing", "loops", "mark", "skill", "tools"].contains(subcommand) {
             throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats tools, akit stats listing, "
+                          + "akit stats loops, "
                           + "akit stats skill NAME, akit stats bindings, akit stats changes, akit stats mark \"<note>\" [--at DATE], "
                           + "or akit stats --debug.")
         }
@@ -911,8 +927,8 @@ public enum AKitCLI {
         // A date range (`--from DAY [--to DAY]`) only for the skill and tool tables and the listing; `--from` is read with
         // the global options.
         let ranged = options.from != nil || toText != nil
-        if ranged, debug || (subcommand != nil && subcommand != "tools" && subcommand != "listing") {
-            throw Failure(message: "--from and --to go with akit stats, akit stats tools and akit stats listing.")
+        if ranged, debug || (subcommand != nil && !["tools", "listing", "loops"].contains(subcommand)) {
+            throw Failure(message: "--from and --to go with akit stats, akit stats tools, akit stats listing and akit stats loops.")
         }
         if ranged, days != nil { throw Failure(message: "--days and --from/--to don't go together.") }
         guard !ranged || options.from != nil else { throw Failure(message: "--to needs --from: akit stats --from YYYY-MM-DD [--to YYYY-MM-DD].") }
@@ -933,6 +949,9 @@ public enum AKitCLI {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (projectArgument != nil, "--project"), (all, "--all"),
                         (top != nil, "--top"), (details, "--details"), (unused, "--unused")], command: "stats skill")
             guard let note, !note.isEmpty else { throw Failure(message: "Use: akit stats skill NAME [--days N] [--bindings LIST] [--json].") }
+        } else if subcommand == "loops" {
+            try refuse([(debug, "--debug"), (session != nil, "--session"), (top != nil, "--top"), (details, "--details"),
+                        (unused, "--unused")], command: "stats loops")
         } else if subcommand == "listing" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (top != nil, "--top"), (details, "--details"),
                         (unused, "--unused")], command: "stats listing")
@@ -987,6 +1006,13 @@ public enum AKitCLI {
                                                  settings: SkillListing.settings(env: env, project: folder, environment: env.variables),
                                                  dropping: SkillListing.fixSkills(recommendations))
             out(options.json ? encode(report) : listingText(report))
+            for note in imported.notes where options.json { err("note: \(note)") }
+            return 0
+        }
+        if subcommand == "loops" {
+            let report = try LoopsLoad.report(env: env, days: days ?? InsightsStats.defaultDays, range: range, project: project,
+                                              bindings: bindingSet)
+            out(options.json ? encode(report) : report.text)
             for note in imported.notes where options.json { err("note: \(note)") }
             return 0
         }

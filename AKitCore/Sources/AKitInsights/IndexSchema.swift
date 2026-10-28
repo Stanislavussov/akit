@@ -133,6 +133,15 @@ public enum IndexSchema {
         CREATE INDEX tool_listings_tool ON tool_listings(tool, session_key);
         CREATE INDEX tool_calls_session ON tool_calls(session_key, name);
         """,
+        // v11: stuck loops (`RepeatLoops`, docs/design/repeat-loops.md): the user asked the same thing 3 or
+        // more times in a row and the agent answered almost the same. Signals, not facts: written with a
+        // session's signals and recomputed with them. No text: the steps, the number of asks, the model and
+        // the thinking level when the last repeat was sent, and when the first ask was sent.
+        """
+        ALTER TABLE signals ADD COLUMN repeat_loops INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE repeat_loops(session_key TEXT NOT NULL, first_step INTEGER NOT NULL, last_step INTEGER NOT NULL,
+          asks INTEGER NOT NULL, model TEXT, thinking TEXT, ts REAL, PRIMARY KEY(session_key, first_step));
+        """,
     ]
 
     /// Brings the database to the latest version. Refuses an index written by a newer akit.
