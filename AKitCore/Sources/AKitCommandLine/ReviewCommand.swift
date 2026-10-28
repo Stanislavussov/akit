@@ -145,11 +145,13 @@ extension AKitCLI {
                                         each tool: read, write drafts (Send Drafts only) or blocked;
                                         context servers only read
 
+    \(reviewConfigUsage)
+
     Files: ~/.akit/local/review/projects/<slug>.yaml (project profiles), runs/<run-id>/.
     """
 
     static func review(_ arguments: [String], env: HarnessEnvironment, cwd: URL, out: (String) -> Void, err: (String) -> Void,
-                       input: () -> Data) async throws -> Int32 {
+                       input: () -> Data, trash: (URL) throws -> URL? = Trash.move) async throws -> Int32 {
         // `--pi-flags=…` carries flags, so it can't be a value Arguments reads.
         let piFlags = arguments.filter { $0.hasPrefix("--pi-flags=") }.flatMap { ReviewPiFlags.split(String($0.dropFirst("--pi-flags=".count))) }
         var args = Arguments(arguments.filter { !$0.hasPrefix("--pi-flags=") })
@@ -241,6 +243,20 @@ extension AKitCLI {
                 out("\(run.id)  \(run.spec.label)  \(run.spec.scenario.value)  \(run.status?.stage.rawValue ?? "?")")
             }
             return 0
+        case "roles", "scenarios":
+            let json = args.flag("--json")
+            try args.finish()
+            let catalog = ReviewCatalog.load(home: env.homeDirectory, brain: brain)
+            for problem in catalog.problems { err("akit: \(problem)") }
+            return try reviewConfigList(command == "roles" ? .role : .scenario, project: project, json: json, catalog: catalog, out: out)
+        case "role", "scenario", "defaults", "profile":
+            // A run's own flags mean nothing here; refuse them rather than drop them.
+            if scenario != nil || !roleChanges.isEmpty || mrText != nil || !wis.isEmpty || !choices.notes.isEmpty || !choices.links.isEmpty
+                || !choices.extraServers.isEmpty || !piFlags.isEmpty || !choices.pi.steps.isEmpty {
+                throw Failure(message: "akit review \(command ?? "") takes only --project, --file, --yes and --brain (akit review --help).")
+            }
+            return try await reviewConfig(reviewConfigKind(command ?? "")!, args: &args, project: project, file: fileText, yes: yes, brain: brain,
+                                          env: env, cwd: cwd, out: out, err: err, input: input, trash: trash)
         case "config":
             guard args.positional() == "show" else { throw Failure(message: "akit review config show [--project P] [--mr MR-URL].") }
             try args.finish()

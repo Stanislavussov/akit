@@ -100,7 +100,7 @@ struct ReviewConfigView: View {
         }
         .sheet(isPresented: $showNew) {
             ReviewNewItemSheet(kind: kind) { id in
-                let template = kind == .role ? ReviewConfigTemplates.role(id) : ReviewConfigTemplates.scenario(id)
+                let template = kind == .role ? ReviewTemplates.role(id) : ReviewTemplates.scenario(id)
                 plan(id: id, text: template)
             }
         }
@@ -312,40 +312,6 @@ struct ReviewNewItemSheet: View {
         }
         .padding(20)
         .frame(width: 420)
-    }
-}
-
-enum ReviewConfigTemplates {
-    static func role(_ id: String) -> String {
-        """
-        ---
-        name: review-\(id)
-        description: "Review a change for …"
-        akit-review:
-          min_severity: medium
-          max_findings: 3
-          needs: [diff, full_files]
-          do_not_comment:
-            - style and naming
-        ---
-
-        What to check, as a list the model can follow:
-
-        - …
-
-        """
-    }
-
-    static func scenario(_ id: String) -> String {
-        """
-        id: \(id)
-        title: \(id.capitalized)
-        roles: { required: [bug-hunter], optional: [] }
-        checks:
-          - "…"
-        context_required: [full_files]
-
-        """
     }
 }
 

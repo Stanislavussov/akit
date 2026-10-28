@@ -971,6 +971,14 @@ Review → **Roles** and **Scenarios**: each item with its source (brain, projec
 Duplicate to Project…, Reset to Brain. `akit review config show [--project P]` prints the
 resolved configuration with the source of each value. The files can be edited by hand too.
 
+The same from the terminal, so an agent with the `/akit` skill can write a role (GitHub issue #3,
+2026-10-28): `akit review roles|scenarios [--project P] [--json]` lists them;
+`akit review role|scenario show|new|save|duplicate|reset ID [--project P] [--file PATH|-] [--yes]`,
+`akit review defaults show|save` and `akit review profile show|new|save SLUG` print the diff and
+write only with `--yes` (a brain save is committed; reset moves the project's copy to the Trash).
+`new` starts from the same template as New Role…, New Scenario… and New Profile… in the app
+(`ReviewTemplates`).
+
 On a work Mac, saving a brain role shows the diff first and marks work words: the GitLab
 hosts, project paths, organisation names and e-mail addresses from the work profiles (R17).
 
