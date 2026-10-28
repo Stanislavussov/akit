@@ -121,8 +121,11 @@ public struct CaptureInstaller {
     /// After a run, a line under the editor offers a rating: ⌥G good, ⌥X bad, ⌥R with a comment.
     /// Until the next prompt the same keys change it and ⌥U removes it (`none`).
     /// `akit rate` writes it (the extension waits for it, so "Saved" is true), and a custom entry
-    /// shows it in the transcript (AKit reads it there to place the rating after its run). Nothing reaches the model: no messages, tools or prompt
-    /// changes, so the next request's cache is untouched.
+    /// shows it in the transcript (AKit reads it there to place the rating after its run).
+    /// After a run it also asks `akit loop-check` whether the session ends in a stuck loop (the same ask
+    /// 3+ times, almost the same answer) and then shows a line with the advice; ⌥T raises the thinking
+    /// level one step for this session (`docs/design/repeat-loops.md`). Nothing reaches the model: no
+    /// messages, tools or prompt changes, so the next request's cache is untouched.
     static let piExtensionText = """
         // \(marker) (akit insights install); AKit replaces or removes this file.
         // On session start, hands the session id, folder and log path to `akit record-session`,
@@ -130,6 +133,8 @@ public struct CaptureInstaller {
         // After a run (Pi 0.80.4 or newer): Option+G rates it good, Option+X bad, Option+R with a
         // comment (`akit rate`). Until the next prompt the rating can be changed the same way, and
         // Option+U removes it.
+        // After a run that ends a stuck loop (the same ask 3+ times, almost the same answer; `akit
+        // loop-check`), a line says so; Option+T raises the thinking level one step for this session.
         // Nothing of this reaches the model: no messages, tools or prompt changes.
         import { spawn } from "node:child_process";
         import { existsSync } from "node:fs";
@@ -138,6 +143,9 @@ public struct CaptureInstaller {
 
         const RATING = "akit-rating";
         const WIDGET = "akit-rate";
+        const LOOP = "akit-loop";
+        // Pi's thinking levels, low to high; Pi clamps a level to what the model has.
+        const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
         const NEWLINE = String.fromCharCode(10);
 
         function findAkit(): string | undefined {
@@ -196,6 +204,48 @@ public struct CaptureInstaller {
           });
         }
 
+        // Runs `akit loop-check` on the session log: the loop the session ends in, or undefined (none,
+        // or akit missing, old, slow or failing: the warning is best effort).
+        function loopCheck(akit: string, input: object): Promise<any> {
+          return new Promise((resolve) => {
+            let stdout = "";
+            let finished = false;
+            const done = (loop?: any) => {
+              if (!finished) {
+                finished = true;
+                resolve(loop);
+              }
+            };
+            try {
+              const child = spawn(akit, ["loop-check", "--harness", "pi"], { stdio: ["pipe", "pipe", "ignore"] });
+              const timer = setTimeout(() => {
+                child.kill();
+                done();
+              }, 5000);
+              child.stdout?.on("data", (chunk: any) => {
+                stdout += String(chunk);
+              });
+              child.on("error", () => {
+                clearTimeout(timer);
+                done();
+              });
+              child.on("close", (code: number | null) => {
+                clearTimeout(timer);
+                if (code !== 0) return done();
+                try {
+                  done(JSON.parse(stdout)?.loop ?? undefined);
+                } catch {
+                  done();
+                }
+              });
+              child.stdin?.on("error", () => {});
+              child.stdin?.end(JSON.stringify(input));
+            } catch {
+              done();
+            }
+          });
+        }
+
         const face = (rating: string) => (rating === "good" ? "👍" : "👎");
         // By code points, so an emoji is never cut in half. 500 of them fit `akit rate`'s 2000
         // bytes, so the log entry and the spool line carry the same comment.
@@ -233,6 +283,7 @@ public struct CaptureInstaller {
           pi.on("session_start", (event: any, ctx: any) => {
             generation += 1;
             sessions += 1;
+            ctx?.ui?.setWidget?.(LOOP, undefined);
             pending = undefined;
             rated = undefined;
             queued = [];
@@ -259,10 +310,28 @@ public struct CaptureInstaller {
             return { render: () => [line], invalidate: () => {} };
           });
 
+          // The loop warning: shown after a run that ends a stuck loop, gone with the next ask.
+          const showLoop = (ctx: any, loop: any) => {
+            const thinking = loop.thinking ? `, thinking ${loop.thinking}` : "";
+            const model = loop.model ? ` on ${loop.model}${thinking}` : thinking;
+            const keys = loop.thinking && ["high", "xhigh", "max"].includes(loop.thinking)
+              ? "Ctrl+P switches the model" : "⌥T raises thinking   Ctrl+P switches the model";
+            ctx?.ui?.setWidget?.(LOOP, [`⟳ Asked ${loop.asks}× with almost the same answer${model}.  ${keys}`],
+                                 { placement: "belowEditor" });
+          };
+
           pi.on("agent_settled", (_event: any, ctx: any) => {
             generation += 1;
             // Without a session file (pi --no-session) a rating would have no session to show on.
             if (!ctx?.hasUI || !ctx.sessionManager?.getSessionFile?.()) return;
+            const akitPath = findAkit();
+            if (akitPath) {
+              const started = generation;
+              loopCheck(akitPath, session(ctx)).then((loop) => {
+                // A newer prompt or session meanwhile: the answer is about a run that is no longer the last.
+                if (loop && generation === started) showLoop(ctx, loop);
+              });
+            }
             // Taken before the queued entries are written: they are not part of the run.
             const anchor = ctx.sessionManager?.getLeafId?.() ?? undefined;
             for (const entry of queued) pi.appendEntry(RATING, entry);
@@ -278,6 +347,7 @@ public struct CaptureInstaller {
             pending = undefined;
             rated = undefined;
             show(ctx);
+            ctx?.ui?.setWidget?.(LOOP, undefined);
           });
 
           // /tree moves to another point of the session: the run that just ended is no longer the last.
@@ -286,6 +356,7 @@ public struct CaptureInstaller {
             pending = undefined;
             rated = undefined;
             show(ctx);
+            ctx?.ui?.setWidget?.(LOOP, undefined);
           });
 
           // Rates the run that just ended, changes its rating, or takes it back (`none`).
@@ -356,6 +427,22 @@ public struct CaptureInstaller {
               if (!choice) return;
               if (generation !== started) return ctx.ui.notify("Not saved: a new run started meanwhile.", "warning");
               await save(ctx, choice.endsWith("good") ? "good" : "bad", oneLine(comment) || undefined);
+            },
+          });
+          // One step up for this session only (Pi's setting for new sessions stays); Pi clamps it to the model.
+          pi.registerShortcut("alt+t", {
+            description: "AKit: raise the thinking level one step (this session)",
+            handler: (ctx: any) => {
+              const before = pi.getThinkingLevel?.();
+              const index = LEVELS.indexOf(before);
+              if (!pi.setThinkingLevel || index < 0 || index === LEVELS.length - 1) {
+                return ctx.ui.notify("Thinking is at its highest. Ctrl+P switches the model.", "info");
+              }
+              pi.setThinkingLevel(LEVELS[index + 1]);
+              const after = pi.getThinkingLevel?.();
+              if (after === before) return ctx.ui.notify(`Thinking stays ${before}: the model has no higher level. Ctrl+P switches the model.`, "info");
+              ctx.ui.setWidget(LOOP, undefined);
+              ctx.ui.notify(`Thinking: ${before} → ${after} (this session)`, "info");
             },
           });
           pi.registerShortcut("alt+u", {
