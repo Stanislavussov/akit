@@ -57,6 +57,8 @@ public struct ListingReport: Encodable, Equatable, Sendable {
 
     let version: Int
     public let days: Int
+    /// Set for a date range (`--from`/`--to`, Date Range…); nil: the last `days` days. Left out of the JSON when nil.
+    public let range: StatsReport.Window.Days?
     public let project: String?
     public let settings: Settings
     public let sessions: Sessions
@@ -179,13 +181,15 @@ public enum SkillListing {
         var requests = 0
     }
 
-    /// The listing of the scope's main Claude Code sessions in the last `days` days. `dropping`:
+    /// The listing of the scope's main Claude Code sessions in the last `days` days, or in `range`'s days. `dropping`:
     /// the skills the recommendations take out of the listing, for the after-fixes fit.
-    public static func report(_ database: IndexDatabase, days: Int = InsightsStats.defaultDays, project: String? = nil,
+    public static func report(_ database: IndexDatabase, days: Int = InsightsStats.defaultDays, range: DayRange? = nil,
+                              project: String? = nil,
                               bindings: BindingSet = .default, settings: ListingReport.Settings, dropping: Set<String> = [],
                               now: Date = Date()) throws -> ListingReport {
-        let from = now.addingTimeInterval(-Double(days) * 86_400)
-        let scope = InsightsStats.Scope(project: project, bindings: bindings, from: from, to: now)
+        let (from, to) = range?.bounds(now: now) ?? (now.addingTimeInterval(-Double(days) * 86_400), now)
+        let days = range?.days() ?? days
+        let scope = InsightsStats.Scope(project: project, bindings: bindings, from: from, to: to)
         let (scoped, values) = scope.cte
         var sessions: [String: Session] = [:]
         for row in try database.rows("""
@@ -254,7 +258,7 @@ public enum SkillListing {
         notes.append("A skill listed by name only because of a user's own name-only setting counts as if the budget had dropped it.")
         notes.append("Claude Code always keeps the descriptions of its bundled skills; AKit can't tell them apart in the listing, so which skills lose theirs isn't modeled, only the total.")
         return ListingReport(
-            version: 1, days: days, project: project, settings: settings,
+            version: 1, days: days, range: range?.label(), project: project, settings: settings,
             sessions: .init(count: all.count, overBudget: now.overBudget,
                             share: all.isEmpty ? 0 : (Double(now.overBudget) / Double(all.count) * 1000).rounded() / 1000,
                             medianChars: InsightsStats.rank(sent, 0.5), p90Chars: InsightsStats.rank(sent, 0.9),
