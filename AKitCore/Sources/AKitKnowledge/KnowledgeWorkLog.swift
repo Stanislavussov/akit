@@ -237,7 +237,8 @@ public struct KnowledgeWorkLog: Sendable {
         return hour * 60 + minute
     }
 
-    static func time(_ minute: Int) -> String { String(format: "%02d:%02d", minute / 60, minute % 60) }
+    /// Minutes since midnight → `HH:MM`.
+    public static func time(_ minute: Int) -> String { String(format: "%02d:%02d", minute / 60, minute % 60) }
 
     static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()

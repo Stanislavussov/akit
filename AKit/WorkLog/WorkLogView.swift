@@ -261,10 +261,14 @@ private struct WorkLogRow: View {
                     .foregroundStyle(kind?.isWork == false ? .secondary : .primary)
                 Text(linked(entry.text)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 if let minutes {
-                    Text((running ? "now · " : "") + KnowledgeWorkLog.duration(minutes))
+                    Label(lasted(minutes), systemImage: running ? "timer" : "hourglass")
                         .monospacedDigit()
                         .foregroundStyle(running ? Color.accentColor : .secondary)
+                        .help(running
+                              ? "Still going: \(KnowledgeWorkLog.duration(minutes)) since \(entry.time). It lasts until your next entry"
+                              : "Lasted \(KnowledgeWorkLog.duration(minutes)): from \(entry.time) until the next entry")
                 }
+                actions
             }
             // On the line only: a double click on the chevron just opens and closes the summary.
             .contentShape(Rectangle())
@@ -273,14 +277,39 @@ private struct WorkLogRow: View {
         .contextMenu {
             Button("Again Now") { model.again(entry) }
             Button("Edit…") { model.editRequest = .init(date: date, entry: entry) }
-            Button("Copy") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(entry.markdownLines.joined(separator: "\n"), forType: .string)
-            }
+            Button("Copy") { copy() }
             Divider()
             Button("Delete…", role: .destructive) { model.deleteRequest = .init(date: date, entry: entry) }
         }
-        .help("Double-click to edit; right-click: Again Now adds the same entry with the time now")
+        .help("Double-click to edit; the buttons on the right: Again Now, Edit, Copy, Delete")
+    }
+
+    /// How long the entry lasted, with its end: "until 10:40 · 1 h 20 min", "until now · 25 min".
+    private func lasted(_ minutes: Int) -> String {
+        let end = running ? "now" : KnowledgeWorkLog.minute(entry.time).map { KnowledgeWorkLog.time(($0 + minutes) % (24 * 60)) } ?? "?"
+        return "until \(end) · \(KnowledgeWorkLog.duration(minutes))"
+    }
+
+    /// The row's actions as buttons, so they are seen without a right click.
+    private var actions: some View {
+        HStack(spacing: 2) {
+            Button("Again Now", systemImage: "arrow.uturn.forward") { model.again(entry) }
+                .help("Again Now: add the same entry with the time now")
+            Button("Edit…", systemImage: "pencil") { model.editRequest = .init(date: date, entry: entry) }
+                .help("Edit the time, kind, text and summary")
+            Button("Copy", systemImage: "doc.on.doc") { copy() }
+                .help("Copy the entry's line and its summary")
+            Button("Delete…", systemImage: "trash", role: .destructive) { model.deleteRequest = .init(date: date, entry: entry) }
+                .help("Delete the entry; the base's git keeps the old version")
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.markdownLines.joined(separator: "\n"), forType: .string)
     }
 
     /// Web links in the text open with a click.
