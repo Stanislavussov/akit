@@ -368,7 +368,7 @@ public enum AKitCLI {
                 return try await lab(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, trash: trash)
             }
             if arguments.first == "review" {
-                return try await self.review(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, input: input)
+                return try await self.review(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, input: input, trash: trash)
             }
             if arguments.first == "kb" {
                 return try await knowledge(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, trash: trash,

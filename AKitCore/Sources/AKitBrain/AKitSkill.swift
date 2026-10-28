@@ -284,6 +284,68 @@ lines changed after that commit of the merge request; without it the review star
 base. Use it when the user's change spans repositories, or asks to look only at the last commits.
 In the app: New Review… → Merge requests, one address per line, a commit after an address.
 
+### Review roles and configuration
+
+When the user wants a new review role (what a reviewer checks: translations, accessibility, their
+team's rules…), a scenario (which roles run) or a change to the review's configuration, write it with
+these commands; never edit the files by hand. Each prints the diff and writes nothing; show the
+diff to the user and run it again with `--yes` after a yes.
+
+```
+akit review roles [--project P] [--json]          # roles with their source (built-in, brain, project)
+akit review scenarios [--project P] [--json]
+akit review role show ID [--project P]            # the SKILL.md text the level sees
+akit review role new ID [--project P] [--file PATH|-] [--yes]
+                                                  # from the template, or your text (- = stdin)
+akit review role save ID --file PATH|- [--project P] [--yes]
+akit review role duplicate ID --project P [--yes] # the brain's role as the project's own copy
+akit review role reset ID --project P [--yes]     # the project's copy to the Trash
+akit review role write ID --describe TEXT|--describe-file PATH|- [--skill NAME|PATH] [--model M] [--thinking T] [--project P] [--yes]
+                                                  # Pi drafts the role from the user's words
+akit review role skills [--json]                  # the skills that can write a role
+akit review scenario show|new|save|duplicate|reset ID …   # the same for scenarios
+akit review defaults show | save --file PATH|- [--yes]    # the brain's review.yaml
+akit review profile show SLUG | new SLUG [--yes] | save SLUG --file PATH|- [--yes]
+```
+
+Without `--project` a role or scenario goes to the brain layer `review` (every project, every
+Mac; committed). With `--project P` it is that project's own copy, only on this Mac
+(`~/.akit/local/review/projects/P/`): use it for anything that names work systems, hosts or
+people. The profile P must exist: `akit review profile new P` writes a template; fill in its
+`gitlab:` and `checkout:` before a review uses it. On a work Mac a brain save warns about such words; then save it with `--project`.
+
+A role is one SKILL.md. Write `name: review-<id>` (a-z, 0-9, -), a one-line `description:`, and an
+`akit-review:` block, then the checklist as a list the model can follow:
+
+```
+---
+name: review-i18n
+description: "Review a change for text users see that is not translated or formatted for their locale"
+akit-review:
+  min_severity: medium          # nit, low, medium, high, critical
+  max_findings: 3               # 1–20
+  needs: [diff, full_files]     # also wi, history, tests
+  do_not_comment:
+    - style and naming
+---
+
+- New UI strings written in code instead of the translation files.
+- …
+```
+
+When the user describes a role and wants Pi (with a writing skill) to write it, or asks for
+"Write with AI", use `akit review role write ID --describe "<the user's words>"`: Pi drafts it with
+`--skill` (default `review-role-writer`, AKit's own guide; `role skills` lists the brain's and
+harnesses' skills, or give a skill folder or its SKILL.md), the review's passes model unless `--model`, with no
+tools and no MCP. AKit checks the draft is a role and prints the diff; `--yes` saves it. It costs
+credits; pass the user's words as they gave them. When you write the role yourself, use
+`role new ID --file -` instead.
+
+A new role runs only when a scenario names it (`roles: { required: [...], optional: [...] }`),
+when a profile adds it (`roles: { add: [...] }`), or for one run with `akit review MR-URL --role +ID`.
+Check the result with `akit review config show [--project P] [--scenario S]`. In the app:
+Review → Roles / Scenarios (New Role…, Save…, Duplicate to Project…, Reset to Brain).
+
 ## Knowledge base
 
 Notes and maps of the systems around a repository: which service sends what to whom, which

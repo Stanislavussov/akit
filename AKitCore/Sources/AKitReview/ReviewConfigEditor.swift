@@ -318,6 +318,7 @@ public enum ReviewConfigEditor {
     public static func resetToBrain(_ kind: Kind, id: String, project slug: String, home: URL, brain: URL,
                                     trash: (URL) throws -> URL? = Trash.move) throws {
         guard kind != .profile else { throw Failure(message: "A project profile has no brain copy to reset to.") }
+        guard ReviewYAML.isID(id), ReviewYAML.isID(slug) else { throw Failure(message: "\(id): use a-z, 0-9 and -.") }
         let url = file(kind, id: id, level: .project(slug), home: home, brain: brain)
         guard FileManager.default.fileExists(atPath: url.path) else { throw Failure(message: "\(slug) has no own \(kind.rawValue) \(id).") }
         _ = try trash(kind == .role ? url.deletingLastPathComponent() : url)

@@ -194,6 +194,7 @@ shot review-new          $MAIN --section review --query "$REVIEWMR" --add
 shot review-new-linked   $MAIN --section review --query "$REVIEWMR"$'\n'"https://gitlab.example.com/shop/web-mfe/-/merge_requests/17 3f9c2ab" --add
 shot review-settings     $MAIN --section review --tab settings --add
 shot review-roles        $MAIN --section review --tab roles --select security
+shot review-role-writer  $MAIN --section review --tab roles --select i18n --query "Text users see must come from the translation files (src/i18n/*.json), not string literals in components. Leave copy wording to the designers." --add
 shot review-scenarios    $MAIN --section review --tab scenarios --select bugfix
 shot review-project-role $MAIN --section review --tab roles --project orders-service --select tests
 shot review-quality      $MAIN --section review --tab quality

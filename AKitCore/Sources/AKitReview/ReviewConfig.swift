@@ -372,7 +372,7 @@ public struct ReviewProfile: Sendable, Hashable {
 }
 
 /// Small YAML helpers shared by the config readers.
-enum ReviewYAML {
+public enum ReviewYAML {
     /// The text between the first two `---` lines.
     static func frontmatter(_ text: String) -> String? {
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
@@ -402,7 +402,7 @@ enum ReviewYAML {
     }
 
     /// Ids of roles, scenarios and gather commands: they become file and folder names.
-    static func isID(_ text: String) -> Bool {
+    public static func isID(_ text: String) -> Bool {
         text.range(of: "^[a-z0-9][a-z0-9-]{0,62}$", options: .regularExpression) != nil
     }
 }
