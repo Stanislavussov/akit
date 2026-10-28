@@ -146,6 +146,8 @@ shot insights-servers    $MAIN --section insights --delay 8 --tab servers --quer
 shot insights-tools      $MAIN --section insights --delay 8 --tab tools
 shot insights-unused     $MAIN --section insights --delay 8 --tab tools --query unused
 shot insights-capture    $MAIN --section insights --delay 8 --capture
+shot insights-loops      $MAIN --section insights --delay 8 --query loops
+shot sessions-loop       $MAIN --section sessions --harness pi
 shot lab                 $MAIN --section lab --select $BATCH_B
 shot lab-new             $MAIN --section lab --add
 shot lab-new-batch       $MAIN --section lab --tab analysis --add

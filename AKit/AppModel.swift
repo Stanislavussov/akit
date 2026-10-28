@@ -73,6 +73,8 @@ final class AppModel {
     var section: SidebarSection? = DebugSnapshot.options?.section ?? .overview
     /// A skill the Skills screen should select when it appears (set by "Show in Skills").
     var revealSkill: Skill.ID?
+    /// A session the Sessions screen should select and scroll to (Insights → Stuck Loops → Show).
+    var revealSession: SessionReveal?
     /// Which skills the Skills screen lists: all, only global ones, or what one project sees.
     var skillsFilter: SkillsFilter = .initial
     /// Skills screen: only skills this harness sees (`HarnessID.rawValue`); nil = every harness.
@@ -1184,4 +1186,10 @@ final class AppModel {
         }
         versions = newVersions
     }
+}
+
+/// A session to show, by its log path, at one transcript item.
+struct SessionReveal: Equatable {
+    let path: String
+    let step: Int
 }
