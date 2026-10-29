@@ -13,6 +13,12 @@ extension SessionNotes {
         public static func note(_ id: String) -> String { "note:\(id)" }
         public static func verdict(_ id: String) -> String { "verdict:\(id)" }
         public static func steelman(_ id: String) -> String { "steelman:\(id)" }
+        public static let diagnosisHeadline = "diagnosis:headline"
+        public static let diagnosisWhy = "diagnosis:why"
+        public static let diagnosisFix = "diagnosis:fix"
+        public static let diagnosisDoubt = "diagnosis:doubt"
+        public static func checkpoint(_ id: String, _ field: String) -> String { "checkpoint:\(id):\(field)" }
+        public static func loop(_ index: Int) -> String { "loop:\(index)" }
     }
 
     /// The model-written texts of these notes, for one Translate call: the conclusion, the
@@ -22,6 +28,18 @@ extension SessionNotes {
     public func translationSource(env: HarnessEnvironment) -> OutputTranslation.Source {
         typealias Key = TranslationKey
         var parts = [OutputTranslation.Part(Key.conclusion, conclusion ?? ""), OutputTranslation.Part(Key.paragraph, paragraph)]
+        if let diagnosis {
+            parts += [OutputTranslation.Part(Key.diagnosisHeadline, diagnosis.headline), OutputTranslation.Part(Key.diagnosisWhy, diagnosis.why),
+                      OutputTranslation.Part(Key.diagnosisFix, diagnosis.fix)]
+        }
+        if let diagnosisDoubt { parts.append(OutputTranslation.Part(Key.diagnosisDoubt, diagnosisDoubt)) }
+        for checkpoint in checkpoints ?? [] {
+            parts += [OutputTranslation.Part(Key.checkpoint(checkpoint.id, "wanted"), checkpoint.wanted),
+                      OutputTranslation.Part(Key.checkpoint(checkpoint.id, "did"), checkpoint.agentDid),
+                      OutputTranslation.Part(Key.checkpoint(checkpoint.id, "thought"), checkpoint.agentThought)]
+            if let fix = checkpoint.fix { parts.append(OutputTranslation.Part(Key.checkpoint(checkpoint.id, "fix"), fix)) }
+        }
+        for (index, loop) in (loops ?? []).enumerated() { parts.append(OutputTranslation.Part(Key.loop(index), loop.what)) }
         parts += requirements.enumerated().map { OutputTranslation.Part(Key.requirement($0.offset), $0.element) }
         for (index, advice) in advice.enumerated() {
             parts.append(OutputTranslation.Part(Key.adviceTitle(index), advice.title))

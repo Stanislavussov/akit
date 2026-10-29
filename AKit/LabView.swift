@@ -265,10 +265,11 @@ private struct LabRunDetail: View {
         ScrollViewReader { proxy in
             scroll
                 .task(id: notes) {
-                    // Snapshots: `--tab notes` scrolls to the review's notes.
-                    guard notes != nil, DebugSnapshot.options?.tab == "notes" else { return }
+                    // Snapshots: `--tab notes` scrolls to the review's notes, `--tab reactions`
+                    // to the user's reactions.
+                    guard notes != nil, let tab = DebugSnapshot.options?.tab, ["notes", "reactions"].contains(tab) else { return }
                     try? await Task.sleep(for: .milliseconds(300))
-                    proxy.scrollTo("notes", anchor: .top)
+                    proxy.scrollTo(tab, anchor: .top)
                 }
         }
         .task(id: run) { await loadNotes() }

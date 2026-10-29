@@ -2,11 +2,11 @@ import AKitErrorAnalysis
 import AKitLab
 import SwiftUI
 
-/// A one-call review's notes (`docs/design/error-analysis.md`, "Step 1" and "Verifier"),
-/// conclusion first: a card with the outcome, the problems by severity, the verifier's
-/// conclusion and the reviewed session's numbers; then what to change, the accepted notes
-/// grouped by error-analysis mode, and the rest (paragraph, requirements, deviation steps,
-/// rejected notes) under Details.
+/// A one-call review's notes (`docs/design/error-analysis.md`, "Step 1", "Diagnosis" and
+/// "Verifier"), diagnosis first: a card with the outcome, the main problem, its cause, why and the
+/// fix; then the user's reactions with what the agent did and why, loops, what to change, the
+/// accepted notes grouped by error-analysis mode, and the rest (paragraph, requirements,
+/// deviation steps, rejected notes) under Details.
 struct ReviewNotesView: View {
     let notes: SessionNotes
     /// Mode names and definitions for the notes' groups; without them a group shows its mode id.
@@ -18,6 +18,7 @@ struct ReviewNotesView: View {
     /// Snapshots: `--tab notes` opens the disclosures.
     @State private var showDetails = DebugSnapshot.options?.tab == "notes"
     @State private var showRejected = DebugSnapshot.options?.tab == "notes"
+    @State private var showPlainTurns = DebugSnapshot.options?.tab == "reactions"
     @State private var translator = Translator()
 
     private typealias Key = SessionNotes.TranslationKey
@@ -32,6 +33,16 @@ struct ReviewNotesView: View {
                     .controlSize(.small)
             }
             ConclusionCard(notes: notes, metrics: metrics, inLabRun: inLabRun, translator: translator)
+            if let reactions = notes.reactions, !reactions.isEmpty {
+                reactionsSection(reactions).id("reactions")
+            }
+            if let loops = notes.loops, !loops.isEmpty {
+                section("Loops") {
+                    ForEach(Array(loops.enumerated()), id: \.offset) { index, loop in
+                        LoopView(loop: loop, what: translator.text(Key.loop(index), loop.what))
+                    }
+                }
+            }
             if !notes.advice.isEmpty {
                 section("What to Change") {
                     ForEach(Array(notes.advice.prefix(Review.limit).enumerated()), id: \.offset) { index, advice in
@@ -63,6 +74,34 @@ struct ReviewNotesView: View {
                 details.padding(.top, 10)
             }
             .font(.callout)
+        }
+    }
+
+    /// Reactions that need explaining first (negative ones, or any with a cause); plain next
+    /// messages folded away.
+    @ViewBuilder private func reactionsSection(_ reactions: [UserReaction]) -> some View {
+        let explained = reactions.filter { $0.kind.isNegative || (notes.checkpoint(of: $0).map { $0.cause != .none } ?? false) }
+        let plain = reactions.filter { reaction in !explained.contains { $0.id == reaction.id } }
+        section("Your Reactions") {
+            Text("Where you stopped, refused, rated or corrected the agent, and why it went that way.")
+                .foregroundStyle(.secondary)
+            if explained.isEmpty {
+                Text("No interrupts, refusals, bad ratings or corrections.").foregroundStyle(.secondary)
+            }
+            ForEach(explained) { reaction in
+                ReactionView(reaction: reaction, checkpoint: notes.checkpoint(of: reaction), translator: translator)
+            }
+            if !plain.isEmpty {
+                DisclosureGroup("Other messages and good ratings (\(plain.count))", isExpanded: $showPlainTurns) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(plain) { reaction in
+                            ReactionView(reaction: reaction, checkpoint: notes.checkpoint(of: reaction), translator: translator)
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.callout)
+            }
         }
     }
 
@@ -158,10 +197,21 @@ private struct ConclusionCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(headline).font(.title3.bold())
-            if let conclusion = notes.conclusion {
+            if let diagnosis = notes.diagnosis {
+                // The diagnosis says it all; the verifier's conclusion is for older reviews.
+                Text(headline).font(.callout.weight(.medium)).foregroundStyle(.secondary)
+                diagnosisView(diagnosis)
+                if notes.diagnosisDoubt != nil, let conclusion = notes.conclusion {
+                    // The verifier's own reading, from the notes it accepted.
+                    (Text("Verifier's conclusion: ").foregroundStyle(.secondary)
+                        + Text(translator.text(SessionNotes.TranslationKey.conclusion, conclusion)))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if let conclusion = notes.conclusion {
+                Text(headline).font(.title3.bold())
                 Text(translator.text(SessionNotes.TranslationKey.conclusion, conclusion)).font(.title3).fixedSize(horizontal: false, vertical: true)
             } else if !notes.notes.isEmpty, notes.verifierConfig?.promptVersion ?? 0 < 3 {
+                Text(headline).font(.title3.bold())
                 // From verifier prompt 3 a missing conclusion means no note reached the
                 // verifier (or it left the conclusion blank), and the headline says it all.
                 Text(inLabRun
@@ -169,6 +219,8 @@ private struct ConclusionCard: View {
                      : "No conclusion yet: this review is older than conclusions. The next review of this session writes one.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(headline).font(.title3.bold())
             }
             if let size {
                 Text(size).font(.callout).foregroundStyle(.secondary)
@@ -179,6 +231,31 @@ private struct ConclusionCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.35)))
+    }
+
+    private typealias Key = SessionNotes.TranslationKey
+
+    @ViewBuilder private func diagnosisView(_ diagnosis: Diagnosis) -> some View {
+        Text(translator.text(Key.diagnosisHeadline, diagnosis.headline))
+            .font(.title2.bold())
+            .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: 6) {
+            Text("Cause:").foregroundStyle(.secondary)
+            CauseTag(cause: diagnosis.cause)
+        }
+        if !diagnosis.why.isEmpty {
+            Text(translator.text(Key.diagnosisWhy, diagnosis.why)).fixedSize(horizontal: false, vertical: true)
+        }
+        if !diagnosis.fix.isEmpty {
+            Text("👉 \(translator.text(Key.diagnosisFix, diagnosis.fix))")
+                .fontWeight(.semibold)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let doubt = notes.diagnosisDoubt {
+            Label("The verifier doubts this diagnosis: \(translator.text(Key.diagnosisDoubt, doubt))", systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     /// "✅ Done · 🟠 2 medium · ⚪ 1 low".
@@ -222,6 +299,95 @@ private struct ConclusionCard: View {
         case .no: .red
         case .unclear: .gray
         }
+    }
+}
+
+/// A root cause as a coloured tag; its help says what usually fixes it.
+struct CauseTag: View {
+    let cause: RootCause
+
+    var body: some View {
+        NoteTag(text: cause.title, color: color).help(cause.fixKind)
+    }
+
+    private var color: Color {
+        switch cause {
+        case .none: .green
+        case .unclearTask, .scopeDrift: .orange
+        case .missingSkill, .wrongSkill, .missingContext: .purple
+        case .toolEnvironment: .gray
+        case .hallucination, .ignoredInstruction, .noVerification, .weakModel: .red
+        }
+    }
+}
+
+/// One user reaction: what the user did and said, then the review's reading of it.
+private struct ReactionView: View {
+    let reaction: UserReaction
+    let checkpoint: Checkpoint?
+    let translator: Translator
+
+    private typealias Key = SessionNotes.TranslationKey
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(icon)
+                Text(reaction.kind.title).fontWeight(.semibold)
+                Text("step #\(reaction.step)").foregroundStyle(.secondary).monospacedDigit()
+                if let checkpoint { CauseTag(cause: checkpoint.cause) }
+            }
+            QuoteText(text: reaction.text)
+            if let checkpoint {
+                line("Wanted", Key.checkpoint(checkpoint.id, "wanted"), checkpoint.wanted)
+                line("Agent did", Key.checkpoint(checkpoint.id, "did"), checkpoint.agentDid)
+                line("Agent thought", Key.checkpoint(checkpoint.id, "thought"), checkpoint.agentThought)
+                if let fix = checkpoint.fix {
+                    Text("👉 \(translator.text(Key.checkpoint(checkpoint.id, "fix"), fix))").fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text("The review didn't explain this reaction.").font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    @ViewBuilder private func line(_ title: String, _ key: String, _ text: String) -> some View {
+        if !text.isEmpty {
+            (Text("\(title): ").foregroundStyle(.secondary) + Text(translator.text(key, text)))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var icon: String {
+        switch reaction.kind {
+        case .interrupt: "✋"
+        case .rejected: "🚫"
+        case .badRating: "👎"
+        case .goodRating: "👍"
+        case .pushback: "↩️"
+        case .followUp: "💬"
+        }
+    }
+}
+
+/// A run of attempts that kept failing the same way.
+private struct LoopView: View {
+    let loop: Loop
+    let what: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text("🔁 Steps #\(loop.fromStep)–#\(loop.toStep)").fontWeight(.semibold).monospacedDigit()
+                CauseTag(cause: loop.cause)
+            }
+            Text(what).fixedSize(horizontal: false, vertical: true)
+            if let root = loop.rootStep {
+                Text("Started at step #\(root)").foregroundStyle(.secondary).monospacedDigit()
+            }
+        }
+        .textSelection(.enabled)
     }
 }
 
@@ -308,6 +474,7 @@ struct NoteView: View {
                 if let phase = note.phase { NoteTag(text: phase.title, color: .blue) }
                 if let severity = note.severity { NoteTag(text: severity.rawValue.capitalized, color: severity.color) }
                 if let layer = note.faultLayer { NoteTag(text: layer.title, color: .purple) }
+                if let cause = note.cause { CauseTag(cause: cause) }
                 if note.source == .human { NoteTag(text: "Yours", color: .teal) }
                 if unconfirmed {
                     NoteTag(text: "Type unconfirmed", color: .gray)

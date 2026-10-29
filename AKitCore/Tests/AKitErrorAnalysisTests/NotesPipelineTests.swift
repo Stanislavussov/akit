@@ -3,6 +3,7 @@ import Testing
 import AKitFoundation
 import AKitModel
 import AKitSessions
+import AKitInsights
 @testable import AKitErrorAnalysis
 @testable import AKitLab
 
@@ -155,6 +156,98 @@ struct NotesPipelineTests {
         #expect(saved == notes)
         #expect(calls() == ["notes", "verifier"])
         #expect(SendLog.records(env: env).map(\.purpose) == ["notes", "verifier"])
+    }
+
+    @Test func theDiagnosisExplainsEveryReaction() async throws {
+        let file = try session()
+        // The user stops the agent and corrects it.
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((#"{"type":"user","timestamp":"2026-10-01T10:01:00Z","message":{"role":"user","content":"[Request interrupted by user]"}}"#
+            + "\n" + #"{"type":"user","timestamp":"2026-10-01T10:01:05Z","message":{"role":"user","content":"No, the tests still fail. Look at the output."}}"#
+            + "\n").utf8))
+        try handle.close()
+        var answer = notesAnswer
+        answer["diagnosis"] = ["headline": "The agent said done while the tests failed.", "cause": "no-verification",
+                               "why": "The user wanted Foo fixed. The agent read exit 1 (#2) and still claimed success (#3).",
+                               "fix": "Require a green test run before saying done.", "steps": [2, 3]]
+        answer["checkpoints"] = [
+            ["id": "r1", "wanted": "Stop the false report.", "agentDid": "Claimed success.", "agentThought": "not visible",
+             "cause": "hallucination", "fix": "Quote the last test result."],
+            ["id": "r2", "wanted": "Fix the failing test.", "agentDid": "Claimed success.", "agentThought": "not visible",
+             "cause": "no-verification"],
+            ["id": "r9", "wanted": "x", "agentDid": "x", "agentThought": "x", "cause": "none"],
+        ]
+        answer["loops"] = [["fromStep": 1, "toStep": 3, "what": "Ran tests once and ignored the failure.", "cause": "no-verification"]]
+        var doubting = verdicts
+        doubting["diagnosisHolds"] = false
+        doubting["diagnosisReason"] = "The user's words show a hallucination more than a missing check."
+        try fakeClaude(notes: answer, verdicts: doubting)
+        let notes = try await review(file)
+
+        #expect(notes.reactions?.map(\.kind) == [.interrupt, .pushback])
+        #expect(notes.reactions?.map(\.step) == [4, 5])
+        // A checkpoint for a reaction code didn't find is dropped.
+        #expect(notes.checkpoints?.map(\.id) == ["r1", "r2"])
+        #expect(notes.checkpoints?.first?.fix == "Quote the last test result.")
+        #expect(notes.checkpoints?.last?.fix == nil)
+        #expect(notes.diagnosis?.cause == .noVerification)
+        #expect(notes.diagnosis?.steps == [2, 3])
+        #expect(notes.diagnosisDoubt == "The user's words show a hallucination more than a missing check.")
+        #expect(notes.loops == [Loop(fromStep: 1, toStep: 3, what: "Ran tests once and ignored the failure.", cause: .noVerification)])
+        #expect(notes.diagnosisText?.hasPrefix("No verification: The agent said done while the tests failed.") == true)
+        let saved = try #require(NotesStore(env: env).load(notes.sessionKey))
+        #expect(saved.checkpoints == notes.checkpoints && saved.reactions == notes.reactions)
+
+        // The notes call gets the list and the thinking-aware digest.
+        let gate = try await SendGate.open(agent: LabAgent(harness: .claudeCode, model: "opus", effort: "high"), env: env)
+        let (items, _) = try NotesPipeline.scrubbedItems(NotesPipeline.Target(harness: .claudeCode, file: file), gate: gate)
+        let input = try NotesPipeline.notesInput(numbers: nil, items: items, reactions: notes.reactions ?? [], model: "opus")
+        #expect(input.contains(#"- r2 · #5 · pushback · "No, the tests still fail. Look at the output.""#))
+    }
+
+    @Test func aBlamingDiagnosisIsVerifiedEvenWithoutNotesAndOddValuesDontFail() async throws {
+        var answer = notesAnswer
+        answer["notes"] = [[String: Any]]()
+        answer["advice"] = [[String: Any]]()
+        answer["diagnosis"] = ["headline": "The request didn't say which screen.", "cause": "Unclear_Task", "why": "w", "fix": "f"]
+        answer["checkpoints"] = [[String: Any]]()
+        answer["loops"] = [["fromStep": 2, "what": "Retried.", "cause": "something-else"]]
+        try fakeClaude(notes: answer, verdicts: ["verdicts": [[String: Any]](), "diagnosisHolds": false, "diagnosisReason": "The task was clear.",
+                                                 "conclusion": "The session went fine."])
+        let notes = try await review(try session())
+        #expect(calls() == ["notes", "verifier"])
+        #expect(notes.diagnosis?.cause == .unclearTask)
+        #expect(notes.loops == [Loop(fromStep: 2, toStep: 2, what: "Retried.", cause: .none)])
+        #expect(notes.diagnosisDoubt == "The task was clear.")
+        #expect(notes.conclusion == "The session went fine.")
+    }
+
+    @Test func aReviewWrittenBeforeTheDiagnosisStillLoads() throws {
+        let old = #"""
+            {"schema":1,"sessionKey":"claude:x","transcript":"/t.jsonl","createdAt":"2026-10-01T10:00:00.000Z","requirements":[],
+             "outcome":"partly","deviation":{},"paragraph":"p","advice":[],
+             "notes":[{"id":"n1","source":"model","step":1,"description":"d","quote":"q"}],
+             "notesConfig":{"step":"notes","promptVersion":1,"extra":{}},"doneKeys":{}}
+            """#
+        let notes = try AnalysisJSON.decoder.decode(SessionNotes.self, from: Data(old.utf8))
+        #expect(notes.diagnosis == nil && notes.reactions == nil && notes.checkpoints == nil && notes.loops == nil)
+        #expect(notes.notes.first?.cause == nil && notes.diagnosisText == nil)
+    }
+
+    @Test func aNewRatingReviewsTheSessionAgain() async throws {
+        try fakeClaude(notes: notesAnswer, verdicts: verdicts)
+        let file = try session()
+        let first = try await review(file)
+        let stdin = try JSONSerialization.data(withJSONObject: ["session_id": "0f6c2b1e-1111-4222-8333-944445555666",
+                                                                "transcript_path": file.path, "text": "It lied about the tests."])
+        try RateRun.run(arguments: ["--harness", "claude", "--rating", "bad"], stdin: stdin, env: env,
+                        now: ISO8601DateFormatter().date(from: "2026-10-01T10:00:30Z")!)
+        let again = try await review(file)
+        #expect(calls() == ["notes", "verifier", "notes", "verifier"])
+        #expect(again.doneKeys["notes"] != first.doneKeys["notes"])
+        #expect(again.reactions?.map(\.kind) == [.badRating])
+        #expect(again.reactions?.first?.step == 3)
     }
 
     @Test func doneKeysSkipStepsThatDidntChange() async throws {

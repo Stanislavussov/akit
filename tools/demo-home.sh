@@ -346,8 +346,34 @@ file "$DEMO/.akit/lab/analysis/notes/claude_$SESSION.json" <<EOF
     { "title": "Name the screens that must not change, and check them before reporting", "evidence": "Step #7 replaced CurrentView's body; step #16 reported done.",
       "detail": "A quick look at the screens the user named would have caught the lost button.", "noteIDs": ["n1", "n2"], "checkedByRepeating": false }
   ],
-  "notesConfig": { "step": "notes", "harness": "claude-code", "model": "opus", "promptVersion": 1, "scrubVersion": 1, "extra": {} },
-  "verifierConfig": { "step": "verifier", "harness": "claude-code", "model": "opus", "promptVersion": 1, "scrubVersion": 1, "extra": {} },
+  "diagnosis": { "headline": "The agent rewrote the screen you asked to keep, then reported done without looking at it.",
+                 "cause": "ignored-instruction",
+                 "why": "You wanted a new forecast screen and the current one unchanged. The agent planned to put both into a TabView and treated CurrentView's body as free to replace (#7), so the refresh button went away and nothing checked it before the report (#16).",
+                 "fix": "Add a rule: before editing a file the user named as unchanged, ask first; after the edit, build and open that screen.",
+                 "steps": [7, 16] },
+  "reactions": [
+    { "id": "r1", "kind": "interrupt", "step": 9, "text": "[Request interrupted by user]" },
+    { "id": "r2", "kind": "pushback", "step": 10, "text": "No, don't touch CurrentView. I said keep it as it is." },
+    { "id": "r3", "kind": "bad-rating", "step": 16, "text": "Broke the current screen again." },
+    { "id": "r4", "kind": "follow-up", "step": 18, "text": "Thanks, now add the icons." }
+  ],
+  "checkpoints": [
+    { "id": "r1", "wanted": "Keep the current screen as it is.", "agentDid": "Replaced CurrentView's body with a TabView.",
+      "agentThought": "A tab bar is the simplest way to show two screens, so the old body can move inside it.", "cause": "ignored-instruction",
+      "fix": "Name the files that must not change in the request or in a project rule." },
+    { "id": "r2", "wanted": "Leave CurrentView untouched.", "agentDid": "Restored the body but kept the TabView around it.",
+      "agentThought": "Not visible.", "cause": "ignored-instruction" },
+    { "id": "r3", "wanted": "A working current screen with its refresh button.", "agentDid": "Reported done after the build passed.",
+      "agentThought": "A green build means the screens work.", "cause": "no-verification",
+      "fix": "Open the screens the user named before reporting." },
+    { "id": "r4", "wanted": "The next step: icons.", "agentDid": "Fixed the screen.", "agentThought": "Not visible.", "cause": "none" }
+  ],
+  "loops": [
+    { "fromStep": 7, "toStep": 15, "what": "Edited CurrentView three times; each edit kept the TabView that hid the toolbar.", "rootStep": 5,
+      "cause": "ignored-instruction" }
+  ],
+  "notesConfig": { "step": "notes", "harness": "claude-code", "model": "opus", "promptVersion": 2, "scrubVersion": 1, "extra": {} },
+  "verifierConfig": { "step": "verifier", "harness": "claude-code", "model": "opus", "promptVersion": 4, "scrubVersion": 1, "extra": {} },
   "doneKeys": {},
   "routes": [
     { "noteID": "n1", "modeID": "user-constraint-violated", "confidence": 0.92, "reason": "The user asked to keep the screen as it is.", "by": "matching" },

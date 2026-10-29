@@ -23,6 +23,8 @@ public enum EvidenceDigest {
     public static let largeBudget = 1_000_000
     /// No item is cut shorter than this; below it the middle of the session goes instead.
     static let floorCap = 80
+    /// Thinking is kept to this many characters at most: the reason, not the whole deliberation.
+    static let thinkingCap = 1200
 
     /// Characters a model can read in one call. A small table on purpose: 1M-token Claude
     /// variants (`opus[1m]`, `…-1m`) and the GPT and Gemini families have large windows;
@@ -35,8 +37,10 @@ public enum EvidenceDigest {
         return large ? largeBudget : defaultBudget
     }
 
-    public static func text(_ transcript: SessionTranscript, budget: Int = defaultBudget) -> Output {
-        let entries = transcript.items.compactMap(Entry.init)
+    /// `thinking`: keep the agent's thinking, cut shorter than other items (`thinkingCap`), for a
+    /// review that asks why the agent did what it did.
+    public static func text(_ transcript: SessionTranscript, budget: Int = defaultBudget, thinking: Bool = false) -> Output {
+        let entries = transcript.items.compactMap { Entry($0, thinking: thinking) }
         let userChars = size(entries.filter(\.isUser).map { $0.line(cap: .max) })
         let others = entries.filter { !$0.isUser }
         func fits(_ cap: Int) -> Bool { userChars + size(others.map { $0.line(cap: cap) }) <= budget }
@@ -105,7 +109,7 @@ public enum EvidenceDigest {
 
     /// One transcript item with what doesn't depend on the cap worked out once.
     struct Entry {
-        enum Role { case user, call, output, other }
+        enum Role { case user, call, output, thinking, other }
 
         let label: String
         let role: Role
@@ -115,9 +119,11 @@ public enum EvidenceDigest {
         let stub: Stub?
         let isError: Bool
 
-        init?(_ item: TranscriptItem) {
+        init?(_ item: TranscriptItem, thinking: Bool = false) {
             switch item.kind {
-            case .thinking: return nil
+            case .thinking:
+                guard thinking else { return nil }
+                (label, role, isError) = ("#\(item.id) thinking", .thinking, false)
             case .user: (label, role, isError) = ("#\(item.id) user", .user, false)
             case .assistant: (label, role, isError) = ("#\(item.id) assistant", .other, false)
             case .toolCall(let name): (label, role, isError) = ("#\(item.id) call \(name)", .call, false)
@@ -141,6 +147,7 @@ public enum EvidenceDigest {
             let body = switch role {
             case .user: text
             case .call: cut(cap / 2)
+            case .thinking: cut(min(cap / 2, EvidenceDigest.thinkingCap))
             case .other: cut(cap)
             case .output: cutOutput(cap)
             }

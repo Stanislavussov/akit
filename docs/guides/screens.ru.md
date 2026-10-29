@@ -3664,13 +3664,15 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 Нужно, когда разбор получил статус **Finished**.
 
 1. Выберите разбор в списке запусков. В строке **Kind** у него написано **Session review**.
-2. Прочитайте цветную карточку вверху. Это итог: достигнута ли цель сессии и сколько найдено проблем по серьёзности.
-3. Прочитайте **What to Change**. Это советы, не больше трёх. Строка **Evidence** под советом раскрывает заметки, на которых он основан.
-4. Прочитайте **Problems by Type**. Это принятые заметки, сгруппированные по режимам Error Analysis.
-5. Раскройте **Details: what happened, requirements, rejected notes**, если нужны подробности.
-6. Хотите читать на другом языке — нажмите **Translate** над карточкой итога. Подробно: [перевести разбор](#lab-translate).
+2. Прочитайте цветную карточку вверху. Это итог: достигнута ли цель сессии, сколько найдено проблем, главная проблема одной фразой, её причина (**Cause**), почему так вышло и одно исправление «👉 …».
+3. Прочитайте **Your Reactions**: где вы остановили агента, отказали, поставили оценку или поправили его, и почему агент пошёл туда. Подробно: [ваши реакции и причины](error-analysis#lab-read-notes).
+4. Если есть **Loops**, посмотрите, где повтор начался.
+5. Прочитайте **What to Change**. Это советы, не больше трёх. Строка **Evidence** под советом раскрывает заметки, на которых он основан.
+6. Прочитайте **Problems by Type**. Это принятые заметки, сгруппированные по режимам Error Analysis.
+7. Раскройте **Details: what happened, requirements, rejected notes**, если нужны подробности.
+8. Хотите читать на другом языке — нажмите **Translate** над карточкой итога. Подробно: [перевести разбор](#lab-translate).
 
-![Страница законченного разбора сессии в Lab: строка Reviewed session с кнопками Show Session и Overview…, карточка итога Partly done · 1 high · 1 medium, раздел What to Change с советом и строкой Evidence (n1, n2), раздел Problems by Type с заметкой n1 step #7 и раскрывающимися строками Quote и The verifier's case against it; выше кнопки Re-check with Another Model…, Show in Finder, Remove…](images/lab-review.png)
+![Страница законченного разбора сессии в Lab: кнопки Re-check with Another Model…, Show in Finder, Remove…, строка Reviewed session с кнопками Show Session и Overview…, карточка итога: Partly done · 1 high · 1 medium, диагноз «The agent rewrote the screen you asked to keep, then reported done without looking at it.», Cause с меткой Ignored instruction, абзац «почему» и исправление «👉 Add a rule…»; ниже начало раздела Your Reactions](images/lab-review.png)
 
 Что есть у заметки:
 

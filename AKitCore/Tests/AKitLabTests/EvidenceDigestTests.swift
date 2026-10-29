@@ -36,6 +36,17 @@ struct EvidenceDigestTests {
         #expect(!digest.overBudget)
     }
 
+    @Test func thinkingIsKeptShortWhenAsked() {
+        let long = String(repeating: "t", count: 5000)
+        let transcript = SessionTranscript(items: [item(0, .user, "Fix it"), item(1, .thinking, "The user wants only Foo."),
+                                                   item(2, .thinking, long), item(3, .assistant, "Done")])
+        let digest = EvidenceDigest.text(transcript, thinking: true)
+        #expect(digest.text.contains("[#1 thinking] The user wants only Foo.\n"))
+        // Thinking is cut to its own cap even when everything else fits uncut.
+        #expect(digest.text.contains("[#2 thinking] \(String(repeating: "t", count: EvidenceDigest.thinkingCap)) […\(5000 - EvidenceDigest.thinkingCap) chars]"))
+        #expect(!EvidenceDigest.text(transcript).text.contains("thinking"))
+    }
+
     @Test func longUserTurnIsKeptVerbatim() {
         let prompt = (0..<1000).map { "Requirement \($0): keep this exact wording." }.joined(separator: "\n")
         #expect(prompt.count > 40_000)
