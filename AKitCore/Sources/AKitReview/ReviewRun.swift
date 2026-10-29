@@ -124,14 +124,25 @@ public enum ReviewRuns {
         }
     }
 
+    /// Only the title of `gitlab/snapshot.json`.
+    private struct SnapshotTitle: Decodable {
+        struct MergeRequest: Decodable { var title: String }
+        var mergeRequest: MergeRequest
+    }
+
     public static func setStatus(_ stage: ReviewRunStatus.Stage, message: String? = nil, folder: URL) throws {
         try ReviewJSON.write(ReviewRunStatus(stage: stage, message: message), to: folder.appending(path: "status.json"))
     }
 
-    /// Every run on this Mac, newest first.
-    public static func list(home: URL) -> [(id: String, spec: ReviewRunSpec, status: ReviewRunStatus?)] {
+    /// Every run on this Mac, newest first. `titles`: a run made before titles were saved gets
+    /// its title from its snapshot, a large file; only lists people read ask for it.
+    public static func list(home: URL, titles: Bool = false) -> [(id: String, spec: ReviewRunSpec, status: ReviewRunStatus?)] {
         FileWalk.children(of: ReviewPaths(home: home).runs).compactMap { folder in
-            guard let spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")) else { return nil }
+            guard var spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")) else { return nil }
+            if titles, spec.title == nil,
+               let title = ReviewJSON.read(SnapshotTitle.self, from: folder.appending(path: "gitlab/snapshot.json"))?.mergeRequest.title {
+                spec.title = ReviewRunSpec.readableTitle(Scrubber.scrub(title).text)
+            }
             return (folder.lastPathComponent, spec, ReviewJSON.read(ReviewRunStatus.self, from: folder.appending(path: "status.json")))
         }.sorted { $0.spec.created > $1.spec.created }
     }

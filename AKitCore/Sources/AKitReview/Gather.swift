@@ -124,6 +124,7 @@ public enum ReviewGather {
         }
         let head = refs.headSHA
         spec.headSHA = head
+        spec.title = ReviewRunSpec.readableTitle(Scrubber.scrub(mr.title, own: scrub).text)
         // The developer's own change (a local review, or a merge request they wrote) gets the
         // self-review limits (R33); a colleague's keeps the posting limits.
         spec.applyMode(own: local != nil || (!snapshot.user.isEmpty && snapshot.mergeRequest.author == snapshot.user))

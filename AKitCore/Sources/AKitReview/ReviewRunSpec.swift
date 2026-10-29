@@ -137,6 +137,9 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var id: String
     public var created: Date
     public var mergeRequest: MergeRequestRef
+    /// Filled by Gather: the merge request's title, or for a local review the latest commit's
+    /// subject; nil in runs made before 2026-10-29 and before Gather ends.
+    public var title: String?
     /// The project profile's slug; nil when none matched.
     public var project: String?
     public var scenario: Sourced<String>

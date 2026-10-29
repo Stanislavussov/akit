@@ -242,6 +242,17 @@ extension ReviewRunSpec {
 
     /// `team/app!7 + team/api!12`.
     public var label: String { mergeRequests.map(\.label).joined(separator: " + ") }
+
+    /// The name people read in the runs list: the title Gather saved, else the address.
+    public var name: String { title ?? label }
+
+    /// A title on one line, at most 120 characters, or nil when it says nothing.
+    static func readableTitle(_ text: String?, limit: Int = 120) -> String? {
+        guard let text else { return nil }
+        let line = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.joined(separator: " ")
+        if line.isEmpty { return nil }
+        return line.count > limit ? String(line.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" : line
+    }
 }
 
 extension ReviewGather {

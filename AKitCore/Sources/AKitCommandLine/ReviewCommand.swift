@@ -237,10 +237,11 @@ extension AKitCLI {
         switch command {
         case "runs":
             try args.finish()
-            let runs = ReviewRuns.list(home: env.homeDirectory)
+            let runs = ReviewRuns.list(home: env.homeDirectory, titles: true)
             if runs.isEmpty { out("No review runs yet.") }
             for run in runs {
-                out("\(run.id)  \(run.spec.label)  \(run.spec.scenario.value)  \(run.status?.stage.rawValue ?? "?")")
+                out("\(run.id)  \(run.spec.label)  \(run.spec.scenario.value)  \(run.status?.stage.rawValue ?? "?")"
+                    + (run.spec.title.map { "  \($0)" } ?? ""))
             }
             return 0
         case "roles", "scenarios":

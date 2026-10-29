@@ -37,7 +37,7 @@
 - «Хочу ревью своей ветки до MR» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree (см. [ревью локальной копии](#local)).
 - «Агенту нужен макет из Figma или страница вики» → поля **Context for this review**, **Links** и блок **Extra servers** в **New Review…** (см. [контекст ревью](#context)).
 
-![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier, кнопки Log… и Review Again…; свёрнутый блок Overview с меткой Russian и кнопкой Translate; переключатель Requests | Map; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) строкой Verifier: confirmed и кнопками Edit, Ask…, Add Note…, Reject и Undo Approve; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, меню Ask…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
+![Экран Review, страница Runs: слева список с ревью Stop logging the Authorization header (AB#4512), меткой Ready, адресом shop/orders-service!42 и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier, кнопки Log… и Review Again…; свёрнутый блок Overview с меткой Russian и кнопкой Translate; переключатель Requests | Map; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) строкой Verifier: confirmed и кнопками Edit, Ask…, Add Note…, Reject и Undo Approve; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, меню Ask…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
 ### Зачем это нужно
 <!-- section: overview-why -->
@@ -552,7 +552,7 @@ default_scenario: bugfix
 - `--anyway` — продолжать, если MR в draft, pipeline упал или этот коммит уже проверен.
 - `--note TEXT`, `--note-file PATH`, `--link URL`, `--extra-server NAME` — контекст ревью (см. [из командной строки](#context-cli)).
 - `akit review passes RUN [--anyway]` — проходы снова на собранном ревью.
-- `akit review runs` — все ревью на этом Mac.
+- `akit review runs` — все ревью на этом Mac: id, адрес MR, сценарий, этап и заголовок MR.
 
 Пример: `akit review https://gitlab.example.com/shop/orders-service/-/merge_requests/42 --wi 4512 --scenario bugfix --role +security`.
 
@@ -966,7 +966,7 @@ To review: commits and uncommitted changes.
 - **Review Settings…** (шестерёнка) — MCP-серверы Pi, как их видит ревью, и профили проектов.
 - **Guide** — это руководство.
 
-Слева список ревью. В строке: MR (например «shop/orders-service!42»), метка этапа, сценарий и роли, дата.
+Слева список ревью. В строке: заголовок MR (например «Stop logging the Authorization header (AB#4512)»), метка этапа, адрес MR («shop/orders-service!42»), сценарий и роли, дата. У локального ревью заголовок — тема последнего коммита. Пока AKit не прочитал MR, вместо заголовка стоит адрес.
 
 Справа одно ревью сверху вниз:
 
