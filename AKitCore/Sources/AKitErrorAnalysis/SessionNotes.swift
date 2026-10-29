@@ -45,6 +45,136 @@ public enum FaultLayer: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// Why something went wrong, from a fixed list, so a review names a cause instead of retelling
+/// the session (`docs/design/error-analysis.md`, "Diagnosis"). The model picks the deepest one
+/// the transcript shows: `weakModel` only when the task, the context and the setup were fine.
+public enum RootCause: String, Codable, Sendable, CaseIterable {
+    /// The request lacked what the agent needed, or changed later.
+    case unclearTask = "unclear-task"
+    /// The request or a rule was clear, and the agent did something else.
+    case ignoredInstruction = "ignored-instruction"
+    /// The agent didn't read or look up what it needed (code, docs, the current state).
+    case missingContext = "missing-context"
+    /// No skill, rule or doc in the setup gave the knowledge this task needed.
+    case missingSkill = "missing-skill"
+    /// A skill, rule, CLAUDE.md or AGENTS.md led the agent the wrong way.
+    case wrongSkill = "wrong-skill"
+    /// Invented APIs, files or facts, or claimed work or checks that didn't happen.
+    case hallucination
+    /// No test, build or check before saying "done", or a failed check ignored.
+    case noVerification = "no-verification"
+    /// Clear task, right context, fitting setup, and still wrong reasoning or no solution.
+    case weakModel = "weak-model"
+    /// A tool, the machine or the network failed.
+    case toolEnvironment = "tool-environment"
+    /// Did more than asked, or something else than asked.
+    case scopeDrift = "scope-drift"
+    /// Nothing went wrong here.
+    case none
+
+    public var title: String {
+        switch self {
+        case .unclearTask: "Unclear task"
+        case .ignoredInstruction: "Ignored instruction"
+        case .missingContext: "Missing context"
+        case .missingSkill: "Missing skill or rule"
+        case .wrongSkill: "Misleading skill or rule"
+        case .hallucination: "Hallucination"
+        case .noVerification: "No verification"
+        case .weakModel: "Weak model"
+        case .toolEnvironment: "Tool or environment"
+        case .scopeDrift: "Scope drift"
+        case .none: "No problem"
+        }
+    }
+
+    /// A model's value, read leniently: `unclear_task` and `Unclear-Task` count; anything else is nil.
+    static func parse(_ text: String?) -> RootCause? {
+        guard let text else { return nil }
+        return RootCause(rawValue: text.trimmingCharacters(in: .whitespaces).lowercased().replacingOccurrences(of: "_", with: "-"))
+    }
+
+    /// What usually fixes this cause: the kind of change, for the reader who skims.
+    public var fixKind: String {
+        switch self {
+        case .unclearTask: "Say more in the request: goal, limits, how to check it."
+        case .ignoredInstruction: "Make the rule shorter and louder, or enforce it with a hook."
+        case .missingContext: "Point the agent at the code or docs to read first."
+        case .missingSkill: "Add a skill or a rule with the missing knowledge."
+        case .wrongSkill: "Fix or remove the skill or rule that misled the agent."
+        case .hallucination: "Ask for evidence: run it, show the output, cite the file."
+        case .noVerification: "Require a test or check before \"done\" (rule or hook)."
+        case .weakModel: "Use a stronger model or split the task into smaller steps."
+        case .toolEnvironment: "Fix the tool or the machine; it isn't the agent's fault."
+        case .scopeDrift: "State the scope and what not to touch."
+        case .none: ""
+        }
+    }
+}
+
+/// The review in one look: the main problem, its cause, why it happened and the one fix.
+public struct Diagnosis: Codable, Hashable, Sendable {
+    /// One plain sentence: what went wrong (or that nothing did).
+    public var headline: String
+    public var cause: RootCause
+    /// The chain: what the user wanted → what the agent thought → what it did.
+    public var why: String
+    /// The one change worth making.
+    public var fix: String
+    /// The steps that prove it.
+    public var steps: [Int]
+
+    public init(headline: String, cause: RootCause, why: String, fix: String, steps: [Int] = []) {
+        self.headline = headline
+        self.cause = cause
+        self.why = why
+        self.fix = fix
+        self.steps = steps
+    }
+}
+
+/// The review's reading of one user reaction: what the user wanted there, what the agent did and
+/// thought before it, and why it went that way.
+public struct Checkpoint: Codable, Hashable, Sendable {
+    /// The reaction's id (`r1`, …).
+    public var id: String
+    public var wanted: String
+    public var agentDid: String
+    /// From the agent's thinking and text before the reaction; "not visible" when the log
+    /// doesn't show it.
+    public var agentThought: String
+    public var cause: RootCause
+    public var fix: String?
+
+    public init(id: String, wanted: String, agentDid: String, agentThought: String, cause: RootCause, fix: String? = nil) {
+        self.id = id
+        self.wanted = wanted
+        self.agentDid = agentDid
+        self.agentThought = agentThought
+        self.cause = cause
+        self.fix = fix
+    }
+}
+
+/// A run of attempts that kept failing the same way, and where it really started.
+public struct Loop: Codable, Hashable, Sendable {
+    public var fromStep: Int
+    public var toStep: Int
+    /// What repeated, and how many times.
+    public var what: String
+    /// The step whose decision caused the loop (often before `fromStep`).
+    public var rootStep: Int?
+    public var cause: RootCause
+
+    public init(fromStep: Int, toStep: Int, what: String, rootStep: Int? = nil, cause: RootCause) {
+        self.fromStep = fromStep
+        self.toStep = toStep
+        self.what = what
+        self.rootStep = rootStep
+        self.cause = cause
+    }
+}
+
 /// The verifier's verdict on one note. Rejected notes are kept with the reason and stay out
 /// of the pool.
 public struct Verdict: Codable, Hashable, Sendable {
@@ -91,11 +221,14 @@ public struct Note: Codable, Hashable, Sendable, Identifiable {
     /// Where in the work it happened. Code derives it from the step; the model may only say
     /// understand or plan, which code can't see.
     public var phase: Phase?
+    /// Why it happened (notes prompt 2 on); nil in older reviews and the user's notes.
+    public var cause: RootCause?
     public var verdict: Verdict?
 
     public init(id: String, source: Source, description: String, step: Int, quote: String, severity: Severity? = nil,
                 faultLayer: FaultLayer? = nil, symptomOf: String? = nil, costTokens: Int? = nil, costSteps: Int? = nil,
-                phase: Phase? = nil, verdict: Verdict? = nil) {
+                phase: Phase? = nil, cause: RootCause? = nil, verdict: Verdict? = nil) {
+        self.cause = cause
         self.id = id
         self.source = source
         self.description = description
@@ -164,6 +297,16 @@ public struct SessionNotes: Codable, Hashable, Sendable {
     /// when the verifier left it blank.
     public var conclusion: String?
     public var advice: [Advice]
+    /// The user's reactions found by code: the checkpoints the review explains (notes prompt 2
+    /// on; nil in older reviews).
+    public var reactions: [UserReaction]?
+    /// The main problem and its cause, written with the notes.
+    public var diagnosis: Diagnosis?
+    /// The verifier's doubt about the diagnosis: nil when it holds or wasn't checked.
+    public var diagnosisDoubt: String?
+    /// One reading per reaction, by its id.
+    public var checkpoints: [Checkpoint]?
+    public var loops: [Loop]?
     /// Who wrote the notes and who verified them, and the done keys of both steps.
     public var notesConfig: StepConfig
     public var verifierConfig: StepConfig?
@@ -191,6 +334,21 @@ public struct SessionNotes: Codable, Hashable, Sendable {
         self.verifierConfig = verifierConfig
         self.doneKeys = doneKeys
         self.runID = runID
+    }
+
+    /// The diagnosis as plain text for the run's summary and log: "Cause: … — headline", why, fix.
+    public var diagnosisText: String? {
+        guard let diagnosis else { return nil }
+        var lines = ["\(diagnosis.cause.title): \(diagnosis.headline)"]
+        if !diagnosis.why.isEmpty { lines.append("Why: \(diagnosis.why)") }
+        if !diagnosis.fix.isEmpty { lines.append("Fix: \(diagnosis.fix)") }
+        if let diagnosisDoubt { lines.append("The verifier doubts it: \(diagnosisDoubt)") }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The checkpoint of a reaction, if the review wrote one.
+    public func checkpoint(of reaction: UserReaction) -> Checkpoint? {
+        checkpoints?.first { $0.id == reaction.id }
     }
 
     /// Where the session's data came from, for the sending policy of calls over its notes.

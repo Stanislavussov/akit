@@ -68,14 +68,24 @@ public enum NotesPipeline {
             throw Failure(message: "AKit can't name the session in \(target.file.path).")
         }
         let origin = SendOrigin.of(harness: target.harness, sessionFile: target.file)
-        var (items, scrubbedCounts) = try scrubbedItems(target, gate: notesGate)
+        var (items, scrubbedCounts, transcript) = try scrubbedTranscript(target, gate: notesGate)
         let numbers = numbers(of: target, gate: notesGate)
         if let numbers { scrubbedCounts.merge(numbers.counts, uniquingKeysWith: +) }
+        // Rating comments are scrubbed before they are cut, as transcript items are.
+        let ratings = UserReactions.ratings(of: transcript, file: target.file, env: env).map { rating in
+            guard let comment = rating.comment else { return rating }
+            let result = notesGate.scrub(comment)
+            scrubbedCounts.merge(result.counts, uniquingKeysWith: +)
+            return RunRating(rating: rating.rating, comment: result.text, anchor: rating.anchor, timestamp: rating.timestamp,
+                             afterItem: rating.afterItem)
+        }
+        let reactions = UserReactions.of(items, ratings: ratings)
         // The key holds what the notes call sends that comes from the session: the scrubbed
-        // transcript and AKit's numbers, both computed from the transcript alone, so a Lab
-        // review and a batch share notes.
+        // transcript, AKit's numbers and the user's reactions (a new rating reruns the review),
+        // computed from the transcript and its ratings alone, so a Lab review and a batch share notes.
         var input = Data(items.map { "[#\($0.id)] \($0.text)" }.joined(separator: "\n").utf8)
         if let numbers { input.append(Data("\n## AKit's numbers\n\(numbers.text)".utf8)) }
+        if !reactions.isEmpty { input.append(Data("\n## Reactions\n\(UserReactions.text(reactions))".utf8)) }
         let notesKey = DoneKey.make(input: input, configs: [config.notesStep])
         let verifierKey = DoneKey.make(input: input, configs: [config.notesStep, config.verifierStep])
         let store = NotesStore(env: env)
@@ -88,11 +98,13 @@ public enum NotesPipeline {
         } else {
             out("Writing notes with \(config.notes.label)…")
             var request = ModelCall.Request(agent: config.notes, purpose: "notes", system: NotesPrompts.notesSystem + "\n" + config.language.instruction,
-                                            input: try notesInput(numbers: numbers?.text, items: items, model: config.notes.model),
+                                            input: try notesInput(numbers: numbers?.text, items: items, reactions: reactions, model: config.notes.model),
                                             schema: NotesPrompts.notesSchema, origin: origin, session: key.description, runID: runID)
             request.scrubbed = scrubbedCounts
             let answer = try await ModelCall.run(request, gate: notesGate, folder: workFolder, env: env)
             draft = try parseNotes(answer.text, items: items)
+            draft.reactions = reactions
+            draft.checkpoints = draft.checkpoints?.filter { checkpoint in reactions.contains { $0.id == checkpoint.id } }
             draft.sessionKey = key.description
             draft.transcript = target.file.path
             draft.title = target.title
@@ -117,6 +129,13 @@ public enum NotesPipeline {
     /// The transcript as the model sees it: the session readers' masking, then the scrub with
     /// the user's own patterns. Quotes are matched against exactly this text.
     static func scrubbedItems(_ target: Target, gate: SendGate) throws -> (items: [TranscriptItem], counts: [String: Int]) {
+        let (items, counts, _) = try scrubbedTranscript(target, gate: gate)
+        return (items, counts)
+    }
+
+    /// The scrubbed items, and the transcript with its ratings for `UserReactions.ratings`.
+    static func scrubbedTranscript(_ target: Target, gate: SendGate)
+        throws -> (items: [TranscriptItem], counts: [String: Int], transcript: SessionTranscript) {
         let transcript = try SessionReader.transcript(of: target.summary)
         var counts: [String: Int] = [:]
         let items = transcript.items.map { item -> TranscriptItem in
@@ -124,7 +143,9 @@ public enum NotesPipeline {
             counts.merge(result.counts, uniquingKeysWith: +)
             return TranscriptItem(id: item.id, kind: item.kind, text: result.text, timestamp: item.timestamp, outcome: item.outcome)
         }
-        return (items, counts)
+        var scrubbed = transcript
+        scrubbed.items = items
+        return (items, counts, scrubbed)
     }
 
     /// AKit's numbers for the notes call: the metrics of a Claude Code transcript (calls,
@@ -150,17 +171,23 @@ public enum NotesPipeline {
     /// callers know it or not, and the transcript's own user turns say what the session was.
     /// Refuses a session whose user turns and failed tool results alone pass the model's
     /// budget: they are never cut, and a call over the budget may not fit the window.
-    static func notesInput(numbers: String?, items: [TranscriptItem], model: String) throws -> String {
+    static func notesInput(numbers: String?, items: [TranscriptItem], reactions: [UserReaction] = [], model: String) throws -> String {
         let budget = EvidenceDigest.budget(model: model)
-        let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: budget)
+        // Thinking shows why the agent did what it did: the checkpoints read it.
+        let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: budget, thinking: true)
         guard !digest.overBudget else { throw Failure(message: tooLong(call: "call", budget: budget, model: model, caller: "model")) }
         let facts = numbers.map { "## AKit's numbers (computed from the transcript; trust them)\n\n\($0)\n\n" } ?? ""
+        let list = reactions.isEmpty ? "(none: the user gave the task and didn't react later)" : UserReactions.text(reactions)
         return """
             # Session
 
             \(facts)## Transcript digest
 
             \(digest.text)
+
+            ## The user's reactions (checkpoints: answer every one)
+
+            \(list)
 
             """
     }
@@ -179,6 +206,33 @@ public enum NotesPipeline {
             let costSteps: Int?
             let costTokens: Int?
             let phase: Phase?
+            let cause: String?
+        }
+
+        // Optional and lenient: one odd field of a weaker model must not fail the review.
+        struct RawCheckpoint: Decodable {
+            let id: String
+            let wanted: String?
+            let agentDid: String?
+            let agentThought: String?
+            let cause: String?
+            let fix: String?
+        }
+
+        struct RawLoop: Decodable {
+            let fromStep: Int
+            let toStep: Int?
+            let what: String?
+            let rootStep: Int?
+            let cause: String?
+        }
+
+        struct RawDiagnosis: Decodable {
+            let headline: String
+            let cause: String?
+            let why: String?
+            let fix: String?
+            let steps: [Int]?
         }
 
         struct RawAdvice: Decodable {
@@ -195,6 +249,9 @@ public enum NotesPipeline {
         let observedStep: Int?
         let paragraph: String
         let advice: [RawAdvice]
+        let checkpoints: [RawCheckpoint]?
+        let loops: [RawLoop]?
+        let diagnosis: RawDiagnosis?
     }
 
     /// The model's answer as notes. Phases come from code; the model may only say understand
@@ -212,17 +269,36 @@ public enum NotesPipeline {
             return Note(id: id, source: .model, description: SecretFilter.masked(raw.description), step: raw.step,
                         quote: SecretFilter.masked(raw.quote), severity: raw.severity, faultLayer: raw.faultLayer,
                         symptomOf: raw.symptomOf.flatMap { $0.isEmpty ? nil : $0 }, costTokens: raw.costTokens,
-                        costSteps: raw.costSteps, phase: modelPhase ?? phases[raw.step])
+                        costSteps: raw.costSteps, phase: modelPhase ?? phases[raw.step], cause: RootCause.parse(raw.cause))
         }
         let advice = answer.advice.prefix(3).map {
             Advice(title: SecretFilter.masked($0.title), evidence: SecretFilter.masked($0.evidence ?? ""),
                    detail: SecretFilter.masked($0.detail), noteIDs: $0.noteIds ?? [])
         }
-        return SessionNotes(sessionKey: "", transcript: "", title: nil, project: nil,
-                            requirements: answer.requirements.map(SecretFilter.masked), outcome: answer.outcome, notes: notes,
-                            deviation: Deviation(decisiveStep: answer.decisiveStep, observedStep: answer.observedStep),
-                            paragraph: SecretFilter.masked(answer.paragraph.trimmingCharacters(in: .whitespacesAndNewlines)),
-                            advice: Array(advice), notesConfig: StepConfig(step: "notes"), verifierConfig: nil, doneKeys: [:], runID: nil)
+        func clean(_ text: String?) -> String { SecretFilter.masked((text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) }
+        var result = SessionNotes(sessionKey: "", transcript: "", title: nil, project: nil,
+                                  requirements: answer.requirements.map(SecretFilter.masked), outcome: answer.outcome, notes: notes,
+                                  deviation: Deviation(decisiveStep: answer.decisiveStep, observedStep: answer.observedStep),
+                                  paragraph: clean(answer.paragraph), advice: Array(advice), notesConfig: StepConfig(step: "notes"),
+                                  verifierConfig: nil, doneKeys: [:], runID: nil)
+        result.diagnosis = answer.diagnosis.flatMap { raw in
+            clean(raw.headline).isEmpty ? nil
+                : Diagnosis(headline: clean(raw.headline), cause: RootCause.parse(raw.cause) ?? .none, why: clean(raw.why), fix: clean(raw.fix),
+                            steps: raw.steps ?? [])
+        }
+        result.checkpoints = answer.checkpoints.map { list in
+            var seenIDs = Set<String>()
+            return list.filter { seenIDs.insert($0.id).inserted }.map {
+                let fix = clean($0.fix)
+                return Checkpoint(id: $0.id, wanted: clean($0.wanted), agentDid: clean($0.agentDid),
+                                  agentThought: clean($0.agentThought), cause: RootCause.parse($0.cause) ?? .none, fix: fix.isEmpty ? nil : fix)
+            }
+        }
+        result.loops = answer.loops.map { list in
+            list.map { Loop(fromStep: $0.fromStep, toStep: $0.toStep ?? $0.fromStep, what: clean($0.what), rootStep: $0.rootStep,
+                            cause: RootCause.parse($0.cause) ?? .none) }
+        }
+        return result
     }
 
     // MARK: Verifier
@@ -236,6 +312,7 @@ public enum NotesPipeline {
         // Reused notes carry the verdicts of an earlier verifier: this one decides afresh.
         for index in result.notes.indices where result.notes[index].source == .model { result.notes[index].verdict = nil }
         result.conclusion = nil
+        result.diagnosisDoubt = nil
         let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var toAsk: [Note] = []
         for index in result.notes.indices where result.notes[index].source == .model {
@@ -252,7 +329,8 @@ public enum NotesPipeline {
                                                       : "The quote isn't in step #\(note.step).", by: .code)
             }
         }
-        if !toAsk.isEmpty {
+        // A diagnosis that blames something is checked even when no note reached the verifier.
+        if !toAsk.isEmpty || (result.diagnosis.map { $0.cause != .none } ?? false) {
             out("Verifying \(toAsk.count) notes with \(config.verifier.label)…")
             let answer = try await ModelCall.run(
                 ModelCall.Request(agent: config.verifier, purpose: "verifier",
@@ -263,6 +341,10 @@ public enum NotesPipeline {
             let parsed = try parseVerifier(answer.text)
             let verdicts = parsed.verdicts
             result.conclusion = parsed.conclusion.map(SecretFilter.masked)
+            if result.diagnosis != nil, parsed.diagnosisHolds == false {
+                let reason = parsed.diagnosisReason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                result.diagnosisDoubt = SecretFilter.masked(reason.isEmpty ? "The verifier doesn't agree with this diagnosis." : reason)
+            }
             for index in result.notes.indices where result.notes[index].verdict == nil && result.notes[index].source == .model {
                 let id = result.notes[index].id
                 guard let verdict = verdicts[id] else {
@@ -331,6 +413,11 @@ public enum NotesPipeline {
 
             Outcome: \(review.outcome.rawValue)
 
+            Diagnosis: \(review.diagnosis.map { "\($0.headline) Cause: \($0.cause.rawValue). Why: \($0.why)" } ?? "(none)")
+
+            The user's reactions (ratings are not in the user turns above):
+            \(review.reactions.map { $0.isEmpty ? "(none)" : UserReactions.text($0) } ?? "(none)")
+
             Paragraph: \(review.paragraph)
 
             Advice:
@@ -375,17 +462,20 @@ public enum NotesPipeline {
     }
 
     /// The verdicts by note id and the conclusion (nil when missing or blank).
-    static func parseVerifier(_ text: String) throws -> (verdicts: [String: RawVerdict], conclusion: String?) {
+    static func parseVerifier(_ text: String) throws
+        -> (verdicts: [String: RawVerdict], conclusion: String?, diagnosisHolds: Bool?, diagnosisReason: String?) {
         struct Answer: Decodable {
             let verdicts: [RawVerdict]
             let conclusion: String?
+            let diagnosisHolds: Bool?
+            let diagnosisReason: String?
         }
         guard let json = ModelCall.jsonObject(in: text), let answer = try? JSONDecoder().decode(Answer.self, from: json) else {
             throw Failure(message: "The verifier's answer isn't the JSON asked for.")
         }
         let conclusion = answer.conclusion?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (Dictionary(answer.verdicts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
-                conclusion?.isEmpty == false ? conclusion : nil)
+                conclusion?.isEmpty == false ? conclusion : nil, answer.diagnosisHolds, answer.diagnosisReason)
     }
 }
 

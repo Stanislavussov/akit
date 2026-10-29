@@ -71,11 +71,14 @@ public enum AnalysisRuns {
         }
         let routedCount = Matching.currentRoutes(routed).values.filter { $0.modeID != nil }.count
         if routedCount > 0 { out("Matched \(routedCount) notes to modes.") }
-        try ReviewRun.write(summary: notes.paragraph,
+        try ReviewRun.write(summary: notes.diagnosisText.map { $0 + "\n\n" + notes.paragraph } ?? notes.paragraph,
                             findings: notes.advice.map { Review.Finding(title: $0.title, evidence: $0.evidence, detail: $0.detail) },
                             to: run.folder)
         out("")
         out("Outcome: \(notes.outcome.title). \(notes.accepted.count) notes accepted, \(notes.rejected.count) rejected.")
+        if let diagnosis = notes.diagnosisText { out(diagnosis) }
+        let negative = (notes.reactions ?? []).filter(\.kind.isNegative).count
+        if negative > 0 { out("Your reactions: \(negative) negative, each explained under Your Reactions.") }
         out(notes.paragraph)
         for (index, advice) in notes.advice.enumerated() { out("\(index + 1). \(advice.title)") }
         phase(.metrics)

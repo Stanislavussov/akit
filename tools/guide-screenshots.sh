@@ -151,6 +151,7 @@ shot lab-new             $MAIN --section lab --add
 shot lab-new-batch       $MAIN --section lab --tab analysis --add
 shot lab-review          $MAIN --section lab --select $REVIEW
 shot lab-notes           $MAIN --section lab --select $REVIEW --tab notes
+shot lab-reactions       $MAIN --section lab --select $REVIEW --tab reactions
 shot lab-recheck         $MAIN --section lab --select $REVIEW --tab recheck
 shot lab-batch           $MAIN --section lab --select $BATCH_A
 shot lab-control         $MAIN --section lab --select $CELL

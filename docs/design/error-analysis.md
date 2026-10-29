@@ -7,6 +7,10 @@ master (tag `v2026.10.02`); what differs from the design and what is not built i
 under [Implementation plan](#implementation-plan). Extends Lab (`lab.md`): the one-session
 review becomes the first step of this pipeline.
 
+2026-10-29: the one-session review got stricter (notes prompt 2, verifier prompt 4): the user's
+reactions are its checkpoints, and it answers with a diagnosis and a root cause. See
+[Checkpoints and diagnosis](#checkpoints-and-diagnosis).
+
 ## Goal
 
 Find out what goes wrong in agent sessions *again and again*, how often, at which step of
@@ -178,6 +182,47 @@ typical false positives are:
 - "normative expectations": the model flags deviations from its own idea of good work
   although the user didn't object;
 - conclusions drawn from context that isn't in the log.
+
+## Checkpoints and diagnosis
+
+Added 2026-10-29 at the user's request: a review was "smeared", it retold the session and
+listed problems, but didn't say *why* it went wrong. The user's own behaviour is the best
+evidence of that, so the review now starts from it.
+
+- **Reactions** (`UserReactions`, code, no model): every later user turn (interrupt,
+  pushback by the `SignalScanner.isPushback` rules, other turn), every refused tool call, and
+  every rating of a run with its comment: the Pi extension's ratings in the log, and the
+  spool and index ratings of other harnesses (`Ratings`), placed after the run's last item.
+  The first user turn is the task, not a reaction. Each gets an id `r1…`; the list goes into
+  the notes input and into the notes done key, so a new rating reviews the session again.
+- **Thinking** is in the notes digest (`EvidenceDigest.text(thinking: true)`), cut to 1200
+  characters an item: the checkpoints say what the agent thought. Judges and the verifier's
+  neighbours still leave it out.
+- **Root causes**, one fixed list (`RootCause`): unclear-task, ignored-instruction,
+  missing-context, missing-skill, wrong-skill, hallucination, no-verification, weak-model,
+  tool-environment, scope-drift, none. The prompt asks for the deepest one; weak-model only
+  when the task, the context and the setup were fine. Each note gets a cause too; the fault
+  layer stays for batch counts.
+- **Answer** (new fields, in this order after the outcome): `checkpoints` (one per reaction:
+  wanted, agentDid, agentThought, cause, fix), `loops` (runs of the same failure: from/to step,
+  what, rootStep, cause), the notes, then `diagnosis` (headline ≤ 20 words, cause, why: the
+  chain requirement → reasoning → action with steps, the one fix, steps). A checkpoint for an
+  id code didn't find is dropped.
+- **Verifier** also checks the diagnosis (`diagnosisHolds`, `diagnosisReason`) against the
+  accepted notes and the reactions list (ratings aren't user turns, so the list goes in too).
+  It runs for a diagnosis with a cause even when no note passed the quote check. A doubt is
+  shown under the diagnosis with the verifier's conclusion; it doesn't remove the diagnosis.
+  Without a doubt the conclusion is shown only for reviews without a diagnosis.
+- **Lenient parsing**: causes are read case- and `_`-insensitively, an unknown one becomes
+  nil (none); checkpoint and loop texts are optional, so a weaker model's odd field doesn't
+  fail the review. Follow-ups and good ratings with nothing wrong need only id and cause.
+- Thinking now leaves the machine in the notes call (scrubbed like every item).
+- **Screen**: the card leads with the diagnosis, cause tag, why and fix; then **Your
+  Reactions** (negative ones and any with a cause; plain turns and good ratings folded), then
+  **Loops**, then the old sections.
+- The reactions are facts from the log, so a review explains them rather than finding them.
+  Pushback by keywords misses quiet corrections; the prompt asks the model to treat a later
+  turn that repeats, corrects or narrows the request as pushback.
 
 ## Bootstrap labeling
 
