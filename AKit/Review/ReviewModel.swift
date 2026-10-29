@@ -57,7 +57,7 @@ final class ReviewModel {
     var home: URL { env.homeDirectory }
 
     func reload(select id: String? = nil) {
-        runs = ReviewRuns.list(home: home).map { Summary(id: $0.id, spec: $0.spec, status: $0.status) }
+        runs = ReviewRuns.list(home: home, titles: true).map { Summary(id: $0.id, spec: $0.spec, status: $0.status) }
         let wanted = id ?? run?.id
         if let wanted, runs.contains(where: { $0.id == wanted }) { open(wanted) } else if run == nil, let first = runs.first { open(first.id) }
     }
@@ -351,7 +351,7 @@ final class ReviewModel {
             await attemptAsync {
                 let script = try await ReviewDiscuss.script(run.folder, env: self.env)
                 let place = try await Launcher.openInteractive(script: script, folder: run.worktree ?? run.folder,
-                                                               title: "Review: \(run.spec.mergeRequest.label)", env: self.env)
+                                                               title: "Review: \(run.spec.name)", env: self.env)
                 self.problem = nil
                 self.discussOpenedIn = place
             }

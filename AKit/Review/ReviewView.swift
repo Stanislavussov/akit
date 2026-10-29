@@ -159,10 +159,13 @@ struct ReviewView: View {
     private var list: some View {
         List(model.runs, selection: Binding(get: { model.run?.id }, set: { model.open($0) })) { run in
             VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text(run.spec.label).fontWeight(.medium).lineLimit(1)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(run.spec.name).fontWeight(.medium).lineLimit(2)
                     Spacer()
                     ReviewStageBadge(status: run.status)
+                }
+                if run.spec.title != nil {
+                    Text(run.spec.label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Text("\(run.spec.scenario.value.capitalized) · \(run.spec.roles.map(\.id).joined(separator: ", "))")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -394,7 +397,7 @@ struct ReviewRunDetail: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(run.snapshot?.mergeRequest.title ?? run.spec.mergeRequest.label).font(.title2.weight(.semibold)).textSelection(.enabled)
+                Text(run.snapshot?.mergeRequest.title ?? run.spec.name).font(.title2.weight(.semibold)).textSelection(.enabled)
                 Spacer()
                 ReviewStageBadge(status: run.status)
             }

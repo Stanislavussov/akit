@@ -144,6 +144,21 @@ struct ConfigTests {
         #expect(ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json"))?.count == 4)
     }
 
+    /// A run made before titles were saved gets its title from the snapshot; without one, the address.
+    @Test func olderRunsGetTheirTitleFromTheSnapshot() throws {
+        let home = TempHome()
+        var spec = try PlanTests.spec()
+        let folder = ReviewPaths(home: home.url).run(spec.id)
+        try FileManager.default.createDirectory(at: folder.appending(path: "gitlab"), withIntermediateDirectories: true)
+        spec.title = nil
+        try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
+        #expect(ReviewRuns.list(home: home.url).first?.spec.name == spec.label)
+        try Data(#"{"mergeRequest": {"title": "  Fix the login\n  timeout  "}}"#.utf8).write(to: folder.appending(path: "gitlab/snapshot.json"))
+        #expect(ReviewRuns.list(home: home.url).first?.spec.title == nil, "only lists people read open the snapshot")
+        #expect(ReviewRuns.list(home: home.url, titles: true).first?.spec.name == "Fix the login timeout")
+        #expect(ReviewRunSpec.readableTitle(String(repeating: "a", count: 300))?.count == 120)
+    }
+
     @Test func workItemReferences() {
         #expect(AzureDevOpsJSON.references(in: ["AB#41 fix", "see WI-7 and AB#41", "feature/AB#9"], pattern: "(?:AB#|WI-)(\\d+)") == [41, 7, 9])
         let pattern = ReviewProfile.Tracker.defaultRegex
@@ -221,6 +236,8 @@ extension ReviewProcessTests {
             #expect(FileManager.default.fileExists(atPath: folder.appending(path: "worktree/src/Auth.swift").path))
             #expect(FileManager.default.fileExists(atPath: folder.appending(path: "roles/review-bug-hunter/SKILL.md").path))
             #expect(ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json"))?.headSHA == head)
+            #expect(ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json"))?.title == "AB#41 Log less in auth")
+            #expect(ReviewRuns.list(home: home.url).first?.spec.name == "AB#41 Log less in auth", "the runs list shows the title")
             #expect(ReviewJSON.read(ReviewRunStatus.self, from: folder.appending(path: "status.json"))?.stage == .gathered)
             let gaps = try #require(ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json")))
             #expect(gaps.contains { $0.needed == "The diff of big.json" })
