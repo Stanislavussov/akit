@@ -15,7 +15,7 @@ struct ReviewView: View {
     @Environment(ReviewModel.self) private var model
     /// Snapshots: `--tab roles|scenarios|quality|settings`.
     @State private var page = DebugSnapshot.options?.tab.flatMap(Page.init(rawValue:)) ?? .runs
-    @State private var showNew = DebugSnapshot.options?.add == true && !["settings", "roles"].contains(DebugSnapshot.options?.tab)
+    @State private var showNew = DebugSnapshot.options?.add == true && !["settings", "roles", "scenarios"].contains(DebugSnapshot.options?.tab)
     @State private var showSettings = DebugSnapshot.options?.tab == "settings"
     /// The running review's live log under its status bar.
     @State private var showDetails = DebugSnapshot.options?.tab == "live"

@@ -306,7 +306,10 @@ In the app: New Review… → Merge requests, one address per line, a commit aft
 When the user wants a new review role (what a reviewer checks: translations, accessibility, their
 team's rules…), a scenario (which roles run) or a change to the review's configuration, write it with
 these commands; never edit the files by hand. Each prints the diff and writes nothing; show the
-diff to the user and run it again with `--yes` after a yes.
+diff to the user and run it again with `--yes` after a yes. Delete a role or a scenario only when
+the user asks for that one by name, and show the list `delete` prints (it may take roles with it)
+before `--yes`. To build a scenario for a problem the user describes, `scenario write` with their
+words; link the skills that hold the rules with `link`.
 
 ```
 akit review roles [--project P] [--json]          # roles with their source (built-in, brain, project)
@@ -319,8 +322,13 @@ akit review role duplicate ID --project P [--yes] # the brain's role as the proj
 akit review role reset ID --project P [--yes]     # the project's copy to the Trash
 akit review role write ID --describe TEXT|--describe-file PATH|- [--skill NAME|PATH] [--model M] [--thinking T] [--project P] [--yes]
                                                   # Pi drafts the role from the user's words
-akit review role skills [--json]                  # the skills that can write a role
-akit review scenario show|new|save|duplicate|reset ID …   # the same for scenarios
+akit review role skills [--json]                  # the skills that can write a role or be linked
+akit review role link|unlink ID SKILL… [--project P] [--yes]
+                                                  # skills: the role's passes load too (by name)
+akit review role delete ID [--project P] [--yes]  # to the Trash with the projects' copies; id to removed:
+akit review scenario show|new|save|duplicate|reset|write|skills|link|unlink ID …   # the same for scenarios
+akit review scenario delete ID [--keep-roles] [--project P] [--yes]
+                                                  # also the roles only it uses, unless --keep-roles
 akit review defaults show | save --file PATH|- [--yes]    # the brain's review.yaml
 akit review profile show SLUG | new SLUG [--yes] | save SLUG --file PATH|- [--yes]
 ```

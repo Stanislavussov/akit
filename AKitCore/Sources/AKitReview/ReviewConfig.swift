@@ -13,6 +13,8 @@ public struct ReviewRole: Sendable, Hashable, Identifiable {
     /// What the role needs from the context pack: `diff`, `full_files`, `wi`, `history`, `tests`.
     public var needs: [String]
     public var doNotComment: [String]
+    /// `skills:`: names of other skills (brain, Claude Code, Pi, agents) a pass of this role loads too.
+    public var skills: [String] = []
     /// The whole file, frontmatter included: what Pi loads with `--skill`.
     public var text: String
     public var source: ReviewSource
@@ -50,9 +52,11 @@ public struct ReviewRole: Sendable, Hashable, Identifiable {
         } ?? .medium
         let max = review["max_findings"] as? Int ?? 3
         guard (1...20).contains(max) else { throw Failure(message: "\(where_): max_findings must be 1–20.") }
-        return ReviewRole(id: id, description: map["description"] as? String ?? "", minSeverity: severity, maxFindings: max,
-                          needs: ReviewYAML.strings(review["needs"]), doNotComment: ReviewYAML.strings(review["do_not_comment"]),
-                          text: text, source: source, file: file)
+        var role = ReviewRole(id: id, description: map["description"] as? String ?? "", minSeverity: severity, maxFindings: max,
+                              needs: ReviewYAML.strings(review["needs"]), doNotComment: ReviewYAML.strings(review["do_not_comment"]),
+                              text: text, source: source, file: file)
+        role.skills = try ReviewYAML.skillNames(review["skills"], where: where_)
+        return role
     }
 }
 
@@ -64,9 +68,14 @@ public struct ReviewScenario: Sendable, Hashable, Identifiable {
     public var optional: [String]
     public var checks: [String]
     public var contextRequired: [String]
+    /// `skills:`: names of other skills every pass of this scenario loads too.
+    public var skills: [String] = []
     public var text: String
     public var source: ReviewSource
     public var file: URL?
+
+    /// Every role it names, required first.
+    public var roleIDs: [String] { required + optional.filter { !required.contains($0) } }
 
     public static func parse(_ text: String, source: ReviewSource, file: URL? = nil) throws -> ReviewScenario {
         let where_ = file?.path ?? "a built-in scenario"
@@ -80,9 +89,11 @@ public struct ReviewScenario: Sendable, Hashable, Identifiable {
             throw ReviewRole.Failure(message: "\(where_): id is missing or uses other characters than a-z, 0-9 and -.")
         }
         let roles = map["roles"] as? [String: Any] ?? [:]
-        return ReviewScenario(id: id, title: map["title"] as? String ?? id.capitalized, required: ReviewYAML.strings(roles["required"]),
-                              optional: ReviewYAML.strings(roles["optional"]), checks: ReviewYAML.strings(map["checks"]),
-                              contextRequired: ReviewYAML.strings(map["context_required"]), text: text, source: source, file: file)
+        var scenario = ReviewScenario(id: id, title: map["title"] as? String ?? id.capitalized, required: ReviewYAML.strings(roles["required"]),
+                                      optional: ReviewYAML.strings(roles["optional"]), checks: ReviewYAML.strings(map["checks"]),
+                                      contextRequired: ReviewYAML.strings(map["context_required"]), text: text, source: source, file: file)
+        scenario.skills = try ReviewYAML.skillNames(map["skills"], where: where_)
+        return scenario
     }
 }
 
@@ -399,6 +410,26 @@ public enum ReviewYAML {
         if let double = value as? Double { return double }
         if let int = value as? Int { return Double(int) }
         return nil
+    }
+
+    /// `skills:` of a role or a scenario: skill names, each once.
+    static func skillNames(_ value: Any?, where where_: String) throws -> [String] {
+        var names: [String] = []
+        for name in strings(value) where !names.contains(name) {
+            guard isSkillName(name) else {
+                throw ReviewRole.Failure(message: "\(where_): skills: \(name) is not a skill name (letters, digits, ., _ and -).")
+            }
+            guard !name.hasPrefix("review-") else {
+                throw ReviewRole.Failure(message: "\(where_): skills: \(name) is a review role; a scenario names roles under roles:.")
+            }
+            names.append(name)
+        }
+        return names
+    }
+
+    /// A linked skill's name: it becomes a folder name in the run.
+    public static func isSkillName(_ text: String) -> Bool {
+        text.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", options: .regularExpression) != nil && !text.contains("..")
     }
 
     /// Ids of roles, scenarios and gather commands: they become file and folder names.

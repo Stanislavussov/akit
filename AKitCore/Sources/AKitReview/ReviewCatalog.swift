@@ -40,11 +40,22 @@ public struct ReviewCatalog: Sendable {
     public var projectScenarios: [String: [ReviewScenario]]
     /// Files that couldn't be read, with why. They are left out, never guessed.
     public var problems: [String]
+    /// `removed:` of the brain's review.yaml: roles and scenarios the user deleted. A built-in one
+    /// stays hidden, and a scenario or profile that still names one skips it.
+    public var removedRoles: Set<String> = []
+    public var removedScenarios: Set<String> = []
+    /// The skills a role or a scenario can link (`skills:`): the brain's and the harnesses' own.
+    public var skills: [ReviewRoleWriter.Skill] = []
 
     public static func load(home: URL, brain: URL?) -> ReviewCatalog {
         var problems: [String] = []
-        var roles = Dictionary(uniqueKeysWithValues: ReviewBuiltIns.roles.map { ($0.id, $0) })
-        var scenarios = Dictionary(uniqueKeysWithValues: ReviewBuiltIns.scenarios.map { ($0.id, $0) })
+        var removed = (roles: Set<String>(), scenarios: Set<String>())
+        if let brain, let text = try? String(contentsOf: ReviewPaths.brainLayer(brain: brain).appending(path: "review.yaml"), encoding: .utf8),
+           let block = (try? ReviewYAML.map(text))?["removed"] as? [String: Any] {
+            removed = (Set(ReviewYAML.strings(block["roles"])), Set(ReviewYAML.strings(block["scenarios"])))
+        }
+        var roles = Dictionary(uniqueKeysWithValues: ReviewBuiltIns.roles.filter { !removed.roles.contains($0.id) }.map { ($0.id, $0) })
+        var scenarios = Dictionary(uniqueKeysWithValues: ReviewBuiltIns.scenarios.filter { !removed.scenarios.contains($0.id) }.map { ($0.id, $0) })
         let builtInDefaults = (try? ReviewSettingsPatch.parse(ReviewYAML.map(ReviewBuiltIns.defaultsYAML), where: "built-in")) ?? ReviewSettingsPatch()
         var brainDefaults = ReviewSettingsPatch()
         var brainPi = ReviewPiExtras()
@@ -90,6 +101,9 @@ public struct ReviewCatalog: Sendable {
                                     profiles: profiles.sorted { $0.slug < $1.slug }, projectRoles: projectRoles,
                                     projectScenarios: projectScenarios, problems: problems)
         catalog.brainPi = brainPi
+        catalog.removedRoles = removed.roles
+        catalog.removedScenarios = removed.scenarios
+        catalog.skills = ReviewRoleWriter.skills(brain: brain, home: home).filter { $0.file != nil }
         return catalog
     }
 

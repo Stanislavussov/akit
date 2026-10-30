@@ -325,6 +325,14 @@ public enum ReviewPrompts {
         if !role.doNotComment.isEmpty {
             text += "\nDo not comment on:\n" + role.doNotComment.map { "- \($0)" }.joined(separator: "\n")
         }
+        // Linked skills (`skills:`): loaded in every pass; this role applies its own and the scenario's.
+        let linked = (role.skills ?? []) + spec.scenarioSkills.filter { !(role.skills ?? []).contains($0) }
+        let loaded = Set((spec.skills ?? []).filter { $0.file != nil }.map(\.name))
+        let usable = linked.filter(loaded.contains)
+        if !usable.isEmpty {
+            text += "\nSkills linked to this check (loaded): " + usable.map { "`\($0)`" }.joined(separator: ", ")
+                + ". Apply what they say to this change; a problem they describe is a finding of this role."
+        }
         // Roles overlap at the edges (bug-hunter and concurrency, contracts and data-migrations):
         // each leaves the deeper role its topic.
         let others = spec.roles.map(\.id).filter { $0 != role.id }

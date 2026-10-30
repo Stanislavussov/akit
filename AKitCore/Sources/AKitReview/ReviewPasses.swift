@@ -428,6 +428,7 @@ public enum ReviewPasses {
         try ReviewJSON.write(log, to: logFile)
         try ReviewRuns.setStatus(.passes, folder: folder)
         var skills = roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
+            + ReviewSkillLinks.flags(folder: folder, spec: spec)
         let linkedTrees = ReviewLinked.worktrees(folder, spec: spec)
         let roots = ([readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)] + linkedTrees.map(\.path)).joined(separator: ":")
         // Where findings' files are read: the worktree, and `@key/…` in the linked worktrees beside it.
@@ -703,7 +704,7 @@ public enum ReviewPasses {
     /// What a pass may read (`AKIT_REVIEW_ROOTS`): the worktree and the scrubbed parts of the run
     /// folder. Never `gitlab/` or `tracker/`: AKit's raw, unscrubbed copies (other drafts too).
     static func readRoots(folder: URL, worktree: URL?) -> String {
-        ((worktree.map { [$0] } ?? []) + ["context", "roles", "prompts"].map { folder.appending(path: $0) })
+        ((worktree.map { [$0] } ?? []) + ["context", "roles", "skills", "prompts"].map { folder.appending(path: $0) })
             .map(\.path).joined(separator: ":")
     }
 

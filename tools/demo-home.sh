@@ -155,6 +155,34 @@ file "$BRAIN/layers/take-home/templates/SUBMISSION.md" <<'EOF'
 ## How to run it
 EOF
 
+# A review scenario of the brain that links a skill (Review → Scenarios, Skills).
+file "$BRAIN/layers/review/scenarios/api-change.yaml" <<'EOF'
+id: api-change
+title: API change
+roles: { required: [contracts, api-review], optional: [tests, security] }
+checks:
+  - "Does every changed endpoint keep its old responses for clients that haven't updated?"
+  - "Are new errors and pagination consistent with the rest of the API?"
+context_required: [full_files]
+skills: [api-design]
+EOF
+file "$BRAIN/layers/review/skills/review-api-review/SKILL.md" <<'EOF'
+---
+name: review-api-review
+description: "Review HTTP API changes: resources, status codes, errors, pagination, versioning"
+akit-review:
+  min_severity: low
+  max_findings: 6
+  needs: [diff, full_files]
+  do_not_comment:
+    - naming taste
+  skills: [api-design]
+---
+
+- A changed response field without a new version: old clients break.
+- A new error without the API's error shape.
+EOF
+
 # Dated 40 days back: Insights counts a brain skill's sessions from the commit that wrote its description.
 git -C "$BRAIN" add -A
 GIT_AUTHOR_DATE="$(date -v-40d +%Y-%m-%dT%H:%M:%S)" git -C "$BRAIN" commit -qm "Add demo layers and skills"

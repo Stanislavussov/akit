@@ -996,6 +996,33 @@ the words, AKit's role format, the list of existing roles and the skill, under S
 purpose `review-role-writer`; files in `~/.akit/local/review/role-writer/`). The draft is checked as a
 role and opens as the usual diff; nothing is saved before the user approves (`ReviewRoleWriter`).
 
+Delete…, linked skills and Write with AI… for scenarios (2026-10-30, the user's request; decisions
+R54–R56):
+
+- **R54 Delete.** Delete… on a role or a scenario (`akit review role|scenario delete ID [--keep-roles]
+  [--project P] [--yes]`, `ReviewConfigEditor.planDelete`/`applyDelete`). At the brain level the item
+  goes to the Trash with every project's own copy; a scenario also takes `default_scenario` out of
+  the profiles and, by the user's choice, the roles no other scenario or profile (`roles.add`)
+  names (a switch keeps them). The ids go to `removed: { roles, scenarios }` of the brain's
+  review.yaml: a built-in item with that id stays hidden, Add to Brain doesn't bring it back, and a
+  scenario or profile that still names a deleted role skips it (a deleted `contracts` is never added
+  by R44). Without `feature` a run takes the first scenario left. At a project level only the
+  project's own items (none in the brain) go; a copy of a brain item is Reset to Brain. The sheet
+  and the command list everything first; nothing is deleted without a yes.
+- **R55 Linked skills.** `skills: [name, …]` in a role's `akit-review:` block and at the top of a
+  scenario: links by name to skills in the brain's `skills/`, `~/.claude/skills`,
+  `~/.pi/agent/skills`, `~/.agents/skills` (`review-*` refused). The run spec lists them
+  (`skills`, with who links each); Gather copies each into `<run>/skills/<name>/` (text files only,
+  scrubbed, ≤ 256 KB each, ≤ 2 MB); every pass and Discuss load them with `--skill`, and the role's
+  prompt names the ones of its role and of the scenario. A skill missing on this Mac is a context
+  gap `skills`, not a stop. In the app: Skills row with Link Skill and ×; `akit review role|scenario
+  link|unlink ID SKILL…`.
+- **R56 Scenario writer.** Write with AI… on Scenarios (`akit review scenario write`): the user
+  describes the problem; Pi (built-in `review-scenario-writer`, or a skill picked) sees the
+  existing roles and the linkable skills and writes the YAML; a draft naming a role that doesn't
+  exist, or with no required role, is refused with the draft. Send-log purpose
+  `review-scenario-writer`.
+
 On a work Mac, saving a brain role shows the diff first and marks work words: the GitLab
 hosts, project paths, organisation names and e-mail addresses from the work profiles (R17).
 
