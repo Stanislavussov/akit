@@ -221,11 +221,11 @@ public enum ReviewRoleWriter {
         name: review-<id>
         description: "One line: what the role reviews a change for"
         akit-review:
-          min_severity: medium        # nit, low, medium, high or critical: findings below it are dropped
-          max_findings: 3             # 1–20
+          min_severity: low           # nit, low, medium, high or critical: findings below it are dropped
+          max_findings: 6             # 1–20
           needs: [diff, full_files]   # what the pass reads: diff, full_files, wi (work items), history, tests
           do_not_comment:             # what this role must leave alone
-            - style and naming
+            - style, and naming taste
         ---
 
         <the checklist>
@@ -251,8 +251,8 @@ public enum ReviewRoleWriter {
 
     # Writing a review role
 
-    A role is read by a model that sees one merge request. It must find real problems and stay quiet
-    otherwise. Write it so:
+    A role is read by a model that sees one merge request. It must find every potential problem of
+    its kind, each with an honest severity and confidence, and nothing outside its kind. Write it so:
 
     1. **One concern.** A role checks one kind of problem (performance, translations, a team rule).
        Its name is given in the task (`review-<id>`): keep it exactly. If the user's words cover two concerns, keep the main one and
@@ -261,11 +261,12 @@ public enum ReviewRoleWriter {
        with its why: "A query inside a loop over request data: one query per item". Never "check
        the quality" or "look for issues".
     3. **What is not a finding.** Add the cases that look like the problem but are fine, and the
-       topics other roles own, under `do_not_comment` (style, naming, tests unless this is the tests
-       role).
-    4. **Severity on purpose.** `min_severity: medium` by default; `high` for roles that should
-       speak only about breakage or data loss; `low` only when the user wants small notes.
-    5. **Few findings.** `max_findings: 3` by default. More is noise.
+       topics other roles own, under `do_not_comment` (style, naming taste, tests unless this is the
+       tests role).
+    4. **Severity on purpose.** Write `min_severity: low` unless the user asks otherwise: the developer sees every potential
+       problem in AKit with its severity, and only confident ones of `medium` or more reach the merge
+       request; `high` for roles that should speak only about breakage or data loss.
+    5. **Room for findings.** Write `max_findings: 6`; fewer for a narrow role.
     6. **Only the context it needs.** `needs: [diff]` for patterns in changed lines; add
        `full_files` when the surrounding code decides; `wi` when the work item's criteria matter;
        `history` for regressions; `tests` for test results.

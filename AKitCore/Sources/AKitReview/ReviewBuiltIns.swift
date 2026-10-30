@@ -30,11 +30,13 @@ public enum ReviewBuiltIns {
         id: feature
         title: Feature
         roles:
-          required: [contracts, domain, bug-hunter, requirements]
-          optional: [architecture, tests, security, performance, concurrency, data-migrations, observability, history]
+          required: [contracts, architecture, domain, bug-hunter, requirements]
+          optional: [tests, security, performance, concurrency, data-migrations, observability, history]
         checks:
           - "Which contracts does the change add or change, and does every consumer still work?"
           - "Does the new code sit in the right component and keep its boundaries?"
+          - "Does each new or changed entity have a name that says what it does, and live where that name says?"
+          - "Is business logic kept out of UI code, and UI and I/O out of the domain?"
           - "Do the changes keep the invariants and business rules of the touched components?"
           - "Does the new code behave right on edge cases, errors and concurrent calls?"
           - "Is each acceptance criterion covered by code and by a test?"
@@ -91,8 +93,8 @@ public enum ReviewBuiltIns {
 
     public static let roleFiles: [String: String] = [
         "contracts": role("contracts", "Review what the change promises to other code: public APIs, DTOs, events, schemas and migrations, config keys, error codes, and whether every consumer still works.",
-                          max: 4, needs: ["diff", "full_files", "history"],
-                          doNotComment: ["style, naming and formatting", "internal code no other component or system uses",
+                          max: 8, needs: ["diff", "full_files", "history"],
+                          doNotComment: ["formatting, and naming taste (a name that misleads is a finding)", "internal code no other component or system uses",
                                          "breaks that the project's constraints explicitly allow (a new version of a versioned API), when no consumer in the repository breaks"], body: """
                           A contract is anything another component, service, client or stored data relies on. Find each one the change adds, changes or removes, then find who relies on it.
 
@@ -108,8 +110,8 @@ public enum ReviewBuiltIns {
                           Every finding names the contract, the consumer that breaks and how. A contract change with no consumer at risk is not a finding.
                           """),
         "architecture": role("architecture", "Review where the change sits in the system: boundaries and layers, dependency direction, responsibilities, coupling, and fit with the existing design.",
-                             max: 3, needs: ["diff", "full_files", "history"],
-                             doNotComment: ["style, naming and formatting", "taste: a different design that is not clearly better for this codebase",
+                             max: 6, needs: ["diff", "full_files", "history"],
+                             doNotComment: ["formatting, and naming taste (a name that misleads is a finding)", "taste: a different design with no concrete cost of the current one",
                                             "rewrites out of the change's scope"], body: """
                              Review the design of the change as the owner of the system's structure. Start from the brief's touched components, then open the code around them: how do neighbours solve the same problem?
 
@@ -120,12 +122,14 @@ public enum ReviewBuiltIns {
                              - State and lifetime: new global or shared mutable state, singletons, caches without an owner or invalidation.
                              - Failure design: where do errors go, which component decides, does a failure in one part now take down another?
                              - Fit: does it follow the patterns of project-rules.md and the knowledge notes? A break from them needs a reason the code or the rules give.
+                             - Each new or changed entity (type, function, module, file, component): is it needed, or does the codebase already have one (name it)? Does its name say what it does and only that (a `get…` that writes, a `…Service` that renders, a `utils` or `manager` that holds several jobs)? Does it live where its name and its job say: the right module, folder and layer, next to what it belongs with? Say where it belongs instead.
+                             - Separation of concerns: business rules inside UI code (views, components, view models that decide prices, permissions or states); UI state, formatting or navigation inside services or the domain; I/O (SQL, HTTP, files) inside domain logic.
 
                              For each finding say what the design makes hard or risky next (a change that will need touching N places, a cycle that blocks a split, a test that can't be written) and name the place in the codebase that shows the better way. When the design is doubtful but you can't show harm, submit it with `kind: "question"` to the author instead of a claim.
                              """),
         "domain": role("domain", "Review a change against the domain: invariants, business rules and state transitions of the touched components.",
-                       max: 3, needs: ["diff", "full_files", "wi"],
-                       doNotComment: ["style and naming", "rules the context pack doesn't state or show in code",
+                       max: 6, needs: ["diff", "full_files", "wi"],
+                       doNotComment: ["style, and naming taste", "rules the context pack doesn't state or show in code",
                                       "contracts and layering (the contracts and architecture roles own them)"], body: """
                        Check the change as someone who owns the business rules of these components.
 
@@ -136,7 +140,7 @@ public enum ReviewBuiltIns {
                        Name the rule you rely on and where it is written (a knowledge note, the work item, the code). If you can't find the rule, report a context gap instead of guessing.
                        """),
         "requirements": role("requirements", "Check the change against the work item's acceptance criteria and fill the summary's coverage matrix.",
-                             max: 3, needs: ["diff", "wi"], doNotComment: ["code style", "anything not tied to a criterion or a repro step"], body: """
+                             max: 6, needs: ["diff", "wi"], doNotComment: ["code style", "anything not tied to a criterion or a repro step"], body: """
                              You don't write inline comments. You fill the acceptance-criteria matrix of the summary.
 
                              For each acceptance criterion (and each repro step of a bug) say one of:
@@ -149,7 +153,7 @@ public enum ReviewBuiltIns {
                              If the work item has no acceptance criteria, report a context gap.
                              """),
         "tests": role("tests", "Review whether the change is tested: missing tests for new behaviour, regression tests for bugs, weak assertions.",
-                      max: 3, needs: ["diff", "full_files", "tests"],
+                      max: 6, needs: ["diff", "full_files", "tests"],
                       doNotComment: ["test style or naming", "coverage numbers without a concrete untested path"], body: """
                       - Which new or changed behaviour has no test? Name the branch or case, not "add more tests".
                       - For a bug: does a test fail without the fix? A test that passes either way is a finding.
@@ -158,8 +162,8 @@ public enum ReviewBuiltIns {
                       - If the gather step ran the tests, read their output: a failing or skipped test is a finding with high severity.
                       """),
         "bug-hunter": role("bug-hunter", "Hunt for defects the change introduces or leaves: wrong logic, edge cases, null and error paths, concurrency, resource leaks.",
-                           max: 3, needs: ["diff", "full_files", "history"],
-                           doNotComment: ["style and naming", "hypothetical problems without a concrete input that triggers them"], body: """
+                           max: 6, needs: ["diff", "full_files", "history"],
+                           doNotComment: ["style, and naming taste", "hypothetical problems without a concrete input that triggers them"], body: """
                            Look for real defects. For each one give the input or state that triggers it and what happens then.
 
                            - Off-by-one, wrong comparison, inverted condition, wrong operator precedence.
@@ -172,7 +176,7 @@ public enum ReviewBuiltIns {
                            Quote the exact line as evidence. If you are not sure the input can occur, say so and lower the confidence.
                            """),
         "upgrade-risk": role("upgrade-risk", "Review a dependency upgrade: breaking changes, deprecated APIs, transitive upgrades, license changes.",
-                             max: 3, needs: ["diff", "full_files"],
+                             max: 6, needs: ["diff", "full_files"],
                              doNotComment: ["version pinning style", "risks the changelog doesn't name and the code doesn't show"], body: """
                              - Which packages change, from which version to which? Major versions first.
                              - Use the changelog or migration guide if the context pack has it. If it doesn't, report a context gap naming the package and versions.
@@ -182,8 +186,8 @@ public enum ReviewBuiltIns {
                              - Does config (build flags, runtime settings) need a change the MR doesn't make?
                              """),
         "security": role("security", "Review a change for authN/authZ, input validation, injection, secrets, SSRF, PII in logs.",
-                         max: 3, needs: ["diff", "full_files"],
-                         doNotComment: ["style and naming", "attacks without a path from an input to a sink"], body: """
+                         max: 6, needs: ["diff", "full_files"],
+                         doNotComment: ["style, and naming taste", "attacks without a path from an input to a sink"], body: """
                          Follow untrusted input to where it is used. A finding needs the whole path: where the input comes from, what it reaches, and why nothing in between stops it.
 
                          - Authentication and authorization: a new endpoint or handler without the check its neighbours have; checks on the wrong object (IDOR).
@@ -194,8 +198,8 @@ public enum ReviewBuiltIns {
                          - Crypto: home-made crypto, weak algorithms, missing certificate checks.
                          """),
         "performance": role("performance", "Review the cost of the change on hot paths: queries, loops, allocations, network calls, caching, and how they grow with data.",
-                            max: 3, needs: ["diff", "full_files", "history"],
-                            doNotComment: ["micro-optimisations without a measured or obvious hot path", "style and naming",
+                            max: 6, needs: ["diff", "full_files", "history"],
+                            doNotComment: ["micro-optimisations without a measured or obvious hot path", "style, and naming taste",
                                            "code that runs once at start-up or in tests"], body: """
                             Find where the change makes something slower or heavier in a way users or operators will notice. For each finding name the path, how often it runs, and how its cost grows (with rows, items, users, payload size).
 
@@ -208,8 +212,8 @@ public enum ReviewBuiltIns {
                             Evidence is the line that runs per item or per request. If you can't tell how often a path runs or how big the data is, ask with `kind: "question"`.
                             """),
         "concurrency": role("concurrency", "Review shared state and parallel work: races, locks, async calls, retries and idempotency.",
-                            max: 3, needs: ["diff", "full_files"],
-                            doNotComment: ["style and naming", "races without two concrete callers or tasks that can overlap"], body: """
+                            max: 6, needs: ["diff", "full_files"],
+                            doNotComment: ["style, and naming taste", "races without two concrete callers or tasks that can overlap"], body: """
                             Find what goes wrong when two things happen at once. For each finding name the two actors (threads, tasks, requests, instances, consumers) and the order of steps that breaks.
 
                             - Shared mutable state without a lock, an actor or a transaction; check-then-act and read-modify-write on a shared value or row.
@@ -221,7 +225,7 @@ public enum ReviewBuiltIns {
                             Quote the line where the shared state is read or written.
                             """),
         "data-migrations": role("data-migrations", "Review schema and data migrations: locks on big tables, rollbacks, data loss, and the deploy order with the code.",
-                                max: 3, needs: ["diff", "full_files", "history"],
+                                max: 6, needs: ["diff", "full_files", "history"],
                                 doNotComment: ["migration file naming and formatting", "changes with no migration, schema or stored data in them",
                                                "consumers in other code of a changed API or DTO (the contracts role owns them)"], body: """
                                 Review every change to a schema or to stored data (SQL and ORM migrations, schema files, data backfills, changes to serialized formats in a store or a queue).
@@ -235,7 +239,7 @@ public enum ReviewBuiltIns {
                                 Name the table and the step. If the size of a table matters and you can't know it, ask with `kind: "question"`.
                                 """),
         "observability": role("observability", "Review whether operators can see and diagnose the change in production: errors, logs, metrics, traces and alerts.",
-                              max: 2, needs: ["diff", "full_files"],
+                              max: 4, needs: ["diff", "full_files"],
                               doNotComment: ["advice to add logging without a failure that would stay invisible", "log wording and levels as taste",
                                              "secrets and personal data in logs (the security role owns them)"], body: """
                               Ask: when this change fails in production, will anyone know, and can they tell why? A finding names the failure and what an operator would see (nothing, a wrong number, a log without the cause).
@@ -247,7 +251,7 @@ public enum ReviewBuiltIns {
                               - A background job or retry loop that can fail forever without a signal.
                               """),
         "history": role("history", "Review the change against the history of its files: old bugs coming back, fixes undone, and what people already asked for in these files.",
-                        max: 2, needs: ["diff", "full_files", "history"],
+                        max: 4, needs: ["diff", "full_files", "history"],
                         doNotComment: ["the history itself: old commits, old merge requests, who wrote what",
                                        "a rule from an earlier thread that the project's constraints or this change's work item overrule"], body: """
                         Read `context/history.md`: the commits behind the changed lines (git blame at the base commit), the recent commits of each file, and people's threads in earlier merge requests on these files. Then ask of each hunk:
@@ -278,7 +282,7 @@ public enum ReviewBuiltIns {
         name: review-\(id)
         description: "\(description.replacingOccurrences(of: "\"", with: "\\\""))"
         akit-review:
-          min_severity: medium
+          min_severity: low
           max_findings: \(max)
           needs: [\(needs.joined(separator: ", "))]
           do_not_comment:

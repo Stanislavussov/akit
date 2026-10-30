@@ -214,6 +214,12 @@ public enum ReviewPlanner {
                 continue
             }
             if finding.kind == .question || verdict == .question {
+                // A question goes to the author too: below the severity threshold it stays in AKit.
+                if !input.forcedInline.contains(finding.id), finding.finalSeverity < posting.severityThreshold.value {
+                    place(.onlyInAKit, "A question of severity \(finding.finalSeverity.rawValue), below \(posting.severityThreshold.value.rawValue): "
+                          + "not asked in the merge request.")
+                    continue
+                }
                 questions.append(finding)
                 place(.question, "Not enough context: a question to the author.")
                 continue

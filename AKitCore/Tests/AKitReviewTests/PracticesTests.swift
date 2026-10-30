@@ -137,12 +137,12 @@ struct PracticesTests {
         var spec = try PlanTests.spec()
         spec.verifier = Sourced(ReviewModelChoice(model: "b/m2"), .run)
         let system = ReviewPrompts.system(spec: spec, hasWorktree: true)
-        for text in ["0.25 = you couldn't verify it", "preExisting: true", "eslint-disable", "a documentation server (context7",
+        for text in ["0.5: likely real, but not verified", "0.25: a guess", "preExisting: true", "eslint-disable", "a documentation server (context7",
                      "never put code of the change"] {
             #expect(system.contains(text), "\(text)")
         }
         let verifier = ReviewPrompts.verifier(candidates: "", brief: nil, spec: spec)
-        #expect(verifier.contains("0.75: verified in the code") && verifier.contains("`preExisting: true`") && verifier.contains("@ts-ignore"))
+        #expect(verifier.contains("0.75: verified in the code") && verifier.contains("0.5: likely real, but not verified") && verifier.contains("`preExisting: true`") && verifier.contains("@ts-ignore"))
     }
 }
 

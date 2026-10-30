@@ -1012,6 +1012,11 @@ struct ReviewRunLogSheet: View {
     @State private var problem: String?
     @State private var copied = false
     @State private var copiedFull = false
+    /// The pass whose steps show below the table.
+    @State private var selected: ReviewRunLog.Pass.ID?
+    @State private var steps: [ReviewLogLine] = []
+    @State private var loadingSteps = false
+    @AppStorage("review.log.expandAll") private var expandAll = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1054,13 +1059,16 @@ struct ReviewRunLogSheet: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 1000, idealWidth: 1080, minHeight: 560, idealHeight: 680)
+        .frame(minWidth: 1000, idealWidth: 1100, minHeight: 720, idealHeight: 860)
         .task {
             // Every saved MCP answer is decoded: off the main thread.
             let folder = folder
             let result = await Task.detached { Result { try ReviewRunLog.load(folder) } }.value
             switch result {
-            case .success(let loaded): log = loaded
+            case .success(let loaded):
+                log = loaded
+                // A role's pass first: its steps show what the review looked at and found.
+                selected = loaded.passes.first(where: { $0.role != nil })?.id ?? loaded.passes.first?.id
             case .failure(let error): problem = error.localizedDescription
             }
         }
@@ -1073,7 +1081,7 @@ struct ReviewRunLogSheet: View {
             Text(totals(log))
         }
         .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-        Table(log.passes) {
+        Table(log.passes, selection: $selected) {
             TableColumn("Pass") { pass in
                 Label(pass.name, systemImage: pass.error == nil ? (pass.seconds == nil ? "circle.dotted" : "checkmark.circle") : "xmark.circle")
                     .foregroundStyle(pass.error == nil ? Color.primary : Color.red)
@@ -1105,7 +1113,8 @@ struct ReviewRunLogSheet: View {
             }
             .width(60)
         }
-        .frame(minHeight: 200)
+        .frame(minHeight: 160)
+        stepsSection(log)
         HStack(alignment: .top, spacing: 16) {
             if !log.roles.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -1158,6 +1167,38 @@ struct ReviewRunLogSheet: View {
                 }
             }
             .frame(minHeight: 140)
+        }
+    }
+
+    /// The selected pass's steps from its saved Pi events: what the live log showed, with the
+    /// details of each step.
+    @ViewBuilder private func stepsSection(_ log: ReviewRunLog) -> some View {
+        let pass = log.passes.first { $0.id == selected }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(pass.map { "Steps of \($0.name)" + (loadingSteps ? "" : " (\(steps.count))") } ?? "Steps: select a pass").font(.headline)
+                Spacer()
+                Toggle("Expand All", isOn: $expandAll).toggleStyle(.switch).controlSize(.small)
+                    .help("Keep every step's details open: arguments, answers, the model's thinking and text, findings")
+            }
+            if loadingSteps {
+                ProgressView().controlSize(.small)
+            } else if pass != nil, steps.isEmpty {
+                Text("No steps saved for this pass.").font(.callout).foregroundStyle(.secondary)
+            } else {
+                // Snapshots (`--tab log`) show the details open.
+                ReviewLogList(lines: steps, expandAll: expandAll || DebugSnapshot.options?.tab == "log")
+                    .id(selected)
+            }
+        }
+        .frame(minHeight: 240)
+        .task(id: selected) {
+            steps = []
+            guard let pass else { return }
+            loadingSteps = true
+            let stream = folder.appending(path: "passes/\(pass.name).jsonl")
+            steps = await Task.detached { ReviewLive.events(stream: stream).map { ReviewLogLine(title: $0.title, detail: $0.detail) } }.value
+            loadingSteps = false
         }
     }
 

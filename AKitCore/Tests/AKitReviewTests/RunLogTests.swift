@@ -9,16 +9,49 @@ struct ReviewLiveLogTests {
         func line(_ json: String) -> String? { ReviewPasses.liveLine(json) }
         #expect(line(#"{"type":"tool_execution_start","toolName":"read","args":{"path":"src/A.swift"}}"#) == "read src/A.swift")
         #expect(line(#"{"type":"tool_execution_start","toolName":"mcp__gitlab__get_merge_request","args":{"iid":7}}"#)
-                == "MCP gitlab: get_merge_request", "MCP arguments never reach the log")
+                == "MCP gitlab: get_merge_request", "MCP arguments stay out of the title")
         #expect(line(#"{"type":"tool_execution_start","toolName":"akit_submit_findings","args":{"findings":[{},{}]}}"#) == "submits 2 findings")
         #expect(line(#"{"type":"tool_execution_end","toolName":"mcp__gitlab__get_merge_request","isError":true}"#)
                 == "mcp__gitlab__get_merge_request failed")
-        #expect(line(#"{"type":"tool_execution_end","toolName":"read","isError":false}"#) == nil)
+        #expect(line(#"{"type":"tool_execution_end","toolName":"read","isError":false}"#) == nil, "without details only failures")
+        #expect(ReviewPasses.liveEvent(#"{"type":"tool_execution_end","toolName":"read","isError":false}"#)?.title == "\u{21B3} read answered")
         #expect(line(#"{"type":"message_end","message":{"role":"assistant","model":"m1","usage":{"input":1200,"output":30}}}"#)?
             .hasPrefix("model answered (m1) · 1.2k in") == true)
         #expect(line(#"{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"401 Unauthorized"}}"#)
                 == "model error: 401 Unauthorized")
         #expect(line("plain text") == nil)
+    }
+
+    @Test func eachLineCarriesItsDetails() throws {
+        func event(_ json: String) -> (title: String, detail: String?)? { ReviewPasses.liveEvent(json) }
+        let call = try #require(event(#"{"type":"tool_execution_start","toolName":"mcp__gitlab__get_merge_request","args":{"iid":7}}"#))
+        #expect(call.detail?.contains("\"iid\" : 7") == true, "the arguments open under the line")
+        let findings = try #require(event(#"{"type":"tool_execution_start","toolName":"akit_submit_findings","args":{"findings":[{"title":"Name says get, it saves","severity":"medium","file":"A.swift","line":4,"confidence":0.5,"why":"Callers don't expect a write."}]}}"#))
+        #expect(findings.title == "submits 1 finding")
+        #expect(findings.detail == "[MEDIUM] Name says get, it saves\n  A.swift:4 · confidence 0.50\n  Callers don't expect a write.")
+        let result = try #require(event(#"{"type":"tool_execution_end","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"let a = 1"}]}}"#))
+        #expect(result.title == "\u{21B3} read answered · 9 chars" && result.detail == "let a = 1")
+        let answer = try #require(event(#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Check the caller."},{"type":"text","text":"done"}]}}"#))
+        #expect(answer.detail == "Thinking:\nCheck the caller.\n\nAnswer:\ndone")
+        let secret = try #require(event(#"{"type":"tool_execution_end","toolName":"read","result":{"content":[{"type":"text","text":"token=ghp_abcdefghijklmnopqrstuvwxyz0123456789"}]}}"#))
+        #expect(secret.detail?.contains("ghp_abcdefghijklmnopqrstuvwxyz0123456789") == false, "details are masked")
+
+        // Through `Options.progress` as one string; the terminal keeps the title.
+        let joined = ReviewLive.line("  role · read A.swift", detail: "body")
+        #expect(ReviewLive.split(joined).title == "  role · read A.swift" && ReviewLive.split(joined).detail == "body")
+        #expect(ReviewLive.split("plain").detail == nil && ReviewLive.line("t", detail: "") == "t")
+    }
+
+    @Test func savedStreamGivesTheSteps() throws {
+        let home = TempHome()
+        let stream = home.url.appending(path: "passes/contracts.jsonl")
+        try FileManager.default.createDirectory(at: stream.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try ([#"{"type":"tool_execution_start","toolName":"read","args":{"path":"A.swift"}}"#,
+              #"{"type":"message_update","message":{"role":"assistant"}}"#,
+              #"{"type":"tool_execution_end","toolName":"read","result":{"content":[{"type":"text","text":"x"}]}}"#].joined(separator: "\n"))
+            .write(to: stream, atomically: true, encoding: .utf8)
+        let steps = ReviewLive.events(stream: stream)
+        #expect(steps.map(\.title) == ["read A.swift", "\u{21B3} read answered · 1 chars"])
     }
 
     @Test func anEmptyFetchSaysWhatPiDid() throws {

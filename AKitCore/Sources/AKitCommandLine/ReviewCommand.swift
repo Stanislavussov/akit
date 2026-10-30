@@ -869,6 +869,8 @@ final class LineBox: @unchecked Sendable {
     private var lines: [String] = []
     private let live = isatty(STDERR_FILENO) == 1
     func add(_ line: String) {
+        // The terminal prints a line's title; its details are for the app's live log.
+        let line = ReviewLive.split(line).title
         if live {
             lock.withLock { FileHandle.standardError.write(Data((line + "\n").utf8)) }
         } else if !line.hasPrefix("  ") {

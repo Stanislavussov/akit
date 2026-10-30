@@ -13,7 +13,12 @@ public enum ReviewCandidates {
             let file = folder.appending(path: "passes/\(pass).json")
             guard let object = (try? Data(contentsOf: file)).flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else { continue }
             var counted = 0
-            for raw in object["findings"] as? [[String: Any]] ?? [] {
+            // The role's limit keeps the worst findings: a recall-first role may list small ones first.
+            let rank = { (raw: [String: Any]) in (raw["severity"] as? String).flatMap(ReviewSeverity.init(rawValue:)) ?? .nit }
+            let raws = (object["findings"] as? [[String: Any]] ?? []).enumerated()
+                .sorted { rank($0.element) != rank($1.element) ? rank($0.element) > rank($1.element) : $0.offset < $1.offset }
+                .map(\.element)
+            for raw in raws {
                 // Matrix rows (one per acceptance criterion) don't count against the role's limit.
                 if raw["kind"] as? String != "ac" {
                     guard counted < role.maxFindings else { continue }

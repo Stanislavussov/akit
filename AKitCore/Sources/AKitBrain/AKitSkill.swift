@@ -322,11 +322,11 @@ A role is one SKILL.md. Write `name: review-<id>` (a-z, 0-9, -), a one-line `des
 name: review-i18n
 description: "Review a change for text users see that is not translated or formatted for their locale"
 akit-review:
-  min_severity: medium          # nit, low, medium, high, critical
-  max_findings: 3               # 1–20
+  min_severity: low             # nit, low, medium, high, critical
+  max_findings: 6               # 1–20
   needs: [diff, full_files]     # also wi, history, tests
   do_not_comment:
-    - style and naming
+    - style, and naming taste
 ---
 
 - New UI strings written in code instead of the translation files.
