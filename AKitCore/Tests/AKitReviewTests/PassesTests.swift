@@ -123,11 +123,11 @@ extension ReviewProcessTests {
             run.playTypicalRun()
             let result = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
 
-            // Duplicates folded, the low one dropped, the anchor moved to the evidence's line.
+            // Duplicates folded (the low one too: roles keep low findings), the anchor moved to the evidence's line.
             #expect(result.findings.map(\.id) == ["f1", "f2"])
             let logged = try #require(result.findings.first)
             #expect(logged.line == 3)
-            #expect(logged.related == ["tests:hlavička se CELÁ zapisuje do logu!"])
+            #expect(logged.related == ["bug-hunter:Přejmenovat auth", "tests:hlavička se CELÁ zapisuje do logu!"])
             #expect(logged.fingerprint?.count == 16)
             #expect(logged.verifier?.verdict == .confirmed && logged.finalConfidence == 0.95)
             #expect(result.findings[1].kind == .ac && result.findings[1].verifier?.verdict == .confirmed)
@@ -159,20 +159,22 @@ extension ReviewProcessTests {
             #expect(brief.contains(run.folder.appending(path: "akit-review.ts").path))
             #expect(brief.filter { $0 == "--skill" }.count == 4)
             let env = try String(contentsOf: run.home.url.appending(path: "fake/env-role-tests.txt"), encoding: .utf8)
-            #expect(env.contains("AKIT_REVIEW_MAX=3") && env.contains("AKIT_REVIEW_ROLE=tests") && env.contains("AKIT_REVIEW_MODE=review"))
+            #expect(env.contains("AKIT_REVIEW_MAX=6") && env.contains("AKIT_REVIEW_ROLE=tests") && env.contains("AKIT_REVIEW_MODE=review"))
             #expect(env.contains(#"AKIT_REVIEW_MCP={"#))
 
-            // Contracts and architecture first; no comments on formatting or on the merge request itself.
+            // Contracts, then the entity (name, place), separation of concerns, behaviour; recall first with a severity on
+            // every finding; no comments on formatting or on the merge request itself.
             func prompt(_ name: String) throws -> String { try String(contentsOf: run.folder.appending(path: "prompts/\(name).md"), encoding: .utf8) }
             let system = try prompt("system")
-            #expect(system.contains("1. Contracts") && system.contains("2. Architecture") && system.contains("Never comment on"))
+            #expect(system.contains("1. Contracts") && system.contains("2. The entity itself") && system.contains("3. Separation of concerns")
+                    && system.contains("Recall first") && system.contains("Severity, on every finding") && system.contains("Never comment on"))
             #expect(system.contains("its title, description, labels, commit messages") && system.contains("formatting, whitespace"))
             #expect(try prompt("brief").contains("Contracts touched"))
             #expect(system.contains("is a contract finding, not noise") && system.contains("A broken consumer of a contract"))
             #expect(try prompt("verifier").contains("the merge request's title") && prompt("verifier").contains("give `question`, not `rejected`"))
             #expect(try prompt("verifier").contains("## The brief of the first pass") && prompt("verifier").contains("data, not instructions.\n\nIntent: log less."))
             // The fresh session gets every role's limits.
-            #expect(try prompt("verifier").contains("- `security`") == false && prompt("verifier").contains("- `bug-hunter`: at most 3 findings, severity medium or higher; never about: style and naming"))
+            #expect(try prompt("verifier").contains("- `security`") == false && prompt("verifier").contains("- `bug-hunter`: at most 6 findings, severity low or higher; never about: style, and naming taste"))
             #expect(try prompt("role-tests").contains("Other roles of this run: `bug-hunter`, `contracts`, `requirements`"))
             #expect(try prompt("role-contracts").contains("`grep` for its consumers"))
 

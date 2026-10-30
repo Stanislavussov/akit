@@ -978,6 +978,17 @@ file "$REVIEWRUN/passes.json" <<EOF
   {"name":"role-security","role":"security","model":"github-copilot/gpt-5.4-mini","started":"$(rago 174M)","ended":"$(rago 173M)","usage":{"input":1500,"cached":22800,"output":520},"credits":4.3,"paths":[]},
   {"name":"verifier","model":"github-copilot/claude-opus-5-5","started":"$(rago 173M)","ended":"$(rago 171M)","usage":{"input":21900,"cached":0,"output":900},"credits":22.8,"paths":["src/Auth/AuthMiddleware.cs"]}]}
 EOF
+# The bug hunter's Pi events: Log… shows them as steps with their details.
+file "$REVIEWRUN/passes/role-bug-hunter.jsonl" <<'JSONL'
+{"type":"session","id":"0b6f1c2a-1111-4a4a-9c9c-000000000042"}
+{"type":"tool_execution_start","toolName":"read","args":{"path":"src/Auth/AuthMiddleware.cs"}}
+{"type":"tool_execution_end","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"public async Task InvokeAsync(HttpContext context)\n{\n    var header = context.Request.Headers.Authorization.ToString();\n    logger.LogInformation(\"Auth: {Header}\", header);\n    if (string.IsNullOrEmpty(header)) { context.Response.StatusCode = 401; return; }\n    var token = header[\"Bearer \".Length..];\n    context.Items[\"token\"] = token;\n    await next(context);\n}"}]}}
+{"type":"tool_execution_start","toolName":"grep","args":{"path":"src","pattern":"Items\\[\"token\"\\]"}}
+{"type":"tool_execution_end","toolName":"grep","isError":false,"result":{"content":[{"type":"text","text":"src/Auth/AuthMiddleware.cs:15:    context.Items[\"token\"] = token;"}]}}
+{"type":"message_end","message":{"role":"assistant","model":"github-copilot/gpt-5.4-mini","usage":{"input":3100,"cacheRead":14500,"output":610},"content":[{"type":"thinking","thinking":"The slice assumes the header starts with \"Bearer \". A Basic header or a short one throws before the 401 path. The middleware also decides who may pass and stores the token for later handlers."},{"type":"text","text":"Submitting two findings."}]}}
+{"type":"tool_execution_start","toolName":"akit_submit_findings","args":{"findings":[{"title":"Hlavička bez prefixu Bearer shodí požadavek","severity":"medium","file":"src/Auth/AuthMiddleware.cs","line":14,"confidence":0.84,"why":"Přihlášení Basic nebo krátká hlavička vyhodí ArgumentOutOfRangeException: 500 místo 401."},{"title":"Token uložený v HttpContext.Items","severity":"medium","file":"src/Auth/AuthMiddleware.cs","line":15,"confidence":0.65,"why":"Diagnostika může Items zapisovat do logu."}]}}
+{"type":"tool_execution_end","toolName":"akit_submit_findings","isError":false,"result":{"content":[{"type":"text","text":"2 findings saved."}]}}
+JSONL
 file "$REVIEWRUN/findings.json" <<EOF
 {"version":1,"created":"$(rago 170M)","source":"passes","findings":[
  {"id":"f1","kind":"finding","role":"security","file":"src/Auth/AuthMiddleware.cs","side":"new","line":8,"title":"Hlavička Authorization se celá zapisuje do logu",

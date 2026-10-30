@@ -9,11 +9,11 @@ public enum ReviewTemplates {
         name: review-\(id)
         description: "Review a change for …"
         akit-review:
-          min_severity: medium
-          max_findings: 3
+          min_severity: low
+          max_findings: 6
           needs: [diff, full_files]
           do_not_comment:
-            - style and naming
+            - style, and naming taste
         ---
 
         What to check, as a list the model can follow:

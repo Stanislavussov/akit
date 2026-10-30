@@ -226,7 +226,7 @@ public enum ReviewPasses {
                                       usage: SendUsage(), credits: 0, paths: [], error: nil)
         let output = await runPi(pi, arguments: arguments(setup, folder: folder, access: access), directory: setup.cwd,
                                  environment: environment, timeout: options.timeout, stream: folder.appending(path: "passes/\(setup.name).jsonl"),
-                                 progress: { [name = setup.name] line in options.progress("  \(name) · \(line)") })
+                                 progress: { [name = setup.name] line in options.progress("  \(name) · \(line)") }, details: true)
         ReviewMask.saved(in: folder)
         record.ended = .now
         record.session = output.session
@@ -768,10 +768,11 @@ public enum ReviewPasses {
         var paths: [String] = []
     }
 
-    /// Runs one `pi -p --mode json` and reads its events: the session id, the recorded usage,
+    /// Runs one `pi -p --mode json` and reads its events. With `details`, each progress line
+    /// carries its details after `ReviewLive`'s separator: the session id, the recorded usage,
     /// the last answer, an error, and the paths of the read tools. The raw stream goes to `stream`.
     static func runPi(_ pi: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
-                      stream: URL, progress: (@Sendable (String) -> Void)? = nil) async -> PassOutput {
+                      stream: URL, progress: (@Sendable (String) -> Void)? = nil, details: Bool = false) async -> PassOutput {
         try? FileManager.default.createDirectory(at: stream.deletingLastPathComponent(), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: stream.path, contents: nil)
         let handle = try? FileHandle(forWritingTo: stream)
@@ -779,7 +780,7 @@ public enum ReviewPasses {
         let exit = await ChildProcess.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout) { line in
             collector.add(line)
             handle?.write(Data((ReviewMask.jsonLine(line) + "\n").utf8))
-            if let progress, let text = liveLine(line) { progress(text) }
+            if let progress, let event = liveEvent(line, details: details) { progress(ReviewLive.line(event.title, detail: event.detail)) }
         }
         try? handle?.close()
         var output = parse(collector.lines)
@@ -793,9 +794,15 @@ public enum ReviewPasses {
         return output
     }
 
-    /// One Pi event as a line of the live log: what the pass does now. Tool names and file paths
-    /// only, never MCP arguments or answers.
-    static func liveLine(_ line: String) -> String? {
+    /// One Pi event as a line of the live log: what the pass does now. The title only; the
+    /// details are in `liveEvent`.
+    static func liveLine(_ line: String) -> String? { liveEvent(line, details: false)?.title }
+
+    /// One Pi event as a line of the live log: a short title (the tool and its file, the
+    /// model's answer with tokens) and the details to open under it: the call's arguments, the
+    /// tool's answer, the model's thinking and text, the findings with their severity. Masked
+    /// and cut; they stay on this Mac (the live log and Log…, never Copy for Analysis).
+    static func liveEvent(_ line: String, details: Bool = true) -> (title: String, detail: String?)? {
         // Only these events make a line: never parse the frequent, large message updates.
         guard line.hasPrefix("{"), line.contains("\"tool_execution_start\"") || line.contains("\"tool_execution_end\"")
                 || line.contains("\"message_end\""),
@@ -804,49 +811,96 @@ public enum ReviewPasses {
         case "tool_execution_start":
             let name = event["toolName"] as? String ?? "?"
             let args = event["args"] as? [String: Any] ?? [:]
-            switch name {
-            case "read", "ls", "find", "grep":
-                let target = (args["path"] as? String) ?? "."
-                let pattern = (args["pattern"] as? String).map { " \"\(SecretFilter.masked(String($0.prefix(60))))\"" } ?? ""
-                return "\(name) \(SecretFilter.masked(target))\(pattern)"
-            case "codemode": return "runs a script that calls MCP tools"
-            case "akit_submit_findings":
-                let count = (args["findings"] as? [Any])?.count ?? 0
-                let verdicts = (args["verdicts"] as? [Any])?.count ?? 0
-                return verdicts > 0 ? "submits \(verdicts) verdicts" : "submits \(count) finding\(count == 1 ? "" : "s")"
-            case "akit_submit_boundaries":
-                let count = (args["boundaries"] as? [Any])?.count ?? 0
-                return "submits \(count) boundar\(count == 1 ? "y" : "ies")"
-            case "akit_submit_overview": return "submits the overview"
-            case "akit_submit_consumers":
-                let count = (args["consumers"] as? [Any])?.count ?? 0
-                return "submits \(count) use\(count == 1 ? "" : "s") in other repositories"
-            case "akit_report_context_gap": return "reports a context gap: " + SecretFilter.masked(String((args["needed"] as? String ?? "").prefix(80)))
-            case "akit_submit_context": return "hands the merge request's data to AKit"
-            case "akit_reading_link": return "reads a link"
-            default:
-                if name.hasPrefix("mcp__") {
-                    let rest = name.dropFirst(5)
-                    let parts = rest.components(separatedBy: "__")
-                    return "MCP \(parts.first ?? ""): \(parts.dropFirst().joined(separator: "__"))"
-                }
-                return "tool \(name)"
-            }
+            return (startTitle(name, args), details ? ReviewLive.clip(startDetail(name, args)) : nil)
         case "tool_execution_end":
-            guard event["isError"] as? Bool == true else { return nil }
-            return "\(event["toolName"] as? String ?? "a tool") failed"
+            let name = event["toolName"] as? String ?? "a tool"
+            // Without details, only a failure makes a line (Ask, Write with AI, Debug…).
+            guard details || event["isError"] as? Bool == true else { return nil }
+            let result = details ? ReviewDebug.resultText(event["result"]) : ""
+            let size = result.isEmpty ? "" : " · \(ReviewRunLog.tokens(result.count)) chars"
+            let title = event["isError"] as? Bool == true ? "\(name) failed" : "\u{21B3} \(shortName(name)) answered\(size)"
+            return (title, details ? ReviewLive.clip(result) : nil)
         case "message_end":
             guard let message = event["message"] as? [String: Any], message["role"] as? String == "assistant" else { return nil }
             if message["stopReason"] as? String == "error" {
-                return "model error: " + SecretFilter.masked(String((message["errorMessage"] as? String ?? "").prefix(200)))
+                let error = message["errorMessage"] as? String ?? ""
+                return ("model error: " + SecretFilter.masked(String(error.prefix(200))), details ? ReviewLive.clip(error) : nil)
             }
             let model = message["model"] as? String
             let usage = (message["usage"] as? [String: Any]).map { PiLogFormat.tokens(fromPiUsage: $0) }
-            return "model answered" + (model.map { " (\($0))" } ?? "")
+            let title = "model answered" + (model.map { " (\($0))" } ?? "")
                 + (usage.map { " · \(ReviewRunLog.tokens($0.input + $0.cacheWrite)) in, \(ReviewRunLog.tokens($0.cacheRead)) cached, \(ReviewRunLog.tokens($0.output)) out" } ?? "")
+            var parts: [String] = []
+            for part in message["content"] as? [[String: Any]] ?? [] {
+                switch part["type"] as? String {
+                case "thinking": if let text = part["thinking"] as? String, !text.isEmpty { parts.append("Thinking:\n" + text) }
+                case "text": if let text = part["text"] as? String, !text.isEmpty { parts.append("Answer:\n" + text) }
+                case "toolCall": if let tool = part["name"] as? String { parts.append("Calls " + tool) }
+                default: break
+                }
+            }
+            return (title, details ? ReviewLive.clip(parts.joined(separator: "\n\n")) : nil)
         default:
             return nil
         }
+    }
+
+    /// `mcp__gitlab__get_merge_request` → `gitlab: get_merge_request`.
+    static func shortName(_ name: String) -> String {
+        guard name.hasPrefix("mcp__") else { return name }
+        let parts = name.dropFirst(5).components(separatedBy: "__")
+        return "\(parts.first ?? ""): \(parts.dropFirst().joined(separator: "__"))"
+    }
+
+    static func startTitle(_ name: String, _ args: [String: Any]) -> String {
+        switch name {
+        case "read", "ls", "find", "grep":
+            let target = (args["path"] as? String) ?? "."
+            let pattern = (args["pattern"] as? String).map { " \"\(SecretFilter.masked(String($0.prefix(60))))\"" } ?? ""
+            return "\(name) \(SecretFilter.masked(target))\(pattern)"
+        case "codemode": return "runs a script that calls MCP tools"
+        case "akit_submit_findings":
+            let count = (args["findings"] as? [Any])?.count ?? 0
+            let verdicts = (args["verdicts"] as? [Any])?.count ?? 0
+            return verdicts > 0 ? "submits \(verdicts) verdicts" : "submits \(count) finding\(count == 1 ? "" : "s")"
+        case "akit_submit_boundaries":
+            let count = (args["boundaries"] as? [Any])?.count ?? 0
+            return "submits \(count) boundar\(count == 1 ? "y" : "ies")"
+        case "akit_submit_overview": return "submits the overview"
+        case "akit_submit_consumers":
+            let count = (args["consumers"] as? [Any])?.count ?? 0
+            return "submits \(count) use\(count == 1 ? "" : "s") in other repositories"
+        case "akit_report_context_gap": return "reports a context gap: " + SecretFilter.masked(String((args["needed"] as? String ?? "").prefix(80)))
+        case "akit_submit_context": return "hands the merge request's data to AKit"
+        case "akit_reading_link": return "reads a link"
+        default:
+            return name.hasPrefix("mcp__") ? "MCP " + shortName(name) : "tool \(name)"
+        }
+    }
+
+    /// What a call carries: the findings and verdicts as readable lines, a script as code, other
+    /// arguments as JSON.
+    static func startDetail(_ name: String, _ args: [String: Any]) -> String {
+        if name == "akit_submit_findings" {
+            let findings = (args["findings"] as? [[String: Any]] ?? []).map { finding in
+                let severity = (finding["severity"] as? String ?? "?").uppercased()
+                let place = (finding["file"] as? String).map { file in file + ((finding["line"] as? Int).map { ":\($0)" } ?? "") } ?? "no line"
+                let confidence = (finding["confidence"] as? Double).map { String(format: " · confidence %.2f", $0) } ?? ""
+                var text = "[\(severity)] \(finding["title"] as? String ?? "?")\n  \(place)\(confidence)"
+                if let why = finding["why"] as? String, !why.isEmpty { text += "\n  " + why }
+                return text
+            }
+            let verdicts = (args["verdicts"] as? [[String: Any]] ?? []).map { verdict in
+                let severity = (verdict["severity"] as? String).map { " · \($0)" } ?? ""
+                let confidence = (verdict["confidence"] as? Double).map { String(format: " · %.2f", $0) } ?? ""
+                return "\(verdict["id"] as? String ?? "?"): \(verdict["verdict"] as? String ?? "?")\(severity)\(confidence)"
+                    + ((verdict["note"] as? String).map { "\n  " + $0 } ?? "")
+            }
+            let all = findings + verdicts
+            return all.isEmpty ? "No findings." : all.joined(separator: "\n\n")
+        }
+        if name == "codemode", let code = args["code"] as? String { return code }
+        return args.isEmpty ? "" : ReviewLive.pretty(args)
     }
 
     static func parse(_ lines: [String]) -> PassOutput {

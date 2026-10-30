@@ -56,9 +56,9 @@ extension AKitCLITests {
         #expect(await reviewConfig(["role", "show", "performance"], brain: brain).out.contains("name: review-performance"))
 
         // An agent's own text from stdin; a broken one is refused before anything is written.
-        let text = ReviewTemplates.role("performance").replacingOccurrences(of: "max_findings: 3", with: "max_findings: 2")
+        let text = ReviewTemplates.role("performance").replacingOccurrences(of: "max_findings: 6", with: "max_findings: 2")
         let edited = await reviewConfig(["role", "save", "performance", "--file", "-", "--yes"], brain: brain, stdin: text)
-        #expect(edited.code == 0 && edited.out.contains("-   max_findings: 3") && edited.out.contains("+   max_findings: 2"), "\(edited)")
+        #expect(edited.code == 0 && edited.out.contains("-   max_findings: 6") && edited.out.contains("+   max_findings: 2"), "\(edited)")
         #expect(ReviewCatalog.load(home: home, brain: brain).roles.first { $0.id == "performance" }?.maxFindings == 2)
         let broken = await reviewConfig(["role", "save", "performance", "--file", "-"], brain: brain, stdin: "---\nname: other\n---\n")
         #expect(broken.code != 0 && !broken.err.isEmpty, "\(broken)")

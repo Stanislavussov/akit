@@ -58,7 +58,7 @@ struct ReviewThreadView: View {
                         Label(entry.text, systemImage: entry.kind == .question ? "questionmark.bubble" : "note.text")
                             .font(.callout).textSelection(.enabled)
                         if let answer = entry.answer {
-                            Text(answer).font(.callout).foregroundStyle(.secondary).textSelection(.enabled).padding(.leading, 22)
+                            MarkdownText(text: answer).foregroundStyle(.secondary).padding(.leading, 22)
                         } else if let error = entry.error {
                             Text(error).font(.caption).foregroundStyle(.red).padding(.leading, 22)
                         }

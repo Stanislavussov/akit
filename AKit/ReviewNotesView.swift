@@ -110,7 +110,7 @@ struct ReviewNotesView: View {
             Text(authors).foregroundStyle(.secondary).textSelection(.enabled)
             if !notes.paragraph.isEmpty {
                 section("What Happened", spacing: 3) {
-                    MarkdownLines(text: translator.text(Key.paragraph, notes.paragraph).trimmingCharacters(in: .whitespacesAndNewlines))
+                    MarkdownText(text: translator.text(Key.paragraph, notes.paragraph).trimmingCharacters(in: .whitespacesAndNewlines))
                     Text("Written before the verifier: it may mention a rejected note.")
                         .font(.caption)
                         .foregroundStyle(.secondary)

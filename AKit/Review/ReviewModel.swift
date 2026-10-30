@@ -18,7 +18,8 @@ final class ReviewModel {
     struct Activity {
         var runID: String?
         var title: String
-        var lines: [String] = []
+        /// Each line with its details (`ReviewLive`).
+        var lines: [ReviewLogLine] = []
         /// Lines dropped from the front: a line's number stays its id in the live log.
         var dropped = 0
     }
@@ -208,14 +209,15 @@ final class ReviewModel {
         reload(select: id)
     }
 
-    private func log(_ line: String) {
+    private func log(_ raw: String) {
+        let line = ReviewLogLine(raw)
         activity?.lines.append(line)
         if let count = activity?.lines.count, count > 3000 {
             activity?.lines.removeFirst(count - 3000)
             activity?.dropped += count - 3000
         }
         // A pass's own events (indented) come often: the run reloads only on the steps between them.
-        if !line.hasPrefix("  "), let id = activity?.runID, run?.id == id { open(id) }
+        if !line.title.hasPrefix("  "), let id = activity?.runID, run?.id == id { open(id) }
     }
 
     private func ask(_ question: CapQuestion) async -> Bool {

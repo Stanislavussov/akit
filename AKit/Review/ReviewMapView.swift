@@ -14,6 +14,21 @@ extension ReviewSeverity {
     }
 }
 
+/// A finding's severity as a coloured tag, on every finding of a run.
+struct SeverityBadge: View {
+    let severity: ReviewSeverity
+
+    var body: some View {
+        Text(severity.rawValue.uppercased())
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(severity.color.opacity(0.18), in: Capsule())
+            .foregroundStyle(severity == .low ? Color.brown : severity.color)
+            .help("Severity: critical = data loss, security or outage; high = a defect users hit or a broken contract; "
+                  + "medium = a rarer defect, a misleading name, logic in the wrong layer; low = a smaller problem with a cost; nit = taste")
+    }
+}
+
 /// The Map tab of a run (R40, "The map on the Review screen"): three lanes left to right, This
 /// change (modules with their files, faded files that import them), Boundaries and Other
 /// repositories, with lines between them. A fixed layout; hovering a node lights up its lines,

@@ -37,7 +37,7 @@
 - «Хочу ревью своей ветки до MR» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree (см. [ревью локальной копии](#local)).
 - «Агенту нужен макет из Figma или страница вики» → поля **Context for this review**, **Links** и блок **Extra servers** в **New Review…** (см. [контекст ревью](#context)).
 
-![Экран Review, страница Runs: слева список с ревью Stop logging the Authorization header (AB#4512), меткой Ready, адресом shop/orders-service!42 и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier, кнопки Log… и Review Again…; свёрнутый блок Overview с меткой Russian и кнопкой Translate; переключатель Requests | Map; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) строкой Verifier: confirmed и кнопками Edit, Ask…, Add Note…, Reject и Undo Approve; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, меню Ask…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
+![Экран Review, страница Runs: слева список с ревью Stop logging the Authorization header (AB#4512), меткой Ready, адресом shop/orders-service!42 и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier, кнопки Log… и Review Again…; свёрнутый блок Overview с меткой Russian и кнопкой Translate; переключатель Requests | Map; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с ролью security, цветной меткой серьёзности HIGH и меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) строкой Verifier: confirmed и кнопками Edit, Ask…, Add Note…, Reject и Undo Approve; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, меню Ask…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
 ### Зачем это нужно
 <!-- section: overview-why -->
@@ -363,16 +363,26 @@ default_scenario: bugfix
 ### Просто: следить за ревью
 <!-- section: run-progress -->
 
-Пока ревью идёт, вверху экрана голубая полоса. В ней последний шаг, например «role-tests · read src/Auth/AuthMiddleware.cs», и кнопки **Details** и **Stop**.
+Пока ревью идёт, вверху экрана голубая полоса. В ней последний шаг, например «role-tests · read src/Auth/AuthMiddleware.cs», и кнопки **Details**, **Open Log Window** и **Stop**.
 
 - **Details** раскрывает живой лог всего ревью. Строки без отступа — шаги: «Pass role-tests…», «Pass role-tests done: 5.0 credits, 61 s, 2.6k in / 20.1k cached / 350 out». Строки с отступом — что проход делает сейчас:
   - `read`, `grep`, `find`, `ls` и путь — проход читает код;
-  - «MCP gitlab: get_merge_request» — вызов инструмента MCP (без аргументов);
+  - «↳ read answered · 2.3k chars» — ответ инструмента;
+  - «MCP gitlab: get_merge_request» — вызов инструмента MCP;
   - «runs a script that calls MCP tools» — скрипт `codemode`;
   - «model answered (модель) · 14.2k in, 0 cached, 420 out» — ответ модели;
   - «submits 2 findings», «reports a context gap: …»;
   - красным — ошибки: «… failed», «model error: …».
-- **Hide Details** сворачивает лог. В терминале (`akit review …`) эти же строки сразу идут в stderr. Если вывод перенаправлен в файл или в другую программу, печатаются только шаги, после их завершения.
+- У строки со стрелкой ▸ есть детали. Нажмите стрелку, и под строкой откроется:
+  - у вызова — его аргументы (JSON) или скрипт `codemode`;
+  - у ответа инструмента — что он вернул: текст файла, результат поиска, ответ сервера MCP;
+  - у ответа модели — её thinking и текст;
+  - у «submits N findings» — каждая находка: серьёзность, заголовок, файл и строка, уверенность, почему это проблема.
+
+  Секреты в деталях скрыты. Длинный текст обрезан посередине: полный есть в папке ревью.
+- **Expand All** держит детали всех строк открытыми. AKit запоминает этот выбор: включите его один раз, если хотите видеть детали всегда.
+- **Open Log Window** открывает тот же лог в большом окне.
+- **Hide Details** сворачивает лог. В терминале (`akit review …`) эти же строки, без деталей, сразу идут в stderr. Если вывод перенаправлен в файл или в другую программу, печатаются только шаги, после их завершения.
 - **Stop** завершает текущий проход. Всё, что сделано до него, остаётся в папке ревью.
 - Ошибка показана оранжевой полосой с кнопкой **Dismiss**.
 
@@ -392,7 +402,7 @@ default_scenario: bugfix
 
 Сценарий выбирает роли. Встроенных сценариев четыре:
 
-- **Feature** — роли `contracts`, `domain`, `bug-hunter`, `requirements`; по желанию `architecture`, `tests`, `security`, `performance`, `concurrency`, `data-migrations`, `observability`, `history`. Проверяет контракты и их потребителей, границы компонентов, инварианты, бизнес-правила, поведение на краевых случаях и покрытие критериев кодом и тестами.
+- **Feature** — роли `contracts`, `architecture`, `domain`, `bug-hunter`, `requirements`; по желанию `tests`, `security`, `performance`, `concurrency`, `data-migrations`, `observability`, `history`. Проверяет контракты и их потребителей, имена и место сущностей, границы компонентов и слоёв, инварианты, бизнес-правила, поведение на краевых случаях и покрытие критериев кодом и тестами.
 - **Bugfix** — роли `bug-hunter`, `contracts`, `requirements`, `tests`; по желанию `architecture`, `security`, `concurrency`, `performance`, `observability`, `history`. Проверяет, исправлена ли причина, не сломал ли фикс контракт, есть ли регрессионный тест, нет ли той же ошибки рядом.
 - **Security** — роли `security`, `bug-hunter`; по желанию `contracts`, `data-migrations`, `observability`, `history`. Проверяет, куда доходит недоверенный ввод, проверку прав на каждом новом входе, утечку секретов и личных данных, ослабленные проверки.
 - **Dependency upgrade** — роли `upgrade-risk`, `tests`; по желанию `contracts`, `security`, `performance`. Проверяет ломающие изменения, транзитивные зависимости, устаревшие API и лицензии.
@@ -413,12 +423,31 @@ default_scenario: bugfix
 - `observability` — увидит ли дежурный сбой этого изменения: ошибка без причины в логе, новый внешний вызов без метрики, переименованная метрика, которую читают дашборды, лог на каждый запрос.
 - `history` — изменение против истории файлов: не отменяет ли оно прошлый фикс, не возвращает ли старый баг, не идёт ли против того, о чём люди уже просили в прошлых MR по этим файлам. Читает `history.md`.
 
-`architecture` в **Feature** теперь по желанию: включайте её, когда в изменении есть вопрос дизайна. Новые четыре роли тоже по желанию. Пример: MR добавляет миграцию — включите `data-migrations`; новый фоновый обработчик очереди — `concurrency` и `observability`.
+`architecture` в **Feature** обязательна: она проверяет имена, место каждой сущности и разделение ответственности. В **Bugfix** она по желанию. Новые четыре роли тоже по желанию. Пример: MR добавляет миграцию — включите `data-migrations`; новый фоновый обработчик очереди — `concurrency` и `observability`.
 
-**Чего ревью не комментирует.** Сначала идут контракты, потом архитектура, потом поведение. Все проходы получают общий список запретов, и verifier отклоняет такие находки:
+**Что ревью проверяет.** Ревью строгое: оно считает, что в изменении есть проблемы, и ищет их. Каждый проход идёт по всем изменённым файлам и по каждой сущности, которую изменение добавляет или трогает (тип, функция, модуль, файл, компонент, эндпоинт, таблица, ключ конфигурации). Порядок такой:
+
+1. **Контракты.** На что опираются другой код, сервисы, клиенты и сохранённые данные. Работает ли каждый потребитель. Имя и сигнатура — тоже контракт: вызывающий им верит.
+2. **Сама сущность.** Нужна ли она, или в коде уже есть такая же. Говорит ли имя, что она делает, и только это. Пример: `getUser()`, который ещё и сохраняет. Где она лежит и почему там: подходит ли модуль, папка или слой тому, чем она себя называет.
+3. **Разделение ответственности.** Бизнес-логика во view или компоненте. Состояние UI, форматирование или навигация в сервисе или в домене. SQL, HTTP или файлы в доменной логике. Зависимость не в ту сторону.
+4. **Поведение.** Ошибки, на которые наткнётся пользователь, со входом, который их вызывает.
+
+Роль сообщает о каждой возможной проблеме, даже если не уверена. Уверенность она ставит честно, например 0.5. Verifier отклоняет только то, что код опровергает. Остальное вы видите в AKit с серьёзностью и уверенностью. В GitLab по-прежнему идут только находки с уверенностью от 0.8 и серьёзностью от `medium` (см. [четыре места](#noise-places)).
+
+**Серьёзность** (severity) есть у каждой находки. Она видна цветной меткой:
+
+| Метка | Когда |
+|---|---|
+| `CRITICAL` | потеря данных, брешь безопасности, отказ |
+| `HIGH` | ошибка, на которую наткнутся пользователи; сломанный контракт |
+| `MEDIUM` | ошибка в редком случае; имя, которое вводит в заблуждение; логика не в том слое; дубль существующего |
+| `LOW` | меньшая проблема дизайна или имени, которая чего-то стоит: сущность труднее найти, проверить или поменять |
+| `NIT` | вкус |
+
+**Чего ревью не комментирует.** Все проходы получают общий список запретов, и verifier отклоняет такие находки:
 
 - форматирование, пробелы, порядок импортов, синтаксис, который поймает компилятор;
-- вкус в именах, опечатки и формулировки комментариев;
+- имена, если дело только во вкусе (имя, которое врёт о том, что делает сущность, — находка), опечатки и формулировки комментариев;
 - сам MR: заголовок, описание, метки, сообщения коммитов, имя ветки, размер;
 - общие советы без последствий («добавьте логирование», «можно читабельнее»);
 - похвала и пересказ изменения.
@@ -483,7 +512,7 @@ default_scenario: bugfix
 
 1. **fetch** — сбор. Отдельная сессия Pi. Pi читает MR, версии, diff, треды, ваши черновики, ваше имя в GitLab и задачи через MCP-инструменты, в скриптах codemode. Расширение AKit сохраняет каждый ответ сервера в `<run>/mcp/calls/`. После прохода AKit прячет в этих ответах токены и пароли: вместо них остаётся `[secret hidden]`. AKit разбирает ответы по их виду (JSON GitLab и Azure DevOps) и не верит пересказу модели.
 2. **brief** — краткое описание: цель изменения, затронутые части, что уже сказали люди, критерии приёмки, первые пробелы.
-3. **role-<id>** — по проходу на каждую роль. Роль возвращает находки, не больше своего `max_findings` и не ниже своего `min_severity`. Строки матрицы критериев (роль `requirements`) в `max_findings` не считаются: в матрице столько строк, сколько критериев в задаче.
+3. **role-<id>** — по проходу на каждую роль. Роль возвращает находки, не больше своего `max_findings` и не ниже своего `min_severity`. Строки матрицы критериев (роль `requirements`) в `max_findings` не считаются: в матрице столько строк, сколько критериев в задаче. У встроенных ролей `min_severity: low` и до 6 находок (`contracts` — до 8, `observability` и `history` — до 4): AKit показывает вам все возможные проблемы, а в GitLab их отбирают пороги.
 4. **verifier** — проверяющий. Это отдельная новая сессия Pi с моделью verifier. Рассуждений ролей он не видит, поэтому не повторяет их ошибки. В запросе он получает brief, ограничения каждой роли (сколько находок, какая серьёзность, о чём роль не пишет), находки ролей и код вокруг каждой, а проверяет их по коду, тредам и задачам. Для каждой находки он говорит: подтверждаю, отклоняю, это вопрос автору или это та же находка, что и другая.
 
 Если роли ничего не нашли, verifier не запускается. Brief, роли и шаги Pi — одна сессия Pi, у verifier — своя.
@@ -995,9 +1024,9 @@ To review: commits and uncommitted changes.
 Карточка сверху вниз:
 
 1. Вид запроса и место: «New comment src/Auth/AuthMiddleware.cs:8».
-2. Справа: роль, серьёзность, уверенность, состояние. Пример: «security · high · 0.93 · Approved».
+2. Справа: роль, цветная метка серьёзности, уверенность, состояние. Пример: «security · HIGH · 0.93 · Approved».
 3. Код вокруг строки на коммите MR. Сама строка подсвечена.
-4. Текст, который уйдёт в GitLab.
+4. Текст, который уйдёт в GitLab. Он показан так, как его покажет GitLab: жирный шрифт, код, заголовки, списки и таблицы сводки, а блок `suggestion` — рамкой **Suggested change**. Знаков разметки (`**`, `###`, `|`) вы не видите.
 5. «Verifier: confirmed — …» — вердикт и заметка verifier.
 6. Кнопки **Edit**, **Reject**, **Approve**.
 
@@ -1017,12 +1046,13 @@ To review: commits and uncommitted changes.
 ### Средне: лог ревью для разбора
 <!-- section: run-log -->
 
-Кнопка **Log…** стоит справа от меток проходов в заголовке ревью. Она открывает окно **Run Log**: что ревью сделало и сколько это стоило.
+Кнопка **Log…** стоит справа от меток проходов в заголовке ревью. Она открывает окно **Run Log**: что ревью сделало, шаг за шагом, и сколько это стоило.
 
-![Окно Run Log: строка shop/orders-service!42 at 4f2c9e1b7a · scenario bugfix, строка Passes: github-copilot/gpt-5.4-mini · verifier: github-copilot/claude-opus-5-5, thinking high, строка 62.1 of 150 credits (estimated 64) · 7 passes · 9m 00s · MCP: 4 calls (gitlab 2, ado 1, context7 1) · 1 blocked; таблица проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier с колонками Model, Thinking, Time, In / cached / out, Credits, Files, MCP, Session; таблица Findings by role; список Blocked by AKit с вызовом mcp__gitlab__create_note; список MCP calls; кнопки Show in Finder, Copy for Analysis, Copy Full Log и Done](images/review-log.png)
+![Окно Run Log: строка shop/orders-service!42 at 4f2c9e1b7a · scenario bugfix, строка Passes: github-copilot/gpt-5.4-mini · verifier: github-copilot/claude-opus-5-5, thinking high, строка 62.1 of 150 credits (estimated 64) · 7 passes · 9m 00s · MCP: 4 calls (gitlab 2, ado 1, context7 1) · 1 blocked; таблица проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier с колонками Model, Thinking, Time, In / cached / out, Credits, Files, MCP, Session, строка role-bug-hunter выбрана; блок Steps of role-bug-hunter (7) с переключателем Expand All: шаг read src/Auth/AuthMiddleware.cs с раскрытыми аргументами {"path": "src/Auth/AuthMiddleware.cs"} и шаг ↳ read answered · 364 chars с раскрытым кодом метода InvokeAsync; таблица Findings by role; список Blocked by AKit с вызовом mcp__gitlab__create_note; список MCP calls; кнопки Show in Finder, Copy for Analysis, Copy Full Log и Done](images/review-log.png)
 
 - Вверху: MR и коммит, сценарий, модели проходов и verifier с уровнем thinking, кредиты (и оценка до проходов), число проходов, общее время, вызовы MCP по серверам.
 - Таблица проходов: модель, thinking, время, токены (вход / из кэша / выход), кредиты, сколько файлов прочитано, вызовы MCP (сколько упало и сколько заблокировано) и **Show** — файл сессии Pi этого прохода: все промпты, ответы и вызовы инструментов.
+- **Steps of …** — шаги прохода, который выбран в таблице. Сначала выбран первый проход роли. Это те же строки, что в живом логе, и у каждой те же детали: аргументы, ответ инструмента, thinking и текст модели, находки с серьёзностью. **Expand All** открывает детали всех шагов. Выберите другой проход в таблице, чтобы увидеть его шаги.
 - **Findings by role** — что стало с находками каждой роли: найдено, подтверждено, отклонено, вопросы, слито, «до этого MR», к строкам.
 - **Blocked by AKit** — вызовы, которые AKit не пропустил, с причиной.
 - **MCP calls** — каждый вызов: проход, инструмент, размер ответа и аргументы (секреты скрыты).
@@ -1100,7 +1130,7 @@ To review: commits and uncommitted changes.
 ### Средне: исправить текст
 <!-- section: screen-edit -->
 
-1. Нажмите **Edit**. Текст станет полем ввода.
+1. Нажмите **Edit**. Текст станет полем ввода с разметкой Markdown: `**жирный**`, `` `код` ``, `- пункт`.
 2. Исправьте текст. Пример: уберите лишнее предложение или смягчите тон.
 3. Нажмите **Done** (или **Cancel**, чтобы выйти без правки).
 4. Нажмите **Approve**. Метка станет **Approved, edited**.
@@ -1352,7 +1382,7 @@ To review: commits and uncommitted changes.
 
 - **Комментарий к строке** (inline) — подтверждённая находка с серьёзностью и уверенностью не ниже порогов. Не больше 5 за ревью, из них `medium` — не больше 3.
 - **Сводка** (summary) — один черновик ко всему MR. Сюда идёт всё, что важно, но не годится для строки.
-- **Только в AKit** (Only in AKit) — всё остальное. Вы видите это, автор MR — нет.
+- **Только в AKit** (Only in AKit) — всё остальное. Вы видите это, автор MR — нет. Сверху самые серьёзные. У каждой находки — метка серьёзности, заголовок, почему это проблема, файл, роль, уверенность и причина, по которой она не пошла в GitLab.
 - **Было до MR** (Before this MR) — проблемы, которые уже были в коде до этого MR. Это не вина автора. Сделайте для них отдельную задачу.
 
 > **Почему так:** мало сильных комментариев лучше многих слабых. Автор читает каждый комментарий к строке. Сводку он читает один раз.
@@ -1750,7 +1780,7 @@ AKit проверяет папку ревью каждые несколько с
 2. **Level** = **Brain**.
 3. Выберите роль в списке. Справа откроется её `SKILL.md`.
 
-![Страница Roles: Level = Brain; список ролей contracts, architecture, domain, requirements, tests, bug-hunter, upgrade-risk, security, performance, concurrency, data-migrations, observability, history, у каждой метка built-in и описание; выбрана security, справа её SKILL.md: name review-security, блок akit-review с min_severity medium, max_findings 3, needs и do_not_comment, ниже список проверок; кнопки New Role…, Write with AI…, Add to Brain, Revert и Save…; подпись Built into AKit. Edit it to save it into the brain, or Add to Brain first.](images/review-roles.png)
+![Страница Roles: Level = Brain; список ролей contracts, architecture, domain, requirements, tests, bug-hunter, upgrade-risk, security, performance, concurrency, data-migrations, observability, history, у каждой метка built-in и описание; выбрана security, справа её SKILL.md: name review-security, блок akit-review с min_severity low, max_findings 6, needs и do_not_comment, ниже список проверок; кнопки New Role…, Write with AI…, Add to Brain, Revert и Save…; подпись Built into AKit. Edit it to save it into the brain, or Add to Brain first.](images/review-roles.png)
 
 Как читать роль:
 

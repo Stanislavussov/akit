@@ -455,7 +455,7 @@ private struct LabRunDetail: View {
             }
         }
         if let summary = run.summary {
-            MarkdownLines(text: translator.text("summary", summary).trimmingCharacters(in: .whitespacesAndNewlines))
+            MarkdownText(text: translator.text("summary", summary).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         if let review = run.review {
             VStack(alignment: .leading, spacing: 10) {
@@ -567,38 +567,6 @@ private struct LabRunDetail: View {
         Task {
             do { try await work() } catch { self.error = error.localizedDescription }
         }
-    }
-}
-
-/// Markdown an agent wrote: headings as bold lines, inline styles (bold, code, links) kept.
-struct MarkdownLines: View {
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("#") {
-                    Text(inline(trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces))).fontWeight(.semibold)
-                } else if trimmed.isEmpty {
-                    Spacer().frame(height: 2)
-                } else {
-                    Text(inline(String(line)))
-                }
-            }
-        }
-        .textSelection(.enabled)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// Links an agent wrote stay clickable only for http and https (no file:// or app schemes).
-    private func inline(_ line: String) -> AttributedString {
-        guard var text = try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
-        else { return AttributedString(line) }
-        for run in text.runs {
-            if let link = run.link, !["http", "https"].contains(link.scheme?.lowercased() ?? "") { text[run.range].link = nil }
-        }
-        return text
     }
 }
 

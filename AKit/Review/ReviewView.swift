@@ -18,7 +18,10 @@ struct ReviewView: View {
     @State private var showNew = DebugSnapshot.options?.add == true && !["settings", "roles"].contains(DebugSnapshot.options?.tab)
     @State private var showSettings = DebugSnapshot.options?.tab == "settings"
     /// The running review's live log under its status bar.
-    @State private var showDetails = false
+    @State private var showDetails = DebugSnapshot.options?.tab == "live"
+    @State private var showLogWindow = false
+    /// Every line's details open, remembered: the user may want them always open.
+    @AppStorage("review.log.expandAll") private var expandAll = false
 
     var body: some View {
         @Bindable var model = model
@@ -29,33 +32,22 @@ struct ReviewView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text((activity.lines.last ?? activity.title).trimmingCharacters(in: .whitespaces)).lineLimit(1)
+                        Text((activity.lines.last?.title ?? activity.title).trimmingCharacters(in: .whitespaces)).lineLimit(1)
                         Spacer()
                         Button(showDetails ? "Hide Details" : "Details") { showDetails.toggle() }
-                            .help("Everything the review did so far: each pass, the files it reads, the MCP tools it calls, the model's answers")
+                            .help("Everything the review did so far: each pass, the files it reads, the MCP tools it calls, the model's answers. Open a line for its arguments, the answer and the model's thinking.")
+                        if showDetails {
+                            Toggle("Expand All", isOn: $expandAll).toggleStyle(.switch).controlSize(.small)
+                                .help("Keep every line's details open")
+                        }
+                        Button("Open Log Window") { showLogWindow = true }
+                            .help("The live log in a large window")
                         Button("Stop") { model.stop() }
                             .help("End the running pass. What is done so far stays in the run.")
                     }
                     if showDetails {
-                        ScrollViewReader { proxy in
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 1) {
-                                    ForEach(Array(activity.lines.enumerated()), id: \.offset) { offset, line in
-                                        let index = activity.dropped + offset
-                                        Text(line).font(.caption.monospaced())
-                                            .foregroundStyle(line.hasSuffix(" failed") || line.contains(" failed:") || line.contains("model error:")
-                                                             ? Color.red
-                                                             : line.hasPrefix("  ") ? Color.secondary : Color.primary)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .id(index)
-                                    }
-                                }
-                                .textSelection(.enabled)
-                            }
-                            .frame(height: 180)
-                            .onChange(of: activity.dropped + activity.lines.count) { proxy.scrollTo(activity.dropped + activity.lines.count - 1, anchor: .bottom) }
-                            .onAppear { proxy.scrollTo(activity.dropped + activity.lines.count - 1, anchor: .bottom) }
-                        }
+                        ReviewLogList(lines: activity.lines, dropped: activity.dropped, expandAll: expandAll, follow: true)
+                            .frame(height: 260)
                     }
                 }
                 .font(.callout)
@@ -130,6 +122,7 @@ struct ReviewView: View {
             NewReviewSheet(brain: app.brainRoot, again: model.again)
         }
         .sheet(isPresented: $showSettings) { ReviewSettingsSheet(brain: app.brainRoot) }
+        .sheet(isPresented: $showLogWindow) { ReviewLiveLogSheet() }
     }
 
     private var runs: some View {
@@ -537,16 +530,24 @@ struct ReviewRunDetail: View {
 
     /// Findings of one place that don't go to GitLab, each with its reason and Move Inline.
     @ViewBuilder private func hiddenFindings(_ place: ReviewPlacement.Place, title: String, help: String?) -> some View {
-        let hidden = (run.plan?.placements ?? []).filter { $0.place == place }
+        // The worst first: a potential problem's severity says where to look.
+        let findings = Dictionary((run.findings?.findings ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let hidden = (run.plan?.placements ?? []).filter { $0.place == place }.sorted { a, b in
+            let x = findings[a.findingID], y = findings[b.findingID]
+            let left = (x?.finalSeverity ?? .nit, x?.finalConfidence ?? 0), right = (y?.finalSeverity ?? .nit, y?.finalConfidence ?? 0)
+            return left != right ? left > right : a.findingID < b.findingID
+        }
         if !hidden.isEmpty {
             DisclosureGroup("\(title) (\(hidden.count))") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(hidden, id: \.findingID) { placement in
                         if let finding = run.finding(placement.findingID) {
                             HStack(alignment: .top) {
+                                SeverityBadge(severity: finding.finalSeverity)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(finding.title).fontWeight(.medium)
-                                    Text("\(finding.file.map { "\($0)\(finding.line.map { ":\($0)" } ?? "")" } ?? "No line") · \(finding.role) · \(finding.finalSeverity.rawValue) · "
+                                    Text(finding.why).font(.callout).lineLimit(4).textSelection(.enabled)
+                                    Text("\(finding.file.map { "\($0)\(finding.line.map { ":\($0)" } ?? "")" } ?? "No line") · \(finding.role) · confidence "
                                          + String(format: "%.2f", finding.finalConfidence))
                                         .font(.caption).foregroundStyle(.secondary)
                                     Text(placement.reason).font(.caption).foregroundStyle(.secondary)
@@ -684,7 +685,7 @@ struct ReviewRequestCard: View {
                 }
                 Spacer()
                 if let role = request.role { Text(role).font(.caption).foregroundStyle(.secondary) }
-                if let severity = request.severity { Text(severity.rawValue).font(.caption.weight(.medium)) }
+                if let severity = request.severity { SeverityBadge(severity: severity) }
                 if let confidence = request.confidence { Text(String(format: "%.2f", confidence)).font(.caption).foregroundStyle(.secondary) }
                 state
             }
@@ -707,7 +708,8 @@ struct ReviewRequestCard: View {
                     .frame(minHeight: 120)
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
             } else {
-                Text(shownText ?? request.text).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                // Drawn as GitLab will show it: no raw `**`, `###` or `|`. Edit shows the Markdown.
+                MarkdownText(text: shownText ?? request.text)
             }
             if let verdict = finding?.verifier {
                 Text("Verifier: \(verdict.verdict.rawValue)" + (verdict.note.isEmpty ? "" : " — \(verdict.note)"))

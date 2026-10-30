@@ -94,7 +94,7 @@ struct ReviewDebugSheet: View {
                      + String(format: " · %.1f credits", report.credits) + (report.usage.cost.map { " · " + ReviewRunLog.dollars($0) } ?? ""))
                     .font(.caption).foregroundStyle(.tertiary)
                 if let answer = report.answer {
-                    MarkdownLines(text: answer)
+                    MarkdownText(text: answer)
                 } else {
                     Label(report.error ?? "Pi gave no answer.", systemImage: "xmark.circle").foregroundStyle(.red).textSelection(.enabled)
                 }
