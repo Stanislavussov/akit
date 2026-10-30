@@ -139,6 +139,49 @@ shot brain-setup         $MAIN --section brain --tab setup --project weather-app
 shot brain-setup-preview $MAIN --section brain --tab setup --project weather-app --capture
 shot brain-setup-local   $MAIN --section brain --tab setup --project weather-app --local-only
 shot brain-evaluate      $MAIN --section brain --select backend-node --tab evaluate
+# Global Instructions (Brain): only for these shots, core gets an AGENTS.md text, the global
+# files get another tool's block and own text, and Lab keeps an analysis. Restored afterwards.
+CORE="$DEMO/.akit/registry/layers/core"
+cp "$CORE/layer.yaml" "$CORE/layer.yaml.keep"
+printf -- 'files:\n  - template: AGENTS.md\n    to: AGENTS.md\n' >> "$CORE/layer.yaml"
+mkdir -p "$CORE/templates"
+printf -- '## Answer style\nShort sentences, one idea each. Show a flow as a diagram.\n\n## Commits\nImperative summary line, 72 characters at most. Commit only when asked.\n' > "$CORE/templates/AGENTS.md"
+GLOBAL_MD="$DEMO/.claude/CLAUDE.md" PI_MD="$DEMO/.pi/agent/AGENTS.md"
+for f in "$GLOBAL_MD" "$PI_MD"; do [[ -e "$f" ]] && cp "$f" "$f.keep"; done
+printf -- '<!-- TEAMKIT:START -->\n# Team kit\n\nUse the team kit commands for releases.\n<!-- TEAMKIT:END -->\n\n## Tests\nRun the tests before you say a change is done.\n\n<!-- akit:core:start -->\n## Answer style\nShort sentences, one idea each. Show a flow as a diagram.\n\n## Commits\nImperative summary line, 72 characters at most. Commit only when asked.\n<!-- akit:core:end -->\n' > "$GLOBAL_MD"
+printf -- '## Tests\nRun the tests before you say a change is done.\n\n## Style\nTabs, not spaces.\n' > "$PI_MD"
+ANALYSIS="$DEMO/.akit/lab/analysis/instructions.json"
+mkdir -p "$(dirname "$ANALYSIS")"
+cat > "$ANALYSIS" <<'JSON'
+{
+  "costs" : [
+    { "bytes" : 220, "file" : "~/.claude/CLAUDE.md", "requests" : 1840, "section" : "## Commits", "tokens" : 55 },
+    { "bytes" : 160, "file" : "~/.claude/CLAUDE.md", "requests" : 1840, "section" : "## Answer style", "tokens" : 40 },
+    { "bytes" : 120, "file" : "~/.claude/CLAUDE.md", "requests" : 1840, "section" : "# Team kit", "tokens" : 30 },
+    { "bytes" : 96, "file" : "~/.pi/agent/AGENTS.md", "requests" : 410, "section" : "## Tests", "tokens" : 24 }
+  ],
+  "days" : 30,
+  "findings" : [
+    { "confidence" : 0.9, "file" : "~/.claude/CLAUDE.md", "part" : "sessions", "places" : [ "claude:6f1c", "claude:9a02", "pi:41bd" ],
+      "section" : "## Commits", "severity" : "high", "suggestion" : "## Commits\nCommit only when the user asks in this session. Imperative summary line, 72 characters at most.",
+      "title" : "Broken: commit only when asked", "why" : "In 3 sessions the agent committed on its own and you reverted it: the rule sits at the end of a line about format." },
+    { "confidence" : 0.75, "file" : null, "part" : "sessions", "places" : [ "claude:6f1c", "claude:77de" ], "section" : null, "severity" : "medium",
+      "suggestion" : "## Screenshots\nCheck a UI change with make snapshot before you say it is done.",
+      "title" : "Missing: check UI with a snapshot", "why" : "You asked for a screenshot of the changed screen by hand in 2 sessions; no rule says it." },
+    { "confidence" : 0.8, "file" : "~/.claude/CLAUDE.md", "part" : "review", "places" : [ "~/.pi/agent/AGENTS.md" ], "section" : "## Tests", "severity" : "low",
+      "suggestion" : null, "title" : "Own text in two files", "why" : "## Tests is in both global files outside the brain: Take Over… makes it one text for both agents." }
+  ],
+  "made" : "2026-10-30T15:20:00Z",
+  "notes" : [ "Sessions: 9 with 21 reactions of yours in the last 30 days." ],
+  "parts" : [ "size", "review", "sessions" ]
+}
+JSON
+shot brain-global          $MAIN --section brain --select global
+shot brain-global-edit     $MAIN --section brain --select global --tab edit
+shot brain-global-takeover $MAIN --section brain --select global --tab take-over
+shot brain-global-review   $MAIN --section brain --select global --tab review
+mv "$CORE/layer.yaml.keep" "$CORE/layer.yaml"; rm -rf "$CORE/templates" "$ANALYSIS"
+for f in "$GLOBAL_MD" "$PI_MD"; do if [[ -e "$f.keep" ]]; then mv "$f.keep" "$f"; else rm -f "$f"; fi; done
 shot insights            $MAIN --section insights --delay 8
 shot insights-apply      $MAIN --section insights --delay 8 --add
 shot insights-table      $MAIN --section insights --delay 8 --tab skills

@@ -1,4 +1,6 @@
 import AKitBrain
+import AKitErrorAnalysis
+import AKitLab
 import AKitFoundation
 import AKitHarnesses
 import AKitInstructions
@@ -202,6 +204,59 @@ extension AKitCLI {
         }
         lines += status.notes.map { "  ! \($0)" }
         if !status.text.isEmpty { lines += ["", status.text] }
+        out(lines.joined(separator: "\n"))
+        return 0
+    }
+
+    static let instructionsAnalyzeUsage = "Use: akit instructions analyze [--part size|review|sessions] [--days N] [--agent claude-code|pi --model M [--effort E]] [--json]"
+
+    /// `akit instructions analyze`: one part of Analyze… (docs/design/global-instructions.md).
+    static func instructionsAnalyze(_ args: inout Arguments, json: Bool, env: HarnessEnvironment, projectsRoot: URL,
+                                    out: (String) -> Void) async throws -> Int32 {
+        let partName = args.value("--part") ?? "size", daysText = args.value("--days")
+        let agentName = args.value("--agent"), modelName = args.value("--model"), effort = args.value("--effort") ?? "high"
+        try args.finish()
+        guard let part = InstructionAnalysis.Part(rawValue: partName) else { throw Failure(message: instructionsAnalyzeUsage) }
+        let days = try daysText.map { text -> Int in
+            guard let days = Int(text), (1...365).contains(days) else { throw Failure(message: "--days takes 1 to 365.") }
+            return days
+        } ?? 30
+        var agent: LabAgent?
+        if part != .size {
+            guard let agentName, let harness = LabHarness(rawValue: agentName), let modelName, !modelName.isEmpty else {
+                throw Failure(message: "--part \(partName) needs --agent claude-code|pi and --model. " + instructionsAnalyzeUsage)
+            }
+            agent = LabAgent(harness: harness, model: modelName, effort: effort)
+        }
+        let installed = Set(HarnessCatalog.detectAll(in: env).map(\.id))
+        let harnesses = InstructionScanner.harnesses.filter(installed.contains)
+        let report: InstructionAnalysis.Report
+        do {
+            report = try await InstructionAnalysis.run(part, days: days, harnesses: harnesses, agent: agent, env: env)
+        } catch {
+            throw Failure(message: error.localizedDescription)
+        }
+        if json {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            out(String(decoding: try encoder.encode(report), as: UTF8.self))
+            return 0
+        }
+        var lines = report.notes
+        let top = report.costs.sorted { $0.sent > $1.sent }.prefix(8)
+        if part == .size, !top.isEmpty {
+            lines.append("Most expensive sections, last \(report.days) days:")
+            lines += top.map { "  \($0.section) (\($0.file)): ≈ \($0.tokens) tokens × \($0.requests) requests = \($0.sent)" }
+        }
+        let findings = report.sorted.filter { $0.part == part }
+        lines.append(findings.isEmpty ? "No findings." : "Findings:")
+        for finding in findings {
+            lines.append("  [\(finding.severity.rawValue.uppercased())] \(finding.title)" + (finding.section.map { " · \($0)" } ?? "") + (finding.file.map { " · \($0)" } ?? ""))
+            if !finding.why.isEmpty { lines.append("    \(finding.why)") }
+            if !finding.places.isEmpty { lines.append("    also: " + finding.places.joined(separator: ", ")) }
+            if let suggestion = finding.suggestion { lines.append(suggestion.isEmpty ? "    suggestion: remove it" : "    suggestion:\n" + suggestion.split(separator: "\n", omittingEmptySubsequences: false).map { "      " + $0 }.joined(separator: "\n")) }
+        }
         out(lines.joined(separator: "\n"))
         return 0
     }

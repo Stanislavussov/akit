@@ -31,6 +31,11 @@ akit doctor pi [--live] [--json] # when Pi misbehaves: install, settings, env, M
                                 # (exit 1 on a problem); --live also connects MCP servers, checks sign-in;
                                 # + lines: what recent Pi sessions say is extra, each with its akit command
 akit instructions remove FILE (--line N | --section HEADING) [--yes]  # drop one section (a repeated one)
+akit instructions global [--json]   # the global instructions: core's AGENTS.md text, its block in each global file
+akit instructions global set FILE|- [--yes]  # new global text: diff; --yes commits it to the brain, writes the blocks
+akit instructions analyze [--part size|review|sessions] [--days N] [--agent claude-code|pi --model M] [--json]
+                                # findings about the global text: size+repeats (no model), a model's review,
+                                # rules broken / asked by hand in recorded sessions (model; send policy applies)
 akit pi packages [install [SOURCE] | remove SOURCE] [--yes]  # Pi's packages; pi does the install
 akit answers [PROJECT]          # saved answers of a project
 akit plan  [PROJECT] [ANSWERS]  # every change with a diff; never writes
@@ -130,6 +135,14 @@ they are backed up). Run it after changing the core layer. The core layer's AGEN
 section goes into each harness's global instructions (`~/.claude/CLAUDE.md`, and the
 file Pi reads in `~/.pi/agent`) as a block between `<!-- akit:core:start -->` and
 `<!-- akit:core:end -->`; the text around it is the user's and stays.
+
+The global instructions are that text: change them with `akit instructions global set FILE`
+(show the diff, then `--yes` after the user agrees), never by editing `~/.claude/CLAUDE.md` or
+Pi's AGENTS.md by hand. `akit instructions global --json` says, per global file, whether the
+block is current, other tools' blocks (left alone) and the user's own sections not in the
+brain yet (Brain → Global Instructions → Take Over… moves them). When the user asks whether
+the global text is good, run `akit instructions analyze --json` first (no model); the
+review and sessions parts send text to a model, so ask before running them.
 
 ## Sync between Macs
 

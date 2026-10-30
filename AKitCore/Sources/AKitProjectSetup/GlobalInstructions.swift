@@ -286,6 +286,24 @@ public enum GlobalInstructions {
         }
     }
 
+    /// An analysis suggestion applied to the core text: a section (`## Heading`) of core gets the
+    /// new text ("" removes it); no section adds the text at the end. Nil when the section is not
+    /// in core (it is in a file's own text: Take Over… first) or nothing would change.
+    public static func applying(_ suggestion: String, toSection section: String?, in text: String) -> String? {
+        let new = suggestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let section else {
+            guard !new.isEmpty else { return nil }
+            return text.isEmpty ? new : text + "\n\n" + new
+        }
+        let wanted = section.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "^#+\\s*", with: "", options: .regularExpression).lowercased()
+        let sections = InstructionText.sections(text)
+        guard let index = sections.firstIndex(where: { $0.heading?.trimmingCharacters(in: .whitespaces).lowercased() == wanted }) else { return nil }
+        var parts = sections.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if new.isEmpty { parts.remove(at: index) } else { parts[index] = new }
+        let result = parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return result == text ? nil : result
+    }
+
     // MARK: - Take Over
 
     /// One piece of own text that can join the core text: the same text in one or more global files.

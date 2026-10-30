@@ -1,4 +1,7 @@
+import AKitErrorAnalysis
 import AKitFoundation
+import AKitLab
+import AKitReview
 import AKitHarnesses
 import AKitModel
 import AKitProjectSetup
@@ -12,9 +15,14 @@ struct GlobalInstructionsDetailView: View {
     @State private var status: GlobalInstructions.Status?
     @State private var sheet: Sheet?
     @AppStorage("brain.global.source") private var showSource = false
+    @State private var report: InstructionAnalysis.Report?
+    @State private var running: InstructionAnalysis.Part?
+    @State private var analysisProblem: String?
+    /// Edit… opened with a suggestion applied.
+    @State private var draft: String?
 
     enum Sheet: String, Identifiable {
-        case edit, blocks, takeOver = "take-over"
+        case edit, blocks, takeOver = "take-over", review, sessions
         var id: String { rawValue }
     }
 
@@ -25,6 +33,7 @@ struct GlobalInstructionsDetailView: View {
                 if let status {
                     text(status)
                     files(status)
+                    analysis(status)
                     ForEach(status.notes, id: \.self) { note in
                         Label(note, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
                             .fixedSize(horizontal: false, vertical: true)
@@ -36,10 +45,15 @@ struct GlobalInstructionsDetailView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task(id: model.lastScan) { status = await model.globalInstructionsStatus() }
+        .task(id: model.lastScan) {
+            status = await model.globalInstructionsStatus()
+            report = await Task.detached { InstructionAnalysis.load(env: .current) }.value
+        }
         .sheet(item: $sheet) { which in
             switch which {
-            case .edit: EditGlobalInstructionsSheet(text: status?.text ?? "") { reload() }
+            case .edit: EditGlobalInstructionsSheet(text: status?.text ?? "", draft: draft) { reload() }
+            case .review, .sessions:
+                AnalyzeInstructionsSheet(part: which == .review ? .review : .sessions) { made in report = made }
             case .blocks: GlobalBlocksSheet(blocks: nil) { reload() }
             case .takeOver: if let status { TakeOverSheet(status: status) { reload() } }
             }
@@ -51,7 +65,82 @@ struct GlobalInstructionsDetailView: View {
     }
 
     private func reload() {
+        draft = nil
         Task { status = await model.globalInstructionsStatus() }
+    }
+
+    private func analysis(_ status: GlobalInstructions.Status) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Button(running == .size ? "Counting…" : "Size and Repeats", systemImage: "ruler") { runSize() }
+                        .disabled(running != nil)
+                        .help("What each section costs in the requests of the last 30 days, and where projects repeat it. No model call.")
+                    Button("Model Review…", systemImage: "sparkle.magnifyingglass") { sheet = .review }
+                        .help("A model reads the global text: contradictions, vague rules, rules with no effect, stale names, wrong place")
+                    Button("Check Sessions…", systemImage: "text.bubble") { sheet = .sessions }
+                        .help("A model matches your corrections in recorded sessions to the rules: broken rules and rules you keep asking for by hand")
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                if let report {
+                    Text("Last analysis: \(report.made.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                }
+                if let analysisProblem {
+                    Label(analysisProblem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let report {
+                    ForEach(report.notes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+                    costs(report)
+                    if report.findings.isEmpty {
+                        Text(report.parts.isEmpty ? "No analysis yet." : "No findings.").foregroundStyle(.secondary)
+                    }
+                    ForEach(report.sorted) { finding in
+                        FindingRow(finding: finding, coreText: status.text) { text in
+                            draft = text
+                            sheet = .edit
+                        }
+                        Divider()
+                    }
+                } else {
+                    Text("No analysis yet. Start with Size and Repeats: it needs no model.").foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
+        } label: {
+            Text("Analysis").fontWeight(.medium)
+        }
+    }
+
+    @ViewBuilder private func costs(_ report: InstructionAnalysis.Report) -> some View {
+        let top = report.costs.sorted { $0.sent != $1.sent ? $0.sent > $1.sent : $0.tokens > $1.tokens }.prefix(8)
+        if !top.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Most expensive sections, last \(report.days) days").font(.callout.weight(.medium))
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                    ForEach(Array(top)) { cost in
+                        GridRow {
+                            Text(cost.section).lineLimit(1)
+                            Text(cost.file).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                            Text("≈ \(cost.tokens.formatted()) tokens").monospacedDigit()
+                            Text(cost.requests > 0 ? "× \(cost.requests.formatted()) = \(cost.sent.formatted())" : "no requests")
+                                .monospacedDigit().foregroundStyle(.secondary)
+                        }
+                        .font(.caption)
+                    }
+                }
+            }
+        }
+    }
+
+    private func runSize() {
+        running = .size
+        analysisProblem = nil
+        Task {
+            do { report = try await model.analyzeGlobalInstructions(.size, agent: nil) } catch { analysisProblem = error.localizedDescription }
+            running = nil
+        }
     }
 
     private var header: some View {
@@ -172,10 +261,11 @@ struct EditGlobalInstructionsSheet: View {
     @State private var problem: String?
     @State private var busy = false
 
-    init(text: String, onDone: @escaping () -> Void) {
+    /// `draft`: the editor starts with it (an analysis suggestion applied) instead of the text.
+    init(text: String, draft: String? = nil, onDone: @escaping () -> Void) {
         initial = text
         self.onDone = onDone
-        _text = State(initialValue: text)
+        _text = State(initialValue: draft ?? text)
     }
 
     var body: some View {
@@ -478,5 +568,133 @@ struct TakeOverSheet: View {
             busy = false
             onDone()
         }
+    }
+}
+
+/// One finding of the analysis: severity, title, why, where, and its suggestion.
+private struct FindingRow: View {
+    let finding: InstructionAnalysis.Finding
+    let coreText: String
+    let onUse: (String) -> Void
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                SeverityBadge(severity: ReviewSeverity(rawValue: finding.severity.rawValue) ?? .medium)
+                Text(finding.title).fontWeight(.medium)
+                Text(partTitle).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if let confidence = finding.confidence {
+                    Text("confidence \(confidence.formatted(.number.precision(.fractionLength(2))))").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if !finding.why.isEmpty { Text(finding.why).font(.callout).fixedSize(horizontal: false, vertical: true) }
+            Text([finding.section, finding.file].compactMap { $0 }.joined(separator: " · ")).font(.caption.monospaced()).foregroundStyle(.secondary)
+            if !finding.places.isEmpty {
+                Text("Also: " + finding.places.prefix(6).joined(separator: ", ") + (finding.places.count > 6 ? " +\(finding.places.count - 6)" : ""))
+                    .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(2)
+            }
+            if let suggestion = finding.suggestion {
+                DisclosureGroup(isExpanded: $open) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if suggestion.isEmpty {
+                            Text("Remove the section.").font(.callout)
+                        } else {
+                            Text(suggestion).font(.caption.monospaced()).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(6)
+                                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        if let applied = GlobalInstructions.applying(suggestion, toSection: finding.section, in: coreText) {
+                            Button("Use in Edit…") { onUse(applied) }
+                                .help("Open Edit… with the suggestion in the core text; you see the diff before the commit")
+                        } else {
+                            Text("The section is not in the brain's text. Take Over… brings it there; then the suggestion can be used.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                } label: {
+                    Text("Suggested change").font(.callout)
+                }
+            }
+        }
+    }
+
+    private var partTitle: String {
+        switch finding.part {
+        case .size: "size"
+        case .review: "model review"
+        case .sessions: "sessions"
+        }
+    }
+}
+
+/// Model Review… and Check Sessions…: the agent that runs the call, then Run.
+struct AnalyzeInstructionsSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let part: InstructionAnalysis.Part
+    let onDone: (InstructionAnalysis.Report) -> Void
+    @AppStorage("instructions.analyze.harness") private var harnessRaw = LabHarness.claudeCode.rawValue
+    @AppStorage("instructions.analyze.model") private var modelName = ""
+    @AppStorage("instructions.analyze.effort") private var effort = "high"
+    @State private var busy = false
+    @State private var problem: String?
+    @State private var task: Task<Void, Never>?
+
+    private var harness: Binding<LabHarness> {
+        Binding(get: { LabHarness(rawValue: harnessRaw) ?? .claudeCode }, set: { harnessRaw = $0.rawValue })
+    }
+
+    private var agent: LabAgent {
+        LabAgent(harness: harness.wrappedValue, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(part == .review ? "Model Review" : "Check Sessions").font(.title2.bold())
+            Text(part == .review
+                 ? "One model call reads your global files (each harness's, with AKit's block) and the names of your skills and MCP servers. It reports contradictions, vague rules, rules with no effect, stale names and rules in the wrong place, each with a severity and a suggested change."
+                 : "AKit takes your reactions in recorded sessions of the last 30 days (Claude Code and Pi; interrupts, refusals, bad ratings, pushbacks, the next message), with what the agent had just said. One model call matches them to your global files: rules the agent broke, and things you ask for by hand that no rule says.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Form {
+                ReviewAgentFields(harness: harness, modelName: $modelName, effort: $effort, keepsValues: DebugSnapshot.options == nil)
+            }
+            .formStyle(.grouped)
+            .disabled(busy)
+            Text("The call goes through the harness's own sign-in, under the send policy and the monthly limit; it shows in Lab → Sends.")
+                .font(.caption).foregroundStyle(.secondary)
+            if busy { ProgressView("Waiting for \(agent.label)…").frame(maxWidth: .infinity) }
+            if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    task?.cancel()
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+                Button("Run") {
+                    busy = true
+                    problem = nil
+                    let agent = agent
+                    task = Task {
+                        do {
+                            let report = try await model.analyzeGlobalInstructions(part, agent: agent)
+                            onDone(report)
+                            dismiss()
+                        } catch {
+                            if !Task.isCancelled { problem = error.localizedDescription }
+                        }
+                        busy = false
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(busy || (agent.harness == .claudeCode && agent.model.isEmpty))
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
     }
 }

@@ -152,3 +152,16 @@ struct GlobalTakeOverTests {
         #expect(throws: GlobalInstructions.Failure.self) { try GlobalInstructions.takeOver([extra], status: again) }
     }
 }
+
+struct GlobalSuggestionTests {
+    let core = "Lead.\n\n## Commits\nShort.\n\n## Style\nTabs."
+
+    @Test func aSuggestionReplacesRemovesOrAddsASection() {
+        #expect(GlobalInstructions.applying("## Commits\nImperative, 72 chars.", toSection: "## commits", in: core)
+                == "Lead.\n\n## Commits\nImperative, 72 chars.\n\n## Style\nTabs.")
+        #expect(GlobalInstructions.applying("", toSection: "Style", in: core) == "Lead.\n\n## Commits\nShort.")
+        #expect(GlobalInstructions.applying("## Tests\nFirst.", toSection: nil, in: core) == core + "\n\n## Tests\nFirst.")
+        #expect(GlobalInstructions.applying("## X\ny", toSection: "## Missing", in: core) == nil, "not in core: Take Over first")
+        #expect(GlobalInstructions.applying("## Style\nTabs.", toSection: "## Style", in: core) == nil, "no change")
+    }
+}

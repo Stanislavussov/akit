@@ -55,7 +55,7 @@ let package = Package(
         .target(name: "AKitLab", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitBrain", "AKitKnowledge"]),
         // Error analysis: failure modes across many sessions (docs/design/error-analysis.md).
         // → Render: layer evals render a brain layer into a control cell (docs/design/layer-evals.md).
-        .target(name: "AKitErrorAnalysis", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitLab", "AKitInsights", "AKitBrain", "AKitRender"]),
+        .target(name: "AKitErrorAnalysis", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitLab", "AKitInsights", "AKitBrain", "AKitRender", "AKitInstructions"]),
         // → MCP: Pi project files of MCP switches stay out of git (MCPProjectSwitch).
         .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "AKitInstructions", "AKitBrain", "AKitRender", "AKitInsights", "AKitMCP"]),
         // akit doctor and Help → Copy Diagnostics: a read-only report of this Mac (docs/design/machine-setup.md);

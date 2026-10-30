@@ -3,7 +3,11 @@
 Status: asked 2026-10-30 ("manage the global AGENTS.md in the brain: open, read, edit,
 analyze"). Decided the same day by the user: the text lives in the brain's core layer (D22),
 and the analysis has three parts: size and repeats, a model's review, and the recorded
-sessions (D23). Steps below; none built yet.
+sessions (D23). Steps 1–5 built 2026-10-30 (`GlobalInstructions` in AKitProjectSetup,
+`InstructionAnalysis` in AKitErrorAnalysis, Brain → Global Instructions, `akit instructions
+global` / `global set` / `analyze`); step 6 (a Codex block) not built. The model parts were
+not run against a live model in development: their prompts, schema and answer parsing are
+tested.
 
 ## Problem
 
@@ -58,10 +62,12 @@ Global Instructions                         [Edit…] [Analyze…] [Update Home 
   asks which one. Ticked sections join the core text (one commit), the home blocks are written,
   and only then the sections leave the files (backup, `InstructionEdit`), each step after the
   one before worked (as `InstructionMove.finish`).
-- **Analyze…**: the three analyses below, each can run alone; results are saved in the brain's
-  machine-local folder (`~/.akit/local/instructions/analysis-<date>.json`, not committed: it
-  may quote sessions).
-- The Instructions screen keeps working as now; its AKit block row gets **Show in Brain**.
+- **Analysis** (a box on the page): the three analyses below, each can run alone; one report
+  in Lab's folder (`~/.akit/lab/analysis/instructions.json`, never synced: it may quote
+  sessions); a part's run replaces only its own findings. A finding with a suggestion offers
+  **Use in Edit…** when its section is in the core text (`GlobalInstructions.applying`).
+- The Instructions screen keeps working as now; its guide points the core block to Brain →
+  Global Instructions → Edit….
 
 ## Analysis
 

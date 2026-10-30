@@ -351,6 +351,20 @@ final class AppModel {
         }
     }
 
+    /// Global Instructions → Analyze: one part over this Mac's global files, saved with the
+    /// other parts' findings. Review and Sessions call `agent` (send policy, scrub, limit, send log).
+    func analyzeGlobalInstructions(_ part: InstructionAnalysis.Part, agent: LabAgent?) async throws -> InstructionAnalysis.Report {
+        let env = HarnessEnvironment.current
+        let installed = Set(installations.map(\.id))
+        let harnesses = InstructionScanner.harnesses.filter(installed.contains)
+        let projects = Array(brainProjectFolders.values)
+        let inventory = InstructionAnalysis.Inventory(skills: Array(Set(skills.map(\.name))), mcpServers: Array(Set(mcpServers.map(\.name))),
+                                                      harnesses: harnesses.map(\.displayName))
+        return try await Cancellation.followingTask {
+            try await InstructionAnalysis.run(part, harnesses: harnesses, projects: projects, inventory: inventory, agent: agent, env: env)
+        }
+    }
+
     /// Rewrite with Skill…: one model call through `agent`'s harness and its own sign-in, with the
     /// chosen model and effort (send policy, scrub,
     /// limit, send log) rewrites the file by the skill's guidance; returns the change as a plan

@@ -304,6 +304,15 @@ public enum AKitCLI {
                                           New global text from FILE (or stdin): shows the diff of
                                           the core text; --yes commits it to the brain, then writes
                                           the block into each global file (backup first)
+          akit instructions analyze [--part size|review|sessions] [--days N]
+                                  [--agent claude-code|pi --model M [--effort E]] [--json]
+                                          Analyze the global instructions: size (each section's
+                                          tokens × the recorded requests, repeats in projects; no
+                                          model), review (a model reads the text) or sessions (a
+                                          model matches your corrections in recorded sessions to
+                                          the rules). review and sessions need --agent and --model;
+                                          the call goes through the send policy and shows in Lab →
+                                          Sends. Findings are kept in ~/.akit/lab/analysis
           akit instructions [FOLDER] [--harness claude|pi|codex|opencode] [--global]
                                           The instruction files each harness loads for a session in
                                           FOLDER (default: here), in the order the model gets them,
@@ -472,6 +481,10 @@ public enum AKitCLI {
                                                      hostName: hostName, installedTargets: installedTargets)
                     let rendered = InstructionEdit.renderedFiles(projects: context.projectFolders, store: context.store)
                     return try instructionsRemove(&args, yes: options.yes, rendered: rendered, env: env, cwd: cwd, out: out)
+                }
+                if args.peek == "analyze" {
+                    _ = args.positional()
+                    return try await instructionsAnalyze(&args, json: options.json, env: env, projectsRoot: projectsRoot, out: out)
                 }
                 if args.peek == "global" {
                     _ = args.positional()
