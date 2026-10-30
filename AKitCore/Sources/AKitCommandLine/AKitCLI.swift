@@ -304,6 +304,11 @@ public enum AKitCLI {
                                           New global text from FILE (or stdin): shows the diff of
                                           the core text; --yes commits it to the brain, then writes
                                           the block into each global file (backup first)
+          akit instructions seen [--days N] [--json]
+                                          The instruction files the recorded sessions (Claude
+                                          Code, Pi) really loaded in the last N days (30): the
+                                          global ones and each project's, and a global file AKit
+                                          doesn't look at (Pi's folder from PI_CODING_AGENT_DIR)
           akit instructions analyze [--part size|review|sessions] [--days N]
                                   [--agent claude-code|pi --model M [--effort E]] [--json]
                                           Analyze the global instructions: size (each section's
@@ -485,6 +490,10 @@ public enum AKitCLI {
                 if args.peek == "analyze" {
                     _ = args.positional()
                     return try await instructionsAnalyze(&args, json: options.json, env: env, projectsRoot: projectsRoot, out: out)
+                }
+                if args.peek == "seen" {
+                    _ = args.positional()
+                    return try instructionsSeen(&args, json: options.json, env: env, out: out)
                 }
                 if args.peek == "global" {
                     _ = args.positional()

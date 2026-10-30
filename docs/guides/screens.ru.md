@@ -2810,7 +2810,7 @@ brain: слой core, текст AGENTS.md
 
 Когда нужно: вы хотите прочитать общий текст, поменять его в одном месте или понять, что в нём лишнее.
 
-![Brain → Global Instructions: вверху кнопки Edit…, Take Over… и Update Blocks…; блок Text с разделами Answer style и Commits, 157 bytes ≈ 39 tokens in every request, переключатель Source; блок Global Files (2): ~/.claude/CLAUDE.md (Claude, OpenCode) с зелёной меткой Current, строкой TEAMKIT block, lines 1–5: another tool writes it; AKit leaves it alone и строкой Your own text, 56 bytes, not in the brain: ## Tests; ~/.pi/agent/AGENTS.md (Pi) с оранжевой меткой Out of date; блок Analysis с кнопками Size and Repeats, Model Review…, Check Sessions…, таблицей Most expensive sections и находкой HIGH Broken: commit only when asked](images/brain-global.png)
+![Brain → Global Instructions: вверху кнопки Edit…, Take Over… и Update Blocks…; блок Text с разделами Answer style и Commits, 157 bytes ≈ 39 tokens in every request, переключатель Source; блок Global Files (2): ~/.claude/CLAUDE.md (Claude, OpenCode) с зелёной меткой Current, строкой TEAMKIT block, lines 1–5: another tool writes it; AKit leaves it alone и строкой Your own text, 56 bytes, not in the brain: ## Tests; ~/.pi/agent/AGENTS.md (Pi) с оранжевой меткой Out of date; блок Analysis с кнопками Size and Repeats, Model Review…, Check Sessions…, таблицей Most expensive sections и находкой HIGH Broken: commit only when asked; блок Loaded in Sessions с кнопкой Refresh, оранжевой строкой AKit found no Pi sessions of the last 30 days, разделом Global и списком Projects (1): ~/Projects/notes-mac](images/brain-global.png)
 
 1. Откройте **Brain** и выберите **Global Instructions** вверху списка.
 2. **Text** — общий текст. Он нарисован как Markdown. Переключатель **Source** показывает его как есть.
@@ -2821,10 +2821,14 @@ brain: слой core, текст AGENTS.md
    - строка с замком — блок другой программы, например oh-my-claudecode (`<!-- OMC:START -->` … `<!-- OMC:END -->`). AKit его не трогает;
    - **Your own text … not in the brain** — разделы, которые вы написали в файле сами. Их забирает **Take Over…**.
 4. Значок со стрелкой открывает файл.
+5. **Loaded in Sessions** — файлы инструкций, которые ваши сессии Claude Code и Pi на самом деле загрузили за 30 дней. Сверху **Global**, ниже **Projects**: у каждого проекта свои AGENTS.md и CLAUDE.md. У строки число сессий и дата последней. **Refresh** читает сессии заново.
+   - **AKit doesn't look here** — агент загрузил общий файл из другой папки, чем смотрит AKit. Обычно это `PI_CODING_AGENT_DIR` (или `CLAUDE_CONFIG_DIR`) в `~/.zshrc`: агент из терминала его видит, AKit из Dock — нет. Оранжевая строка сверху говорит, какая папка где;
+   - если `PI_CODING_AGENT_DIR` задан только в shell, AKit читает его из login shell, берёт сессии Pi из той папки и пишет об этом оранжевой строкой;
+   - **Use as Core Text…** (только у общих файлов) открывает **Edit…** с текстом этого файла (без блоков других программ). Так на новом Mac можно сделать общий текст из того AGENTS.md, который агенты уже читают. У файлов проектов кнопки нет: текст рабочего проекта не должен попасть в brain.
 
 - **Почему через brain.** Текст один для всех агентов и всех ваших Mac. История правок есть в git. Другой Mac получает текст после **Sync** и **Update Home Folder…**.
 - **Остальное в файле цело.** AKit меняет только строки между своими маркерами.
-- **В терминале:** `akit instructions global` показывает то же; `--json` — для агента.
+- **В терминале:** `akit instructions global` показывает то же; `--json` — для агента. `akit instructions seen [--days N] [--json]` показывает **Loaded in Sessions**.
 
 #### Средне: поменять глобальный текст
 <!-- section: brain-global-edit -->
