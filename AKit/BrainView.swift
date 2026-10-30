@@ -13,7 +13,7 @@ struct BrainView: View {
     @Environment(GuideNavigator.self) private var guides
     /// Snapshot `--select <layer>` picks that layer, `--select project:<id>` that project.
     @State private var selection: Item? = DebugSnapshot.options?.select.map {
-        $0.hasPrefix("project:") ? .project(String($0.dropFirst("project:".count))) : .layer($0)
+        $0 == "global" ? .global : $0.hasPrefix("project:") ? .project(String($0.dropFirst("project:".count))) : .layer($0)
     }
     @State private var query = DebugSnapshot.options?.query ?? ""
     @State private var importing = false
@@ -79,6 +79,8 @@ struct BrainView: View {
     }
 
     enum Item: Hashable {
+        /// Global Instructions: core's AGENTS.md text and its copies in the global files.
+        case global
         case layer(String)
         case project(String)
         case skill(String)
@@ -459,6 +461,8 @@ struct BrainView: View {
                 .frame(minWidth: 240, idealWidth: 280, maxWidth: 420)
             Group {
                 switch selection {
+                case .global:
+                    GlobalInstructionsDetailView()
                 case .layer(let name):
                     if let layer = brain.layers.first(where: { $0.name == name }) {
                         LayerDetailView(layer: layer, problems: brain.problems(of: name).map(\.message),
@@ -527,6 +531,20 @@ struct BrainView: View {
                             .font(.callout)
                             .selectionDisabled()
                     }
+                }
+            }
+            if brain.layers.contains(where: { $0.name == "core" }), query.isEmpty || "global instructions agents.md claude.md".contains(query.lowercased()) {
+                Section {
+                    Label {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Global Instructions").fontWeight(.medium)
+                            Text("The AGENTS.md text every session gets").font(.caption).foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "text.book.closed")
+                    }
+                    .padding(.vertical, 2)
+                    .tag(Item.global)
                 }
             }
             if !layers(brain).isEmpty { Section {
@@ -653,6 +671,7 @@ struct BrainView: View {
 
     private func exists(_ item: Item?, in brain: Brain) -> Bool {
         switch item {
+        case .global: brain.layers.contains { $0.name == "core" }
         case .layer(let name): brain.layers.contains { $0.name == name }
         case .project(let id): brain.projects.contains { $0.id == id }
         case .skill(let name): brain.skills.contains { $0.name == name }

@@ -289,6 +289,82 @@ final class AppModel {
         }
     }
 
+    /// Global Instructions in Brain: the core text and its copies in the global files. Off the main thread.
+    func globalInstructionsStatus() async -> GlobalInstructions.Status? {
+        guard let brain else { return nil }
+        let context = homeContext()
+        return await Task.detached { GlobalInstructions.status(context: context, brain: brain) }.value
+    }
+
+    /// Global Instructions → Edit…, step 1: the new core text (a commit, in line with the other
+    /// layer edits); returns step 2's preview of the global files' blocks.
+    func commitGlobalInstructions(_ plan: GlobalInstructions.EditPlan) async throws -> GlobalInstructions.HomeBlocks {
+        let context = homeContext()
+        var root: URL?
+        try await oneLayerEditAtATime { brain in
+            try await GlobalInstructions.commit(plan, brain: brain, env: context.env)
+            root = brain.root
+        }
+        guard let root else { throw Self.noBrain }
+        await refresh()
+        return await Task.detached { GlobalInstructions.homeBlocks(context: context, brainRoot: root) }.value
+    }
+
+    /// The core blocks of the global files as the brain has them now (Update Blocks…).
+    func globalInstructionBlocks() async -> GlobalInstructions.HomeBlocks? {
+        guard let root = brain?.root else { return nil }
+        let context = homeContext()
+        return await Task.detached { GlobalInstructions.homeBlocks(context: context, brainRoot: root) }.value
+    }
+
+    /// Step 2: the blocks are written, holding the home folder's worktree sync.
+    func applyGlobalInstructionBlocks(_ blocks: GlobalInstructions.HomeBlocks) async throws {
+        defer { Task { await refresh() } }
+        let context = homeContext()
+        try await holdingWorktrees(all: [context.homeID]) {
+            try await GlobalInstructions.applyHome(blocks, context: context)
+        }
+    }
+
+    /// Take Over…, step 1: the picked own text joins core (one commit); returns the blocks' preview.
+    func commitGlobalTakeOver(_ plan: GlobalInstructions.TakeOverPlan) async throws -> GlobalInstructions.HomeBlocks {
+        let context = homeContext()
+        var root: URL?
+        try await oneLayerEditAtATime { brain in
+            try await GlobalInstructions.commit(plan, brain: brain, env: context.env)
+            root = brain.root
+        }
+        guard let root else { throw Self.noBrain }
+        await refresh()
+        return await Task.detached { GlobalInstructions.homeBlocks(context: context, brainRoot: root) }.value
+    }
+
+    /// Take Over…, step 2: the blocks (when any changed), then the picked text leaves the files
+    /// whose block has it. Returns what stayed and why.
+    func finishGlobalTakeOver(_ plan: GlobalInstructions.TakeOverPlan, blocks: GlobalInstructions.HomeBlocks) async throws -> [String] {
+        defer { Task { await refresh() } }
+        let context = homeContext()
+        return try await holdingWorktrees(all: [context.homeID]) {
+            if blocks.canApply { try await GlobalInstructions.applyHome(blocks, context: context) }
+            let env = context.env
+            return await Task.detached { GlobalInstructions.removeTakenOver(plan, env: env) }.value
+        }
+    }
+
+    /// Global Instructions → Analyze: one part over this Mac's global files, saved with the
+    /// other parts' findings. Review and Sessions call `agent` (send policy, scrub, limit, send log).
+    func analyzeGlobalInstructions(_ part: InstructionAnalysis.Part, agent: LabAgent?) async throws -> InstructionAnalysis.Report {
+        let env = HarnessEnvironment.current
+        let installed = Set(installations.map(\.id))
+        let harnesses = InstructionScanner.harnesses.filter(installed.contains)
+        let projects = Array(brainProjectFolders.values)
+        let inventory = InstructionAnalysis.Inventory(skills: Array(Set(skills.map(\.name))), mcpServers: Array(Set(mcpServers.map(\.name))),
+                                                      harnesses: harnesses.map(\.displayName))
+        return try await Cancellation.followingTask {
+            try await InstructionAnalysis.run(part, harnesses: harnesses, projects: projects, inventory: inventory, agent: agent, env: env)
+        }
+    }
+
     /// Rewrite with Skill…: one model call through `agent`'s harness and its own sign-in, with the
     /// chosen model and effort (send policy, scrub,
     /// limit, send log) rewrites the file by the skill's guidance; returns the change as a plan

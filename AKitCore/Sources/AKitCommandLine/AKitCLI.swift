@@ -289,12 +289,30 @@ public enum AKitCLI {
                                           One call with the translation model, cached next to the
                                           output. akit translate --help lists the rest
 
-        Instructions (AGENTS.md, CLAUDE.md; only reads):
+        Instructions (AGENTS.md, CLAUDE.md):
           akit instructions remove FILE (--line N | --section HEADING) [--yes]
                                           Take one section out of an instruction file (Remove This
                                           Copy… on the Instructions screen): shows the diff; --yes
                                           writes it after a backup, refused if the file changed.
                                           Never AKit's core block or a file AKit renders
+          akit instructions global [--json]
+                                          The global instructions: the core layer's AGENTS.md text
+                                          (the brain is its source), and per global file (Claude
+                                          Code's, Pi's) whether AKit's block has it, other tools'
+                                          blocks and the user's own sections
+          akit instructions global set FILE|- [--yes]
+                                          New global text from FILE (or stdin): shows the diff of
+                                          the core text; --yes commits it to the brain, then writes
+                                          the block into each global file (backup first)
+          akit instructions analyze [--part size|review|sessions] [--days N]
+                                  [--agent claude-code|pi --model M [--effort E]] [--json]
+                                          Analyze the global instructions: size (each section's
+                                          tokens × the recorded requests, repeats in projects; no
+                                          model), review (a model reads the text) or sessions (a
+                                          model matches your corrections in recorded sessions to
+                                          the rules). review and sessions need --agent and --model;
+                                          the call goes through the send policy and shows in Lab →
+                                          Sends. Findings are kept in ~/.akit/lab/analysis
           akit instructions [FOLDER] [--harness claude|pi|codex|opencode] [--global]
                                           The instruction files each harness loads for a session in
                                           FOLDER (default: here), in the order the model gets them,
@@ -463,6 +481,19 @@ public enum AKitCLI {
                                                      hostName: hostName, installedTargets: installedTargets)
                     let rendered = InstructionEdit.renderedFiles(projects: context.projectFolders, store: context.store)
                     return try instructionsRemove(&args, yes: options.yes, rendered: rendered, env: env, cwd: cwd, out: out)
+                }
+                if args.peek == "analyze" {
+                    _ = args.positional()
+                    return try await instructionsAnalyze(&args, json: options.json, env: env, projectsRoot: projectsRoot, out: out)
+                }
+                if args.peek == "global" {
+                    _ = args.positional()
+                    let root = brainRoot(options, cwd: cwd, env: env)
+                    guard let brain = Brain.load(from: root) else { throw Failure(message: "No brain at \(root.path). Create one with akit init.") }
+                    let context = await skillContext(brainRoot: root, env: env, projectsRoot: projectsRoot,
+                                                     hostName: hostName, installedTargets: installedTargets)
+                    return try await instructionsGlobal(&args, json: options.json, yes: options.yes, brain: brain, context: context,
+                                                        env: env, cwd: cwd, input: input, out: out)
                 }
                 return try instructions(&args, env: env, cwd: cwd, out: out)
             }
