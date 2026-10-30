@@ -290,6 +290,18 @@ final class AppModel {
     }
 
     /// Global Instructions in Brain: the core text and its copies in the global files. Off the main thread.
+    /// The login shell's variables, read once per run: the folder variables AKit.app doesn't see.
+    private var shellVariables: [String: String]?
+
+    /// Global Instructions → Loaded in Sessions. The shell's variables are read once; the app's
+    /// session list is reused unless the shell moves a harness's folder.
+    func instructionSightings() async -> GlobalInstructions.Sightings {
+        let env = HarnessEnvironment.current
+        if shellVariables == nil { shellVariables = await LoginShell.variables(in: env).values }
+        let shell = shellVariables, sessions = sessions.isEmpty ? nil : sessions
+        return await Task.detached { GlobalInstructions.sightings(env: env, shell: shell, sessions: sessions) }.value
+    }
+
     func globalInstructionsStatus() async -> GlobalInstructions.Status? {
         guard let brain else { return nil }
         let context = homeContext()

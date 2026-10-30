@@ -34,10 +34,20 @@ public enum InstructionSightings {
         public let read: [HarnessID: Int]
         public let recorded: [HarnessID: Int]
         public let sightings: [Sighting]
-
-        public var global: [Sighting] { sightings.filter { $0.level == .global } }
+        public let global: [Sighting]
         /// Project files grouped by session folder, with the sessions there, the busiest folder first.
-        public var byProject: [(project: String, files: [(file: Sighting, sessions: Int)])] {
+        public let byProject: [(project: String, files: [(file: Sighting, sessions: Int)])]
+
+        init(days: Int, read: [HarnessID: Int], recorded: [HarnessID: Int], sightings: [Sighting]) {
+            self.days = days
+            self.read = read
+            self.recorded = recorded
+            self.sightings = sightings
+            global = sightings.filter { $0.level == .global }
+            byProject = Self.group(sightings)
+        }
+
+        static func group(_ sightings: [Sighting]) -> [(project: String, files: [(file: Sighting, sessions: Int)])] {
             var groups: [String: [(file: Sighting, sessions: Int)]] = [:]
             for sighting in sightings where sighting.level == .project {
                 for project in sighting.projects { groups[project.path, default: []].append((sighting, project.sessions)) }
@@ -93,7 +103,9 @@ public enum InstructionSightings {
     /// (`AutoMem`, MEMORY.md) isn't an instruction file AKit manages: left out.
     static func claudeFiles(in file: URL) -> [(path: String, level: Level)]? {
         var found: [(path: String, level: Level)]?
-        JSONLines.scanHead(of: file) { entry in
+        JSONLines.scanHead(of: file, limit: headLimit) { entry in
+            // The attachment comes before the first answer; a session without it stops there.
+            if entry["type"] as? String == "assistant", !ClaudeLogFormat.isSidechain(entry) { return true }
             guard entry["type"] as? String == "attachment", !ClaudeLogFormat.isSidechain(entry),
                   let attachment = entry["attachment"] as? JSONLines.Object, attachment["type"] as? String == "instructions" else { return false }
             found = (attachment["files"] as? [JSONLines.Object] ?? []).compactMap { file in
@@ -109,12 +121,16 @@ public enum InstructionSightings {
 
     /// Pi 1.0 and newer: the paths in the system message's `project_context`. Pi reads one file
     /// per folder from the session's folder up, and the global one from its agent folder: a file
-    /// in no folder above the session's is the global one.
+    /// in no folder above the session's is the global one. Without the session's folder AKit
+    /// can't tell, so nil.
     static func piFiles(in file: URL, cwd: URL?) -> [(path: String, level: Level)]? {
         var found: [(path: String, level: Level)]?
-        JSONLines.scanHead(of: file) { entry in
-            guard entry["type"] as? String == "message", let message = entry["message"] as? JSONLines.Object,
-                  message["role"] as? String == "system", let sections = message["sections"] as? JSONLines.Object else { return false }
+        guard let cwd else { return nil }
+        JSONLines.scanHead(of: file, limit: headLimit) { entry in
+            guard entry["type"] as? String == "message", let message = entry["message"] as? JSONLines.Object else { return false }
+            // The system message comes before the first answer; an older session stops there.
+            if message["role"] as? String == "assistant" { return true }
+            guard message["role"] as? String == "system", let sections = message["sections"] as? JSONLines.Object else { return false }
             let context = sections["project_context"] as? String ?? ""
             found = paths(inPiContext: context).map { path in (path, isAbove(path, cwd: cwd) ? .project : .global) }
             return true
@@ -122,15 +138,18 @@ public enum InstructionSightings {
         return found
     }
 
+    /// The record sits at a session's start: never read more than this of a file.
+    static let headLimit = 2 << 20
+
     static func paths(inPiContext text: String) -> [String] {
         text.matches(of: /<project_instructions path="([^"]*)">/).map { String($0.1) }
     }
 
     /// The file's folder is `cwd` or a folder above it.
-    static func isAbove(_ path: String, cwd: URL?) -> Bool {
-        guard let cwd else { return false }
-        let folder = URL(filePath: path).deletingLastPathComponent().standardizedFileURL.path
-        let here = cwd.standardizedFileURL.path
+    /// Paths are compared with links resolved (`/tmp` is `/private/tmp`).
+    static func isAbove(_ path: String, cwd: URL) -> Bool {
+        let folder = URL(filePath: path).deletingLastPathComponent().resolvingSymlinksInPath().path
+        let here = cwd.resolvingSymlinksInPath().path
         return here == folder || here.hasPrefix(folder.hasSuffix("/") ? folder : folder + "/")
     }
 }

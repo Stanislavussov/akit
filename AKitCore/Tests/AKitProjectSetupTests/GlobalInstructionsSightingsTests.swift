@@ -75,6 +75,20 @@ struct GlobalInstructionsSightingsTests {
         #expect(seen.notes.contains { $0.contains("Pi loaded ~/work-pi/AGENTS.md") && $0.contains("PI_CODING_AGENT_DIR") })
     }
 
+    @Test func aPiFolderOnlyTheShellSetsIsWhereTheSessionsAreRead() throws {
+        try sessions()
+        let file = ".pi/agent/sessions/--x--/2026-10-30T10-00-00-000Z_p1.jsonl"
+        let text = try #require(f.read(file, in: f.home))
+        try FileManager.default.removeItem(at: f.home.appending(path: file))
+        try f.write("work-pi/sessions/--x--/2026-10-30T10-00-00-000Z_p1.jsonl", text)
+        #expect(GlobalInstructions.sightings(env: f.env).notes.contains { $0.contains("no Pi sessions") })
+        let seen = GlobalInstructions.sightings(env: f.env, shell: ["PI_CODING_AGENT_DIR": f.home.path + "/work-pi"])
+        #expect(seen.report.read[.pi] == 1)
+        #expect(seen.notes.first?.contains("Your shell sets PI_CODING_AGENT_DIR") == true)
+        let pi = try #require(seen.report.global.first { $0.harnesses == [.pi] })
+        #expect(!seen.isKnown(pi))
+    }
+
     @Test func oldSessionsAndGoneFoldersAreLeftOut() throws {
         try sessions()
         let later = Date.now.addingTimeInterval(40 * 86_400)

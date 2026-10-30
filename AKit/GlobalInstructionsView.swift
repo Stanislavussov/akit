@@ -71,8 +71,9 @@ struct GlobalInstructionsDetailView: View {
     }
 
     private func findInSessions() async {
+        guard !seeing else { return }
         seeing = true
-        seen = await Task.detached { GlobalInstructions.sightings(env: .current) }.value
+        seen = await model.instructionSightings()
         seeing = false
     }
 
@@ -109,7 +110,8 @@ struct GlobalInstructionsDetailView: View {
                         ForEach(projects, id: \.project) { group in
                             DisclosureGroup {
                                 ForEach(group.files, id: \.file.id) { item in
-                                    SightingRow(sighting: item.file, sessions: item.sessions, unknown: false) { useAsCoreText(item.file) }
+                                    // No Use as Core Text… here: a work project's file must not go into the brain.
+                                    SightingRow(sighting: item.file, sessions: item.sessions, unknown: false, use: nil)
                                 }
                             } label: {
                                 Text(sightingPath(group.project))
@@ -282,7 +284,8 @@ private struct SightingRow: View {
     let sessions: Int
     /// A global file AKit doesn't look at.
     let unknown: Bool
-    let use: () -> Void
+    /// Use as Core Text…; nil hides the button (project files).
+    let use: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -297,9 +300,11 @@ private struct SightingRow: View {
                 if unknown {
                     Label("AKit doesn't look here", systemImage: "eye.slash").foregroundStyle(.orange).font(.caption)
                 }
-                Button("Use as Core Text…", systemImage: "square.and.arrow.down") { use() }
-                    .disabled(!sighting.exists)
-                    .help("Open Edit… with this file's own text (without other tools' blocks) as the global instructions")
+                if let use {
+                    Button("Use as Core Text…", systemImage: "square.and.arrow.down") { use() }
+                        .disabled(!sighting.exists)
+                        .help("Open Edit… with this file's own text (without other tools' blocks) as the global instructions")
+                }
                 Button("Open", systemImage: "arrow.up.forward.app") { NSWorkspace.shared.open(URL(filePath: sighting.path)) }
                     .labelStyle(.iconOnly).buttonStyle(.borderless)
                     .disabled(!sighting.exists)
