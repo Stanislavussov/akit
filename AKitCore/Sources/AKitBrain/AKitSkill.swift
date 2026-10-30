@@ -33,6 +33,7 @@ akit doctor pi [--live] [--json] # when Pi misbehaves: install, settings, env, M
 akit instructions remove FILE (--line N | --section HEADING) [--yes]  # drop one section (a repeated one)
 akit instructions global [--json]   # the global instructions: core's AGENTS.md text, its block in each global file
 akit instructions global set FILE|- [--yes]  # new global text: diff; --yes commits it to the brain, writes the blocks
+akit instructions seen [--days N] [--json]   # instruction files the recorded sessions really loaded: global + per project
 akit instructions analyze [--part size|review|sessions] [--days N] [--agent claude-code|pi --model M] [--json]
                                 # findings about the global text: size+repeats (no model), a model's review,
                                 # rules broken / asked by hand in recorded sessions (model; send policy applies)
@@ -142,7 +143,10 @@ Pi's AGENTS.md by hand. `akit instructions global --json` says, per global file,
 block is current, other tools' blocks (left alone) and the user's own sections not in the
 brain yet (Brain → Global Instructions → Take Over… moves them). When the user asks whether
 the global text is good, run `akit instructions analyze --json` first (no model); the
-review and sessions parts send text to a model, so ask before running them.
+review and sessions parts send text to a model, so ask before running them. When AKit
+doesn't find a global AGENTS.md the user says is there, run `akit instructions seen --json`:
+it lists the files Claude Code and Pi sessions loaded, and `akitLooksHere: false` marks a
+global file in another folder (a PI_CODING_AGENT_DIR only the shell sets).
 
 ## Sync between Macs
 

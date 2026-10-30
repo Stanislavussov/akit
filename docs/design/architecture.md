@@ -60,6 +60,10 @@ Foundation, Model, Brain and Yams. `AKitDoctor → AKitKnowledge` (the "knowledg
 `AKitCommandLine → AKitKnowledge` (`akit kb`); the app imports it too. Knowledge sits beside
 Review, below Doctor, so the arrows still point down.
 
+2026-10-30 (Loaded in Sessions, `global-instructions.md`): `AKitProjectSetup → AKitSessions`, for
+`InstructionSightings` (the instruction files recorded sessions loaded). Sessions sits below
+Insights, which ProjectSetup already uses, so the arrows still point down.
+
 2026-10-25 (knowledge base, slice 5.3): `AKitLab → AKitKnowledge`, for `KnowledgeChecker`: the
 check model's call on a proposal (candidates, `ModelCall` with the origin `knowledgeBase`, the
 stored marks), which `akit kb check` and the app's Inbox → Check Again share. Knowledge needs

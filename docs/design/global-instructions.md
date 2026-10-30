@@ -15,6 +15,16 @@ Folder writes no block into (by the home targets) keeps its text; Edit… and Ta
 marker lines and a heading core already has; only files Claude Code or Pi read are sent, under
 their origins; a whole-text suggestion is never appended.
 
+Added 2026-10-30 (work-Mac feedback: AKit didn't find the global AGENTS.md there): Loaded in
+Sessions on the screen and `akit instructions seen [--days N] [--json]`. The files the recorded
+sessions of the last 30 days really loaded: Claude Code's `instructions` attachment (`User` and
+`Managed` global, `Project`/`Local` per folder, auto memory left out) and the `project_context`
+paths of Pi's system message (a file in no folder above the session's is Pi's global one).
+A global file AKit doesn't look at gets "AKit doesn't look here" and a note naming the
+variable; Use as Core Text… opens Edit… with the file's own text. `InstructionSightings` in
+AKitSessions, `GlobalInstructions.sightings` in AKitProjectSetup (new arrow ProjectSetup →
+Sessions, below Insights). Read-only.
+
 ## Problem
 
 Every session of every harness starts with its global instruction file: `~/.claude/CLAUDE.md`

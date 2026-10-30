@@ -6,6 +6,7 @@ import AKitHarnesses
 import AKitInstructions
 import AKitModel
 import AKitProjectSetup
+import AKitSessions
 import Foundation
 
 /// `akit instructions [FOLDER] [--harness NAME]`: the instruction files each harness loads for a
@@ -34,6 +35,52 @@ extension AKitCLI {
         if let project, !FileWalk.isDirectory(project) { throw Failure(message: "No folder at \(project.path).") }
         out(harnesses.map { instructionsText(InstructionScanner.view(harness: $0, project: project, env: env), home: env.homeDirectory) }
             .joined(separator: "\n\n"))
+        return 0
+    }
+
+    static let instructionsSeenUsage = "Use: akit instructions seen [--days N] [--json]"
+
+    /// `akit instructions seen`: Global Instructions → Loaded in Sessions from the command line.
+    static func instructionsSeen(_ args: inout Arguments, json: Bool, env: HarnessEnvironment, out: (String) -> Void) throws -> Int32 {
+        let daysText = args.value("--days")
+        try args.finish()
+        guard let days = daysText.map({ Int($0) }) ?? 30, days > 0 else { throw Failure(message: instructionsSeenUsage) }
+        let seen = GlobalInstructions.sightings(days: days, env: env)
+        let report = seen.report
+        let tilde = { (path: String) in FileWalk.tilde(URL(filePath: path), home: env.homeDirectory) }
+        if json {
+            struct File: Encodable { let path: String, level: String, harnesses: [String], projects: [String: Int], sessions: Int, lastSeen: Date, exists: Bool, akitLooksHere: Bool? }
+            struct Output: Encodable { let days: Int, sessionsRead: [String: Int], sessionsRecorded: [String: Int], files: [File], notes: [String] }
+            let files = report.sightings.map { File(path: $0.path, level: $0.level.rawValue, harnesses: $0.harnesses.map(\.rawValue), projects: Dictionary($0.projects.map { ($0.path, $0.sessions) }, uniquingKeysWith: +),
+                                                    sessions: $0.sessions, lastSeen: $0.lastSeen, exists: $0.exists,
+                                                    akitLooksHere: $0.level == .global ? seen.isKnown($0) : nil) }
+            let output = Output(days: days, sessionsRead: Dictionary(uniqueKeysWithValues: report.read.map { ($0.key.rawValue, $0.value) }),
+                                sessionsRecorded: Dictionary(uniqueKeysWithValues: report.recorded.map { ($0.key.rawValue, $0.value) }),
+                                files: files, notes: seen.notes)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            out(String(decoding: try encoder.encode(output), as: UTF8.self))
+            return 0
+        }
+        func line(_ sighting: InstructionSightings.Sighting, sessions: Int? = nil) -> String {
+            let count = sessions ?? sighting.sessions
+            var parts = [sighting.harnesses.map(\.displayName).joined(separator: ", "), count == 1 ? "1 session" : "\(count) sessions",
+                         "last \(sighting.lastSeen.formatted(date: .abbreviated, time: .omitted))"]
+            if !sighting.exists { parts.append("gone now") }
+            if sighting.level == .global, !seen.isKnown(sighting) { parts.append("AKit doesn't look here") }
+            return "  \(tilde(sighting.path)) (\(parts.joined(separator: " · ")))"
+        }
+        let counts = report.read.keys.sorted().map { "\($0.displayName) \(report.recorded[$0] ?? 0) of \(report.read[$0] ?? 0)" }
+        var lines = ["Instruction files loaded by the sessions of the last \(days) days (sessions with a record: \(counts.isEmpty ? "none" : counts.joined(separator: ", "))):"]
+        lines.append("Global:")
+        lines += report.global.isEmpty ? ["  none"] : report.global.map { line($0) }
+        for group in report.byProject {
+            lines.append("\(tilde(group.project)):")
+            lines += group.files.map { line($0.file, sessions: $0.sessions) }
+        }
+        lines += seen.notes
+        out(lines.joined(separator: "\n"))
         return 0
     }
 

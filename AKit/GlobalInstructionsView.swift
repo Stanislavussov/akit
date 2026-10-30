@@ -2,6 +2,7 @@ import AKitErrorAnalysis
 import AKitFoundation
 import AKitLab
 import AKitReview
+import AKitSessions
 import AKitHarnesses
 import AKitModel
 import AKitProjectSetup
@@ -20,6 +21,9 @@ struct GlobalInstructionsDetailView: View {
     @State private var analysisProblem: String?
     /// Edit… opened with a suggestion applied.
     @State private var draft: String?
+    /// Loaded in Sessions: the files recorded sessions really loaded.
+    @State private var seen: GlobalInstructions.Sightings?
+    @State private var seeing = false
 
     enum Sheet: String, Identifiable {
         case edit, blocks, takeOver = "take-over", review, sessions
@@ -33,6 +37,7 @@ struct GlobalInstructionsDetailView: View {
                 if let status {
                     text(status)
                     files(status)
+                    loadedInSessions
                     analysis(status)
                     ForEach(status.notes, id: \.self) { note in
                         Label(note, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
@@ -48,6 +53,7 @@ struct GlobalInstructionsDetailView: View {
         .task(id: model.lastScan) {
             status = await model.globalInstructionsStatus()
             report = await Task.detached { InstructionAnalysis.load(env: .current) }.value
+            await findInSessions()
         }
         .sheet(item: $sheet) { which in
             switch which {
@@ -61,6 +67,64 @@ struct GlobalInstructionsDetailView: View {
         .onAppear {
             // Snapshots: `--tab edit` / `blocks` open the sheets.
             if let tab = DebugSnapshot.options?.tab { sheet = Sheet(rawValue: tab) }
+        }
+    }
+
+    private func findInSessions() async {
+        seeing = true
+        seen = await Task.detached { GlobalInstructions.sightings(env: .current) }.value
+        seeing = false
+    }
+
+    /// Use as Core Text…: Edit… with the file's own text (other tools' blocks and AKit's left out).
+    private func useAsCoreText(_ sighting: InstructionSightings.Sighting) {
+        guard let text = GlobalInstructions.ownText(of: URL(filePath: sighting.path)) else { return }
+        draft = text
+        sheet = .edit
+    }
+
+    private var loadedInSessions: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("The instruction files your recorded sessions of the last 30 days loaded (Claude Code, Pi). A global file AKit doesn't look at means the harness reads another folder.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button(seeing ? "Reading…" : "Refresh", systemImage: "arrow.clockwise") { Task { await findInSessions() } }
+                        .disabled(seeing)
+                }
+                if let seen {
+                    ForEach(seen.notes, id: \.self) { note in
+                        Label(note, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("Global").font(.headline)
+                    if seen.report.global.isEmpty { Text("No session recorded a global file.").foregroundStyle(.secondary) }
+                    ForEach(seen.report.global) { sighting in
+                        SightingRow(sighting: sighting, sessions: sighting.sessions, unknown: !seen.isKnown(sighting)) { useAsCoreText(sighting) }
+                    }
+                    let projects = seen.report.byProject
+                    if !projects.isEmpty {
+                        Text("Projects (\(projects.count))").font(.headline)
+                        ForEach(projects, id: \.project) { group in
+                            DisclosureGroup {
+                                ForEach(group.files, id: \.file.id) { item in
+                                    SightingRow(sighting: item.file, sessions: item.sessions, unknown: false) { useAsCoreText(item.file) }
+                                }
+                            } label: {
+                                Text(sightingPath(group.project))
+                                    .font(.callout.monospaced())
+                            }
+                        }
+                    }
+                } else {
+                    ProgressView().frame(maxWidth: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
+        } label: {
+            Text("Loaded in Sessions")
         }
     }
 
@@ -201,6 +265,49 @@ struct GlobalInstructionsDetailView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(4)
+        }
+    }
+}
+
+/// `~/…` for a path a session recorded; `/tmp` and `/private/tmp` are the same folder.
+private func sightingPath(_ path: String) -> String {
+    let home = HarnessEnvironment.current.homeDirectory, url = URL(filePath: path)
+    let shown = FileWalk.tilde(url, home: home)
+    return shown.hasPrefix("~") ? shown : FileWalk.tilde(url.resolvingSymlinksInPath(), home: home.resolvingSymlinksInPath())
+}
+
+/// One file the sessions loaded, with Use as Core Text….
+private struct SightingRow: View {
+    let sighting: InstructionSightings.Sighting
+    let sessions: Int
+    /// A global file AKit doesn't look at.
+    let unknown: Bool
+    let use: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(sightingPath(sighting.path))
+                    .font(.callout.monospaced())
+                ForEach(sighting.harnesses, id: \.self) { harness in
+                    Text(harness.displayName).font(.caption).padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(.quaternary, in: Capsule())
+                }
+                Spacer()
+                if unknown {
+                    Label("AKit doesn't look here", systemImage: "eye.slash").foregroundStyle(.orange).font(.caption)
+                }
+                Button("Use as Core Text…", systemImage: "square.and.arrow.down") { use() }
+                    .disabled(!sighting.exists)
+                    .help("Open Edit… with this file's own text (without other tools' blocks) as the global instructions")
+                Button("Open", systemImage: "arrow.up.forward.app") { NSWorkspace.shared.open(URL(filePath: sighting.path)) }
+                    .labelStyle(.iconOnly).buttonStyle(.borderless)
+                    .disabled(!sighting.exists)
+                    .help("Open the file in its app")
+            }
+            Text((sessions == 1 ? "1 session" : "\(sessions) sessions") + ", last \(sighting.lastSeen.formatted(date: .abbreviated, time: .omitted))"
+                 + (sighting.exists ? "" : " · the file is gone now"))
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }
