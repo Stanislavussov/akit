@@ -43,6 +43,9 @@ public enum ReviewConfigEditor {
         /// Hosts, project paths, organizations and e-mail addresses of the work profiles found in
         /// the text: a brain save from a work Mac shows them before it goes to the brain.
         public var workWords: [String]
+        /// What the save links that this Mac doesn't have: skills, a scenario's roles. Saving is
+        /// still allowed (the brain may go to a Mac that has them); a run skips them.
+        public var notes: [String] = []
     }
 
     public static func file(_ kind: Kind, id: String, level: Level, home: URL, brain: URL) -> URL {
@@ -65,13 +68,27 @@ public enum ReviewConfigEditor {
         }
         if case .project(let slug) = level, !ReviewYAML.isID(slug) { throw Failure(message: "\(slug) is not a project profile id.") }
         guard kind == .defaults || ReviewYAML.isID(id) else { throw Failure(message: "\(id): use a-z, 0-9 and -.") }
+        var notes: [String] = []
+        func missingSkills(_ names: [String]) {
+            guard !names.isEmpty else { return }
+            let known = Set(ReviewRoleWriter.skills(brain: brain, home: home).filter { $0.file != nil }.map(\.name))
+            let missing = names.filter { !known.contains($0) }
+            if !missing.isEmpty { notes.append("No skill on this Mac is called " + missing.joined(separator: ", ") + ": a run here goes without it.") }
+        }
         switch kind {
         case .role:
             let role = try ReviewRole.parse(text, source: .brain)
             guard role.id == id else { throw Failure(message: "The name must be review-\(id).") }
+            missingSkills(role.skills)
         case .scenario:
             let scenario = try ReviewScenario.parse(text, source: .brain)
             guard scenario.id == id else { throw Failure(message: "The id must be \(id).") }
+            missingSkills(scenario.skills)
+            let catalog = ReviewCatalog.load(home: home, brain: brain)
+            let profile = level.slug.flatMap { slug in catalog.profiles.first { $0.slug == slug } }
+            let roles = Set(catalog.roles(for: profile).map(\.id))
+            let unknown = scenario.roleIDs.filter { !roles.contains($0) }
+            if !unknown.isEmpty { notes.append("There is no role " + unknown.joined(separator: ", ") + " at this level: a run skips a deleted one and stops on any other.") }
         case .defaults:
             _ = try ReviewSettingsPatch.parse(ReviewYAML.map(text), where: "review.yaml")
         case .profile:
@@ -82,7 +99,9 @@ public enum ReviewConfigEditor {
         let old = try? String(contentsOf: url, encoding: .utf8)
         let diff = TextDiff.unified(TextDiff.lines(from: old ?? "", to: text))
         let words = level == .brain && MachineProfile.load(home: home).isWork ? workWords(in: text, home: home) : []
-        return Save(kind: kind, id: id, level: level, file: url, old: old, new: text, diff: diff, workWords: words)
+        var save = Save(kind: kind, id: id, level: level, file: url, old: old, new: text, diff: diff, workWords: words)
+        save.notes = notes
+        return save
     }
 
     /// Writes it; a brain save is committed in the brain.
@@ -329,9 +348,12 @@ public enum ReviewConfigEditor {
     @discardableResult
     public static func addBuiltIns(brain: URL, env: HarnessEnvironment) async throws -> [String] {
         if let problem = await BrainGit.commitProblem(brain: brain, env: env) { throw Failure(message: problem) }
+        // What the user deleted stays deleted.
+        let catalog = ReviewCatalog.load(home: env.homeDirectory, brain: brain)
         var files: [(Kind, String, String)] = [(.defaults, "", ReviewBuiltIns.defaultsYAML + "\n")]
-        files += ReviewBuiltIns.roleIDs.compactMap { id in ReviewBuiltIns.roleFiles[id].map { (.role, id, $0) } }
-        files += ReviewBuiltIns.scenarioIDs.compactMap { id in ReviewBuiltIns.scenarioFiles[id].map { (.scenario, id, $0 + "\n") } }
+        files += ReviewBuiltIns.roleIDs.filter { !catalog.removedRoles.contains($0) }.compactMap { id in ReviewBuiltIns.roleFiles[id].map { (.role, id, $0) } }
+        files += ReviewBuiltIns.scenarioIDs.filter { !catalog.removedScenarios.contains($0) }
+            .compactMap { id in ReviewBuiltIns.scenarioFiles[id].map { (.scenario, id, $0 + "\n") } }
         var written: [String] = []
         let root = brain.resolvingSymlinksInPath().path
         for (kind, id, text) in files {

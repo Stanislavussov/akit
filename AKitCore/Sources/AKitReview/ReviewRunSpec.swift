@@ -74,6 +74,24 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
         public var doNotComment: [String]
         /// The role's SKILL.md as copied into `<run>/roles/review-<id>/SKILL.md`.
         public var sha256: String
+        /// The skills the role links (`skills:`); nil when none.
+        public var skills: [String]? = nil
+    }
+
+    /// A skill a role or the scenario links: Gather copies it to `<run>/skills/<name>/` and every
+    /// pass loads it with `--skill`.
+    public struct LinkedSkill: Codable, Sendable, Hashable {
+        public var name: String
+        /// `scenario feature`, `role security`.
+        public var linkedBy: [String]
+        /// Its SKILL.md on this Mac; nil when no skill of that name was found.
+        public var file: String?
+
+        public init(name: String, linkedBy: [String], file: String?) {
+            self.name = name
+            self.linkedBy = linkedBy
+            self.file = file
+        }
     }
 
     /// A Pi step after the roles (`docs/design/review.md`, "Pi steps"): a subagent, a prompt
@@ -181,6 +199,13 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var mcpServers: [ReviewServerChoice]?
     /// Pi steps after the roles; nil in runs made before 2026-10-22.
     public var steps: [Step]?
+    /// Skills the scenario and the roles link; nil when none.
+    public var skills: [LinkedSkill]?
+
+    /// The skills the scenario links (not a role).
+    public var scenarioSkills: [String] {
+        (skills ?? []).filter { $0.linkedBy.contains("scenario \(scenario.value)") }.map(\.name)
+    }
     /// Extra Pi flags of the brief, the roles, the steps and the verifier, by the level that added them.
     public var piFlags: [Sourced<[String]>]?
 
@@ -256,15 +281,22 @@ public enum ReviewResolver {
             scenario = Sourced(chosen, .run)
         } else if let preset = profile?.defaultScenario {
             scenario = Sourced(preset, .project)
+        } else if let feature = scenarios.first(where: { $0.id == "feature" }) {
+            scenario = Sourced("feature", feature.source)
+        } else if let first = scenarios.first {
+            // The user deleted feature: the first scenario left.
+            scenario = Sourced(first.id, first.source)
         } else {
-            scenario = Sourced("feature", catalog.scenarios.first { $0.id == "feature" }?.source ?? .builtIn)
+            throw Failure(message: "There is no scenario: make one in Review → Scenarios.")
         }
         guard let definition = scenarios.first(where: { $0.id == scenario.value }) else {
             throw Failure(message: "There is no scenario \(scenario.value). Known: \(scenarios.map(\.id).joined(separator: ", ")).")
         }
         let available = catalog.roles(for: profile)
-        var picked: [(id: String, reason: String)] = definition.required.map { ($0, "required by \(definition.id)") }
-        for id in profile?.rolesAdd ?? [] where !picked.contains(where: { $0.id == id }) { picked.append((id, "added by the project")) }
+        // A role the user deleted that a scenario or the profile still names is skipped.
+        func deleted(_ id: String) -> Bool { catalog.removedRoles.contains(id) && !available.contains { $0.id == id } }
+        var picked: [(id: String, reason: String)] = definition.required.filter { !deleted($0) }.map { ($0, "required by \(definition.id)") }
+        for id in profile?.rolesAdd ?? [] where !picked.contains(where: { $0.id == id }) && !deleted(id) { picked.append((id, "added by the project")) }
         for id in choices.rolesOn where !picked.contains(where: { $0.id == id }) {
             picked.append((id, definition.optional.contains(id) ? "optional, turned on" : "added for this run"))
         }
@@ -330,7 +362,7 @@ public enum ReviewResolver {
             roles: zip(picked, roles).map { pick, role in
                 ReviewRunSpec.Role(id: role.id, source: role.source, reason: pick.reason, minSeverity: role.minSeverity,
                                    maxFindings: role.maxFindings, needs: role.needs, doNotComment: role.doNotComment,
-                                   sha256: ReviewHash.sha256(role.text))
+                                   sha256: ReviewHash.sha256(role.text), skills: role.skills.isEmpty ? nil : role.skills)
             },
             passes: passes, verifier: verifier,
             posting: ReviewRunSpec.Posting(marker: pick(\.marker, fallback: "🤖"),
@@ -349,7 +381,8 @@ public enum ReviewResolver {
         spec.maxChangedLines = pick(\.maxChangedLines, fallback: 6000)
         spec.impact = pick(\.impact, fallback: .auto)
         spec.summaryLanguage = pick(\.summaryLanguage, fallback: preferredLanguage(preferredLanguages))
-        let turnedOff = off.filter { !choices.rolesOn.contains($0) }.sorted()
+        // A deleted contracts role is never added back for other repositories' uses (R44).
+        let turnedOff = Set(off.filter { !choices.rolesOn.contains($0) } + (deleted("contracts") ? ["contracts"] : [])).sorted()
         spec.rolesOff = turnedOff.isEmpty ? nil : turnedOff
         if let base = choices.knowledgeBase {
             spec.knowledgeBase = Sourced(base, .run)
@@ -377,7 +410,22 @@ public enum ReviewResolver {
             }
         }
         spec.steps = steps.isEmpty ? nil : steps
+        spec.skills = linkedSkills(scenario: definition, roles: roles, catalog: catalog)
         return (spec, roles)
+    }
+
+    /// The skills the scenario and the roles link, each once, with who links it; nil when none.
+    static func linkedSkills(scenario: ReviewScenario, roles: [ReviewRole], catalog: ReviewCatalog) -> [ReviewRunSpec.LinkedSkill]? {
+        var linked: [ReviewRunSpec.LinkedSkill] = []
+        let links = scenario.skills.map { ($0, "scenario \(scenario.id)") } + roles.flatMap { role in role.skills.map { ($0, "role \(role.id)") } }
+        for (name, by) in links {
+            if let index = linked.firstIndex(where: { $0.name == name }) {
+                linked[index].linkedBy.append(by)
+            } else {
+                linked.append(ReviewRunSpec.LinkedSkill(name: name, linkedBy: [by], file: catalog.skills.first { $0.name == name }?.file?.path))
+            }
+        }
+        return linked.isEmpty ? nil : linked
     }
 
     /// A configured step resolved against the user's Pi set-up. Throws when the agent, template

@@ -240,6 +240,9 @@ shot review-settings     $MAIN --section review --tab settings --add
 shot review-roles        $MAIN --section review --tab roles --select security
 shot review-role-writer  $MAIN --section review --tab roles --select i18n --query "Text users see must come from the translation files (src/i18n/*.json), not string literals in components. Leave copy wording to the designers." --add
 shot review-scenarios    $MAIN --section review --tab scenarios --select bugfix
+shot review-scenario-skills $MAIN --section review --tab scenarios --select api-change
+shot review-scenario-writer $MAIN --section review --tab scenarios --select payments --query "Payment changes: money must never be counted twice or lost. Check idempotency of the payment calls, rounding of amounts and the refund path. Follow our API design rules." --add
+shot review-scenario-delete $MAIN --section review --tab scenarios --select api-change --capture
 shot review-project-role $MAIN --section review --tab roles --project orders-service --select tests
 shot review-quality      $MAIN --section review --tab quality
 shot review-log          $MAIN --section review --tab log --select 20261015-091500-orders-service-42

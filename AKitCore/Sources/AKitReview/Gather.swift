@@ -461,6 +461,19 @@ public enum ReviewGather {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(role.text.utf8).write(to: url)
         }
+        // The skills the scenario and the roles link, scrubbed like the context pack.
+        for skill in spec.skills ?? [] {
+            guard let file = skill.file else {
+                gap("skills", "The skill \(skill.name) (\(skill.linkedBy.joined(separator: ", ")))",
+                    "No skill of that name is on this Mac, so the passes run without it.",
+                    how: "Put it in the brain's skills/, ~/.claude/skills, ~/.pi/agent/skills or ~/.agents/skills, or unlink it.")
+                continue
+            }
+            if let problem = ReviewSkillLinks.copy(URL(filePath: file).deletingLastPathComponent(), to: folder.appending(path: "skills/\(skill.name)"),
+                                                   scrub: scrub) {
+                gap("skills", "The skill \(skill.name)", problem, how: "Check \(file).")
+            }
+        }
         try ReviewJSON.write(gaps, to: folder.appending(path: "gaps.json"))
         try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
         return Result(spec: spec, snapshot: snapshot, workItems: workItems, gaps: gaps, contextCharacters: size, scrubbed: counts)

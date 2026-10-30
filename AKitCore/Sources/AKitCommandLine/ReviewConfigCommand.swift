@@ -21,6 +21,8 @@ extension AKitCLI {
       akit review role write ID (--describe TEXT | --describe-file PATH|-) [--skill NAME|PATH]
                          [--model M] [--thinking T] [--project P] [--yes]
       akit review role skills [--json]
+      akit review role link|unlink ID SKILL… [--project P] [--yes]
+      akit review role delete ID [--project P] [--yes]
                                         new: a role from the template (or from --file; - reads
                                         stdin) as skills/review-ID/SKILL.md. save: replace its text.
                                         Without --project it goes to the brain layer review
@@ -31,9 +33,22 @@ extension AKitCLI {
                                         your words with a writing skill (default: AKit's own
                                         review-role-writer; role skills lists the others), the
                                         review's passes model unless --model, no tools, no MCP;
-                                        AKit checks the draft is a role and prints the diff
-      akit review scenario show|new|save|duplicate|reset ID …
-                                        The same for a scenario (scenarios/ID.yaml)
+                                        AKit checks the draft is a role and prints the diff.
+                                        link: add skills (role skills lists them) to the role's
+                                        akit-review: skills:, unlink takes them out: every pass of
+                                        a run with the role loads them. delete: the role goes to
+                                        the Trash with every project's own copy, and its id to
+                                        removed: in review.yaml (a built-in one stays hidden;
+                                        scenarios naming it skip it). With --project only that
+                                        project's own role (one the brain lacks) goes
+      akit review scenario show|new|save|duplicate|reset|write|skills|link|unlink ID …
+      akit review scenario delete ID [--keep-roles] [--project P] [--yes]
+                                        The same for a scenario (scenarios/ID.yaml). write: Pi
+                                        drafts it from the problem you describe (default skill
+                                        review-scenario-writer), with only existing roles and
+                                        linkable skills. delete also moves the roles only this
+                                        scenario uses to the Trash (--keep-roles keeps them) and
+                                        takes default_scenario: ID out of the profiles
       akit review defaults show | save --file PATH|- [--yes]
                                         The brain's review.yaml: models, thresholds, caps
       akit review profile show SLUG | new SLUG [--file PATH|-] [--yes] | save SLUG --file PATH|- [--yes]
@@ -100,13 +115,17 @@ extension AKitCLI {
         let modelName = args.value("--model")
         let thinking = args.value("--thinking")
         let json = args.flag("--json")
+        let keepRoles = args.flag("--keep-roles")
+        if keepRoles, !(action == "delete" && kind == .scenario) { throw Failure(message: "--keep-roles goes with akit review scenario delete.") }
         if action != "write", !describe.isEmpty || describeFile != nil || skillName != nil || modelName != nil || thinking != nil {
             throw Failure(message: "--describe, --describe-file, --skill, --model and --thinking go with akit review role write.")
         }
         if action == "skills" {
-            guard kind == .role else { throw Failure(message: "akit review role skills lists the skills that can write a role.") }
+            guard kind == .role || kind == .scenario else {
+                throw Failure(message: "akit review role|scenario skills lists the skills that can write or be linked.")
+            }
             try args.finish()
-            let skills = ReviewRoleWriter.skills(brain: brain, home: home)
+            let skills = ReviewRoleWriter.skills(brain: brain, home: home, for: kind)
             if json {
                 let rows = skills.map { ["name": $0.name, "description": $0.description, "place": $0.place, "file": $0.file?.path ?? ""] }
                 let encoder = JSONEncoder()
@@ -125,6 +144,11 @@ extension AKitCLI {
         } else {
             guard let given = args.positional() else { throw Failure(message: "Which \(name)? akit review \(name) \(action) ID.") }
             id = given.hasPrefix("review-") && kind == .role ? String(given.dropFirst("review-".count)) : given
+        }
+        var skillNames: [String] = []
+        if action == "link" || action == "unlink" {
+            while let name = args.positional() { skillNames.append(name) }
+            guard !skillNames.isEmpty else { throw Failure(message: "Which skills? akit review \(name) \(action) ID SKILL….") }
         }
         try args.finish()
         // Ids name files: nothing like ../ may reach a path.
@@ -156,6 +180,7 @@ extension AKitCLI {
                 return 0
             }
             for line in save.diff { out(line) }
+            for note in save.notes { err("akit: \(note)") }
             if !save.workWords.isEmpty {
                 err("akit: this is a work Mac, and the text names \(save.workWords.joined(separator: ", ")) from your work profiles. "
                     + "The brain may go to your personal GitHub: keep work names in a project copy (--project P) instead.")
@@ -223,7 +248,9 @@ extension AKitCLI {
                 }
                 return try await finishSave(try ReviewConfigEditor.plan(kind, id: id, text: text, level: level, home: home, brain: brain))
             case "write":
-                guard kind == .role else { throw Failure(message: "Only a role can be written with AI: akit review role write ID --describe TEXT.") }
+                guard kind == .role || kind == .scenario else {
+                    throw Failure(message: "Only a role or a scenario can be written with AI: akit review \(name) write ID --describe TEXT.")
+                }
                 if file != nil { throw Failure(message: "write drafts the text itself; use save --file for your own.") }
                 var words = describe
                 if let describeFile {
@@ -236,16 +263,19 @@ extension AKitCLI {
                         words.append(text)
                     }
                 }
-                guard !words.isEmpty else { throw Failure(message: "Say what the role checks: --describe TEXT or --describe-file PATH|-.") }
+                guard !words.isEmpty else {
+                    throw Failure(message: "Say what the \(kind == .role ? "role checks" : "scenario is for"): --describe TEXT or --describe-file PATH|-.")
+                }
                 let skill: ReviewRoleWriter.Skill
                 do {
-                    skill = try skillName.map { try ReviewRoleWriter.skill(named: $0, brain: brain, home: home, cwd: cwd) } ?? .builtIn
+                    skill = try skillName.map { try ReviewRoleWriter.skill(named: $0, brain: brain, home: home, cwd: cwd, for: kind) } ?? .builtIn(for: kind)
                 } catch let failure as ReviewRoleWriter.Failure {
                     throw Failure(message: failure.message)
                 }
                 let model = modelName.map { ReviewModelChoice(model: $0, thinking: thinking ?? "") }
                     ?? thinking.map { ReviewModelChoice(model: "", thinking: $0) }
-                let request = ReviewRoleWriter.Request(id: id, description: words.joined(separator: "\n\n"), skill: skill, level: level, model: model)
+                let request = ReviewRoleWriter.Request(kind: kind, id: id, description: words.joined(separator: "\n\n"), skill: skill, level: level,
+                                                       model: model)
                 let lines = LineBox()
                 let result: ReviewRoleWriter.Result
                 do {
@@ -289,8 +319,57 @@ extension AKitCLI {
                 try ReviewConfigEditor.resetToBrain(kind, id: id, project: project, home: home, brain: brain, trash: trash)
                 out("Moved \(target.path) to the Trash; \(after).")
                 return 0
+            case "link", "unlink":
+                guard kind == .role || kind == .scenario else { throw Failure(message: "Only a role or a scenario links skills.") }
+                if file != nil { throw Failure(message: "\(action) changes the text itself; use save --file for your own.") }
+                let profile = try reviewProfile(project, catalog: catalog)
+                let current: [String]
+                let text: String
+                if kind == .role {
+                    guard let role = catalog.roles(for: profile).first(where: { $0.id == id }) else { throw Failure(message: "There is no role \(id).") }
+                    (current, text) = (role.skills, role.text)
+                } else {
+                    guard let scenario = catalog.scenarios(for: profile).first(where: { $0.id == id }) else { throw Failure(message: "There is no scenario \(id).") }
+                    (current, text) = (scenario.skills, scenario.text)
+                }
+                var names = current
+                if action == "link" {
+                    let known = Set(catalog.skills.map(\.name))
+                    for skill in skillNames where !known.contains(skill) {
+                        err("akit: no skill on this Mac is called \(skill) (akit review \(name) skills lists them); linked anyway.")
+                    }
+                    names += skillNames.filter { !names.contains($0) }
+                } else {
+                    for skill in skillNames where !names.contains(skill) { err("akit: \(name) \(id) doesn't link \(skill).") }
+                    names.removeAll(where: skillNames.contains)
+                }
+                let edited: String
+                do {
+                    edited = try ReviewSkillLinks.setting(names, kind: kind, in: text)
+                } catch let failure as ReviewSkillLinks.Failure {
+                    throw Failure(message: failure.message)
+                }
+                return try await finishSave(try ReviewConfigEditor.plan(kind, id: id, text: edited, level: level, home: home, brain: brain))
+            case "delete":
+                guard kind == .role || kind == .scenario else { throw Failure(message: "Only a role or a scenario can be deleted.") }
+                if file != nil { throw Failure(message: "delete takes no --file.") }
+                let removal = try ReviewConfigEditor.planDelete(kind, id: id, level: level, withRoles: !keepRoles, catalog: catalog,
+                                                                home: home, brain: brain)
+                out("Delete \(name) \(id) in \(level.title):")
+                for line in ReviewConfigEditor.describe(removal) { out("  " + line) }
+                for edit in removal.edits {
+                    out(edit.file.path + ":")
+                    for line in edit.diff { out(line) }
+                }
+                guard yes else {
+                    out("Nothing changed. Run again with --yes to do it" + (level == .brain ? " (committed in the brain)." : "."))
+                    return 0
+                }
+                try await ReviewConfigEditor.applyDelete(removal, brain: brain, env: env, trash: trash)
+                out("Deleted" + (level == .brain ? " and committed in the brain." : "."))
+                return 0
             default:
-                throw Failure(message: "akit review \(name) takes show, new, save, duplicate or reset, not \(action).")
+                throw Failure(message: "akit review \(name) takes show, new, save, duplicate, reset, write, link, unlink or delete, not \(action).")
             }
         } catch let failure as ReviewConfigEditor.Failure {
             throw Failure(message: failure.message)

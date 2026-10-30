@@ -433,7 +433,7 @@ public enum ReviewDebug {
         environment["AKIT_REVIEW_ROLE"] = "debug"
         environment["AKIT_REVIEW_MAX"] = "0"
         // The masked parts only: never gitlab/ or tracker/ (raw copies) or the worktree.
-        environment["AKIT_REVIEW_ROOTS"] = (["debug", "context", "roles", "prompts"].map { folder.appending(path: $0).path }).joined(separator: ":")
+        environment["AKIT_REVIEW_ROOTS"] = (["debug", "context", "roles", "skills", "prompts"].map { folder.appending(path: $0).path }).joined(separator: ":")
         environment["AKIT_REVIEW_MCP"] = String(decoding: (try? JSONEncoder().encode(access)) ?? Data("{}".utf8), as: UTF8.self)
         progress("Pi reads the log (\(model.model.isEmpty ? "Pi's default model" : model.model))…")
         let output = await ReviewPasses.runPi(pi, arguments: arguments, directory: folder, environment: environment, timeout: timeout,

@@ -225,7 +225,10 @@ struct NewReviewSheet: View {
         .frame(width: 620, height: 720)
         .task {
             catalog = model.catalog(brain: brain)
-            scenario = scenario.isEmpty ? (profile?.defaultScenario ?? "feature") : scenario
+            // feature may be deleted: then the first scenario left.
+            if scenario.isEmpty {
+                scenario = profile?.defaultScenario ?? scenarios.first { $0.id == "feature" }?.id ?? scenarios.first?.id ?? ""
+            }
         }
         .onChange(of: address) {
             if let preset = profile?.defaultScenario { scenario = preset }

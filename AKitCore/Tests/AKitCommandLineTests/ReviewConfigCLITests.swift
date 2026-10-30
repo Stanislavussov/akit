@@ -114,6 +114,31 @@ extension AKitCLITests {
         #expect(await reviewConfig(["role", "write", "i18n"], brain: brain).err.contains("--describe TEXT"))
         #expect(await reviewConfig(["role", "write", "i18n", "--describe", "x", "--skill", "nope"], brain: brain).err.contains("There is no skill nope"))
         #expect(await reviewConfig(["role", "new", "i18n", "--describe", "x"], brain: brain).err.contains("go with akit review role write"))
-        #expect(await reviewConfig(["scenario", "write", "x", "--describe", "y"], brain: brain).err.contains("Only a role"))
+        #expect(await reviewConfig(["defaults", "write", "--describe", "y"], brain: brain).err.contains("Only a role or a scenario"))
+    }
+
+    @Test func reviewLinksSkillsAndDeletesScenarios() async throws {
+        let brain = try await reviewBrain()
+        try write(".claude/skills/house-style/SKILL.md", "---\nname: house-style\ndescription: Our rules\n---\nRules.\n")
+        #expect(await reviewConfig(["scenario", "skills"], brain: brain).out.contains("review-scenario-writer  [built-in]"))
+        let linked = await reviewConfig(["role", "link", "security", "house-style", "--yes"], brain: brain)
+        #expect(linked.code == 0 && linked.out.contains("+   skills: [house-style]"), "\(linked)")
+        #expect(ReviewCatalog.load(home: home, brain: brain).roles.first { $0.id == "security" }?.skills == ["house-style"])
+        let unknown = await reviewConfig(["scenario", "link", "bugfix", "nope"], brain: brain)
+        #expect(unknown.code == 0 && unknown.err.contains("no skill on this Mac is called nope"), "\(unknown)")
+        let unlinked = await reviewConfig(["role", "unlink", "security", "house-style", "--yes"], brain: brain)
+        #expect(unlinked.code == 0 && ReviewCatalog.load(home: home, brain: brain).roles.first { $0.id == "security" }?.skills == [])
+
+        let dry = await reviewConfig(["scenario", "delete", "dependency-upgrade"], brain: brain)
+        #expect(dry.code == 0 && dry.out.contains("Roles only this scenario uses, deleted too: upgrade-risk."), "\(dry)")
+        #expect(dry.out.contains("Nothing changed"))
+        let kept = await reviewConfig(["scenario", "delete", "dependency-upgrade", "--keep-roles", "--yes"], brain: brain)
+        #expect(kept.code == 0 && kept.out.contains("committed in the brain"), "\(kept)")
+        let catalog = ReviewCatalog.load(home: home, brain: brain)
+        #expect(!catalog.scenarios.contains { $0.id == "dependency-upgrade" } && catalog.roles.contains { $0.id == "upgrade-risk" })
+        let role = await reviewConfig(["role", "delete", "upgrade-risk", "--yes"], brain: brain)
+        #expect(role.code == 0 && !ReviewCatalog.load(home: home, brain: brain).roles.contains { $0.id == "upgrade-risk" }, "\(role)")
+        #expect(await reviewConfig(["role", "delete", "upgrade-risk"], brain: brain).err.contains("There is no role upgrade-risk"))
+        #expect(await reviewConfig(["role", "delete", "tests", "--keep-roles"], brain: brain).err.contains("--keep-roles goes with"))
     }
 }

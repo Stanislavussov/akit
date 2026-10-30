@@ -74,6 +74,7 @@ public enum ReviewDiscuss {
         let knowledge = ReviewPasses.knowledgeEnvironment(spec: run.spec, env: env)
         if !knowledge.isEmpty { tools += "," + ReviewPasses.knowledgeTools.joined(separator: ",") }
         arguments += run.spec.roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
+        arguments += ReviewSkillLinks.flags(folder: folder, spec: run.spec)
         arguments += ["--append-system-prompt", folder.appending(path: "prompts/discuss.md").path,
                       "-e", folder.appending(path: "akit-review.ts").path, "--tools", tools]
         let variables: [(String, String)] = [
