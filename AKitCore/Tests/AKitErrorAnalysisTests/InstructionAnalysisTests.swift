@@ -134,4 +134,16 @@ struct InstructionReviewTests {
         #expect(first.session == "claude:\(id)" && first.text == "No, I told you to use tabs" && first.agentBefore == "Done, I used spaces.")
         #expect(InstructionAnalysis.evidence(days: 14, env: env, now: .now.addingTimeInterval(30 * 86_400)).items.isEmpty, "older than the window")
     }
+
+    @Test func onlyFilesClaudeOrPiReadAreSent() {
+        var notes: [String] = []
+        let globals = [
+            InstructionAnalysis.Text(path: "~/.claude/CLAUDE.md", harnesses: ["claude", "opencode"], text: "a"),
+            InstructionAnalysis.Text(path: "~/.codex/AGENTS.md", harnesses: ["codex"], text: "b"),
+            InstructionAnalysis.Text(path: "~/.config/opencode/AGENTS.md", harnesses: ["opencode"], text: "c"),
+        ]
+        let sent = InstructionAnalysis.sendable(globals, notes: &notes)
+        #expect(sent.map(\.path) == ["~/.claude/CLAUDE.md"] && notes.count == 2)
+        #expect(InstructionAnalysis.codeOrigins(sent) == [.code(.claudeCode)])
+    }
 }

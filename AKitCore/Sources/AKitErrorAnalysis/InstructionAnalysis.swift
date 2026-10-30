@@ -112,11 +112,12 @@ public enum InstructionAnalysis {
             self.notes = notes
         }
 
-        /// The part's findings replace the earlier ones of that part.
+        /// The part's findings and notes replace the earlier ones of that part (a note starts
+        /// with its part's name: "review: …").
         public mutating func merge(_ part: Part, findings new: [Finding], notes more: [String] = []) {
             findings = findings.filter { $0.part != part } + new
             if !parts.contains(part) { parts.append(part) }
-            notes += more
+            notes = notes.filter { !$0.hasPrefix(part.rawValue + ": ") } + more.map { part.rawValue + ": " + $0 }
             made = .now
         }
 

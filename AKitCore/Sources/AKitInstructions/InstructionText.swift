@@ -172,11 +172,12 @@ public enum InstructionText {
 /// A fenced code block's opening line: three or more backticks or tildes. It closes at a line
 /// of the same character, at least as long, with nothing else (CommonMark). A backtick opener
 /// can't have a backtick after it (```` ```x``` ```` is inline code, not a fence).
-struct Fence {
+/// A fenced code block's opening line (``` or ~~~, 3 or more), and the line that closes it.
+public struct Fence: Sendable {
     let mark: Character
     let length: Int
 
-    init?(opening line: String) {
+    public init?(opening line: String) {
         guard let first = line.first, first == "`" || first == "~" else { return nil }
         let length = line.prefix { $0 == first }.count
         guard length >= 3 else { return nil }
@@ -185,7 +186,7 @@ struct Fence {
         self.length = length
     }
 
-    func closes(_ line: String) -> Bool {
+    public func closes(_ line: String) -> Bool {
         let run = line.prefix { $0 == mark }.count
         return run >= length && line.dropFirst(run).allSatisfy { $0 == " " || $0 == "\t" }
     }

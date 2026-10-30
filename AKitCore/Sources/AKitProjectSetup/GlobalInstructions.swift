@@ -44,12 +44,18 @@ public enum GlobalInstructions {
         /// Harnesses that read the file as their global instructions.
         public let harnesses: [HarnessID]
         public let state: State
+        /// Update Home Folder writes AKit's block into this file (Claude's CLAUDE.md, Pi's file),
+        /// as the home folder's harnesses are set; a file only imported or read by another
+        /// harness gets none, so its own text can't leave it.
+        public let getsBlock: Bool
         /// The whole file as the harnesses read it.
         public let bytes: Int
         /// Other tools' blocks in it.
         public let managed: [ManagedBlock]
         /// The user's own sections: not AKit's block, not in another tool's block, not blank.
         public let own: [InstructionSection]
+        /// Lines of the `own` sections cut out of a section another tool's block shares.
+        public let partial: [Int]
         public var id: String { file.path }
         public var ownBytes: Int { own.reduce(0) { $0 + $1.bytes } }
     }
@@ -81,6 +87,7 @@ public enum GlobalInstructions {
         let homePlan = plan(context: context, brain: brain)
         let url: (String) -> URL = { $0.hasPrefix("/") ? URL(filePath: $0) : home.appending(path: $0) }
         let blockChanges = homePlan.changes.filter(\.block)
+        let targets = blockTargets(homePlan, context: context)
 
         // Every installed harness's loaded global files, one copy per real file.
         var order: [String] = [], readers: [String: [HarnessID]] = [:], entries: [String: InstructionEntry] = [:]
@@ -103,19 +110,35 @@ public enum GlobalInstructions {
             let change = blockChanges.first { InstructionEdit.realPath(url($0.path)) == key }
             let fileText = entry?.text ?? ""
             let managed = managedBlocks(in: fileText)
+            let parts = ownParts(of: fileText, managed: managed)
             return Copy(file: file, path: FileWalk.tilde(file, home: home), harnesses: readers[key] ?? [],
-                        state: state(of: change, text: fileText, coreIsEmpty: text.isEmpty), bytes: fileText.utf8.count, managed: managed,
-                        own: ownSections(of: fileText, managed: managed))
+                        state: homePlan.canApply ? state(of: change, text: fileText, coreIsEmpty: text.isEmpty)
+                            : .noBlock("AKit can't render the core text now; the notes below say why."),
+                        getsBlock: targets.contains(key), bytes: fileText.utf8.count, managed: managed,
+                        own: parts.map(\.section), partial: parts.filter(\.partial).map(\.section.line))
         }
         var notes = homePlan.render.warnings
         if !homePlan.canApply { notes += homePlan.render.errors + homePlan.blockers }
         return Status(text: text, hasCore: true, copies: copies, notes: notes)
     }
 
+    /// The files Update Home Folder writes AKit's block into, by real path.
+    static func blockTargets(_ plan: ProjectSetup.Plan, context: SkillMove.Context) -> Set<String> {
+        let home = context.env.homeDirectory
+        var urls: [URL] = []
+        if plan.answers.targets.contains("claude") { urls.append(home.appending(path: InstructionsBlock.claudePath)) }
+        if plan.answers.targets.contains("pi"),
+           let folder = InstructionsBlock.piDirectory(setting: context.piAgentDirSetting, recorded: plan.previous?.piAgentDir,
+                                                      remember: context.rememberPiAgentDir, home: home).url {
+            urls.append(InstructionsBlock.piFile(in: folder))
+        }
+        return Set(urls.map(InstructionEdit.realPath))
+    }
+
     static func state(of change: ProjectSetup.Change?, text: String, coreIsEmpty: Bool) -> Copy.State {
         guard let change else {
-            if text.contains(InstructionText.akitStart) { return .current }
-            return .noBlock(coreIsEmpty ? "No block: core has no text yet." : "AKit writes no core block into this file.")
+            if InstructionText.sections(text).contains(where: \.isAKitBlock) { return .current }
+            return .noBlock(coreIsEmpty ? "core has no text yet." : "AKit writes no core block into this file.")
         }
         if change.kind == .same { return .current }
         switch change.blockAction {
@@ -126,55 +149,96 @@ public enum GlobalInstructions {
         }
     }
 
-    /// `<!-- NAME:START -->` … `<!-- NAME:END -->` pairs, outside code fences.
+    /// `<!-- NAME:START -->` … `<!-- NAME:END -->` pairs, outside code fences. A start without
+    /// its end runs to the end of the file: AKit can't tell where that tool's text stops.
     public static func managedBlocks(in text: String) -> [ManagedBlock] {
         let lines = InstructionText.lines(text)
         var open: (name: String, line: Int)?
         var found: [ManagedBlock] = []
-        var fence: Character?
+        var fence: Fence?
+        let bytes = { (range: ClosedRange<Int>) in lines[(range.lowerBound - 1)...(range.upperBound - 1)].reduce(0) { $0 + $1.utf8.count + 1 } }
         for (index, raw) in lines.enumerated() {
-            let line = raw.trimmingCharacters(in: .whitespaces.union(CharacterSet(charactersIn: "\r")))
-            if let mark = line.first, mark == "`" || mark == "~", line.hasPrefix(String(repeating: mark, count: 3)) {
-                fence = fence == nil ? mark : (fence == mark ? nil : fence)
+            var line = raw
+            if index == 0, line.unicodeScalars.first == "\u{FEFF}" { line.unicodeScalars.removeFirst() }
+            line = line.trimmingCharacters(in: .whitespaces.union(CharacterSet(charactersIn: "\r")))
+            if let current = fence {
+                if current.closes(line) { fence = nil }
                 continue
             }
-            guard fence == nil, line.hasPrefix("<!--"), line.hasSuffix("-->") else { continue }
-            let inner = line.dropFirst(4).dropLast(3).trimmingCharacters(in: .whitespaces)
-            let parts = inner.split(separator: ":")
-            guard parts.count == 2, let name = parts.first.map(String.init), !name.isEmpty,
-                  name.lowercased() != "akit", name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { continue }
-            switch parts[1].uppercased() {
-            case "START" where open == nil:
-                open = (name, index + 1)
-            case "END" where open?.name == name:
-                let range = open!.line...(index + 1)
-                let bytes = lines[(range.lowerBound - 1)...(range.upperBound - 1)].reduce(0) { $0 + $1.utf8.count + 1 }
-                found.append(ManagedBlock(name: name, lines: range, bytes: bytes))
-                open = nil
-            default: break
+            if let opening = Fence(opening: line) {
+                fence = opening
+                continue
             }
+            guard let marker = marker(line) else { continue }
+            if marker.start, open == nil {
+                open = (marker.name, index + 1)
+            } else if !marker.start, let current = open, current.name == marker.name {
+                found.append(ManagedBlock(name: marker.name, lines: current.line...(index + 1), bytes: bytes(current.line...(index + 1))))
+                open = nil
+            }
+        }
+        // The split leaves an empty last line after a final newline: not a line of the file.
+        let last = lines.last?.isEmpty == true ? lines.count - 1 : lines.count
+        if let open, last >= open.line {
+            found.append(ManagedBlock(name: open.name, lines: open.line...last, bytes: bytes(open.line...last)))
         }
         return found
     }
 
-    /// The file's sections that are the user's: not AKit's block, not starting inside another
-    /// tool's block, not blank. A section that starts inside a block and goes on past its end
-    /// keeps only its lines after the end marker (oh-my-claudecode's `## Setup` ends its block).
+    /// Another tool's marker line (`<!-- NAME:START -->` / `<!-- NAME:END -->`), not AKit's.
+    static func marker(_ line: String) -> (name: String, start: Bool)? {
+        guard line.hasPrefix("<!--"), line.hasSuffix("-->") else { return nil }
+        let parts = line.dropFirst(4).dropLast(3).trimmingCharacters(in: .whitespaces).split(separator: ":")
+        guard parts.count == 2, let name = parts.first.map(String.init), !name.isEmpty, name.lowercased() != "akit",
+              name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { return nil }
+        switch parts[1].uppercased() {
+        case "START": return (name, true)
+        case "END": return (name, false)
+        default: return nil
+        }
+    }
+
+    /// The text has a block marker of AKit or of another tool on a line of its own.
+    static func hasMarkers(_ text: String) -> Bool {
+        InstructionText.lines(text).contains { raw in
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return line == InstructionText.akitStart || line == InstructionText.akitEnd || marker(line) != nil
+        }
+    }
+
+    /// The file's sections that are the user's: not AKit's block, not blank, and not inside
+    /// another tool's block. A section that shares lines with such a block (the user's text
+    /// right above its start, or after its end inside one section) keeps only its own lines and
+    /// is marked `partial`: AKit can copy that text, but can't take it out of the file.
     static func ownSections(of text: String, managed: [ManagedBlock]) -> [InstructionSection] {
-        InstructionText.sections(text).compactMap { section in
-            guard !section.isAKitBlock, !section.isBlank else { return nil }
-            guard let block = managed.first(where: { $0.lines.contains(section.line) }) else {
-                // Text before a block that starts inside this section is still the user's.
-                return section
-            }
+        ownParts(of: text, managed: managed).map(\.section)
+    }
+
+    static func ownParts(of text: String, managed: [ManagedBlock]) -> [(section: InstructionSection, partial: Bool)] {
+        InstructionText.sections(text).flatMap { section -> [(section: InstructionSection, partial: Bool)] in
+            guard !section.isAKitBlock, !section.isBlank else { return [] }
             let lines = InstructionText.lines(section.text)
-            let after = section.line + lines.count - 1
-            guard after > block.lines.upperBound else { return nil }
-            let rest = lines.dropFirst(block.lines.upperBound - section.line + 1)
-            let kept = rest.drop { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isComment($0) }
-            guard !kept.isEmpty else { return nil }
-            let first = section.line + lines.count - kept.count
-            return InstructionSection(heading: nil, text: kept.joined(separator: "\n"), isAKitBlock: false, line: first)
+            let last = section.line + lines.count - 1
+            let blocks = managed.filter { $0.lines.lowerBound <= last && $0.lines.upperBound >= section.line }
+            guard !blocks.isEmpty else { return [(section, false)] }
+            // The section's lines outside every block, in runs.
+            var runs: [[(number: Int, text: String)]] = [[]]
+            for (offset, line) in lines.enumerated() {
+                let number = section.line + offset
+                if blocks.contains(where: { $0.lines.contains(number) }) {
+                    if !runs[runs.count - 1].isEmpty { runs.append([]) }
+                } else {
+                    runs[runs.count - 1].append((number, line))
+                }
+            }
+            return runs.compactMap { run -> (section: InstructionSection, partial: Bool)? in
+                let kept = run.drop { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isComment($0.text) }
+                var body = Array(kept)
+                while let tail = body.last, tail.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { body.removeLast() }
+                guard let first = body.first else { return nil }
+                let heading = first.number == section.line ? section.heading : nil
+                return (InstructionSection(heading: heading, text: body.map(\.text).joined(separator: "\n") + "\n", isAKitBlock: false, line: first.number), true)
+            }
         }
     }
 
@@ -208,8 +272,8 @@ public enum GlobalInstructions {
             throw Failure(message: "The core layer sends its AGENTS.md text only under a when: condition. Edit the layer by hand.")
         }
         let after = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if after.contains(InstructionText.akitStart) || after.contains(InstructionText.akitEnd) {
-            throw Failure(message: "The text has AKit's block markers. Take them out: AKit adds them when it writes the block.")
+        if hasMarkers(after) {
+            throw Failure(message: "The text has a block marker line (<!-- …:START --> or <!-- …:END -->, AKit's or another tool's). Take it out: each tool writes its own markers.")
         }
         return EditPlan(before: LayerEditor.details(of: core).agentsSection, after: after)
     }
@@ -292,14 +356,23 @@ public enum GlobalInstructions {
     public static func applying(_ suggestion: String, toSection section: String?, in text: String) -> String? {
         let new = suggestion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let section else {
-            guard !new.isEmpty else { return nil }
+            // Only a new section: its own ## heading, not one core has. A rewrite of the
+            // whole text would double it.
+            guard let heading = InstructionText.sections(new).first?.heading, new.hasPrefix("## "),
+                  !InstructionText.sections(text).contains(where: { $0.heading?.lowercased() == heading.lowercased() }) else { return nil }
             return text.isEmpty ? new : text + "\n\n" + new
         }
         let wanted = section.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "^#+\\s*", with: "", options: .regularExpression).lowercased()
         let sections = InstructionText.sections(text)
         guard let index = sections.firstIndex(where: { $0.heading?.trimmingCharacters(in: .whitespaces).lowercased() == wanted }) else { return nil }
         var parts = sections.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-        if new.isEmpty { parts.remove(at: index) } else { parts[index] = new }
+        if new.isEmpty {
+            parts.remove(at: index)
+        } else {
+            // A suggestion without its heading would merge into the section before it.
+            guard new.hasPrefix("## ") else { return nil }
+            parts[index] = new
+        }
         let result = parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
         return result == text ? nil : result
     }
@@ -333,11 +406,14 @@ public enum GlobalInstructions {
         let core = Set(InstructionText.sections(status.text).map(InstructionText.normalized))
         var order: [String] = [], places: [String: [Candidate.Place]] = [:], first: [String: InstructionSection] = [:]
         for copy in status.copies {
+            let partial = Set(copy.partial)
             for section in copy.own {
                 let key = InstructionText.normalized(section)
                 if places[key] == nil { order.append(key); first[key] = section }
                 places[key, default: []].append(.init(file: copy.file, path: copy.path, section: section,
-                                                      stays: stays(section, in: copy, env: env)))
+                                                      stays: partial.contains(section.line)
+                                                          ? "It shares a section with another tool's block; take it out of the file by hand."
+                                                          : stays(section, in: copy, env: env)))
             }
         }
         var list = order.map { key in
@@ -351,24 +427,13 @@ public enum GlobalInstructions {
     }
 
     static func stays(_ section: InstructionSection, in copy: Copy, env: HarnessEnvironment) -> String? {
-        if case .noBlock = copy.state, copy.harnesses.isEmpty == false, !blockWillBeWritten(copy) {
-            return "\(copy.path) gets no core block, so it keeps its copy."
-        }
-        // Text after another tool's end marker (no heading of its own) is not a whole section.
-        if section.heading == nil, copy.managed.contains(where: { $0.lines.upperBound < section.line }) {
-            return "It follows another tool's block inside one section; take it out by hand."
-        }
+        guard copy.getsBlock else { return "AKit writes no core block into \(copy.path), so it keeps its copy." }
         do {
             _ = try InstructionEdit.removing(section, from: copy.file, rendered: [], env: env)
             return nil
         } catch {
             return error.message
         }
-    }
-
-    /// A file AKit writes a block into once core has text (Claude's and Pi's global files).
-    static func blockWillBeWritten(_ copy: Copy) -> Bool {
-        copy.harnesses.contains(.claudeCode) || copy.harnesses.contains(.pi)
     }
 
     /// Take Over…: the picked pieces at the end of the core text, as a diff.
@@ -384,6 +449,13 @@ public enum GlobalInstructions {
     public static func takeOver(_ picked: [Candidate], status: Status) throws(Failure) -> TakeOverPlan {
         guard status.hasCore else { throw Failure(message: "The brain has no core layer.") }
         guard !picked.isEmpty else { throw Failure(message: "Pick at least one section.") }
+        if let marked = picked.first(where: { hasMarkers($0.text) }) {
+            throw Failure(message: "\(marked.title) holds a block marker line; AKit doesn't move another tool's block.")
+        }
+        let coreHeadings = Set(InstructionText.sections(status.text).compactMap { $0.heading?.lowercased() })
+        if let clash = picked.first(where: { !$0.inCore && $0.heading.map { coreHeadings.contains($0.lowercased()) } == true }) {
+            throw Failure(message: "The core text has \(clash.title) already, with other text. Edit… the core text to merge them instead.")
+        }
         let ids = Set(picked.map(\.id))
         if let clash = picked.first(where: { !$0.differs.filter(ids.contains).isEmpty }) {
             throw Failure(message: "Two versions of \(clash.title) are picked. Keep one; edit the core text afterwards to merge them.")
@@ -422,12 +494,17 @@ public enum GlobalInstructions {
                     kept.append("\(place.path) keeps \(candidate.title): it can't be read.")
                     continue
                 }
-                let units = InstructionText.units(text)
-                guard units.contains(where: { $0.isAKitBlock && InstructionText.normalized($0) == candidate.id }) else {
+                guard InstructionText.units(text).contains(where: { $0.isAKitBlock && InstructionText.normalized($0) == candidate.id }) else {
                     kept.append("\(place.path) keeps \(candidate.title): its core block doesn't have it yet.")
                     continue
                 }
-                guard let own = units.first(where: { !$0.isAKitBlock && InstructionText.normalized($0) == candidate.id }) else { continue }
+                // Only a whole own section (never one inside another tool's block), at its line
+                // in the preview when it is still there.
+                let whole = ownParts(of: text, managed: managedBlocks(in: text)).filter { !$0.partial && InstructionText.normalized($0.section) == candidate.id }
+                guard let own = (whole.first { $0.section.line == place.section.line } ?? whole.first)?.section else {
+                    kept.append("\(place.path) keeps \(candidate.title): it changed since the preview.")
+                    continue
+                }
                 do {
                     let removal = try InstructionEdit.removing(own, from: place.file, rendered: [], env: env)
                     try InstructionEdit.apply(removal, env: env)

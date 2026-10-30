@@ -261,17 +261,17 @@ extension InstructionAnalysis {
             let result = sizeAndRepeats(globals: globals, projects: projects, requests: recorded.requests)
             report.costs = result.costs
             if recorded.requests.isEmpty { notes.append("No recorded sessions in the window: costs count no requests.") }
-            report.merge(.size, findings: result.findings)
+            report.merge(.size, findings: result.findings, notes: notes)
         case .review:
             guard let agent else { throw AnswerFailure(message: "Pick the agent that reads the text.") }
-            let globals = inputs(harnesses: harnesses, projects: [], env: env).globals
+            let globals = sendable(inputs(harnesses: harnesses, projects: [], env: env).globals, notes: &notes)
             guard !globals.isEmpty else { throw AnswerFailure(message: "No global instruction file to review.") }
             let prompt = reviewPrompt(globals: globals, inventory: inventory)
             let findings = try await call(.review, system: prompt.system, input: prompt.input, agent: agent, origins: codeOrigins(globals), env: env)
-            report.merge(.review, findings: findings)
+            report.merge(.review, findings: findings, notes: notes)
         case .sessions:
             guard let agent else { throw AnswerFailure(message: "Pick the agent that reads the sessions.") }
-            let globals = inputs(harnesses: harnesses, projects: [], env: env).globals
+            let globals = sendable(inputs(harnesses: harnesses, projects: [], env: env).globals, notes: &notes)
             let found = evidence(days: days, env: env)
             guard !found.items.isEmpty else {
                 throw AnswerFailure(message: "No reactions of yours in recorded sessions of the last \(days) days (Claude Code, Pi): nothing to match.")
@@ -280,17 +280,25 @@ extension InstructionAnalysis {
             let findings = try await call(.sessions, system: prompt.system, input: prompt.input, agent: agent,
                                           origins: codeOrigins(globals) + found.origins, env: env)
             notes.append("Sessions: \(found.sessions) with \(found.items.count) reactions of yours in the last \(days) days.")
-            report.merge(.sessions, findings: findings)
+            report.merge(.sessions, findings: findings, notes: notes)
         }
-        report.notes = notes
         try save(report, env: env)
         return report
     }
 
-    /// Instruction files are code: their origin is the harness that reads them.
+    /// Only files Claude Code or Pi read go to a model: the send policy knows those origins.
+    /// A file only Codex or OpenCode reads stays here, with a note.
+    static func sendable(_ globals: [Text], notes: inout [String]) -> [Text] {
+        let kept = globals.filter { $0.harnesses.contains("claude") || $0.harnesses.contains("pi") }
+        for left in globals where !kept.contains(left) {
+            notes.append("\(left.path) is not sent: only files Claude Code or Pi read go to a model.")
+        }
+        return kept
+    }
+
+    /// Instruction files are code: their origin is the harness that reads them (Claude Code or Pi).
     static func codeOrigins(_ globals: [Text]) -> [SendOrigin] {
         let names = Set(globals.flatMap(\.harnesses))
-        return (names.contains("claude") || names.contains("opencode") ? [SendOrigin.code(.claudeCode)] : [])
-            + (names.contains("pi") ? [SendOrigin.code(.pi)] : [])
+        return (names.contains("claude") ? [SendOrigin.code(.claudeCode)] : []) + (names.contains("pi") ? [SendOrigin.code(.pi)] : [])
     }
 }

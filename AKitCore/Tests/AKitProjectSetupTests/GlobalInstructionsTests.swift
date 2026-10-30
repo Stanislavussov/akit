@@ -162,6 +162,90 @@ struct GlobalSuggestionTests {
         #expect(GlobalInstructions.applying("", toSection: "Style", in: core) == "Lead.\n\n## Commits\nShort.")
         #expect(GlobalInstructions.applying("## Tests\nFirst.", toSection: nil, in: core) == core + "\n\n## Tests\nFirst.")
         #expect(GlobalInstructions.applying("## X\ny", toSection: "## Missing", in: core) == nil, "not in core: Take Over first")
+        #expect(GlobalInstructions.applying(core + "\nMore.", toSection: nil, in: core) == nil, "a whole rewrite is not appended")
+        #expect(GlobalInstructions.applying("## Style\nOther.", toSection: nil, in: core) == nil, "core has ## Style")
+        #expect(GlobalInstructions.applying("Imperative.", toSection: "## Commits", in: core) == nil, "no heading")
         #expect(GlobalInstructions.applying("## Style\nTabs.", toSection: "## Style", in: core) == nil, "no change")
+    }
+}
+
+/// Review round 2026-10-30: another tool's block is never taken, moved or cut.
+struct GlobalManagedBlockTests {
+    let move: SkillMoveTests
+    var f: GitProjectFixture { move.f }
+
+    init() throws { move = try SkillMoveTests() }
+
+    @Test func theUsersTextRightAboveABlockIsCutAtItsStartAndStays() async throws {
+        try move.harnesses()
+        try f.write(".claude/CLAUDE.md", "## My notes\nx\n\n<!-- OMC:START -->\n# omc\ntext\n## Setup\nomc\n<!-- OMC:END -->\n")
+        let brain = try await f.setUpBrain()
+        let status = GlobalInstructions.status(context: move.context(), brain: brain)
+        let claude = try #require(status.copies.first { $0.path == "~/.claude/CLAUDE.md" })
+        #expect(claude.own.map(\.text) == ["## My notes\nx\n"] && claude.partial == [1])
+        let candidate = try #require(GlobalInstructions.candidates(status, env: f.env).first)
+        #expect(candidate.places.first?.stays != nil, "AKit can't take part of a section out")
+        let plan = try GlobalInstructions.takeOver([candidate], status: status)
+        #expect(!plan.after.contains("OMC"))
+        try await GlobalInstructions.commit(plan, brain: brain, env: f.env)
+        try await GlobalInstructions.applyHome(GlobalInstructions.homeBlocks(context: move.context(), brainRoot: f.brainRoot),
+                                               context: move.context(), trash: f.trash)
+        #expect(GlobalInstructions.removeTakenOver(plan, env: f.env).count == 1)
+        let after = try #require(f.read(".claude/CLAUDE.md", in: f.home))
+        #expect(after.hasPrefix("## My notes\nx\n\n<!-- OMC:START -->\n# omc\ntext\n## Setup\nomc\n<!-- OMC:END -->\n"))
+    }
+
+    @Test func aBOMAnUnclosedStartAndFencesAreRead() {
+        #expect(GlobalInstructions.managedBlocks(in: "\u{FEFF}<!-- OMC:START -->\n## A\n<!-- OMC:END -->\n").first?.lines == 1...3)
+        let open = GlobalInstructions.managedBlocks(in: "## Mine\nx\n<!-- OMC:START -->\n## A\nb\n")
+        #expect(open.first?.lines == 3...5, "runs to the end of the file")
+        #expect(GlobalInstructions.ownSections(of: "## Mine\nx\n<!-- OMC:START -->\n## A\nb\n", managed: open).map(\.heading) == ["Mine"])
+        // ```swift doesn't close a ``` fence; the markers inside the fence don't count.
+        let fenced = "````\n```swift\n<!-- X:START -->\n```\n<!-- X:END -->\n````\n"
+        #expect(GlobalInstructions.managedBlocks(in: fenced).isEmpty)
+    }
+
+    @Test func theSameTextInsideABlockIsNeverTheOneRemoved() async throws {
+        try move.harnesses()
+        try f.write(".claude/CLAUDE.md", "<!-- OMC:START -->\n## Setup\nSay hi.\n<!-- OMC:END -->\n\n## Setup\nSay hi.\n")
+        let brain = try await f.setUpBrain()
+        let status = GlobalInstructions.status(context: move.context(), brain: brain)
+        let candidate = try #require(GlobalInstructions.candidates(status, env: f.env).first)
+        #expect(candidate.places.first?.section.line == 6 && candidate.places.first?.stays == nil)
+        let plan = try GlobalInstructions.takeOver([candidate], status: status)
+        try await GlobalInstructions.commit(plan, brain: brain, env: f.env)
+        try await GlobalInstructions.applyHome(GlobalInstructions.homeBlocks(context: move.context(), brainRoot: f.brainRoot),
+                                               context: move.context(), trash: f.trash)
+        #expect(GlobalInstructions.removeTakenOver(plan, env: f.env).isEmpty)
+        let after = try #require(f.read(".claude/CLAUDE.md", in: f.home))
+        #expect(after.hasPrefix("<!-- OMC:START -->\n## Setup\nSay hi.\n<!-- OMC:END -->\n"))
+        #expect(after.components(separatedBy: "Say hi.").count == 3, "OMC's copy and AKit's block; the own copy went")
+        #expect(!after.contains("<!-- OMC:END -->\n\n## Setup"))
+    }
+
+    @Test func aFileThatGetsNoBlockKeepsItsTextAndMarkersAreRefused() async throws {
+        try move.harnesses()
+        try f.write(".pi/agent/AGENTS.md", "## Style\nTabs.\n")
+        let brain = try await f.setUpBrain()
+        // Claude only: Pi's file gets no block.
+        var context = move.context()
+        context.targets = ["claude"]
+        let status = GlobalInstructions.status(context: context, brain: brain)
+        let pi = try #require(status.copies.first { $0.path == "~/.pi/agent/AGENTS.md" })
+        #expect(!pi.getsBlock)
+        #expect(GlobalInstructions.candidates(status, env: f.env).first?.places.first?.stays?.contains("no core block") == true)
+        #expect(throws: GlobalInstructions.Failure.self) { try GlobalInstructions.editing(to: "## A\n<!-- OMC:START -->\n", brain: brain) }
+    }
+
+    @Test func aCoreHeadingIsNotAddedTwice() async throws {
+        try move.harnesses()
+        try f.write(".claude/CLAUDE.md", "## Style\nSpaces.\n")
+        let brain = try await f.setUpBrain()
+        try await GlobalInstructions.commit(try GlobalInstructions.editing(to: "## Style\nTabs.", brain: brain), brain: brain, env: f.env)
+        let fresh = try #require(Brain.load(from: f.brainRoot))
+        let status = GlobalInstructions.status(context: move.context(), brain: fresh)
+        #expect(throws: GlobalInstructions.Failure.self) {
+            try GlobalInstructions.takeOver(GlobalInstructions.candidates(status, env: f.env), status: status)
+        }
     }
 }

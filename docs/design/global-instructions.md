@@ -7,7 +7,13 @@ sessions (D23). Steps 1–5 built 2026-10-30 (`GlobalInstructions` in AKitProjec
 `InstructionAnalysis` in AKitErrorAnalysis, Brain → Global Instructions, `akit instructions
 global` / `global set` / `analyze`); step 6 (a Codex block) not built. The model parts were
 not run against a live model in development: their prompts, schema and answer parsing are
-tested.
+tested. Review round the same day: another tool's block (`<!-- NAME:START -->` … END, a BOM
+before it, one never closed, fences as `Fence` reads them) is never taken: a section that shares
+lines with it keeps only the user's lines and stays in the file (copy only); Take Over removes
+only a whole own section, at its preview line, and says when it changed; a file Update Home
+Folder writes no block into (by the home targets) keeps its text; Edit… and Take Over refuse
+marker lines and a heading core already has; only files Claude Code or Pi read are sent, under
+their origins; a whole-text suggestion is never appended.
 
 ## Problem
 

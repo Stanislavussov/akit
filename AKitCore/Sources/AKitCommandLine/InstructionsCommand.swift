@@ -158,6 +158,7 @@ extension AKitCLI {
             let blocks = GlobalInstructions.homeBlocks(context: context, brainRoot: brain.root)
             if blocks.canApply {
                 do { try await GlobalInstructions.applyHome(blocks, context: context) } catch { throw Failure(message: error.message) }
+                for diff in blocks.diffs { lines += ["\(diff.path) (AKit's block):"] + TextDiff.unified(diff.lines) }
                 lines.append("Written into " + blocks.diffs.map(\.path).joined(separator: ", ") + " (a backup first).")
             } else {
                 lines.append("No global file took the block: " + (blocks.warnings.isEmpty ? "nothing to change." : blocks.warnings.joined(separator: " ")))
