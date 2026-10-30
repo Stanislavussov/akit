@@ -360,6 +360,28 @@ final class KnowledgeModel {
         open(id)
     }
 
+    /// A link clicked in the note in view (`[[note#Heading|alias]]`, `akit:note/…`): the note it
+    /// resolves to, at its heading, or the map.
+    func follow(link: String) {
+        switch targets.resolve(link, from: note ?? "") {
+        case .note(let id):
+            showRelation(note: id)
+            var inner = link.hasPrefix("[[") ? String(link.dropFirst(2).dropLast(2)) : link
+            inner = inner.replacingOccurrences(of: "\\|", with: "|")
+            if let bar = inner.firstIndex(of: "|") { inner = String(inner[..<bar]) }
+            if let hash = inner.firstIndex(of: "#") {
+                let heading = inner[inner.index(after: hash)...].trimmingCharacters(in: .whitespaces)
+                if !heading.isEmpty, !heading.hasPrefix("^") { sectionTarget = heading }
+            }
+        case .map(let id):
+            showRelation(map: id)
+        case .missing:
+            notice = "No note or map for \(link)."
+        case .ambiguous(let ids):
+            notice = "\(link) matches \(ids.count) notes: \(ids.prefix(3).joined(separator: ", ")). Write the path of the one you mean."
+        }
+    }
+
     /// A relation's map: it opens with the note in view beside it.
     func showRelation(map id: String) {
         open(map: id)

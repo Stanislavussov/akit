@@ -216,7 +216,7 @@ public enum KnowledgeLint {
     }
 
     /// `[[image.png]]` (an embed of a file that is no note or map), not checked.
-    static func isAttachment(_ link: String) -> Bool {
+    public static func isAttachment(_ link: String) -> Bool {
         var target = link
         if target.hasPrefix("[["), target.hasSuffix("]]") { target = String(target.dropFirst(2).dropLast(2)) }
         if let cut = target.firstIndex(where: { $0 == "|" || $0 == "#" }) { target = String(target[..<cut]) }

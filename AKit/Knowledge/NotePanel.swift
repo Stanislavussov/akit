@@ -38,7 +38,7 @@ struct NotePanel: View {
                         .onChange(of: draft) { _, text in model.save(text) }
                         .onChange(of: model.text) { _, text in if text != draft { draft = text } }
                 } else {
-                    NoteReadView(text: model.text, section: model.sectionTarget, grey: Set(checks.compactMap(\.link)))
+                    NoteReadView(text: model.text, section: model.sectionTarget, grey: Set(checks.compactMap(\.link))) { model.follow(link: $0) }
                 }
             } else {
                 ContentUnavailableView("No note open", systemImage: "doc.text",
@@ -230,20 +230,23 @@ private struct PropertyField: View {
     }
 }
 
-/// A note as text: its frontmatter as a small table, then the Markdown body, headings bigger.
-/// The links and paths lint flags (`grey`: broken or ambiguous links, unknown repos, missing
-/// files) are grey.
+/// A note as Obsidian shows it: its frontmatter as a small table, then the Markdown drawn —
+/// headings, lists, tables, quotes and callouts, code, Mermaid diagrams. `[[links]]` open the note
+/// or map they point to (`follow`). The links and paths lint flags (`grey`: broken or ambiguous
+/// links, unknown repos, missing files) are grey.
 struct NoteReadView: View {
     let text: String
     /// A heading to scroll to (a search hit's section).
     var section: String?
     var grey: Set<String> = []
+    /// A clicked `[[link]]` or `akit:` link, as written.
+    var follow: (String) -> Void = { _ in }
 
     var body: some View {
         let note = KnowledgeNote(text: text)
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
                     let front = note.frontmatter.sorted { $0.key < $1.key }
                     if !front.isEmpty {
                         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 3) {
@@ -260,13 +263,17 @@ struct NoteReadView: View {
                         .padding(8)
                         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    ForEach(Array(Self.blocks(note.body, grey: grey).enumerated()), id: \.offset) { _, block in
-                        block
-                    }
+                    MarkdownText(text: String(note.body), font: .body, large: true, diagrams: true, headingID: Self.anchor,
+                                 inlineText: { [grey] in Self.inline($0, grey: grey) })
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
             }
+            .environment(\.openURL, OpenURLAction { url in
+                guard let link = Self.link(url) else { return .systemAction }
+                follow(link)
+                return .handled
+            })
             // The note's text is in the key too: the same heading in another note scrolls again.
             .onChange(of: section.map { [$0, text] }, initial: true) {
                 guard let section else { return }
@@ -283,41 +290,86 @@ struct NoteReadView: View {
         return "\(value)"
     }
 
-    /// One view per line: `#` headings bigger, code fences monospaced, the rest inline Markdown.
-    static func blocks(_ body: Substring, grey: Set<String> = []) -> [AnyView] {
-        var views: [AnyView] = []
-        var inFence = false
-        for raw in body.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
-            if line.hasPrefix("```") || line.hasPrefix("~~~") {
-                inFence.toggle()
-                continue
+    /// The link a clicked URL stands for: a `[[link]]` (`akit-link:`) or an `akit:` link; nil for
+    /// the web.
+    static func link(_ url: URL) -> String? {
+        switch url.scheme?.lowercased() {
+        case "akit-link": return url.absoluteString.dropFirst("akit-link:".count).removingPercentEncoding.map { "[[\($0)]]" }
+        case "akit": return url.absoluteString.removingPercentEncoding ?? url.absoluteString
+        default: return nil
+        }
+    }
+
+    /// A note's inline Markdown: `[[target#Heading|alias]]` becomes a link showing the alias (or
+    /// the target), grey and dead when lint flags it; `![[embed]]` and `[[image.png]]` show their name. Bold, italics,
+    /// code and web links as `MarkdownText.inline`. Inside `code` nothing changes.
+    static func inline(_ text: String, grey: Set<String> = []) -> AttributedString {
+        // A table cell loses the `\|` of `[[note\|alias]]`; lint keeps it.
+        let dead = Set(grey.map { $0.replacingOccurrences(of: "\\|", with: "|") })
+        let parts = text.split(separator: "`", omittingEmptySubsequences: false)
+        let marked = parts.enumerated().map { index, part -> String in
+            if index % 2 == 1 { return String(part) }
+            return String(part).replacing(/!?\[\[([^\[\]\n]+)\]\]/) { match in
+                let inner = String(match.output.1)
+                // An embed or an attachment (`[[image.png]]`) is no note: its name, not a link.
+                let plain = match.output.0.hasPrefix("!") || KnowledgeLint.isAttachment("[[\(inner)]]")
+                let scheme = plain ? "akit-plain:"
+                    : dead.contains("[[\(inner.replacingOccurrences(of: "\\|", with: "|"))]]") ? "akit-grey:" : "akit-link:"
+                let target = inner.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+                return "[\(escaped(shown(inner)))](\(scheme)\(target))"
             }
-            if inFence {
-                views.append(AnyView(Text(line).font(.body.monospaced()).textSelection(.enabled)))
-                continue
-            }
-            let level = line.prefix { $0 == "#" }.count
-            if (1...3).contains(level), line.dropFirst(level).first == " " {
-                let title = String(line.dropFirst(level + 1))
-                views.append(AnyView(Text(title).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
-                    .padding(.top, level == 1 ? 2 : 8).id(anchor(title))))
-            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                views.append(AnyView(Spacer().frame(height: 2)))
-            } else {
-                var attributed = (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-                    ?? AttributedString(line)
-                for link in grey {
-                    var start = attributed.startIndex
-                    while start < attributed.endIndex, let found = attributed[start...].range(of: link) {
-                        attributed[found].foregroundColor = .secondary
-                        start = found.upperBound
-                    }
+        }.joined(separator: "`")
+        guard var attributed = try? AttributedString(markdown: marked, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
+        else { return AttributedString(text) }
+        for run in attributed.runs {
+            if let link = run.link {
+                switch link.scheme?.lowercased() ?? "" {
+                case "http", "https", "akit-link": break
+                case "akit" where !grey.contains(link.absoluteString.removingPercentEncoding ?? link.absoluteString): break
+                case "akit-plain": attributed[run.range].link = nil
+                case "akit", "akit-grey":
+                    attributed[run.range].link = nil
+                    attributed[run.range].foregroundColor = .secondary
+                default: attributed[run.range].link = nil
                 }
-                views.append(AnyView(Text(attributed).textSelection(.enabled)))
+            }
+            if run.inlinePresentationIntent?.contains(.code) == true {
+                attributed[run.range].font = .system(.body, design: .monospaced)
+                attributed[run.range].backgroundColor = Color.secondary.opacity(0.12)
             }
         }
-        return views
+        // Repo and file paths lint flags; never part of a link's text.
+        for link in grey where !link.hasPrefix("[[") && !link.hasPrefix("akit:") {
+            var start = attributed.startIndex
+            while start < attributed.endIndex, let found = attributed[start...].range(of: link) {
+                if !attributed[found].runs.contains(where: { $0.link != nil }) { attributed[found].foregroundColor = .secondary }
+                start = found.upperBound
+            }
+        }
+        return attributed
+    }
+
+    /// What a `[[link]]` shows: its alias, else the target without `.md`, a heading after `›`.
+    static func shown(_ inner: String) -> String {
+        let unescaped = inner.replacingOccurrences(of: "\\|", with: "|")
+        if let bar = unescaped.firstIndex(of: "|") {
+            let alias = unescaped[unescaped.index(after: bar)...].trimmingCharacters(in: .whitespaces)
+            if !alias.isEmpty { return alias }
+        }
+        let target = unescaped.split(separator: "|", maxSplits: 1).first.map(String.init) ?? unescaped
+        var parts = target.split(separator: "#", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+        if let first = parts.first, first.lowercased().hasSuffix(".md") { parts[0] = String(first.dropLast(3)) }
+        return parts.filter { !$0.isEmpty }.joined(separator: " › ")
+    }
+
+    /// Text safe inside `[…]` of a Markdown link.
+    static func escaped(_ text: String) -> String {
+        var out = ""
+        for character in text {
+            if "\\[]*_`<>".contains(character) { out.append("\\") }
+            out.append(character)
+        }
+        return out
     }
 }
 
