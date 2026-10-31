@@ -70,13 +70,15 @@ public enum KnowledgeAsk {
         public var error: String?
         /// Pi's session of the answer: the next question forks it.
         public var session: String?
+        /// The proposals (`inbox/<id>.md`) Pi made in this answer (K32), for their cards.
+        public var proposals: [String]?
         /// The answer can be forked: it has a session and no error.
         public var isGood: Bool { session != nil && error == nil }
 
         public init(id: String, question: String, passage: String? = nil, asked: Date, answered: Date? = nil, answer: String? = nil,
-                    error: String? = nil, session: String? = nil) {
+                    error: String? = nil, session: String? = nil, proposals: [String]? = nil) {
             (self.id, self.question, self.passage, self.asked, self.answered) = (id, question, passage, asked, answered)
-            (self.answer, self.error, self.session) = (answer, error, session)
+            (self.answer, self.error, self.session, self.proposals) = (answer, error, session, proposals)
         }
     }
 
@@ -177,7 +179,14 @@ public enum KnowledgeAsk {
         The knowledge base "\(note.base)" is the folder \(note.baseRoot); the note is \(note.id) (\(note.path)).
         Read the note, the rest of the base (akit kb search, akit kb show, or the files) and other systems \
         (the user's MCP servers, repositories, documentation) with your tools when the answer needs them.
-        Do not change files, commit, or create or update anything anywhere (no tickets, comments or notes): only read and answer.
+        Never edit, write, move or delete files yourself, and don't commit: not in the base and not anywhere else. Create or \
+        update nothing in other systems either (no tickets, comments or messages).
+        The one change you may make: when the user asks to change, fix or add something in the knowledge base (or you find \
+        the note wrong and the user agrees), propose it with akit kb propose; the user sees the diff and accepts or rejects it. \
+        For a note: akit kb propose --base \(note.baseRoot) --author pi --note AREA/NAME --stdin --reason "why", the text on \
+        stdin: for an existing note, the changed sections as whole `## Heading` blocks (each replaces the section with that \
+        heading, or is added at the end); for a new note, its whole text. --set KEY=VALUE changes one frontmatter field. For an arrow on a map: akit kb propose --base \(note.baseRoot) --author pi \
+        --arrow "A -kind-> B" --reason "why". Say in your answer what you proposed.
         Answer in the language of the question, short and to the point; say where a fact comes from.
         """
     }
@@ -269,13 +278,17 @@ public enum KnowledgeAsk {
         let arguments = ["-p", "--mode", "json", "--offline"] + options(chat: chat, fork: fork, agent: agent) + ["--", scrubbed.text]
         let environment = PiJSONStream.shellEnvironment(await LoginShell.variables(in: env), env: env)
         let cwd = URL(filePath: chat.cwd, directoryHint: .isDirectory)
+        let base = KnowledgeBase(root: URL(filePath: chat.note.baseRoot, directoryHint: .isDirectory))
+        let before = Set(base.proposals().map(\.id))
         progress("Pi is reading the question…")
-        let output = await run(pi, arguments: arguments, directory: FileWalk.isDirectory(cwd) ? cwd : chat.folder, environment: environment,
+        let (output, stream) = await run(pi, arguments: arguments, directory: FileWalk.isDirectory(cwd) ? cwd : chat.folder, environment: environment,
                                timeout: timeout, stream: chat.folder.appending(path: "streams/q\(number).jsonl"), progress: progress)
         entry.answered = .now
         entry.session = output.session
         entry.answer = output.answer.map(SecretFilter.masked)
         entry.error = output.error ?? (output.answer == nil ? "Pi gave no answer." : nil)
+        let made = proposals(in: base, before: before, stream: stream)
+        entry.proposals = made.isEmpty ? nil : made
         if output.usage != SendUsage() {
             _ = SendLog.appendAfterRun(SendRecord(purpose: purpose, session: output.session, runID: chat.id, destination: gate.destination,
                                                   model: agent.model, inputCharacters: scrubbed.text.count, usage: output.usage,
@@ -291,7 +304,7 @@ public enum KnowledgeAsk {
     /// Runs one `pi -p --mode json`: the stream (masked line by line) to `stream`, a short
     /// progress line per tool call.
     static func run(_ pi: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
-                    stream: URL, progress: @escaping @Sendable (String) -> Void) async -> PiJSONStream.Output {
+                    stream: URL, progress: @escaping @Sendable (String) -> Void) async -> (PiJSONStream.Output, [String]) {
         FileManager.default.createFile(atPath: stream.path, contents: nil)
         let handle = try? FileHandle(forWritingTo: stream)
         let collector = Collector()
@@ -309,7 +322,15 @@ public enum KnowledgeAsk {
             let tail = collector.lines.filter { !$0.hasPrefix("{") }.suffix(5).joined(separator: " ")
             output.error = "Pi exited with status \(exit?.status ?? -1)" + (tail.isEmpty ? "." : ": \(SecretFilter.masked(String(tail.suffix(300))))")
         }
-        return output
+        return (output, collector.lines)
+    }
+
+    /// The proposals Pi made in one answer (K32): new in the base's inbox since the question was
+    /// sent, and named in this answer's own stream (`akit kb propose` prints the id). Both, so a
+    /// proposal another session made meanwhile never shows up here.
+    static func proposals(in base: KnowledgeBase, before: Set<String>, stream: [String]) -> [String] {
+        let text = stream.joined(separator: "\n")
+        return base.proposals().map(\.id).filter { !before.contains($0) && text.contains($0) }.sorted()
     }
 
     /// What Pi does now, from one event: a tool call (with its command or path, cut and masked),

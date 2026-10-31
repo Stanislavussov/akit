@@ -466,6 +466,17 @@ extension KnowledgeBase {
     // MARK: - Inbox
 
     /// The proposals in `inbox/` (hidden files left out), by id, each with its checks run now.
+    /// Where a proposal stands (K32: its card in Ask Pi follows it): still in `inbox/`; accepted
+    /// (a commit "… (accept proposal ID)" or "Close proposal ID …"); else closed (rejected or removed).
+    public enum ProposalState: String, Sendable { case pending, accepted, closed }
+
+    public func state(ofProposal id: String, env: HarnessEnvironment) async -> ProposalState {
+        if FileWalk.isRegularFile(root.appending(path: KnowledgeInbox.path(of: id))) { return .pending }
+        let log = (try? await KnowledgeGit(base: root, env: env).run(["log", "--format=%s", "-F", "--grep=proposal \(id)"])) ?? ""
+        let accepted = log.split(separator: "\n").contains { $0.contains("(accept proposal \(id))") || $0.hasPrefix("Close proposal \(id) ") }
+        return accepted ? .accepted : .closed
+    }
+
     public func proposals() -> [KnowledgeInbox.Entry] {
         let files = FileWalk.children(of: inboxFolder).filter { $0.pathExtension == "md" && !$0.lastPathComponent.hasPrefix(".") && FileWalk.isRegularFile($0) }
         return files.map { file in

@@ -82,6 +82,30 @@ struct NotePanel: View {
         }
     }
 
+    @ViewBuilder private var copyButtons: some View {
+        Button("Copy", systemImage: "doc.on.doc") { model.copy() }
+            .help("Copy the note's whole text")
+        Button("Paste", systemImage: "doc.on.clipboard") { model.paste() }
+            .help("Add the clipboard's text at the end of the note and save it")
+    }
+
+    @ViewBuilder private func otherButtons(_ entry: KnowledgeBase.NoteEntry) -> some View {
+        Button("Open in Obsidian", systemImage: "arrow.up.forward.app") { model.openInObsidian() }
+            .help("Open the note in Obsidian: the base is a plain Obsidian vault")
+        Button("Rename…", systemImage: "character.cursor.ibeam") { model.renameRequest = entry.id }
+            .help("Rename the note and every link to it in notes and maps, all or nothing, in one commit")
+        Button("Delete…", systemImage: "trash") { model.deleteRequest = entry.id }
+            .help("Move the note to the Trash and commit its removal")
+    }
+
+    private func moreMenu(@ViewBuilder _ items: () -> some View) -> some View {
+        Menu("More", systemImage: "ellipsis.circle", content: items)
+            .labelStyle(.iconOnly)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More: Open in Obsidian, Rename…, Delete…")
+    }
+
     /// The text selected in Edit, when there is some.
     private var selectedText: String? {
         guard model.editing, let selection, case .selection(let range) = selection.indices, !range.isEmpty,
@@ -123,31 +147,42 @@ struct NotePanel: View {
                 Text(entry.title).font(.headline).lineLimit(1)
                 Text(entry.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).textSelection(.enabled)
             }
-            Spacer()
+            .help(entry.path)
+            Spacer(minLength: 4)
             if let notice = model.notice {
                 Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Toggle("Edit", systemImage: "pencil", isOn: $model.editing)
                 .toggleStyle(.button)
+                .fixedSize()
                 .help("Edit the note's Markdown. Every change is saved to the file at once and committed when you close the tab, after 5 minutes without edits, or when AKit quits")
             Toggle("Properties", systemImage: "list.bullet.rectangle", isOn: $model.showingProperties)
                 .toggleStyle(.button)
+                .fixedSize()
                 .help("Change the note's kind and fields (its frontmatter), one line each; saved at once, committed with your other edits")
             Button("Ask Pi", systemImage: "bubble.left.and.text.bubble.right") {
                 if model.ask.isOpen, selectedText == nil { model.ask.isOpen = false } else { model.showAsk(passage: selectedText) }
             }
             .keyboardShortcut("a", modifiers: [.command, .option])
+            .fixedSize()
             .help("Ask your own Pi about this note in a chat under it (⌥⌘A); in Edit, about the selected text. Right-click a section to ask about it")
-            Button("Copy", systemImage: "doc.on.doc") { model.copy() }
-                .help("Copy the note's whole text")
-            Button("Paste", systemImage: "doc.on.clipboard") { model.paste() }
-                .help("Add the clipboard's text at the end of the note and save it")
-            Button("Open in Obsidian", systemImage: "arrow.up.forward.app") { model.openInObsidian() }
-                .help("Open the note in Obsidian: the base is a plain Obsidian vault")
-            Button("Rename…", systemImage: "character.cursor.ibeam") { model.renameRequest = entry.id }
-                .help("Rename the note and every link to it in notes and maps, all or nothing, in one commit")
-            Button("Delete…", systemImage: "trash") { model.deleteRequest = entry.id }
-                .help("Move the note to the Trash and commit its removal")
+            // The rest as wide as there is room for: titled, else Copy and Paste as icons and the
+            // others in a menu, else all in the menu. Labels are never cut.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    copyButtons
+                    otherButtons(entry)
+                }
+                HStack(spacing: 8) {
+                    copyButtons.labelStyle(.iconOnly)
+                    moreMenu { otherButtons(entry) }
+                }
+                moreMenu {
+                    copyButtons
+                    otherButtons(entry)
+                }
+            }
+            .layoutPriority(1)
         }
         .labelStyle(.titleAndIcon)
         .controlSize(.small)

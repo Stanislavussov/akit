@@ -150,9 +150,16 @@ final class KnowledgeAskModel {
 
     /// What `--tab knowledge-ask` snapshots print.
     var manifest: [String] {
-        ["ask pi: \(note?.id ?? "-"), model \(agent.model.isEmpty ? "default" : agent.model), \(entries.count) answer\(entries.count == 1 ? "" : "s")"
-            + (passage.map { ", passage \($0.count) characters" } ?? "")]
-            + entries.map { "ask pi \($0.id): \($0.question)" + ($0.passage == nil ? "" : " (passage)") + " → " + ($0.answer.map { "\($0.count) characters" } ?? $0.error ?? "-") }
+        let model = agent.model.isEmpty ? "default" : agent.model
+        let head = "ask pi: \(note?.id ?? "-"), model \(model), \(entries.count) answer\(entries.count == 1 ? "" : "s")"
+            + (passage.map { ", passage \($0.count) characters" } ?? "")
+        return [head] + entries.map(Self.line)
+    }
+
+    private static func line(_ entry: KnowledgeAsk.Entry) -> String {
+        let result: String = entry.answer.map { "\($0.count) characters" } ?? entry.error ?? "-"
+        let proposals: String = entry.proposals.map { ", proposals " + $0.joined(separator: ", ") } ?? ""
+        return "ask pi \(entry.id): \(entry.question)" + (entry.passage == nil ? "" : " (passage)") + " → " + result + proposals
     }
 
     /// A made-up chat about the sample base's orders-api (snapshots, guide screenshots).
@@ -169,9 +176,79 @@ final class KnowledgeAskModel {
                                """, error: nil, session: "demo-1"),
         KnowledgeAsk.Entry(id: "q2", question: "What happens when billing is down?", passage: "## Events\n- order created\n- retry after 5 min",
                            asked: Date(timeIntervalSince1970: 1_761_900_100), answered: Date(timeIntervalSince1970: 1_761_900_150),
-                           answer: "orders-api keeps the event and sends it again after 5 minutes (the *retry* line of this section). Nothing is lost while billing is down.",
-                           error: nil, session: "demo-2"),
+                           answer: "orders-api keeps the event and sends it again after 5 minutes (the *retry* line of this section). Nothing is lost while billing is down. billing's note doesn't say so yet: I proposed a section for it.",
+                           error: nil, session: "demo-2", proposals: ["2026-10-24-payments-billing"]),
     ]
+}
+
+/// A proposal Pi made in an answer (K32): its target, reason, checks and the diff Accept writes,
+/// with Accept… / Reject… / Show in Inbox, the same actions and confirmations as the Inbox tab.
+/// Once it has left the Inbox (here or elsewhere) the card says how it ended.
+private struct AskProposalCard: View {
+    @Environment(KnowledgeModel.self) private var model
+    let id: String
+    @State private var state: KnowledgeBase.ProposalState?
+
+    var body: some View {
+        let entry = model.proposals.first { $0.id == id }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: entry?.kind == .arrow ? "arrow.right" : "doc.badge.plus").foregroundStyle(.tint)
+                Text("Proposal: " + (entry.map { $0.arrow?.text ?? $0.target ?? id } ?? id)).bold().lineLimit(1)
+                Spacer()
+                if let entry {
+                    if entry.checks.contains(where: { $0.status == .failed }) {
+                        Image(systemName: "xmark.octagon.fill").foregroundStyle(.red).help("A check fails: Accept is refused")
+                    } else if entry.checks.contains(where: { $0.status == .warning }) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).help("A check warns")
+                    } else {
+                        Image(systemName: "checkmark.circle").foregroundStyle(.green).help("Every check passes")
+                    }
+                }
+            }
+            if let entry {
+                if let reason = entry.reason { Text(reason).font(.callout).foregroundStyle(.secondary).textSelection(.enabled) }
+                ForEach(entry.checks.filter { $0.status != .passed }, id: \.name) { check in
+                    Text("\(check.name): \(check.message ?? check.status.rawValue)").font(.caption).foregroundStyle(.orange)
+                }
+                switch model.acceptPlan(entry) {
+                case .success(let plan)?:
+                    ScrollView {
+                        Text(plan.diff).font(.caption.monospaced()).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 160)
+                case .failure(let error)?:
+                    Text(error.message).font(.caption).foregroundStyle(.red)
+                case nil:
+                    EmptyView()
+                }
+                HStack {
+                    Button("Accept…", systemImage: "checkmark") { model.requestAccept(entry) }
+                        .disabled(entry.proposal == nil || entry.checks.contains { $0.status == .failed })
+                        .help("See the change, then write it into the note and commit it, as in the Inbox; the old note is backed up")
+                    Button("Reject…", systemImage: "xmark") { model.rejectRequest = id }
+                        .help("Move the proposal's file to the Trash; nothing in the base changes")
+                    Button("Show in Inbox", systemImage: "tray") {
+                        model.proposalID = id
+                        model.screenTab = .inbox
+                    }
+                    .help("Open this proposal on the Inbox tab, with its check model marks and Check Again")
+                }
+                .controlSize(.small)
+            } else {
+                Label(state == .accepted ? "Accepted" : state == .closed ? "Rejected or removed" : "Looking it up…",
+                      systemImage: state == .accepted ? "checkmark.circle.fill" : "xmark.circle")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .task(id: entry == nil) {
+            guard entry == nil, let base = model.base else { return }
+            state = await base.state(ofProposal: id, env: model.env)
+        }
+    }
 }
 
 /// The Ask Pi panel under the note: header, messages, the field.
@@ -193,7 +270,7 @@ struct KnowledgeAskPanel: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         if ask.entries.isEmpty, !ask.isRunning {
-                            Text("Ask your Pi about this note: what it means, who uses it, what's missing. Pi runs with your own setup (MCP servers, skills like /akit-context), so it can look things up in the base and in other systems. It reads only; it doesn't change files. The next question continues the same conversation.")
+                            Text("Ask your Pi about this note: what it means, who uses it, what's missing. Pi runs with your own setup (MCP servers, skills like /akit-context), so it can look things up in the base and in other systems. Changes to the base come as proposals you accept or reject here or in the Inbox; Pi is told to change nothing else (its bash and MCP tools stay on). The next question continues the same conversation.")
                                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                         ForEach(ask.entries) { entry in
@@ -205,6 +282,7 @@ struct KnowledgeAskPanel: View {
                                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout)
                                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                             }
+                            ForEach(entry.proposals ?? [], id: \.self) { id in AskProposalCard(id: id) }
                         }
                         if let asking = ask.asking {
                             question(asking.question, passage: asking.passage)
@@ -218,7 +296,11 @@ struct KnowledgeAskPanel: View {
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .onChange(of: ask.entries.count, initial: true) { proxy.scrollTo(ask.entries.last?.id, anchor: .bottom) }
+                .onChange(of: ask.entries.count, initial: true) {
+                    // A new answer may have proposals: the Inbox list (and the cards) read them now.
+                    model.readInbox()
+                    proxy.scrollTo(ask.entries.last?.id, anchor: .bottom)
+                }
                 .onChange(of: ask.isRunning) { if ask.isRunning { proxy.scrollTo("running", anchor: .bottom) } }
             }
             Divider()

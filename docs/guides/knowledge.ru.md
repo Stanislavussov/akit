@@ -34,7 +34,7 @@
 - «Где код этого сервиса?» → поле `repo:` в начале заметки, например `repo: git@example.com:shop/orders-api.git`.
 - «Как данные идут от заказа до счёта?» → заметка вида `flow` в папке `flows/`.
 
-![Экран Knowledge: слева одна колонка — список заметок с развёрнутыми пространствами lint-examples (число заметок 8), logistics (4) и payments (6); в payments карта overview и заметки: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Ask Pi, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service, path ~/Projects/orders-api и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева одна колонка — список заметок с развёрнутыми пространствами lint-examples (число заметок 8), logistics (4) и payments (6); в payments карта overview и заметки: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Ask Pi, Copy, Paste и остальные кнопки заметки (часть из них — в меню More, если не хватает места); ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service, path ~/Projects/orders-api и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
 
 ### Главные слова
 <!-- section: overview-terms -->
@@ -363,7 +363,7 @@ shop/wiki  wiki: How we deploy.  [~/Documents/wiki]
 ## Читать и править заметку
 <!-- section: note -->
 
-Панель заметки показывает заголовок и путь файла, например `areas/payments/orders-api.md`. Ниже — поля из начала заметки (`kind`, `repo`, `files`) таблицей и текст заметки, оформленный как в Obsidian: заголовки, списки и задачи `- [ ]`, таблицы, цитаты и выноски `> [!note]`, блоки кода. Блок ```` ```mermaid ```` показан диаграммой; кнопки над ней открывают её крупно и копируют её текст. Ссылка `[[…]]` показана коротким именем; нажмите её, и откроется заметка (на нужном разделе, если в ссылке есть `#раздел`) или карта. Сломанная ссылка серая.
+Панель заметки показывает заголовок и путь файла, например `areas/payments/orders-api.md`. Если панель узкая, **Open in Obsidian**, **Rename…** и **Delete…** (а ещё уже — и **Copy**, **Paste**) уходят в меню **More** (значок ⋯); **Edit**, **Properties** и **Ask Pi** видны всегда. Ниже — поля из начала заметки (`kind`, `repo`, `files`) таблицей и текст заметки, оформленный как в Obsidian: заголовки, списки и задачи `- [ ]`, таблицы, цитаты и выноски `> [!note]`, блоки кода. Блок ```` ```mermaid ```` показан диаграммой; кнопки над ней открывают её крупно и копируют её текст. Ссылка `[[…]]` показана коротким именем; нажмите её, и откроется заметка (на нужном разделе, если в ссылке есть `#раздел`) или карта. Сломанная ссылка серая.
 
 ### Просто: Edit
 <!-- section: note-edit -->
@@ -374,7 +374,7 @@ shop/wiki  wiki: How we deploy.  [~/Documents/wiki]
 
 AKit пишет файл целиком и атомарно: сначала во временный файл, потом подменяет. Байты, которые вы не меняли, остаются как были: переносы строк, начало заметки, порядок полей.
 
-![Панель заметки orders-api в режиме Edit: нажатая кнопка Edit, рядом Properties, Ask Pi, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations и Markdown заметки моноширинным шрифтом: строки kind: service, repo: git@example.com:shop/orders-api.git, path: ~/Projects/orders-api, files: [src/events/order-created.ts] между линиями ---, заголовок # orders-api и раздел ## Events со строками order created и retry](images/knowledge-note.png)
+![Панель заметки orders-api в режиме Edit: нажатая кнопка Edit, рядом Properties, Ask Pi и остальные кнопки заметки (часть — в меню More); ниже часть Relations и Markdown заметки моноширинным шрифтом: строки kind: service, repo: git@example.com:shop/orders-api.git, path: ~/Projects/orders-api, files: [src/events/order-created.ts] между линиями ---, заголовок # orders-api и раздел ## Events со строками order created и retry](images/knowledge-note.png)
 
 ### Просто: Copy и Paste
 <!-- section: note-copy -->
@@ -413,9 +413,9 @@ Obsidian открывает только заметки из своих хран
 - «Есть ли тикет на эту доработку?» — Pi спрашивает ваш MCP-сервер Azure DevOps или GitLab.
 - «Что значит этот раздел?» — вопрос о куске заметки, а не обо всей.
 
-**Когда не нужно:** если нужно поменять заметку — правьте её в **Edit**. Pi здесь только читает: он не правит файлы и ничего не создаёт.
+**Изменения базы — только с вашего согласия.** Попросите «поправь владельца» или «допиши раздел о повторах» — Pi не правит файлы сам, а делает предложение через `akit kb propose`. Оно появляется карточкой под ответом и во вкладке **Inbox**; вы смотрите разницу и принимаете или отклоняете. Ничего другого Pi менять не должен: так сказано в его инструкции, а инструменты `edit` и `write` у него убраны. Команды (`bash`) и ваши MCP-серверы у него остаются, поэтому следите, о чём просите.
 
-![Панель заметки orders-api, под ней панель Ask Pi about orders-api: список Model, кнопки Open in Pi, New Chat и крестик; вопрос «Which services read the order created event?» и ответ Pi списком: billing и warehouse, с источником akit kb search; цитата раздела ## Events, под ней второй вопрос «What happens when billing is down?» и ответ про повтор через 5 минут; внизу поле Ask Pi about this note… и кнопка Send](images/knowledge-ask.png)
+![Панель заметки orders-api, под ней панель Ask Pi about orders-api: список Model, кнопки Open in Pi, New Chat и крестик; вопрос «Which services read the order created event?» и ответ Pi списком: billing и warehouse, с источником akit kb search; цитата раздела ## Events, под ней второй вопрос «What happens when billing is down?» и ответ про повтор через 5 минут, под ним карточка Proposal: payments/billing с причиной, разницей и кнопками Accept…, Reject… и Show in Inbox; внизу поле Ask Pi about this note… и кнопка Send](images/knowledge-ask.png)
 
 ### Просто: задать вопрос
 <!-- section: ask-pi-ask -->
@@ -442,20 +442,32 @@ Pi получает этот раздел цитатой и путь замет�
 
 Свой кусок текста: нажмите **Edit**, выделите текст и нажмите **Ask Pi**. Вопрос будет о выделенном тексте. В режиме чтения выделение текста AKit не видит, поэтому там вопрос о разделе.
 
+### Средне: предложения Pi: Accept… и Reject…
+<!-- section: ask-pi-proposals -->
+
+Когда Pi предлагает изменение, под его ответом появляется карточка **Proposal: payments/billing**: причина, проверки и разница — что именно запишет принятие.
+
+- **Accept…** открывает то же окно **Accept Proposal**, что и во вкладке **Inbox**: разница, потом **Accept** пишет заметку с копией старой и делает один коммит. Открытая заметка сразу показывает новый текст.
+- **Reject…** отправляет предложение в Корзину, база не меняется.
+- **Show in Inbox** открывает предложение во вкладке **Inbox**: там есть ещё **Check Again**.
+
+Приняли или отклонили предложение во вкладке **Inbox** или командой `akit kb accept` — карточка в чате тоже покажет **Accepted** или **Rejected or removed**. Карточки сохраняются с чатом: снова открытый чат показывает их.
+
 ### Средне: продолжить, новый чат, Open in Pi
 <!-- section: ask-pi-chat -->
 
 - Следующий вопрос продолжает тот же разговор: Pi помнит прошлые вопросы и ответы. Ответ с ошибкой или остановленный ответ разговор не продолжает: следующий вопрос идёт от последнего хорошего ответа.
 - Закрыли панель или AKit — чат остался. Снова **Ask Pi** на этой заметке показывает её последний чат.
 - **New Chat** начинает новый разговор об этой заметке. Старый остаётся на диске.
-- **Open in Pi** открывает обычный Pi в терминале (Orca, herdr или Terminal) с этим же разговором: можно продолжить там, с полным интерфейсом Pi.
+- **Open in Pi** открывает обычный Pi в терминале (Orca, herdr или Terminal) с этим же разговором: можно продолжить там, с полным интерфейсом Pi. Что вы спросите там, в панель не вернётся: панель продолжает от своего последнего ответа.
 - **Model** — модель Pi для ответов. **Lab default** — модель Pi по умолчанию из Lab. AKit помнит выбор.
 
 ### Сложно: что получает Pi и где лежит чат
 <!-- section: ask-pi-details -->
 
 - Первый вопрос чата несёт имя и папку базы, имя, путь и заголовок заметки и весь её текст (или только раздел). Следующие вопросы несут только сам вопрос: остальное Pi помнит.
-- Pi запускается как `pi -p --mode json` с вашими навыками, расширениями, MCP-серверами и файлами `AGENTS.md`. AKit только убирает инструменты `edit` и `write` (`--exclude-tools edit,write`) и добавляет к системному промпту: отвечай об этой заметке, читай базу и другие системы, ничего не меняй, отвечай коротко и на языке вопроса.
+- Pi запускается как `pi -p --mode json` с вашими навыками, расширениями, MCP-серверами и файлами `AGENTS.md`. AKit только убирает инструменты `edit` и `write` (`--exclude-tools edit,write`) и добавляет к системному промпту: отвечай об этой заметке, читай базу и другие системы, сам ничего не меняй, изменения базы — только через `akit kb propose --base <папка базы> --author pi`, отвечай коротко и на языке вопроса.
+- Карточки ответа — это предложения, которые появились в `inbox/` за время ответа и id которых есть в выводе этого ответа. Предложение другого агента в то же время сюда не попадёт.
 - Папка, где работает Pi: папка проекта пространства из **Area Settings…** → **Projects**, если она есть на этом Mac; иначе папка базы.
 - Вопрос проходит правила отправки (Settings → **Sending policy**) и маскировку секретов. Токены и стоимость записываются в Lab → **Sends** с целью `knowledge-ask`.
 - Чаты лежат вне базы и её git: `~/.akit/local/knowledge-ask/<база>/<чат>/`. Там `chat.jsonl` (вопросы и ответы, секреты в них скрыты), `sessions/` (сессии Pi) и `streams/` (что делал Pi).

@@ -4109,7 +4109,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Хочу поправить заметку» → откройте её и нажмите **Edit**: правка сразу сохраняется в файл.
 - «Удобнее писать в Obsidian» → **Open in Obsidian**.
 
-![Экран Knowledge: слева список заметок с развёрнутыми пространствами lint-examples, logistics и payments, в payments карта overview и заметки billing, order-to-billing и orders-api, справа открытая заметка orders-api с кнопками Edit, Properties, Ask Pi, Copy, Paste, Open in Obsidian, Rename… и Delete…, частью Relations, таблицей полей kind, repo, files и разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева список заметок с развёрнутыми пространствами lint-examples, logistics и payments, в payments карта overview и заметки billing, order-to-billing и orders-api, справа открытая заметка orders-api с кнопками Edit, Properties, Ask Pi и остальными кнопками заметки (часть — в меню More), частью Relations, таблицей полей kind, repo, files и разделами Events и Owners](images/knowledge.png)
 
 #### Что на экране
 <!-- section: knowledge-screen -->

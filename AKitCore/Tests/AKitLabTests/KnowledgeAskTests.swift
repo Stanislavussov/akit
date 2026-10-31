@@ -41,6 +41,12 @@ final class KnowledgeAskTests {
             echo '{"type":"tool_execution_start","toolName":"bash","args":{"command":"akit kb search orders"}}'
             mode=$(cat "$HOME/mode" 2>/dev/null)
             if [ "$mode" = "slow" ]; then sleep 30; fi
+            if [ "$mode" = "propose" ]; then
+              root=$(cat "$HOME/base-root")
+              cp "$HOME/mine.md" "$root/inbox/2026-10-31-payments-orders-api.md"
+              cp "$HOME/other.md" "$root/inbox/2026-10-31-payments-billing.md"
+              echo '{"type":"tool_execution_end","toolName":"bash","result":{"content":[{"type":"text","text":"2026-10-31-payments-orders-api\nProposed in inbox/2026-10-31-payments-orders-api.md"}]}}'
+            fi
             if [ "$mode" = "fail" ]; then
               echo '{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"rate limited"}}'
               exit 1
@@ -87,8 +93,47 @@ final class KnowledgeAskTests {
         let forked = KnowledgeAsk.options(chat: chat, fork: URL(filePath: "/s/a_s1.jsonl"), agent: LabAgent(harness: .pi, model: "", effort: ""))
         #expect(Array(forked.prefix(2)) == ["--fork", "/s/a_s1.jsonl"] && !forked.contains("--model") && !forked.contains("--thinking"))
         let system = KnowledgeAsk.systemPrompt(Self.note)
-        #expect(system.contains("/tmp/kb/work") && system.contains("payments/orders-api") && system.contains("Do not change files"))
+        #expect(system.contains("/tmp/kb/work") && system.contains("payments/orders-api") && system.contains("Never edit, write"))
         #expect(system.contains("language of the question"))
+    }
+
+    @Test func theSystemPromptLetsPiOnlyPropose() {
+        let system = KnowledgeAsk.systemPrompt(Self.note)
+        #expect(system.contains("Never edit, write, move or delete files yourself"))
+        #expect(system.contains("akit kb propose --base /tmp/kb/work --author pi --note AREA/NAME --stdin --reason"))
+        #expect(system.contains("whole `## Heading` blocks") && system.contains("--arrow \"A -kind-> B\""))
+        #expect(!system.contains("Do not change files"))
+    }
+
+    /// K32: the cards of an answer are its own proposals: new since the question and named in its
+    /// stream; one another session made meanwhile is not.
+    @Test func anAnswersProposalsAreOnlyItsOwnAndComeBackWithTheChat() async throws {
+        let base = try await KnowledgeBase.create(world: "work", env: env())
+        try await base.newNote(area: "payments", name: "orders-api", kind: nil, env: env())
+        try await base.newNote(area: "payments", name: "billing", kind: nil, env: env())
+        let earlier = try base.propose(.init(.note("payments/billing", body: "## Owners\nTeam B.\n", set: []), reason: "earlier", author: "claude")).proposal
+        func proposal(_ id: String, _ target: String) -> String {
+            KnowledgeProposal(id: id, kind: .note, target: target, reason: "Pi: owner", created: "2026-10-31T10:00:00Z", author: "pi",
+                              set: [], arrow: nil, body: "# x\nNew.\n").text
+        }
+        try Data(proposal("2026-10-31-payments-orders-api", "payments/orders-api").utf8).write(to: home.appending(path: "mine.md"))
+        try Data(proposal("2026-10-31-payments-billing", "payments/billing").utf8).write(to: home.appending(path: "other.md"))
+        try Data(base.root.path.utf8).write(to: home.appending(path: "base-root"))
+        try mode("propose")
+        var note = Self.note
+        note.baseRoot = base.root.path
+        let chat = try KnowledgeAsk.newChat(note: note, cwd: home, env: env())
+        let entry = try await KnowledgeAsk.ask("Fix the owner, please", noteText: "# orders-api", in: chat, agent: Self.agent, env: env())
+        #expect(entry.proposals == ["2026-10-31-payments-orders-api"], "not \(earlier.id) (before) nor the other session's billing one")
+        #expect(KnowledgeAsk.entries(chat).first?.proposals == ["2026-10-31-payments-orders-api"])
+        #expect(await base.state(ofProposal: "2026-10-31-payments-orders-api", env: env()) == .pending)
+        #expect(await base.state(ofProposal: "no-such-proposal", env: env()) == .closed)
+
+        try mode("")
+        let plain = try await KnowledgeAsk.ask("Thanks", noteText: "", in: chat, agent: Self.agent, env: env())
+        #expect(plain.proposals == nil)
+        let line = try String(contentsOf: chat.folder.appending(path: "chat.jsonl"), encoding: .utf8).split(separator: "\n").last ?? ""
+        #expect(!line.contains("proposals"), "an answer without proposals stores none")
     }
 
     @Test func piRunsInTheSpacesProjectFolderElseTheBase() throws {
