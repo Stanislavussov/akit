@@ -10,8 +10,9 @@ import Foundation
 public final class PiSecretFiles: @unchecked Sendable {
     private let lock = NSLock()
     private var secretCalls = Set<String>()
-    /// Tools whose call without an id read a secret file, oldest first.
-    private var unnamed: [String] = []
+    /// Tools whose last call without an id read a secret file: their results without an id are
+    /// hidden until a call of the same tool without an id reads something else.
+    private var unnamed = Set<String>()
 
     public init() {}
 
@@ -36,7 +37,9 @@ public final class PiSecretFiles: @unchecked Sendable {
             secretCalls.insert(id)
         }
         if object["type"] as? String == "tool_execution_start", SecretFilter.readsSecretFile(object["args"]) {
-            if let id = object["toolCallId"] as? String { secretCalls.insert(id) } else { unnamed.append(object["toolName"] as? String ?? "") }
+            if let id = object["toolCallId"] as? String { secretCalls.insert(id) } else { unnamed.insert(object["toolName"] as? String ?? "") }
+        } else if object["type"] as? String == "tool_execution_start", object["toolCallId"] == nil {
+            unnamed.remove(object["toolName"] as? String ?? "")
         }
         for item in object.values { register(item) }
     }
@@ -53,27 +56,34 @@ public final class PiSecretFiles: @unchecked Sendable {
             return (hidden, changed)
         }
         guard var object = value as? [String: Any] else { return (value, false) }
-        var changed = false
         let call = (object["toolCallId"] as? String) ?? (object["type"] as? String == "toolCall" ? object["id"] as? String : nil)
         var secret = call.map(secretCalls.contains) ?? false
-        // No call id: the next end of the tool that read a secret file.
-        if call == nil, type == "tool_execution_end", let name = object["toolName"] as? String, let index = unnamed.firstIndex(of: name) {
-            unnamed.remove(at: index)
+        // No call id: a result of a tool whose last call without an id read a secret file.
+        if call == nil, let name = object["toolName"] as? String, unnamed.contains(name),
+           type == "tool_execution_end" || type == "tool_execution_update" || object["role"] as? String == "toolResult" {
             secret = true
         }
-        if call == nil, type == "tool_execution_update", let name = object["toolName"] as? String, unnamed.contains(name) { secret = true }
-        if secret {
-            for key in ["result", "partialResult", "content", "output"] where object[key] != nil {
-                object[key] = ["content": [["type": "text", "text": SecretFilter.hiddenOutput]]]
-                if key == "content" { object[key] = [["type": "text", "text": SecretFilter.hiddenOutput]] }
-                changed = true
-            }
+        let input = object["type"] as? String == "toolCall" || type == "tool_execution_start"
+        if secret, input {
+            // The call itself: its arguments, with a secret file's content redacted.
             for key in ["args", "arguments"] where object[key] != nil {
                 if let redacted = SecretFilter.redactedInput(object[key]) { object[key] = redacted }
-                changed = true
             }
+            return (object, true)
         }
-        for (key, item) in object where !(secret && ["result", "partialResult", "content", "output", "args", "arguments"].contains(key)) {
+        if secret {
+            // A result in any shape (an end, an update, a toolResult message, an entry of
+            // turn_end.toolResults or agent_end.messages): only who and what, and a marker. Its
+            // content, details (a truncated copy) and structured content (the full output's path) go.
+            var kept = object.filter { ["role", "toolCallId", "toolName", "isError", "timestamp", "type"].contains($0.key) }
+            let marker: [[String: Any]] = [["type": "text", "text": SecretFilter.hiddenOutput]]
+            if object["result"] != nil { kept["result"] = ["content": marker] }
+            if object["partialResult"] != nil { kept["partialResult"] = ["content": marker] }
+            if object["content"] != nil || (object["result"] == nil && object["partialResult"] == nil) { kept["content"] = marker }
+            return (kept, true)
+        }
+        var changed = false
+        for (key, item) in object {
             let (new, itemChanged) = hide(item, type: nil)
             if itemChanged {
                 object[key] = new

@@ -60,6 +60,31 @@ struct KnowledgeAskLogTests {
         #expect(!written.contains("hunter2") && !written.contains("s3cr3t") && written.contains("Hello"))
     }
 
+    /// Verification: Pi's toolResult message (`details.truncation.content`, `structuredContent`),
+    /// `turn_end.toolResults[]` and `agent_end.messages[]` keep nothing of a secret call's output;
+    /// a toolResult without a call id follows the tool's last call without one.
+    @Test func everyResultShapeOfASecretCallIsHidden() {
+        let result = #"{"role":"toolResult","toolCallId":"r1","toolName":"bash","isError":false,"timestamp":1,"content":[{"type":"text","text":"DB_PASS=hunter2hunter2"}],"details":{"truncation":{"content":"DB_PASS=hunter2hunter2"}},"structuredContent":{"full_output_path":"/tmp/pi-out-hunter2"}}"#
+        let lines = [
+            #"{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"r1","name":"bash","arguments":{"command":"base64 < .env"}}]}}"#,
+            #"{"type":"tool_execution_start","toolName":"bash","toolCallId":"r1","args":{"command":"base64 < .env"}}"#,
+            #"{"type":"message_start","message":"# + result + "}",
+            #"{"type":"message_end","message":"# + result + "}",
+            #"{"type":"turn_end","message":{"role":"assistant","content":[]},"toolResults":["# + result + "]}",
+            #"{"type":"agent_end","messages":["# + result + "]}",
+            #"{"type":"tool_execution_start","toolName":"read","args":{"path":".e*"}}"#,
+            #"{"type":"message_end","message":{"role":"toolResult","toolName":"read","content":[{"type":"text","text":"TOKEN=hunter2hunter2"}]}}"#,
+            #"{"type":"tool_execution_start","toolName":"read","args":{"path":"README.md"}}"#,
+            #"{"type":"message_end","message":{"role":"toolResult","toolName":"read","content":[{"type":"text","text":"Hello"}]}}"#,
+        ]
+        let hider = PiSecretFiles()
+        let written = lines.map { JSONMask.jsonLine(hider.line($0)) }
+        #expect(!written.joined().contains("hunter2"))
+        #expect(written[3].contains("\"toolCallId\":\"r1\"") && written[3].contains("Hidden by AKit") && !written[3].contains("details"))
+        #expect(written[1].contains("base64 < .env"), "the call itself stays readable")
+        #expect(written.last?.contains("Hello") == true, "a later read of another file isn't hidden")
+    }
+
     /// Review: values under a secret-naming key are masked, in tool arguments and in JSON inside a result.
     @Test func namedSecretsInArgumentsAreMasked() {
         let line = #"{"type":"tool_execution_start","toolName":"mcp__api__call","toolCallId":"m1","args":{"headers":{"X-Api-Key":"Zq8xLm2Pq"},"password":"hunter2abc","query":"orders"}}"#
