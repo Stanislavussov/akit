@@ -460,14 +460,16 @@ struct KnowledgeAskPanel: View {
                     .lineLimit(1...5)
                     .textFieldStyle(.roundedBorder)
                     .focused($inputFocused)
+                    // Return sends; Option-Return starts a new line.
+                    .onSubmit { if canSend { send() } }
                 if ask.isAskingHere {
                     Button("Stop", systemImage: "stop.circle") { ask.stop() }
                         .help("Stop Pi and everything it started; this answer is not continued")
                 } else {
                     Button("Send", systemImage: "arrow.up.circle.fill") { send() }
                         .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(ask.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || ask.isRunning)
-                        .help(ask.isRunning ? "Pi is still stopping the question of the chat you left; send in a moment" : "Send the question to Pi (⌘↩)")
+                        .disabled(!canSend)
+                        .help(ask.isRunning ? "Pi is still stopping the question of the chat you left; send in a moment" : "Send the question to Pi (↩; ⌥↩ for a new line)")
                 }
             }
             .labelStyle(.iconOnly)
@@ -478,6 +480,10 @@ struct KnowledgeAskPanel: View {
         .padding(10)
         .onAppear { inputFocused = true }
         .onChange(of: ask.passage) { if ask.passage != nil { inputFocused = true } }
+    }
+
+    private var canSend: Bool {
+        !ask.isAskingHere && !ask.isRunning && !ask.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func send() {
