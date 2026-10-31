@@ -260,12 +260,15 @@ public struct KnowledgeBase: Sendable, Hashable {
     /// The areas (folders in `areas/`), sorted by name, with their note and map counts and their
     /// `area.yaml` settings.
     public func areas() -> [Area] {
-        FileWalk.children(of: areasFolder).filter(FileWalk.isDirectory).map { folder in
+        let found = FileWalk.children(of: areasFolder).filter(FileWalk.isDirectory).map { folder in
             let files = Self.files(in: folder)
             return Area(name: Self.nfc(folder.lastPathComponent), notes: files.filter { $0.pathExtension == "md" }.count,
                         maps: files.filter { $0.pathExtension == "excalidraw" }.count,
                         settings: (try? KnowledgeArea.load(folder: folder)) ?? KnowledgeArea())
         }
+        // In the order of `.spaces.json` (K31), the rest by name.
+        let place = Dictionary(Self.ordered(found.map(\.name), saved: savedSpaceOrder()).enumerated().map { ($1, $0) }) { first, _ in first }
+        return found.sorted { place[$0.name, default: 0] < place[$1.name, default: 0] }
     }
 
     /// The notes of one area, or of every area, sorted by id.
@@ -379,8 +382,14 @@ public struct KnowledgeBase: Sendable, Hashable {
         do { _ = try trash(url) } catch {
             throw Failure(message: "Couldn't move \(path) to the Trash: \(error.localizedDescription)")
         }
+        // A deleted space leaves the order too (K31), in the same commit.
+        var paths = [path]
+        if let area, savedSpaceOrder().contains(Self.nfc(area)) {
+            try writeSpaceOrder(savedSpaceOrder().filter { $0 != Self.nfc(area) })
+            paths.append(Self.spaceOrderName)
+        }
         do {
-            try await KnowledgeGit(base: root, env: env).commit(paths: [path], message: "Delete \(label)")
+            try await KnowledgeGit(base: root, env: env).commit(paths: paths, message: "Delete \(label)")
         } catch {
             throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: \(error.message)")
         }

@@ -334,6 +334,23 @@ final class KnowledgeModel {
     /// The maps of one space, for its group in the note list.
     func maps(in area: String) -> [String] { Self.maps(of: area, in: targets) }
 
+    /// Move Up / Move Down of a space (K31): its place in `.spaces.json`, committed at once.
+    func move(space name: String, by offset: Int) async {
+        guard let base else { return }
+        do { try await base.move(space: name, by: offset, env: env) } catch { problem = error.message }
+        reload()
+    }
+
+    /// A space dropped on another one in the list: it takes that one's place (K31).
+    func move(space name: String, before target: String) async {
+        guard let base, name != target else { return }
+        var names = areas.map(\.name).filter { $0 != name }
+        guard let index = names.firstIndex(of: target), areas.contains(where: { $0.name == name }) else { return }
+        names.insert(name, at: index)
+        do { try await base.reorder(spaces: names, env: env) } catch { problem = error.message }
+        reload()
+    }
+
     /// Folds or unfolds a space in the note list; it becomes the chosen space too.
     func toggle(area name: String) {
         choose(area: name)

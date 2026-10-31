@@ -247,6 +247,9 @@ struct KnowledgeView: View {
         return count == 0 ? "Lint" : "Lint (\(count))"
     }
 
+    /// What a dragged space carries: this and its name (a dragged note carries its id).
+    static let spaceDragPrefix = "akit-space:"
+
     /// The selection of the list: a note id, or `map:` and a map id. A space's own row isn't
     /// selectable: a click folds or unfolds it.
     private var listSelection: Binding<String?> {
@@ -296,7 +299,14 @@ struct KnowledgeView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { model.toggle(area: area.name) }
-        .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")" + (area.title.map { " · \($0)" } ?? "") + ". Click to fold or unfold")
+        // Drag a space onto another to put it there (K31); a dropped note is no space.
+        .draggable(Self.spaceDragPrefix + area.name)
+        .dropDestination(for: String.self) { items, _ in
+            guard let name = items.first(where: { $0.hasPrefix(Self.spaceDragPrefix) })?.dropFirst(Self.spaceDragPrefix.count) else { return false }
+            Task { await model.move(space: String(name), before: area.name) }
+            return true
+        }
+        .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")" + (area.title.map { " · \($0)" } ?? "") + ". Click to fold or unfold; drag onto another space to put it there")
         .contextMenu {
             Button("New Note…") { model.newNoteRequest = KnowledgeModel.NewNoteRequest(area: area.name, name: "") }
             Button("Area Settings…") {
@@ -306,6 +316,12 @@ struct KnowledgeView: View {
             Button("Show in Finder") {
                 if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.areasFolder.appending(path: area.name)]) }
             }
+            Divider()
+            Button("Move Up") { Task { await model.move(space: area.name, by: -1) } }
+                .disabled(model.areas.first?.name == area.name)
+            Button("Move Down") { Task { await model.move(space: area.name, by: 1) } }
+                .disabled(model.areas.last?.name == area.name)
+            Divider()
             Button("Delete…", role: .destructive) { areaToDelete = area.name }
         }
     }
