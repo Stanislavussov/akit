@@ -25,7 +25,7 @@ with Pi…, `KnowledgeMapDrawer` in AKitLab; seed v7 with a map proposal) built 
 [Proposals](#proposals). 6.1 (K18: the knowledge card of AKit Review, `context/knowledge-card.md`; profile
 `knowledge_base:` / `knowledge_budget:`, Review Settings… → Knowledge base, `akit review --knowledge-base`,
 `--knowledge-budget`) built 2026-10-25; 6.2 (the review passes' `akit_kb_search` / `akit_kb_show`, extension v13 after the merge with master's v12) built
-2026-10-25: step 6 is done. K27 (folders and other repositories: `path:`, kind `folder`, `local` in `kb show` / `kb context`, Add Folder… and `akit kb add-folder`; seed v8) built 2026-10-25. Step 7 waits for about two weeks of use on the work Mac (7.0: go or no-go from the miss log). Steps in [Steps](#steps).
+2026-10-25: step 6 is done. K27 (folders and other repositories: `path:`, kind `folder`, `local` in `kb show` / `kb context`, Add Folder… and `akit kb add-folder`; seed v8) built 2026-10-25. K29 (the one-column note list with foldable spaces, Hide Note List) built 2026-10-31. Step 7 waits for about two weeks of use on the work Mac (7.0: go or no-go from the miss log). Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
 ## Goal
@@ -71,6 +71,7 @@ describe the system once, by hand, and let the agent read it.
 | K26 | Sample base | Added 2026-10-24 at the user's request: `akit kb seed` / **Add Sample Base…** make a separate base `sample` with made-up content that shows every feature (each later step adds its feature to it); `kb seed --remove` / **Remove Sample Base…** move it to the Trash. `akit kb rm NOTE\|MAP\|AREA` removes from the terminal (to the Trash, one commit) |
 | K27 | Folders and other repositories | Added 2026-10-25 at the user's request: the base is the one way in to the other repositories and local folders around a project (the backend of a frontend, a local wiki). A note's `path:` names its folder on this Mac (`~/…` or absolute); `kind: folder` (new default kind, fields `path`, `owner`) is a folder without git, and `service` gained `path`. `KnowledgeLocal` finds a note's folder: `path:`, else a `~/` `repo:`, else the clone of `repo:`'s remote among the projects lint knows; `akit kb show` gives it as `local` ("on this Mac"), `akit kb context` as `local` per system (`[~/…]`). **Add Folder…** and `akit kb add-folder FOLDER --area A [--name] [--description] [--yes]` (person only) write the note: kind service with the origin remote (password, token and query cut out; a remote that still looks secret is left out) for a git repository or a folder inside one, else kind folder; `path:`; the description given, else the README's first line (none with a secret); one commit, with the kind added to a `kb.yaml` that lacks it. Lint: `missing-home-path` for a `path:` that is no folder; a `repo:` whose clone is the `path:` folder is known wherever it lies; `files:` are checked from the top of the repository `path:` is in. Seed v8: orders-api has `path:`, lint-examples' home-path is a folder note |
 | K28 | Two skills | Added 2026-10-25 at the user's request: the core layer's manual `/akit` was the only way an agent learned about the base, so Claude Code (no session block, K16) never found it unless the user typed `/akit`. Now the core layer also has `/akit-context`, **auto**: reading the base (`context`, `search`, `show`, `neighbors`, `relations`, `notes`, `areas`, `kinds`, `maps`, `lint`, `inbox`), `propose` and `check`, and `akit notebook` (≈ 12 KB instead of the whole 35 KB `/akit`). `/akit` keeps setup and the person-only `kb` commands, and points to `/akit-context`. The Pi template names `/akit-context`. New brains get both (`BrainSetup`); an existing brain gets the skill folder and its core line by a brain commit |
+| K29 | One-column note list | Added 2026-10-31 at the user's request (the note was narrow beside the app sidebar, Spaces and the note list): one list column instead of two. Each space is a foldable group with its note count, holding its maps, then its notes; a click on the space's row folds or unfolds it and makes it the chosen space (New Note… default, Area Settings…). The unfolded spaces are remembered per base on this Mac (UserDefaults, keyed by the base folder); opening a note or map unfolds its space. The space's context menu: New Note… (in that space), Area Settings…, Show in Finder, Delete…. **Hide Note List** / **Show Note List** (toolbar, ⌥⌘L; ⌃⌘S is the app sidebar's) hides the column so the note or map gets the whole width. Search hits still replace the list |
 
 ## Layout
 
@@ -252,8 +253,9 @@ plan is refused; a failed commit puts the note and the proposal back. Reject (`k
 
 ## Screen
 
-Knowledge (sidebar): spaces on the left, tabs of maps in the middle (Excalidraw), the note
-panel on the right with **Open in Obsidian**; **Inbox** and **Lint** as tabs of the screen.
+Knowledge (sidebar): one list column on the left (since K29: foldable spaces, each with its maps
+and notes; **Hide Note List** hides it), then a map (Excalidraw, in tabs) or the note panel with
+**Open in Obsidian**; **Inbox** and **Lint** as tabs of the screen.
 
 ## Steps
 

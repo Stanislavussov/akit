@@ -34,7 +34,7 @@
 - «Где код этого сервиса?» → поле `repo:` в начале заметки, например `repo: git@example.com:shop/orders-api.git`.
 - «Как данные идут от заказа до счёта?» → заметка вида `flow` в папке `flows/`.
 
-![Экран Knowledge: слева список Spaces с пространствами lint-examples с числом заметок 7, logistics с числом заметок 4 и payments с числом заметок 6; в середине часть Maps с картой overview и заметки пространства payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service, path ~/Projects/orders-api и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева одна колонка — список заметок с развёрнутыми пространствами lint-examples (число заметок 8), logistics (4) и payments (6); в payments карта overview и заметки: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service, path ~/Projects/orders-api и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
 
 ### Главные слова
 <!-- section: overview-terms -->
@@ -84,7 +84,7 @@ AKit создаёт базу в папке мира `sample` (по умолча�
 
 То же делает `akit kb seed` в терминале.
 
-![Экран Knowledge с примером базы: в подзаголовке sample и путь ~/.akit/local/knowledge/sample, в панели инструментов список Base и меню Sample Base; слева Spaces с пространствами lint-examples (7 заметок), logistics (4 заметки) и payments (6 заметок); в середине часть Maps с картой overview и заметки payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db; справа открыта заметка order-events вида queue со ссылками на orders-api, billing и logistics/warehouse](images/knowledge-sample.png)
+![Экран Knowledge с примером базы: в подзаголовке sample и путь ~/.akit/local/knowledge/sample, в панели инструментов список Base и меню Sample Base; слева список заметок с развёрнутыми пространствами lint-examples, logistics и payments; в payments карта overview и заметки: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db; справа открыта заметка order-events вида queue со ссылками на orders-api, billing и logistics/warehouse](images/knowledge-sample.png)
 
 ### Просто: Remove Sample Base…
 <!-- section: sample-remove -->
@@ -140,7 +140,7 @@ payments  6 notes, 1 map  Payments
 ### Просто: 2. заметки и карты
 <!-- section: try-look -->
 
-1. **Spaces** → `payments` → заметка `orders-api`. Справа: поля (`kind: service`, `repo:`), разделы `## Events` и `## Owners`, ниже **Relations**: стрелка → `payments/billing` с подписью «events».
+1. Список заметок → `payments` → заметка `orders-api`. Справа: поля (`kind: service`, `repo:`), разделы `## Events` и `## Owners`, ниже **Relations**: стрелка → `payments/billing` с подписью «events».
 2. **Maps** → `overview`. На карте два блока, `orders-api` и `billing`, и стрелка «events». Нажмите блок: откроется его заметка.
 3. На карте `overview` есть блок `logistics routes`: он ведёт на карту `logistics/maps/routes`. Так пространства, которые не связаны, ссылаются друг на друга.
 4. Нажмите **Edit** на карте, сдвиньте блок, нажмите **Edit** ещё раз. Правка сохраняется в файл сама, коммит AKit делает при **Close Map** ([Коммиты правок](#commits)).
@@ -221,7 +221,7 @@ payments/billing  billing: Bills each order once.
 ### Средне: 6. проверить и принять
 <!-- section: try-accept -->
 
-1. Слева под **Spaces** появится **Inbox (4)**: три предложения из примера и одно от агента.
+1. В переключателе вверху экрана появится **Inbox (4)**: три предложения из примера и одно от агента.
 2. Нажмите предложение `payments/refunds`: справа будет текст заметки и причина, которую указал агент.
 3. **Check Again** отправляет предложение модели проверки (Settings → **Knowledge check model**). Она ставит пометки: повтор, спор со стрелкой карты, сломанная ссылка. Пример такой пометки уже есть у `2026-10-24-payments-billing`: `duplicate`.
 4. **Accept…** показывает, что будет записано; **Accept** пишет заметку в `areas/payments/refunds.md` и делает коммит. **Reject…** убирает предложение в Корзину.
@@ -255,16 +255,24 @@ payments/billing  billing: Bills each order once.
 ## Пространства и заметки
 <!-- section: spaces -->
 
-Экран разбит на три колонки:
+Экран разбит на две колонки:
 
-- **Spaces** — пространства базы и число заметок в каждом.
-- Список заметок выбранного пространства: заголовок, вид и путь внутри пространства.
+- Список заметок. Каждое пространство — папка, которую можно свернуть и развернуть, как в Obsidian. Справа от имени — число заметок. Внутри — карты пространства, потом его заметки: заголовок, вид и путь внутри пространства.
 - Панель заметки: открытые вкладки и одна заметка.
+
+Щелчок по имени пространства сворачивает или разворачивает его. AKit помнит свёрнутые пространства для каждой базы. Когда вы открываете заметку или карту, её пространство разворачивается само.
+
+### Просто: скрыть список: Hide Note List
+<!-- section: spaces-hide-list -->
+
+Заметке нужно больше места? Нажмите **Hide Note List** в панели инструментов (значок боковой панели слева) или ⌥⌘L. Список исчезает, заметка или карта занимает всю ширину. **Show Note List** (та же кнопка, ⌥⌘L) возвращает список. AKit помнит выбор.
+
+![Экран Knowledge со скрытым списком заметок: слева в панели инструментов кнопка Show Note List, заметка orders-api занимает всю ширину: вкладка, заголовок, кнопки, поля и разделы Events и Owners](images/knowledge-list-hidden.png)
 
 ### Просто: открыть заметку
 <!-- section: spaces-open -->
 
-1. Нажмите на пространство в **Spaces**, например `payments`.
+1. В списке заметок разверните пространство, например `payments`, если оно свёрнуто.
 2. Нажмите на заметку, например `orders-api`.
 
 Заметка открывается во вкладке справа. Каждая открытая заметка — своя вкладка. Крестик на вкладке закрывает её.
@@ -285,6 +293,8 @@ payments/billing  billing: Bills each order once.
 2. Выберите **Area** в списке. Впишите **Name**, например `orders-api`. Оба поля обязательные.
 3. Выберите **Kind**: **None** или вид из списка. Список берётся из `kb.yaml` базы: `service`, `flow`, `team`, `database`, `queue`, `external`, `folder` и виды, которые вы добавили в **Kinds…**.
 4. Нажмите **Add Note**.
+
+Быстрее: правый щелчок по пространству в списке заметок → **New Note…**. Поле **Area** уже заполнено этим пространством.
 
 AKit создаёт файл `areas/<пространство>/<имя>.md` с заголовком `# <имя>` и, если выбран вид, строкой `kind:` в начале. Заметку AKit сразу коммитит отдельным коммитом «Add note …». В этот коммит попадает только новый файл, даже если другие правки ещё ждут своего коммита.
 
@@ -334,7 +344,7 @@ shop/wiki  wiki: How we deploy.  [~/Documents/wiki]
 <!-- section: spaces-delete -->
 
 - Заметка: кнопка **Delete…** в панели заметки или правый щелчок по заметке → **Delete…**. Потом **Move to Trash**.
-- Пространство: правый щелчок по пространству в **Spaces** → **Delete…** → **Move to Trash**. В Корзину уходит вся папка со всеми заметками.
+- Пространство: правый щелчок по пространству в списке заметок → **Delete…** → **Move to Trash**. В Корзину уходит вся папка со всеми заметками.
 
 Файл или папка уходят в Корзину, а их удаление AKit сразу коммитит («Delete note …» или «Delete area …»). Ссылки `[[…]]` на заметку в других заметках остаются как есть.
 
@@ -392,12 +402,12 @@ Obsidian открывает только заметки из своих хран
 ### Просто: открыть карту
 <!-- section: maps-open -->
 
-1. Нажмите на пространство в **Spaces**, например `payments`.
-2. Над заметками есть часть **Maps**. Нажмите на карту, например `overview`.
+1. Разверните пространство в списке заметок, например `payments`.
+2. Карты пространства стоят над его заметками, со значком схемы. Нажмите на карту, например `overview`.
 
 Карта открывается справа, вместо панели заметки, в режиме просмотра, в своей вкладке. Откройте ещё одну карту пространства — у неё будет своя вкладка рядом; крестик на вкладке закрывает её и коммитит ждущие правки. Вкладки показаны для карт пространства той карты, что на экране. Карта на ней ничего нельзя сдвинуть или стереть. Сверху — имя карты, путь файла и кнопки **Edit**, **Show in Finder**, **Delete…** и **Close Map**. Карту можно двигать мышью и колёсиком. **Show in Finder** показывает файл карты в Finder. **Close Map** возвращает панель заметки и коммитит ждущие правки.
 
-![Экран Knowledge с открытой картой overview пространства payments: в середине часть Maps с картой overview над списком Notes; справа вкладка карты overview, ниже заголовок overview, путь areas/payments/maps/overview.excalidraw, кнопки Edit, Show in Finder, Rename…, Delete… и Close Map; ниже карта Excalidraw в режиме просмотра: блоки orders-api и billing со стрелкой events между ними и блок logistics routes](images/knowledge-map.png)
+![Экран Knowledge с открытой картой overview пространства payments: слева в списке заметок пространства payments выбрана карта overview над заметками; справа вкладка карты overview, ниже заголовок overview, путь areas/payments/maps/overview.excalidraw, кнопки Edit, Show in Finder, Rename…, Delete… и Close Map; ниже карта Excalidraw в режиме просмотра: блоки orders-api и billing со стрелкой events между ними и блок logistics routes](images/knowledge-map.png)
 
 ### Просто: открыть заметку блока
 <!-- section: maps-block -->
@@ -622,12 +632,12 @@ AKit сначала коммитит правки из очереди ([Комм
 ### Просто: Area Settings…
 <!-- section: area-settings-edit -->
 
-1. Правый щелчок по пространству в **Spaces** → **Area Settings…**.
+1. Правый щелчок по пространству в списке заметок → **Area Settings…**.
 2. **Title** — название, например `Payments`. **Description** — пара слов, о чём пространство.
 3. **Projects**: впишите проект и нажмите **Add Project** (или Return). Кнопка с минусом убирает проект.
 4. Нажмите **Save**.
 
-AKit записывает `area.yaml`. Коммит ждёт в очереди, как правка заметки. Все поля необязательные. Название видно в подсказке над пространством в **Spaces**.
+AKit записывает `area.yaml`. Коммит ждёт в очереди, как правка заметки. Все поля необязательные. Название видно в подсказке над пространством в списке заметок.
 
 То же в терминале: `akit kb area payments` (показать), `akit kb area payments --title Payments --project git@example.com:shop/orders-api.git`, `--remove-project P`. Команда сразу делает коммит.
 
@@ -643,7 +653,7 @@ AKit записывает `area.yaml`. Коммит ждёт в очереди, 
 - «В какой заметке про `retry`?» → введите `retry`.
 - «Что агент найдёт по слову `order`?» → введите `order`: вы видите те же разделы, что и агент.
 
-![Поиск order на экране Knowledge: в поле поиска панели инструментов слово order; в середине вместо списка заметок часть «7 hits» с находками payments/orders-api с разделом ## Events, payments/billing, payments/flows/order-to-billing, payments/order-events, payments/orders-db с разделом ## Tables, payments/orders-api и payments/billing с разделом ## Invoices, у каждой — кусок текста с найденным словом; слева под Spaces строка Index: 17 notes, 28 sections, кнопка Reindex и Inbox: 0](images/knowledge-search.png)
+![Поиск order на экране Knowledge: в поле поиска панели инструментов слово order; слева вместо списка заметок часть «7 hits» с находками payments/orders-api с разделом ## Events, payments/billing, payments/flows/order-to-billing, payments/order-events, payments/orders-db с разделом ## Tables, payments/orders-api и payments/billing с разделом ## Invoices, у каждой — кусок текста с найденным словом; внизу колонки строка Index: 18 notes, 29 sections, кнопка Reindex и Inbox: 0](images/knowledge-search.png)
 
 ### Просто: найти заметку
 <!-- section: search-find -->
@@ -660,7 +670,7 @@ AKit записывает `area.yaml`. Коммит ждёт в очереди, 
 ### Средне: индекс поиска
 <!-- section: search-index -->
 
-Поиск идёт по индексу — файлу `.akit-index.sqlite` в базе. Строка под **Spaces** показывает его размер: «Index: 17 notes, 28 sections».
+Поиск идёт по индексу — файлу `.akit-index.sqlite` в базе. Строка под списком заметок показывает его размер: «Index: 17 notes, 28 sections».
 
 - AKit сам следит за папкой базы. Вы поправили заметку в AKit, в Obsidian или в другом редакторе — через секунду-две поиск её находит.
 - **stale** рядом со строкой: индекс сейчас обновляет другая программа (например, `akit kb index` в терминале). Поиск показывает его прошлое состояние.

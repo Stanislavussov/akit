@@ -4109,13 +4109,12 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Хочу поправить заметку» → откройте её и нажмите **Edit**: правка сразу сохраняется в файл.
 - «Удобнее писать в Obsidian» → **Open in Obsidian**.
 
-![Экран Knowledge: слева Spaces с lint-examples, logistics и payments, в середине карта overview и заметки billing, order-to-billing и orders-api, справа открытая заметка orders-api с кнопками Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…, частью Relations, таблицей полей kind, repo, files и разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева список заметок с развёрнутыми пространствами lint-examples, logistics и payments, в payments карта overview и заметки billing, order-to-billing и orders-api, справа открытая заметка orders-api с кнопками Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…, частью Relations, таблицей полей kind, repo, files и разделами Events и Owners](images/knowledge.png)
 
 #### Что на экране
 <!-- section: knowledge-screen -->
 
-- **Spaces** — пространства базы и число заметок в каждом. Правый щелчок: **Area Settings…**, **Show in Finder** и **Delete…**. Под ними строка индекса поиска («Index: 17 notes, 28 sections», **Reindex**) и **Inbox** — число предложений агентов.
-- Список заметок пространства: заголовок, вид (`service`, `flow`) и путь. Над ним часть **Maps**, если у пространства есть карты.
+- Список заметок — одна колонка: каждое пространство базы — папка с числом заметок, щелчок сворачивает и разворачивает её. Внутри — карты пространства, потом заметки: заголовок, вид (`service`, `flow`) и путь. Правый щелчок по пространству: **New Note…**, **Area Settings…**, **Show in Finder** и **Delete…**. Под списком строка индекса поиска («Index: 17 notes, 28 sections», **Reindex**) и **Inbox** — число предложений агентов. **Hide Note List** (⌥⌘L) скрывает список, и заметка занимает всю ширину.
 - Карта (вместо панели заметки, когда вы её открыли), во вкладке: **Edit**, **Show in Finder**, **Rename…**, **Delete…**, **Close Map**. В режиме просмотра нажатие на блок открывает его заметку рядом. Заметку из списка можно перетащить на карту: появится блок со ссылкой на неё.
 - В панели заметки часть **Relations** — стрелки к заметке и от неё на картах — и кнопка **Rename…**.
 - Панель заметки: вкладки открытых заметок, кнопки **Edit**, **Properties** (вид и поля заметки), **Copy**, **Paste**, **Open in Obsidian**, **Delete…** и текст.

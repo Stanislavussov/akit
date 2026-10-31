@@ -254,6 +254,8 @@ shot review-local-find   $MAIN --section review --query "$DEMO/work/orders-servi
 # Knowledge (guide knowledge.ru.md): the made-up base from tools/demo-home.sh.
 shot knowledge           $MAIN --section knowledge --select payments/orders-api
 shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
+# Hide Note List: the note gets the whole width.
+shot knowledge-list-hidden $MAIN --section knowledge --select payments/orders-api --tab hide-list
 # Add Folder… with the demo's handbook folder (no git: kind folder, README's line as the description).
 shot knowledge-add-folder 900x700 --section knowledge --select payments/orders-api --tab add-folder --query "~/Documents/payments-handbook"
 # The notebook (notebook.ru.md): the sample base's Inbox tab, Today on a fixed day, New Tab…, the Plans tab and its drawing.

@@ -24,6 +24,16 @@ final class KnowledgeModel {
     private(set) var notes: [KnowledgeBase.NoteEntry] = []
     /// The maps (`.excalidraw` ids, `payments/maps/overview`) of the chosen area.
     private(set) var maps: [String] = []
+    /// The spaces unfolded in the note list (K29), remembered per base. Opening a note or map
+    /// unfolds its space. Snapshots show every space unfolded.
+    var expandedAreas: Set<String> = [] {
+        didSet {
+            guard let expandedKey, DebugSnapshot.options == nil, expandedAreas != oldValue else { return }
+            UserDefaults.standard.set(expandedAreas.sorted(), forKey: expandedKey)
+        }
+    }
+    /// The defaults key `expandedAreas` was read from: the base's folder.
+    private var expandedKey: String?
     /// The map in view; nil shows the note panel alone.
     private(set) var map: String?
     /// Open map tabs (ids), in the order they were opened. The tab bar shows those of the area
@@ -255,6 +265,7 @@ final class KnowledgeModel {
         areas = base.areas()
         if let area, !areas.contains(where: { $0.name == area }) { self.area = nil }
         if area == nil { area = areas.first?.name }
+        readExpandedAreas(of: base)
         allNotes = (try? base.notes()) ?? []
         notes = allNotes.filter { $0.area == area }
         targets = base.linkTargets()
@@ -289,6 +300,34 @@ final class KnowledgeModel {
         maps = Self.maps(of: area, in: targets)
     }
 
+    /// The notes of one space, for its group in the note list.
+    func notes(in area: String) -> [KnowledgeBase.NoteEntry] { allNotes.filter { $0.area == area } }
+
+    /// The maps of one space, for its group in the note list.
+    func maps(in area: String) -> [String] { Self.maps(of: area, in: targets) }
+
+    /// Folds or unfolds a space in the note list; it becomes the chosen space too.
+    func toggle(area name: String) {
+        choose(area: name)
+        if expandedAreas.contains(name) { expandedAreas.remove(name) } else { expandedAreas.insert(name) }
+    }
+
+    /// `expandedAreas` of this base, once per base: as saved, else just the chosen space. Snapshots
+    /// unfold every space.
+    private func readExpandedAreas(of base: KnowledgeBase) {
+        let key = "knowledgeExpandedAreas." + base.root.path
+        guard key != expandedKey else { return }
+        expandedKey = nil
+        if DebugSnapshot.options != nil {
+            expandedAreas = Set(areas.map(\.name))
+        } else if let saved = UserDefaults.standard.stringArray(forKey: key) {
+            expandedAreas = Set(saved)
+        } else {
+            expandedAreas = Set([area].compactMap(\.self))
+        }
+        expandedKey = key
+    }
+
     static func maps(of area: String?, in targets: KnowledgeLinks) -> [String] {
         guard let area else { return [] }
         return targets.maps.filter { $0.hasPrefix(area + "/") }
@@ -307,6 +346,7 @@ final class KnowledgeModel {
         }
         let area = String(id.split(separator: "/").first ?? "")
         if area != self.area { choose(area: area) }
+        expandedAreas.insert(area)
         mapHashes[id] = KnowledgeWrite.hash(data)
         mapIsEmpty = Self.isEmpty(map: data)
         showScene(id, data)
@@ -655,6 +695,7 @@ final class KnowledgeModel {
         guard let entry = allNotes.first(where: { $0.id == id }) else { return }
         sectionTarget = nil
         if entry.area != area { choose(area: entry.area) }
+        expandedAreas.insert(entry.area)
         if !tabs.contains(id) { tabs.append(id) }
         note = id
         readNote()
@@ -794,7 +835,9 @@ final class KnowledgeModel {
         do {
             try base.newArea(name)
             reload()
-            choose(area: name.trimmingCharacters(in: .whitespaces).precomposedStringWithCanonicalMapping)
+            let name = name.trimmingCharacters(in: .whitespaces).precomposedStringWithCanonicalMapping
+            choose(area: name)
+            expandedAreas.insert(name)
             return true
         } catch {
             problem = error.message
@@ -1304,6 +1347,8 @@ final class KnowledgeModel {
             }
         }
         lines.append("areas: " + areas.map { "\($0.name)\($0.name == area ? "*" : "") (\($0.notes))" }.joined(separator: ", "))
+        let hidden = DebugSnapshot.options?.tab == "hide-list"
+        lines.append("note list: " + (hidden ? "hidden" : "one column, unfolded: " + areas.map(\.name).filter { expandedAreas.contains($0) }.joined(separator: ", ")))
         lines.append("notes: " + notes.map(\.id).joined(separator: ", "))
         lines.append("maps: " + maps.map { $0 == map ? "\($0)*" : $0 }.joined(separator: ", "))
         if !mapTabs.isEmpty { lines.append("map tabs: " + mapTabs.joined(separator: ", ")) }
