@@ -384,6 +384,16 @@ public struct KnowledgeBase: Sendable, Hashable {
         }
         // A deleted space leaves the order too (K31), in the same commit. If the order can't be
         // written, the removal is still committed and the message says so.
+        // The order is written under the base's git lock, like a reorder.
+        let lockFile = root.appending(path: Self.queueLockName)
+        let lock: FileLock?
+        do { lock = try FileLock.acquire(lockFile, timeout: 2) } catch {
+            throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: can't open the lock \(lockFile.path): \(error.localizedDescription)")
+        }
+        guard let lock else {
+            throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: another AKit is writing to the base; it is committed with the next batch.")
+        }
+        defer { lock.release() }
         var paths = [path]
         var orderProblem: String?
         if let area, savedSpaceOrder().contains(Self.nfc(area)) {
@@ -395,7 +405,7 @@ public struct KnowledgeBase: Sendable, Hashable {
             }
         }
         do {
-            try await KnowledgeGit(base: root, env: env).commit(paths: paths, message: "Delete \(label)")
+            try await KnowledgeGit(base: root, env: env).commit(paths: paths, message: "Delete \(label)", alreadyLocked: lock)
         } catch {
             throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: \(error.message)")
         }

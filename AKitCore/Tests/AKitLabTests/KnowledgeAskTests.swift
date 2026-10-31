@@ -44,9 +44,12 @@ final class KnowledgeAskTests {
             if [ "$mode" = "slow" ]; then sleep 30; fi
             if [ "$mode" = "propose" ]; then
               root=$(cat "$HOME/base-root")
-              cp "$HOME/mine.md" "$root/inbox/2026-10-31-payments-orders-api.md"
-              cp "$HOME/other.md" "$root/inbox/2026-10-31-payments-billing.md"
-              echo '{"type":"tool_execution_end","toolName":"bash","result":{"content":[{"type":"text","text":"2026-10-31-payments-orders-api\nProposed in inbox/2026-10-31-payments-orders-api.md"}]}}'
+              cp "$HOME/other.md" "$root/inbox/2020-01-02-payments-billing.md"
+              cp "$HOME/mine.md" "$root/inbox/2020-01-02-payments-billing-2.md"
+              echo '{"type":"tool_execution_start","toolName":"bash","toolCallId":"c1","args":{"command":"akit kb propose --base x --note payments/billing --stdin"}}'
+              echo '{"type":"tool_execution_end","toolName":"bash","toolCallId":"c1","result":{"content":[{"type":"text","text":"2020-01-02-payments-billing-2 Proposed in inbox/2020-01-02-payments-billing-2.md, for the person to accept or reject (not committed)."}]}}'
+              echo '{"type":"tool_execution_start","toolName":"bash","toolCallId":"c2","args":{"command":"akit kb inbox"}}'
+              echo '{"type":"tool_execution_end","toolName":"bash","toolCallId":"c2","result":{"content":[{"type":"text","text":"2020-01-02-payments-billing  note payments/billing (inbox/2020-01-02-payments-billing.md)"}]}}'
             fi
             if [ "$mode" = "fail" ]; then
               echo '{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"rate limited"}}'
@@ -101,33 +104,40 @@ final class KnowledgeAskTests {
     @Test func theSystemPromptLetsPiOnlyPropose() {
         let system = KnowledgeAsk.systemPrompt(Self.note)
         #expect(system.contains("Never edit, write, move or delete files yourself"))
-        #expect(system.contains("akit kb propose --base /tmp/kb/work --author pi --note AREA/NAME --stdin --reason"))
+        #expect(system.contains("akit kb propose --base '/tmp/kb/work' --author pi --note AREA/NAME --stdin --reason"))
+        #expect(system.contains("Keep the quotes around the base folder"))
+        var spaced = Self.note
+        spaced.baseRoot = "/Users/me/My Notes/it's"
+        #expect(KnowledgeAsk.systemPrompt(spaced).contains("--base '/Users/me/My Notes/it'\\''s' --author pi"))
         #expect(system.contains("whole `## Heading` blocks") && system.contains("--arrow \"A -kind-> B\""))
         #expect(!system.contains("Do not change files"))
     }
 
-    /// K32: the cards of an answer are its own proposals: new since the question and named in its
-    /// stream; one another session made meanwhile is not.
+    /// K32, review round 2: the cards of an answer are only the ids its own `kb propose` printed,
+    /// and new since the question: not another session's `X` while Pi made `X-2`, and not what an
+    /// `akit kb inbox` in the same answer lists.
     @Test func anAnswersProposalsAreOnlyItsOwnAndComeBackWithTheChat() async throws {
         let base = try await KnowledgeBase.create(world: "work", env: env())
         try await base.newNote(area: "payments", name: "orders-api", kind: nil, env: env())
         try await base.newNote(area: "payments", name: "billing", kind: nil, env: env())
-        let earlier = try base.propose(.init(.note("payments/billing", body: "## Owners\nTeam B.\n", set: []), reason: "earlier", author: "claude")).proposal
-        func proposal(_ id: String, _ target: String) -> String {
-            KnowledgeProposal(id: id, kind: .note, target: target, reason: "Pi: owner", created: "2026-10-31T10:00:00Z", author: "pi",
-                              set: [], arrow: nil, body: "# x\nNew.\n").text
+        let earlier = try base.propose(.init(.note("payments/billing", body: "## Owners\nTeam B.\n", set: []), reason: "earlier", author: "claude"),
+                                       now: Date(timeIntervalSince1970: 1_577_836_800)).proposal
+        func proposal(_ id: String, _ created: String) -> String {
+            KnowledgeProposal(id: id, kind: .note, target: "payments/billing", reason: "owner", created: created, author: "pi",
+                              set: [], arrow: nil, body: "## Owners\nTeam C.\n").text
         }
-        try Data(proposal("2026-10-31-payments-orders-api", "payments/orders-api").utf8).write(to: home.appending(path: "mine.md"))
-        try Data(proposal("2026-10-31-payments-billing", "payments/billing").utf8).write(to: home.appending(path: "other.md"))
+        try Data(proposal("2020-01-02-payments-billing-2", "2020-01-02T10:00:01Z").utf8).write(to: home.appending(path: "mine.md"))
+        try Data(proposal("2020-01-02-payments-billing", "2020-01-02T10:00:00Z").utf8).write(to: home.appending(path: "other.md"))
         try Data(base.root.path.utf8).write(to: home.appending(path: "base-root"))
         try mode("propose")
         var note = Self.note
         note.baseRoot = base.root.path
         let chat = try KnowledgeAsk.newChat(note: note, cwd: home, env: env())
         let entry = try await KnowledgeAsk.ask("Fix the owner, please", noteText: "# orders-api", in: chat, agent: Self.agent, env: env())
-        #expect(entry.proposals == ["2026-10-31-payments-orders-api"], "not \(earlier.id) (before) nor the other session's billing one")
-        #expect(KnowledgeAsk.entries(chat).first?.proposals == ["2026-10-31-payments-orders-api"])
-        #expect(await base.state(ofProposal: "2026-10-31-payments-orders-api", env: env()) == .pending)
+        let mine = KnowledgeAsk.ProposalRef(id: "2020-01-02-payments-billing-2", created: "2020-01-02T10:00:01Z")
+        #expect(entry.proposals == [mine], "not \(earlier.id) (before), nor the other session's 2020-01-02-payments-billing")
+        #expect(KnowledgeAsk.entries(chat).first?.proposals == [mine])
+        #expect(await base.state(ofProposal: mine.id, created: mine.created, env: env()) == .pending)
         #expect(await base.state(ofProposal: "no-such-proposal", env: env()) == .closed)
 
         try mode("")
@@ -135,6 +145,28 @@ final class KnowledgeAskTests {
         #expect(plain.proposals == nil)
         let line = try String(contentsOf: chat.folder.appending(path: "chat.jsonl"), encoding: .utf8).split(separator: "\n").last ?? ""
         #expect(!line.contains("proposals"), "an answer without proposals stores none")
+    }
+
+    /// A chat saved before proposals had a time reads its plain ids.
+    @Test func oldEntriesWithPlainProposalIdsStillRead() throws {
+        let line = #"{"asked":"2026-10-31T10:00:00Z","id":"q1","proposals":["2026-10-31-payments-billing"],"question":"Q"}"#
+        let entry = try KnowledgeAsk.decoder.decode(KnowledgeAsk.Entry.self, from: Data(line.utf8))
+        #expect(entry.proposals == [KnowledgeAsk.ProposalRef(id: "2026-10-31-payments-billing", created: nil)])
+        let again = try KnowledgeAsk.decoder.decode(KnowledgeAsk.Entry.self, from: KnowledgeAsk.encoder.encode(entry))
+        #expect(again == entry)
+    }
+
+    /// Without call ids, a propose's result is the next bash result; a failed propose names nothing.
+    @Test func proposeOutputWithoutCallIds() {
+        let stream = [
+            #"{"type":"tool_execution_start","toolName":"bash","args":{"command":"akit kb propose --json --note a/b --stdin"}}"#,
+            #"{"type":"tool_execution_end","toolName":"bash","result":{"content":[{"type":"text","text":"{\"id\":\"x-1\",\"path\":\"inbox/x-1.md\"}"}]}}"#,
+            #"{"type":"tool_execution_start","toolName":"bash","args":{"command":"akit kb propose --note a/c --stdin"}}"#,
+            #"{"type":"tool_execution_end","toolName":"bash","isError":true,"result":{"content":[{"type":"text","text":"inbox/x-2.md exists"}]}}"#,
+            #"{"type":"tool_execution_start","toolName":"bash","args":{"command":"cat inbox/x-3.md"}}"#,
+            #"{"type":"tool_execution_end","toolName":"bash","result":{"content":[{"type":"text","text":"inbox/x-3.md"}]}}"#,
+        ]
+        #expect(KnowledgeAsk.proposeOutputIDs(stream) == ["x-1"])
     }
 
     @Test func piRunsInTheSpacesProjectFolderElseTheBase() throws {
@@ -299,6 +331,7 @@ final class KnowledgeAskTests {
             try await KnowledgeAsk.ask("Slow?", noteText: "", in: chat, agent: Self.agent, env: self.env())
         }
         #expect(entry.error == "Stopped." && !entry.isGood)
+        #expect(SendLog.records(env: env()).count == 1, "the stopped question went out: it is logged")
         #expect(Date().timeIntervalSince(started) < 25, "Pi was stopped, not waited for")
         try mode("")
         _ = try await KnowledgeAsk.ask("Again?", noteText: "", in: chat, agent: Self.agent, env: env())

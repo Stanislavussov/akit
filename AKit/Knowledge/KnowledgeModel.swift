@@ -296,6 +296,9 @@ final class KnowledgeModel {
         if let area, !areas.contains(where: { $0.name == area }) { self.area = nil }
         if area == nil { area = areas.first?.name }
         readExpandedAreas(of: base)
+        // Spaces that are gone aren't kept unfolded.
+        let names = Set(areas.map(\.name))
+        if !expandedAreas.isSubset(of: names) { expandedAreas.formIntersection(names) }
         allNotes = (try? base.notes()) ?? []
         notes = allNotes.filter { $0.area == area }
         targets = base.linkTargets()

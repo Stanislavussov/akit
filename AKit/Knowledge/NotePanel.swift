@@ -98,12 +98,12 @@ struct NotePanel: View {
             .help("Move the note to the Trash and commit its removal")
     }
 
-    private func moreMenu(@ViewBuilder _ items: () -> some View) -> some View {
+    private func moreMenu(_ help: String, @ViewBuilder _ items: () -> some View) -> some View {
         Menu("More", systemImage: "ellipsis.circle", content: items)
             .labelStyle(.iconOnly)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More: Open in Obsidian, Rename…, Delete…")
+            .help(help)
     }
 
     /// The text selected in Edit, when there is some.
@@ -175,9 +175,9 @@ struct NotePanel: View {
                 }
                 HStack(spacing: 8) {
                     copyButtons.labelStyle(.iconOnly)
-                    moreMenu { otherButtons(entry) }
+                    moreMenu("More: Open in Obsidian, Rename…, Delete…") { otherButtons(entry) }
                 }
-                moreMenu {
+                moreMenu("More: Copy, Paste, Open in Obsidian, Rename…, Delete…") {
                     copyButtons
                     otherButtons(entry)
                 }

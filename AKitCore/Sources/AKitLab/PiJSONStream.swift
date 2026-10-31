@@ -13,6 +13,8 @@ public enum PiJSONStream {
         public var error: String?
         /// The paths the read tools read, and `mcp:<tool>` for an MCP call (never its arguments).
         public var paths: [String] = []
+        /// Pi's process started (`run`): the prompt went out, whatever happened after.
+        public var started = false
 
         public init() {}
     }
@@ -70,13 +72,15 @@ public enum PiJSONStream {
         FileManager.default.createFile(atPath: stream.path, contents: nil)
         let handle = try? FileHandle(forWritingTo: stream)
         let collector = Collector()
-        let exit = await ChildProcess.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout) { line in
+        let exit = await ChildProcess.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout,
+                                          onStart: { collector.start() }) { line in
             collector.add(line)
             handle?.write(Data((JSONMask.jsonLine(line) + "\n").utf8))
             onLine?(line)
         }
         try? handle?.close()
         var output = parse(collector.lines)
+        output.started = collector.started
         if exit == nil { output.error = "Pi couldn't start." }
         else if exit?.cancelled == true { output.error = "Stopped." }
         else if exit?.timedOut == true { output.error = timeoutMessage }
@@ -90,8 +94,11 @@ public enum PiJSONStream {
     private final class Collector: @unchecked Sendable {
         private let lock = NSLock()
         private var stored: [String] = []
+        private var didStart = false
         func add(_ line: String) { lock.withLock { stored.append(line) } }
+        func start() { lock.withLock { didStart = true } }
         var lines: [String] { lock.withLock { stored } }
+        var started: Bool { lock.withLock { didStart } }
     }
 
     /// A session Pi saved in `folder`: `<time>_<id>.jsonl`.

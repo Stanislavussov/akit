@@ -96,6 +96,31 @@ final class KnowledgeSpaceOrderTests {
         #expect(try await FakeHome.git(["status", "--porcelain"], in: base.root, env: env) == "")
     }
 
+    /// Review round 2: the order can't be written (the base folder is read-only for new files):
+    /// the removal is still committed, and the error says the order wasn't updated.
+    @Test func aDeleteWhoseOrderCantBeWrittenIsStillCommitted() async throws {
+        let base = try await base(["logistics", "payments"])
+        try await base.newNote(area: "logistics", name: "warehouse", kind: nil, env: env)
+        try await base.reorder(spaces: ["payments", "logistics"], env: env)
+        let trashed = home.appending(path: "trash")
+        try FileManager.default.createDirectory(at: trashed, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: base.root.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: base.root.path) }
+        do {
+            try await base.moveToTrash(area: "logistics", env: env, trash: { url in
+                let target = trashed.appending(path: UUID().uuidString)
+                try FileManager.default.moveItem(at: url, to: target)
+                return target
+            })
+            Issue.record("no error")
+        } catch {
+            #expect(error.message.contains("its removal is committed, but the order of the spaces wasn't updated"))
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: base.root.path)
+        #expect(try await last(base).hasPrefix("Delete area logistics\n\nD\tareas/logistics/warehouse.md"))
+        #expect(base.areas().map(\.name) == ["payments"])
+    }
+
     @Test func theFileIsNoSpaceNoteOrWatchedChange() async throws {
         let base = try await base(["payments"])
         try await base.reorder(spaces: ["payments"], env: env)

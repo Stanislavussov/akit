@@ -73,14 +73,34 @@ public enum KnowledgeAsk {
         /// Pi's session of the answer: the next question forks it.
         public var session: String?
         /// The proposals (`inbox/<id>.md`) Pi made in this answer (K32), for their cards.
-        public var proposals: [String]?
+        public var proposals: [ProposalRef]?
         /// The answer can be forked: it has a session and no error.
         public var isGood: Bool { session != nil && error == nil }
 
         public init(id: String, question: String, passage: String? = nil, asked: Date, answered: Date? = nil, answer: String? = nil,
-                    error: String? = nil, session: String? = nil, proposals: [String]? = nil) {
+                    error: String? = nil, session: String? = nil, proposals: [ProposalRef]? = nil) {
             (self.id, self.question, self.passage, self.asked, self.answered) = (id, question, passage, asked, answered)
             (self.answer, self.error, self.session, self.proposals) = (answer, error, session, proposals)
+        }
+    }
+
+    /// A proposal of an answer: its id and its `created` time. Ids are reused once a proposal has
+    /// left `inbox/`, so the card follows the one made at that time (`state(ofProposal:created:)`).
+    /// Reads the plain id strings of chats saved before (created nil).
+    public struct ProposalRef: Codable, Sendable, Hashable {
+        public var id: String
+        public var created: String?
+
+        public init(id: String, created: String?) { (self.id, self.created) = (id, created) }
+
+        public init(from decoder: any Decoder) throws {
+            if let id = try? decoder.singleValueContainer().decode(String.self) {
+                (self.id, created) = (id, nil)
+                return
+            }
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            created = try container.decodeIfPresent(String.self, forKey: .created)
         }
     }
 
@@ -185,9 +205,10 @@ public enum KnowledgeAsk {
         update nothing in other systems either (no tickets, comments or messages).
         The one change you may make: when the user asks to change, fix or add something in the knowledge base (or you find \
         the note wrong and the user agrees), propose it with akit kb propose; the user sees the diff and accepts or rejects it. \
-        For a note: akit kb propose --base \(note.baseRoot) --author pi --note AREA/NAME --stdin --reason "why", the text on \
+        Keep the quotes around the base folder. \
+        For a note: akit kb propose --base \(quoted(note.baseRoot)) --author pi --note AREA/NAME --stdin --reason "why", the text on \
         stdin: for an existing note, the changed sections as whole `## Heading` blocks (each replaces the section with that \
-        heading, or is added at the end); for a new note, its whole text. --set KEY=VALUE changes one frontmatter field. For an arrow on a map: akit kb propose --base \(note.baseRoot) --author pi \
+        heading, or is added at the end); for a new note, its whole text. --set KEY=VALUE changes one frontmatter field. For an arrow on a map: akit kb propose --base \(quoted(note.baseRoot)) --author pi \
         --arrow "A -kind-> B" --reason "why". Say in your answer what you proposed.
         Answer in the language of the question, short and to the point; say where a fact comes from.
         """
@@ -288,7 +309,7 @@ public enum KnowledgeAsk {
         let arguments = ["-p", "--mode", "json", "--offline"] + options(chat: chat, fork: fork, agent: agent) + ["--", scrubbed.text]
         let environment = PiJSONStream.shellEnvironment(await LoginShell.variables(in: env), env: env)
         let base = KnowledgeBase(root: URL(filePath: chat.note.baseRoot, directoryHint: .isDirectory))
-        let before = Set(base.proposals().map(\.id))
+        let before = base.proposalIDs()
         progress("Pi is reading the question…")
         let (output, stream) = await run(pi, arguments: arguments, directory: FileWalk.isDirectory(cwd) ? cwd : chat.folder, environment: environment,
                                timeout: timeout, stream: chat.folder.appending(path: "streams/q\(number).jsonl"), progress: progress)
@@ -299,7 +320,7 @@ public enum KnowledgeAsk {
         let made = proposals(in: base, before: before, stream: stream)
         entry.proposals = made.isEmpty ? nil : made
         // Logged whenever Pi started, also when it was stopped or timed out: the prompt went out.
-        if output.error != "Pi couldn't start." {
+        if output.started {
             let system = systemPrompt(chat.note).count
             _ = SendLog.appendAfterRun(SendRecord(purpose: purpose, session: output.session, runID: chat.id, destination: gate.destination,
                                                   model: agent.model, inputCharacters: scrubbed.text.count + system,
@@ -328,12 +349,55 @@ public enum KnowledgeAsk {
         cwd.standardizedFileURL.path == URL(filePath: chat.note.baseRoot, directoryHint: .isDirectory).standardizedFileURL.path
     }
 
-    /// The proposals Pi made in one answer (K32): new in the base's inbox since the question was
-    /// sent, and named in this answer's own stream (`akit kb propose` prints the id). Both, so a
-    /// proposal another session made meanwhile never shows up here.
-    static func proposals(in base: KnowledgeBase, before: Set<String>, stream: [String]) -> [String] {
-        let text = stream.joined(separator: "\n")
-        return base.proposals().map(\.id).filter { !before.contains($0) && text.contains($0) }.sorted()
+    /// The proposals Pi made in one answer (K32): read only from the output of its own `bash`
+    /// calls that ran `kb propose` (the printed `inbox/<id>.md` path, plain or `--json`), and only
+    /// ids whose file is new in `inbox/` since the question was sent. So another session's
+    /// proposal, or one an `akit kb inbox` in the same answer lists, never shows.
+    static func proposals(in base: KnowledgeBase, before: Set<String>, stream: [String]) -> [ProposalRef] {
+        let printed = proposeOutputIDs(stream)
+        let new = base.proposalIDs().subtracting(before)
+        return printed.filter(new.contains).sorted().map { id in
+            ProposalRef(id: id, created: try? base.proposal(id).created)
+        }
+    }
+
+    /// The ids `akit kb propose` printed in this stream: the result of each `bash` call whose
+    /// command runs `kb propose`, matched by its call id (else the next `bash` result).
+    static func proposeOutputIDs(_ stream: [String]) -> Set<String> {
+        var calls = Set<String>()
+        var unnamed = 0
+        var ids = Set<String>()
+        for line in stream where line.hasPrefix("{") && line.contains("tool_execution_") {
+            guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                  event["toolName"] as? String == "bash" else { continue }
+            let call = event["toolCallId"] as? String
+            switch event["type"] as? String {
+            case "tool_execution_start":
+                let command = (event["args"] as? [String: Any])?["command"] as? String ?? ""
+                guard command.contains("kb propose") else { continue }
+                if let call { calls.insert(call) } else { unnamed += 1 }
+            case "tool_execution_end":
+                if let call {
+                    guard calls.remove(call) != nil else { continue }
+                } else {
+                    guard unnamed > 0 else { continue }
+                    unnamed -= 1
+                }
+                guard event["isError"] as? Bool != true else { continue }
+                let text = resultText(event["result"])
+                for match in text.matches(of: /inbox\/([^\s"\/\\]+)\.md/) { ids.insert(String(match.output.1)) }
+            default:
+                break
+            }
+        }
+        return ids
+    }
+
+    /// A tool result's text: its text parts, or the value itself when it is a string.
+    static func resultText(_ value: Any?) -> String {
+        if let text = value as? String { return text }
+        let parts = ((value as? [String: Any])?["content"] as? [[String: Any]]) ?? (value as? [[String: Any]]) ?? []
+        return parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
     }
 
     /// What Pi does now, from one event: a tool call (with its command or path, cut and masked),

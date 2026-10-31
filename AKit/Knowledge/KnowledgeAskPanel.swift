@@ -29,8 +29,12 @@ final class KnowledgeAskModel {
     var draft = ""
     /// The passage the next question is about (Ask Pi About This Section, or the selection in Edit).
     var passage: String?
-    /// The question being answered now, and what Pi does.
-    private(set) var asking: (question: String, passage: String?)?
+    /// The question being answered now, and what Pi does; `generation` is the chat it was asked in.
+    private var running: (question: String, passage: String?, generation: Int)?
+    /// The running question, when it belongs to the chat on screen (another note's stays hidden).
+    var asking: (question: String, passage: String?)? {
+        running.flatMap { $0.generation == generation ? ($0.question, $0.passage) : nil }
+    }
     private(set) var step = ""
     /// A refusal before anything was asked (no Pi, the sending policy, not confirmed).
     var problem: String?
@@ -40,7 +44,10 @@ final class KnowledgeAskModel {
     /// Where "Open in Pi" opened, for one line under the header.
     private(set) var openedIn: String?
 
-    var isRunning: Bool { asking != nil }
+    /// A question runs, in this chat or (stopping) in one left a moment ago: no new one starts.
+    var isRunning: Bool { running != nil }
+    /// The question running is this chat's (Stop and the spinner show).
+    var isAskingHere: Bool { asking != nil }
 
     /// The agent: the chosen Pi model, else Lab's default Pi agent.
     var agent: LabAgent {
@@ -94,7 +101,7 @@ final class KnowledgeAskModel {
         let scope = Cancellation.Scope()
         self.scope = scope
         let generation = generation
-        (asking, step, problem) = ((question, passage), "Starting Pi…", nil)
+        (running, step, problem) = ((question, passage, generation), "Starting Pi…", nil)
         draft = ""
         self.passage = nil
         Task {
@@ -106,7 +113,12 @@ final class KnowledgeAskModel {
                                                confirm: { destination in await self.confirm(destination, agent: agent) },
                                                progress: { line in Task { @MainActor in self.step = line } })
                 }
-                if generation == self.generation { entries.append(entry) }
+                if generation == self.generation {
+                    entries.append(entry)
+                } else if self.chat == chat {
+                    // The chat left and came back meanwhile: what is on disk is the truth.
+                    entries = KnowledgeAsk.entries(chat)
+                }
             } catch {
                 // Only into the chat it was asked in: the panel may show another note by now.
                 if generation == self.generation {
@@ -120,7 +132,7 @@ final class KnowledgeAskModel {
                 }
             }
             // The process is gone: the next question may start.
-            asking = nil
+            running = nil
             self.scope = nil
         }
     }
@@ -138,6 +150,14 @@ final class KnowledgeAskModel {
                 problem = error.localizedDescription
             }
         }
+    }
+
+    /// When the next proposal of this chat with the same id was made: `ref`'s proposal ended
+    /// before it (ids are reused).
+    func nextCreated(after ref: KnowledgeAsk.ProposalRef) -> String? {
+        let all = entries.flatMap { $0.proposals ?? [] }
+        guard let index = all.firstIndex(of: ref) else { return nil }
+        return all[(index + 1)...].first { $0.id == ref.id }?.created
     }
 
     var canOpenInPi: Bool { entries.contains(where: \.isGood) && !isRunning && chat != nil }
@@ -176,7 +196,7 @@ final class KnowledgeAskModel {
 
     private static func line(_ entry: KnowledgeAsk.Entry) -> String {
         let result: String = entry.answer.map { "\($0.count) characters" } ?? entry.error ?? "-"
-        let proposals: String = entry.proposals.map { ", proposals " + $0.joined(separator: ", ") } ?? ""
+        let proposals: String = entry.proposals.map { ", proposals " + $0.map(\.id).joined(separator: ", ") } ?? ""
         return "ask pi \(entry.id): \(entry.question)" + (entry.passage == nil ? "" : " (passage)") + " → " + result + proposals
     }
 
@@ -195,7 +215,7 @@ final class KnowledgeAskModel {
         KnowledgeAsk.Entry(id: "q2", question: "What happens when billing is down?", passage: "## Events\n- order created\n- retry after 5 min",
                            asked: Date(timeIntervalSince1970: 1_761_900_100), answered: Date(timeIntervalSince1970: 1_761_900_150),
                            answer: "orders-api keeps the event and sends it again after 5 minutes (the *retry* line of this section). Nothing is lost while billing is down. billing's note doesn't say so yet: I proposed a section for it.",
-                           error: nil, session: "demo-2", proposals: ["2026-10-24-payments-billing"]),
+                           error: nil, session: "demo-2", proposals: [KnowledgeAsk.ProposalRef(id: "2026-10-24-payments-billing", created: nil)]),
     ]
 }
 
@@ -204,15 +224,24 @@ final class KnowledgeAskModel {
 /// Once it has left the Inbox (here or elsewhere) the card says how it ended.
 private struct AskProposalCard: View {
     @Environment(KnowledgeModel.self) private var model
-    let id: String
+    let ref: KnowledgeAsk.ProposalRef
+    /// When the chat's next proposal with this id was made.
+    let before: String?
     @State private var state: KnowledgeBase.ProposalState?
+    /// What Accept would write, worked out once per proposal, inbox and note text (not per redraw).
+    @State private var plan: Result<KnowledgeInbox.Plan, KnowledgeBase.Failure>?
+
+    /// The Inbox's entry of this very proposal: the same id and the same `created`.
+    private var entry: KnowledgeInbox.Entry? {
+        model.proposals.first { $0.id == ref.id && (ref.created == nil || $0.created == ref.created) }
+    }
 
     var body: some View {
-        let entry = model.proposals.first { $0.id == id }
+        let entry = entry
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: entry?.kind == .arrow ? "arrow.right" : "doc.badge.plus").foregroundStyle(.tint)
-                Text("Proposal: " + (entry.map { $0.arrow?.text ?? $0.target ?? id } ?? id)).bold().lineLimit(1)
+                Text("Proposal: " + (entry.map { $0.arrow?.text ?? $0.target ?? ref.id } ?? ref.id)).bold().lineLimit(1)
                 Spacer()
                 if let entry {
                     if entry.checks.contains(where: { $0.status == .failed }) {
@@ -229,7 +258,7 @@ private struct AskProposalCard: View {
                 ForEach(entry.checks.filter { $0.status != .passed }, id: \.name) { check in
                     Text("\(check.name): \(check.message ?? check.status.rawValue)").font(.caption).foregroundStyle(.orange)
                 }
-                switch model.acceptPlan(entry) {
+                switch plan {
                 case .success(let plan)?:
                     ScrollView {
                         Text(plan.diff).font(.caption.monospaced()).textSelection(.enabled)
@@ -245,26 +274,40 @@ private struct AskProposalCard: View {
                     Button("Accept…", systemImage: "checkmark") { model.requestAccept(entry) }
                         .disabled(entry.proposal == nil || entry.checks.contains { $0.status == .failed })
                         .help("See the change, then write it into the note and commit it, as in the Inbox; the old note is backed up")
-                    Button("Reject…", systemImage: "xmark") { model.rejectRequest = id }
+                    Button("Reject…", systemImage: "xmark") { model.rejectRequest = ref.id }
                         .help("Move the proposal's file to the Trash; nothing in the base changes")
                     Button("Show in Inbox", systemImage: "tray") {
-                        model.proposalID = id
+                        model.proposalID = ref.id
                         model.screenTab = .inbox
                     }
                     .help("Open this proposal on the Inbox tab, with its check model marks and Check Again")
                 }
                 .controlSize(.small)
             } else {
-                Label(state == .accepted ? "Accepted" : state == .closed ? "Rejected or removed" : "Looking it up…",
-                      systemImage: state == .accepted ? "checkmark.circle.fill" : "xmark.circle")
+                Label(label, systemImage: state == .accepted ? "checkmark.circle.fill" : state == .pending ? "clock" : "xmark.circle")
                     .font(.callout).foregroundStyle(.secondary)
             }
         }
         .padding(8)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        // Worked out when the proposal, the inbox or the open note's text changes.
+        .task(id: "\(ref.id)|\(entry?.created ?? "-")|\(model.inboxCount)|\(model.proposals.count)|\(model.text.hashValue)") {
+            plan = entry.flatMap(model.acceptPlan)
+        }
         .task(id: entry == nil) {
             guard entry == nil, let base = model.base else { return }
-            state = await base.state(ofProposal: id, env: model.env)
+            state = await base.state(ofProposal: ref.id, created: ref.created, before: before, env: model.env)
+            // In inbox/ but not in the list yet (it was read before Pi wrote it): read it again.
+            if state == .pending { model.readInbox() }
+        }
+    }
+
+    private var label: String {
+        switch state {
+        case .accepted?: "Accepted"
+        case .closed?: "Rejected or removed"
+        case .pending?: "Pending: in the Inbox"
+        case nil: "Looking it up…"
         }
     }
 }
@@ -287,7 +330,7 @@ struct KnowledgeAskPanel: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        if ask.entries.isEmpty, !ask.isRunning {
+                        if ask.entries.isEmpty, !ask.isAskingHere {
                             Text("Ask your Pi about this note: what it means, who uses it, what's missing. Pi runs with your own setup (MCP servers, skills like /akit-context), so it can look things up in the base and in other systems. Changes to the base come as proposals you accept or reject here or in the Inbox; Pi is told to change nothing else (its bash and MCP tools stay on). The next question continues the same conversation.")
                                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
@@ -300,7 +343,9 @@ struct KnowledgeAskPanel: View {
                                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout)
                                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                             }
-                            ForEach(entry.proposals ?? [], id: \.self) { id in AskProposalCard(id: id) }
+                            ForEach(entry.proposals ?? [], id: \.self) { ref in
+                                AskProposalCard(ref: ref, before: ask.nextCreated(after: ref))
+                            }
                         }
                         if let asking = ask.asking {
                             question(asking.question, passage: asking.passage)
@@ -319,7 +364,7 @@ struct KnowledgeAskPanel: View {
                     model.readInbox()
                     proxy.scrollTo(ask.entries.last?.id, anchor: .bottom)
                 }
-                .onChange(of: ask.isRunning) { if ask.isRunning { proxy.scrollTo("running", anchor: .bottom) } }
+                .onChange(of: ask.isAskingHere) { if ask.isAskingHere { proxy.scrollTo("running", anchor: .bottom) } }
             }
             Divider()
             footer
@@ -415,14 +460,14 @@ struct KnowledgeAskPanel: View {
                     .lineLimit(1...5)
                     .textFieldStyle(.roundedBorder)
                     .focused($inputFocused)
-                if ask.isRunning {
+                if ask.isAskingHere {
                     Button("Stop", systemImage: "stop.circle") { ask.stop() }
                         .help("Stop Pi and everything it started; this answer is not continued")
                 } else {
                     Button("Send", systemImage: "arrow.up.circle.fill") { send() }
                         .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(ask.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .help("Send the question to Pi (⌘↩)")
+                        .disabled(ask.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || ask.isRunning)
+                        .help(ask.isRunning ? "Pi is still stopping the question of the chat you left; send in a moment" : "Send the question to Pi (⌘↩)")
                 }
             }
             .labelStyle(.iconOnly)

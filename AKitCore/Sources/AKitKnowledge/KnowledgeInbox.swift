@@ -466,15 +466,46 @@ extension KnowledgeBase {
     // MARK: - Inbox
 
     /// The proposals in `inbox/` (hidden files left out), by id, each with its checks run now.
-    /// Where a proposal stands (K32: its card in Ask Pi follows it): still in `inbox/`; accepted
-    /// (a commit "… (accept proposal ID)" or "Close proposal ID …"); else closed (rejected or removed).
+    /// Where a proposal stands (K32: its card in Ask Pi follows it).
     public enum ProposalState: String, Sendable { case pending, accepted, closed }
 
-    public func state(ofProposal id: String, env: HarnessEnvironment) async -> ProposalState {
-        if FileWalk.isRegularFile(root.appending(path: KnowledgeInbox.path(of: id))) { return .pending }
-        let log = (try? await KnowledgeGit(base: root, env: env).run(["log", "--format=%s", "-F", "--grep=proposal \(id)"])) ?? ""
-        let accepted = log.split(separator: "\n").contains { $0.contains("(accept proposal \(id))") || $0.hasPrefix("Close proposal \(id) ") }
-        return accepted ? .accepted : .closed
+    /// The state of the proposal `id` that was created at `created` (its frontmatter time). Ids are
+    /// unique only among the files in `inbox/`, so a later proposal may reuse one:
+    /// - pending: `inbox/<id>.md` is there with this `created` (nil: any);
+    /// - accepted: the oldest commit "… (accept proposal ID)" or "Close proposal ID …" made at or
+    ///   after `created`, and before `before` (the next known proposal with this id, if any);
+    /// - closed: otherwise (rejected, or removed: an untracked reject leaves no commit).
+    public func state(ofProposal id: String, created: String? = nil, before: String? = nil, env: HarnessEnvironment) async -> ProposalState {
+        let file = root.appending(path: KnowledgeInbox.path(of: id))
+        var before = before.flatMap(Self.date)
+        if FileWalk.isRegularFile(file) {
+            let current = KnowledgeNote.load(file).flatMap { KnowledgeProposal.parse($0.text) }?.created
+            if created == nil || current == created { return .pending }
+            // A later proposal with this id is there now: this one ended before it was made.
+            if let current = current.flatMap(Self.date), let mine = created.flatMap(Self.date), current > mine {
+                before = min(before ?? current, current)
+            }
+        }
+        let log = (try? await KnowledgeGit(base: root, env: env).run(["log", "--format=%cI%x09%s", "-F", "--grep=proposal \(id)"])) ?? ""
+        let since = created.flatMap(Self.date)
+        let closes = log.split(separator: "\n").compactMap { line -> Date? in
+            let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
+            guard parts.count == 2, parts[1].contains("(accept proposal \(id))") || parts[1].hasPrefix("Close proposal \(id) "),
+                  let date = Self.date(parts[0]) else { return nil }
+            return date
+        }
+        guard let first = closes.filter({ date in since.map { date >= $0 } ?? true }).min() else { return .closed }
+        if let before, first >= before { return .closed }
+        return .accepted
+    }
+
+    /// An ISO 8601 time (a proposal's `created`, git's `%cI`).
+    static func date(_ text: String) -> Date? { ISO8601DateFormatter().date(from: text) }
+
+    /// The ids of the files in `inbox/`, without reading them (no checks).
+    public func proposalIDs() -> Set<String> {
+        Set(FileWalk.children(of: inboxFolder).filter { $0.pathExtension == "md" && FileWalk.isRegularFile($0) }
+            .map { Self.nfc($0.deletingPathExtension().lastPathComponent) })
     }
 
     public func proposals() -> [KnowledgeInbox.Entry] {
