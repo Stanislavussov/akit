@@ -1,12 +1,13 @@
 import AKitErrorAnalysis
 import AKitLab
+import AppKit
 import SwiftUI
 
-/// A one-call review's notes (`docs/design/error-analysis.md`, "Step 1", "Diagnosis" and
-/// "Verifier"), diagnosis first: a card with the outcome, the main problem, its cause, why and the
-/// fix; then the user's reactions with what the agent did and why, loops, what to change, the
-/// accepted notes grouped by error-analysis mode, and the rest (paragraph, requirements,
-/// deviation steps, rejected notes) under Details.
+/// A one-call review's notes (`docs/design/error-analysis.md`, "Step 1", "Problems" and
+/// "Verifier"), the result first: a card with the outcome and the main problem in one line; then
+/// up to three problems, each with its cause, why, the user's words, the quote from the session
+/// and a prompt to copy for the agent; the rest (reactions, loops, notes by type, paragraph,
+/// requirements, rejected notes) folded under Details.
 struct ReviewNotesView: View {
     let notes: SessionNotes
     /// Mode names and definitions for the notes' groups; without them a group shows its mode id.
@@ -16,7 +17,9 @@ struct ReviewNotesView: View {
     /// On a Lab review run, which has Re-check with Another Model….
     var inLabRun = false
     /// Snapshots: `--tab notes` opens the disclosures.
-    @State private var showDetails = DebugSnapshot.options?.tab == "notes"
+    @State private var showDetails = ["notes", "reactions"].contains(DebugSnapshot.options?.tab)
+    @State private var showOther = DebugSnapshot.options?.tab == "notes"
+    @State private var copied: String?
     @State private var showRejected = DebugSnapshot.options?.tab == "notes"
     @State private var showPlainTurns = DebugSnapshot.options?.tab == "reactions"
     @State private var translator = Translator()
@@ -33,48 +36,57 @@ struct ReviewNotesView: View {
                     .controlSize(.small)
             }
             ConclusionCard(notes: notes, metrics: metrics, inLabRun: inLabRun, translator: translator)
-            if let reactions = notes.reactions, !reactions.isEmpty {
-                reactionsSection(reactions).id("reactions")
-            }
-            if let loops = notes.loops, !loops.isEmpty {
-                section("Loops") {
-                    ForEach(Array(loops.enumerated()), id: \.offset) { index, loop in
-                        LoopView(loop: loop, what: translator.text(Key.loop(index), loop.what))
-                    }
-                }
-            }
-            if !notes.advice.isEmpty {
-                section("What to Change") {
-                    ForEach(Array(notes.advice.prefix(Review.limit).enumerated()), id: \.offset) { index, advice in
-                        AdviceView(number: index + 1, advice: advice,
-                                   title: translator.text(Key.adviceTitle(index), advice.title),
-                                   detail: translator.text(Key.adviceDetail(index), advice.detail))
-                    }
-                }
-            }
-            section("Problems by Type", spacing: 16) {
-                if notes.accepted.isEmpty {
-                    Text("Checked, no failures: the verifier accepted no notes.").foregroundStyle(.secondary)
-                }
-                ForEach(groups, id: \.id) { group in
+            problemsSection.id("problems")
+            let other = notes.otherNotes
+            if !other.isEmpty {
+                DisclosureGroup("Smaller problems (\(other.count))", isExpanded: $showOther) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("\(group.title) · \(group.notes.count)", systemImage: "tag")
-                            .font(.headline)
-                            .help(group.help)
-                        ForEach(group.notes) { note in
-                            NoteView(note: note, collapsesQuote: true,
-                                     unconfirmed: !group.id.isEmpty && types[note.id]?.confirmed == false, translator: translator)
-                        }
-                            .padding(.leading, 22)
+                        ForEach(other) { NoteView(note: $0, collapsesQuote: true, translator: translator) }
                     }
+                    .padding(.top, 6)
                 }
+                .font(.callout)
             }
-            .id("notes")
-            DisclosureGroup("Details: what happened, requirements, rejected notes", isExpanded: $showDetails) {
+            DisclosureGroup("Details: your reactions, loops, problems by type, what happened, rejected notes", isExpanded: $showDetails) {
                 details.padding(.top, 10)
             }
             .font(.callout)
+            .id("notes")
         }
+    }
+
+    /// The review's result: each problem with its proof and a prompt for the agent.
+    @ViewBuilder private var problemsSection: some View {
+        let problems = notes.shownProblems
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(problems.isEmpty ? "What Went Wrong" : "What Went Wrong · \(problems.count)").font(.title3.bold())
+                Spacer()
+                if problems.contains(where: { !$0.prompt.isEmpty }) {
+                    Button(copied == "prompts" ? "Copied" : "Copy All Prompts") { copy(notes.promptsText, as: "prompts") }
+                        .help("Every problem's prompt, to paste into AGENTS.md or CLAUDE.md or to send to an agent")
+                }
+                Button(copied == "brief" ? "Copied" : "Copy Report") { copy(notes.briefMarkdown, as: "brief") }
+                    .help("The main problem and each problem with its cause, your words, the quote from the session and the prompt, as Markdown")
+            }
+            .controlSize(.small)
+            if problems.isEmpty {
+                Text(notes.accepted.isEmpty ? "Checked, no problems: the verifier accepted no notes." : "No problem worth a prompt; the smaller ones are below.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(Array(problems.enumerated()), id: \.offset) { index, problem in
+                ProblemCard(number: index + 1, problem: problem, evidence: notes.evidence(of: problem), reactions: notes.reactions(of: problem),
+                            title: translator.text(notes.problems == nil ? Key.adviceTitle(index) : Key.problemTitle(index), problem.title),
+                            why: translator.text(notes.problems == nil ? Key.adviceDetail(index) : Key.problemWhy(index), problem.why),
+                            fromAdvice: notes.problems == nil)
+            }
+        }
+    }
+
+    private func copy(_ text: String, as what: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copied = what
     }
 
     /// Reactions that need explaining first (negative ones, or any with a cause); plain next
@@ -108,6 +120,32 @@ struct ReviewNotesView: View {
     @ViewBuilder private var details: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(authors).foregroundStyle(.secondary).textSelection(.enabled)
+            if let reactions = notes.reactions, !reactions.isEmpty {
+                reactionsSection(reactions).id("reactions")
+            }
+            if let loops = notes.loops, !loops.isEmpty {
+                section("Loops") {
+                    ForEach(Array(loops.enumerated()), id: \.offset) { index, loop in
+                        LoopView(loop: loop, what: translator.text(Key.loop(index), loop.what))
+                    }
+                }
+            }
+            if !notes.accepted.isEmpty {
+                section("Problems by Type", spacing: 16) {
+                    ForEach(groups, id: \.id) { group in
+                        VStack(alignment: .leading, spacing: 12) {
+                            Label("\(group.title) · \(group.notes.count)", systemImage: "tag")
+                                .font(.headline)
+                                .help(group.help)
+                            ForEach(group.notes) { note in
+                                NoteView(note: note, collapsesQuote: true,
+                                         unconfirmed: !group.id.isEmpty && types[note.id]?.confirmed == false, translator: translator)
+                            }
+                                .padding(.leading, 22)
+                        }
+                    }
+                }
+            }
             if !notes.paragraph.isEmpty {
                 section("What Happened", spacing: 3) {
                     MarkdownText(text: translator.text(Key.paragraph, notes.paragraph).trimmingCharacters(in: .whitespacesAndNewlines))
@@ -246,7 +284,8 @@ private struct ConclusionCard: View {
         if !diagnosis.why.isEmpty {
             Text(translator.text(Key.diagnosisWhy, diagnosis.why)).fixedSize(horizontal: false, vertical: true)
         }
-        if !diagnosis.fix.isEmpty {
+        // Older reviews' one fix; the problems below carry the prompts.
+        if !diagnosis.fix.isEmpty, notes.shownProblems.isEmpty {
             Text("👉 \(translator.text(Key.diagnosisFix, diagnosis.fix))")
                 .fontWeight(.semibold)
                 .fixedSize(horizontal: false, vertical: true)
@@ -298,6 +337,75 @@ private struct ConclusionCard: View {
         case .partly: .orange
         case .no: .red
         case .unclear: .gray
+        }
+    }
+}
+
+/// One problem: what went wrong and its cause, why, the user's own words, the quote from the
+/// session that proves it, and the prompt for the agent with Copy.
+private struct ProblemCard: View {
+    let number: Int
+    let problem: Problem
+    let evidence: Note?
+    let reactions: [UserReaction]
+    /// The title and why as shown: translated or the originals.
+    let title: String
+    let why: String
+    /// Made from an older review's advice: the prompt is the advice itself.
+    let fromAdvice: Bool
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(number)").font(.headline.monospacedDigit()).foregroundStyle(.secondary)
+                Text(title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if let cause = problem.cause { CauseTag(cause: cause) }
+            }
+            if !why.isEmpty {
+                Text(why).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(reactions) { reaction in
+                proof("You said · step #\(reaction.step)", reaction.text)
+            }
+            if let evidence, !evidence.quote.isEmpty {
+                proof("In the session · step #\(evidence.step)", evidence.quote)
+            }
+            if !problem.prompt.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(fromAdvice ? "Advice (older review: review again for a full prompt)" : "Prompt for the agent")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Spacer()
+                        Button(copied ? "Copied" : "Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(problem.prompt, forType: .string)
+                            copied = true
+                        }
+                        .controlSize(.small)
+                        .help("Paste it into AGENTS.md or CLAUDE.md, or send it to the agent")
+                    }
+                    Text(problem.prompt)
+                        .font(.callout.monospaced())
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(0.3)))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .textSelection(.enabled)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func proof(_ label: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary).monospacedDigit()
+            QuoteText(text: text)
         }
     }
 }
@@ -388,35 +496,6 @@ private struct LoopView: View {
             }
         }
         .textSelection(.enabled)
-    }
-}
-
-/// One improvement: the advice, what it improves, and the evidence folded away.
-private struct AdviceView: View {
-    let number: Int
-    let advice: Advice
-    /// The title and detail as shown: translated or the originals.
-    let title: String
-    let detail: String
-    @State private var showEvidence = DebugSnapshot.options?.tab == "notes"
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("👉 \(title)").fontWeight(.semibold)
-            Text(detail).foregroundStyle(.secondary)
-            if !advice.evidence.isEmpty {
-                DisclosureGroup("Evidence" + (advice.noteIDs.isEmpty ? "" : " (\(advice.noteIDs.joined(separator: ", ")))"),
-                                isExpanded: $showEvidence) {
-                    Text(advice.evidence)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 2)
-                }
-                .font(.callout)
-            }
-        }
-        .textSelection(.enabled)
-        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

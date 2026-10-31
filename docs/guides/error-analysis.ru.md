@@ -106,7 +106,7 @@
 - список заметок;
 - решающий и наблюдаемый шаг (decisive/observed step);
 - абзац в 3–5 предложений;
-- не больше трёх советов.
+- не больше трёх проблем: у каждой заголовок, причина, «почему», номера её заметок и промпт для агента на английском.
 
 В каждой заметке есть: описание, шаг `#n`, цитата из этого шага, серьёзность, слой вины, «корень или симптом», примерная цена.
 
@@ -3051,7 +3051,7 @@ home overlap: none · 5 tasks with the project's own CLAUDE.md or AGENTS.md (the
 **Когда пригодится:**
 
 - «Сколько я потратил на разборы?» → откройте запуск и прочитайте строку **Cost**; за месяц — вкладка **Sends**.
-- «Одна сессия пошла плохо, хочу понять почему» → разберите её одну: карточка итога, советы **What to Change** и проблемы **Problems by Type**.
+- «Одна сессия пошла плохо, хочу понять почему» → разберите её одну: карточка итога и **What Went Wrong** — до трёх проблем, у каждой промпт для агента, который можно скопировать.
 - «Что и кому ушло с моего Mac?» → вкладка **Sends** показывает каждый вызов модели: цель, адресата, токены и стоимость.
 - «Сессия трудная, одной модели не верю» → **Re-check with Another Model…** ставит новый платный разбор той же сессии другой моделью.
 - «Хочу знать, как часто встречается каждый режим» → **New Run…** → **Error Analysis Batch** разбирает выборку сессий, а **Open Report** открывает отчёт.
@@ -3126,14 +3126,14 @@ Lab выполняет запуски по одному: остальные жд
 Пример: разбор сессии закончился (**Finished**), и вы хотите за минуту понять, что пошло не так, почему и что поменять.
 
 1. В **Lab** → **Runs** нажмите запуск «Review: …».
-2. Прочитайте карточку итога: исход, главная проблема одной фразой, её причина (**Cause**), почему так вышло и одно исправление «👉 …».
-3. Прочитайте **Your Reactions**: каждое место, где вы остановили агента, отказали в вызове, поставили оценку или поправили его. У каждого места — что вы хотели, что сделал агент, о чём он думал и причина.
-4. Если есть **Loops** — это повторы одной ошибки. Строка «Started at step #n» говорит, где повтор начался.
-5. Прочитайте **What to Change**: до трёх советов.
-6. Если нужно доказательство, раскройте **Evidence** у совета или **Quote** у заметки.
-7. Хотите читать на другом языке — нажмите **Translate** (глобус) над карточкой итога и выберите язык. Диагноз, ваши реакции, повторы, заключение, советы, абзац **What Happened**, требования и заметки модели заменятся переводом, над ними будет строка «Translated to … · модель». **Show Original** возвращает оригинал. Цитаты и ваши заметки не переводятся. Та же кнопка есть в окне заметок сессии, которое открывается со страницы режима, из матрицы переходов и со страницы пакета в Lab. Подробно: [перевести разбор](screens#lab-translate).
+2. Прочитайте карточку итога: исход, главная проблема одной фразой и её причина (**Cause**).
+3. Прочитайте **What Went Wrong**: до трёх проблем, самая дорогая первой. У каждой проблемы — что пошло не так, почему, ваши слова, цитата из сессии и промпт для агента.
+4. Скопируйте промпт: **Copy** у одной проблемы или **Copy All Prompts** — промпты всех проблем.
+5. Вставьте промпт в AGENTS.md или CLAUDE.md или отправьте его агенту. В AKit общий файл инструкций — [Brain → Global Instructions](screens#brain-global); у проекта — его собственный файл инструкций.
+6. Раскройте **Details** только когда нужны ваши реакции, повторы или заметки по режимам.
+7. Хотите читать на другом языке — нажмите **Translate** (глобус) над карточкой итога и выберите язык. Диагноз, заголовки проблем и строки «почему», ваши реакции, повторы, заключение, абзац **What Happened**, требования и заметки модели заменятся переводом, над ними будет строка «Translated to … · модель». **Show Original** возвращает оригинал. Цитаты, ваши заметки и промпты для агента не переводятся: промпты всегда на английском. Та же кнопка есть в окне заметок сессии, которое открывается со страницы режима, из матрицы переходов и со страницы пакета в Lab. Подробно: [перевести разбор](screens#lab-translate).
 
-![Страница разбора одной сессии в Lab: строки Kind, Agent, Opens in, Queued, Started, Ended, Cost, Folder, кнопки Re-check with Another Model…, Show in Finder, Remove…, строка «Reviewed session: Add a 5-day forecast screen» с кнопками Show Session и Overview…, кнопка Translate. Ниже оранжевая карточка итога: строка «Partly done · 1 high · 1 medium», крупно диагноз «The agent rewrote the screen you asked to keep, then reported done without looking at it.», строка Cause с меткой Ignored instruction, абзац «You wanted a new forecast screen…» и исправление «👉 Add a rule: before editing a file the user named as unchanged, ask first…». Под карточкой начало раздела Your Reactions с реакцией Interrupted step #9.](images/lab-review.png)
+![Страница разбора одной сессии в Lab: строки Kind, Agent, Opens in, Queued, Started, Ended, Cost, Folder, кнопки Re-check with Another Model…, Show in Finder, Remove…, строка «Reviewed session: Add a 5-day forecast screen» с кнопками Show Session и Overview…, кнопка Translate. Ниже оранжевая карточка итога: строка «Partly done · 1 high · 1 medium», крупно диагноз «The agent rewrote the screen you asked to keep, then reported done without looking at it.» и строка Cause с меткой Ignored instruction. Под карточкой блок «What Went Wrong · 2» с кнопками Copy All Prompts и Copy Report и начало проблемы 1 «Rewrote the screen you asked to keep as it is.» с меткой Ignored instruction: строка «почему», «You said · step #10» «No, don't touch CurrentView. I said keep it as it is.», «In the session · step #7» «Edit CurrentView.swift: replace body with TabView { … }» и «Prompt for the agent» с кнопкой Copy.](images/lab-review.png)
 
 Строка под кнопками:
 
@@ -3147,11 +3147,10 @@ Lab выполняет запуски по одному: остальные жд
 - Рядом — число принятых проблем по серьёзности: «🔴 1 high · 🟠 2 medium · ⚪ 1 low». Если проблем нет: «no problems found».
 - Крупная строка — диагноз: главная проблема одной фразой, без пересказа сессии.
 - **Cause** — причина из одного списка (см. ниже). Наведите курсор на метку: подсказка скажет, что обычно помогает.
-- Абзац «почему»: что вы хотели, о чём думал агент и что он сделал, со ссылками на шаги (#n).
-- «👉 …» — одно исправление, которое стоит сделать.
 - «The verifier doubts this diagnosis: …» (оранжевая строка) — проверяющий (verifier), второй вызов модели, не согласен с диагнозом и пишет почему. Ниже тогда стоит «Verifier's conclusion: …» — его вывод по принятым заметкам. Верьте ему и вашим реакциям больше, чем диагнозу.
 - У разборов, сделанных до диагноза, вместо него стоит заключение: одно-два предложения проверяющего.
 - Размер разобранной сессии (только Claude Code): «⏱ 2 hr, 35 min · 164 calls · 515K fresh tokens · peak context 397K».
+- У старых разборов без проблем в карточке ещё есть абзац «почему» и исправление «👉 …». Новые разборы пишут «почему» у каждой проблемы.
 
 Причины (**Cause**). Разбор выбирает самую глубокую причину, которую видно в сессии:
 
@@ -3171,6 +3170,38 @@ Lab выполняет запуски по одному: остальные жд
 
 > **Почему так:** **Weak model** разбор ставит последним. Сначала он проверяет, хватало ли агенту задачи, контекста и настройки. Иначе «слабая модель» объясняла бы всё и ничего не подсказывала.
 
+**What Went Wrong · N** — главный блок: от 0 до 3 пронумерованных проблем, самая дорогая первой. Кнопки справа:
+
+- **Copy All Prompts** — копирует промпты всех проблем: вставить в AGENTS.md или CLAUDE.md или отправить агенту.
+- **Copy Report** — копирует отчёт в Markdown: главная проблема и каждая проблема с причиной, вашими словами, цитатой и промптом.
+
+Карточка проблемы:
+
+- Номер и заголовок — что пошло не так, одной фразой. Справа — метка причины, как в карточке итога.
+- Серая строка — почему: что вы хотели, о чём думал агент и что он сделал.
+- «You said · step #10» — ваши слова дословно: реакции, которые эта проблема объясняет (остановка, возражение, плохая оценка). Строки нет, если таких реакций нет.
+- «In the session · step #7» — цитата из сессии, которая доказывает проблему.
+- «Prompt for the agent» с кнопкой **Copy** — промпт в синей рамке: 1–4 короткие строки для агента. Промпт всегда на английском и общий: без файлов и функций этой задачи. Он говорит, когда правило действует, что делать и как проверить.
+- У разборов, сделанных до этого изменения, проблемами стоят их советы. Подпись рамки тогда «Advice (older review: review again for a full prompt)», а в рамке — текст совета. Разберите сессию заново, чтобы получить полный промпт.
+
+Если проблем нет:
+
+- «Checked, no problems: the verifier accepted no notes.» — проверяющий не принял ни одной заметки. Такая сессия тоже считается в знаменателях частот.
+- «No problem worth a prompt; the smaller ones are below.» — заметки есть, но ни одна не стоит промпта. Они в **Smaller problems**.
+
+![Страница разбора, прокрученная к блоку «What Went Wrong · 2» с кнопками Copy All Prompts и Copy Report. Проблема 1 «Rewrote the screen you asked to keep as it is.» с меткой Ignored instruction, «You said · step #10», «In the session · step #7» и промптом «When the user says to keep a file or screen as it is, don't edit it. If the task seems to need that edit, stop and ask first, naming the file.». Проблема 2 «Reported done without opening the screen it changed.» с меткой No verification, строкой «почему» «The agent took a green build as proof that the screens work…», «You said · step #16» «Broke the current screen again.», «In the session · step #16» «Done: ForecastView is in the tab bar.» и промптом «Before you report a UI task done, build and open every screen you touched. Say in the report what you checked and what you saw.». Ниже свёрнутый блок Details: your reactions, loops, problems by type, what happened, rejected notes.](images/lab-problems.png)
+
+**Smaller problems (k)** — свёрнутый блок с принятыми заметками, которые не вошли ни в одну проблему. Строки заметок те же, что в **Problems by Type**. Блока нет, если таких заметок нет.
+
+**Details: your reactions, loops, problems by type, what happened, rejected notes** — свёрнутый блок с подробностями. Внутри по порядку:
+
+- «Notes by …; verified by …» — какая модель писала заметки и какая проверяла.
+- **Your Reactions**, **Loops** и **Problems by Type** — см. ниже.
+- **What Happened** — абзац о ходе сессии. Он пишется до проверки, поэтому может упоминать отклонённую заметку. Диагноз пишется в том же вызове, но проверяющий его проверяет: если он не согласен, в карточке есть оранжевая строка.
+- **Requirements** — требования задачи, выписанные из ваших реплик.
+- **Where It Went Off** — «Decided about step #n» и «Visible about step #m»: где решение пошло не туда и где это стало видно. Оба шага приблизительные.
+- **Rejected by the verifier (N)** — отклонённые заметки с причиной: «Rejected by code» или «Rejected by the verifier model».
+
 **Your Reactions** — места, где вы реагировали на работу агента. AKit находит их кодом, без модели, и разбор обязан объяснить каждое:
 
 - ✋ **Interrupted** — вы остановили агента (Esc).
@@ -3183,9 +3214,7 @@ Lab выполняет запуски по одному: остальные жд
 
 **Loops** — повторы: одна и та же ошибка, одна и та же ваша поправка или правки, которые отменяют друг друга. «🔁 Steps #7–#15» — где повтор шёл, ниже — что повторялось и «Started at step #n»: решение, с которого всё началось. Часто оно раньше первого повтора.
 
-![Страница разбора, прокрученная к Your Reactions: реакция Interrupted step #9 с меткой Ignored instruction, цитатой «[Request interrupted by user]», строками Wanted, Agent did, Agent thought и исправлением «👉 Name the files that must not change…»; Pushed back step #10 «No, don't touch CurrentView. I said keep it as it is.»; Rated bad step #16 с меткой No verification и комментарием «Broke the current screen again.»; раскрытая строка Other messages and good ratings (1) с Next message step #18 и меткой No problem. Ниже раздел Loops: «🔁 Steps #7–#15», метка Ignored instruction, «Edited CurrentView three times…» и «Started at step #5».](images/lab-reactions.png)
-
-**What to Change** — до трёх советов «👉 …» и что каждый улучшит. **Evidence (n1)** раскрывает доказательства из сессии; в скобках — заметки, на которых совет стоит.
+![Раскрытый блок Details: строка «Notes by Claude Code · opus; verified by Claude Code · opus.», раздел Your Reactions: Interrupted step #9 с меткой Ignored instruction, цитатой «[Request interrupted by user]», строками Wanted, Agent did, Agent thought и исправлением «👉 Name the files that must not change in the request or in a project rule.»; Pushed back step #10; Rated bad step #16 с меткой No verification и исправлением «👉 Open the screens the user named before reporting.»; свёрнутая строка Other messages and good ratings (1). Ниже раздел Loops: «🔁 Steps #7–#15», метка Ignored instruction, «Edited CurrentView three times; each edit kept the TabView that hid the toolbar.» и «Started at step #5»; дальше начало раздела Problems by Type.](images/lab-notes.png)
 
 **Problems by Type** — принятые заметки, сгруппированные по режимам. Группы те же, что считают страницы режимов на экране Error Analysis.
 
@@ -3195,17 +3224,6 @@ Lab выполняет запуски по одному: остальные жд
 - **The verifier's case against it** есть у заметок высокой серьёзности. Это аргумент проверяющего против заметки и его вердикт.
 - Метка «Type unconfirmed» — сопоставление было не уверено (уверенность ниже 0.6), а вы маршрут ещё не смотрели. Примите или перенесите его на вкладке [Review](#review). Страницы режимов такую заметку пока не считают.
 - Группа «No type yet» — заметки, которым ни один режим не подошёл или которые ещё не сопоставлялись. Из таких кластеризация делает новые режимы.
-- «Checked, no failures: the verifier accepted no notes» — принятых заметок нет. Такая сессия тоже считается в знаменателях частот.
-
-![Страница разбора, прокрученная к заметкам, все строки раскрыты. Блок Problems by Type: режим «Explicit user constraint violated · 1» с заметкой n1 (step #7, метки Edit, High, Agent), раскрытой Quote «Edit CurrentView.swift: replace body with TabView { … }» и раскрытой The verifier's case against it со строкой Verdict; режим «Overclaiming completion · 1» с заметкой n2 (step #16, метки Verify, Medium, Agent, Type unconfirmed, «symptom of n1»). Ниже раскрытый блок Details: what happened, requirements, rejected notes со строкой «Notes by Claude Code · opus; verified by Claude Code · opus.» и разделами What Happened, Requirements, Where It Went Off («Decided about step #7», «Visible about step #16»).](images/lab-notes.png)
-
-**Details: what happened, requirements, rejected notes** — свёрнутый блок с подробностями:
-
-- «Notes by …; verified by …» — какая модель писала заметки и какая проверяла.
-- **What Happened** — абзац о ходе сессии. Он пишется до проверки, поэтому может упоминать отклонённую заметку. Диагноз пишется в том же вызове, но проверяющий его проверяет: если он не согласен, в карточке есть оранжевая строка.
-- **Requirements** — требования задачи, выписанные из ваших реплик.
-- **Where It Went Off** — «Decided about step #n» и «Visible about step #m»: где решение пошло не туда и где это стало видно. Оба шага приблизительные.
-- **Rejected by the verifier (N)** — отклонённые заметки с причиной: «Rejected by code» или «Rejected by the verifier model».
 
 > **Совет:** «No conclusion yet» в карточке значит, что разбор сделан до появления заключений. **Re-check with Another Model…** с той же моделью, тем же усилием и тем же языком разбора возьмёт готовые заметки и заново запустит только проверку и сопоставление: два вызова модели вместо трёх.
 
@@ -3462,7 +3480,7 @@ Lab выполняет запуски по одному: остальные жд
 
 Это то же, что команда `akit analysis notes SESSION`, плюс сигналы и маршруты. Сверху название и ключ сессии. Ниже:
 
-- Карточка итога (без размера сессии), **What to Change**, **Problems by Type** и свёрнутые **Details** — как на [странице разбора](#lab-read-notes).
+- Карточка итога (без размера сессии), **What Went Wrong**, **Smaller problems** и свёрнутые **Details** — как на [странице разбора](#lab-read-notes).
 - **Routes** — куда сейчас отнесена каждая принятая заметка модели. Маршрут — решение «эта заметка относится к этому режиму».
 - **Signals** — дешёвые сигналы сессии. Их считает код прямо здесь по транскрипту, без вызова модели.
 - **Done** — закрыть окно.
@@ -3571,6 +3589,7 @@ Lab выполняет запуски по одному: остальные жд
 - Повторный разбор той же сессии той же моделью с теми же настройками и на неизменённом файле не вызывает модель заново. Заметки и проверка берутся по ключу готовности — отпечатку входа: сессия, модель, язык, версия маскирования.
 - Если сопоставление не удалось, разбор не падает: заметки остаются без маршрутов.
 - Проверка, которая пишет заключение, — новая версия (3). Поэтому следующий разбор каждой уже разобранной сессии — в пакете, в **Queue Model Notes…** или поштучно — один раз заново вызовет проверку и сопоставление. Это платно, но заметки не переписываются: они берутся по ключу.
+- Промпт заметок теперь версии 3 (проверка — версии 5): он пишет проблемы с промптами для агента. Поэтому следующий разбор каждой уже разобранной сессии один раз заново вызовет заметки. Это платно.
 - В окне заметок сессии кнопки **Re-check with Another Model…** нет. Там подсказка другая: «No conclusion yet: this review is older than conclusions. The next review of this session writes one.»
 - «Rejected by code» значит одно из трёх: цитата не найдена в указанном шаге, цитата короче 8 символов или у цитаты с «…» все части короче 8 символов.
 - Разбор в режиме **Agent with file tools** показывает абзац и блок «What to Improve» вместо заметок. Если агент не написал результат: «The agent wrote no review.json.» или «The agent's review.json isn't readable.»
@@ -3701,7 +3720,7 @@ Lab выполняет запуски по одному: остальные жд
 ### Просто: выбрать язык разборов
 <!-- section: settings-language -->
 
-Пример: вы хотите, чтобы абзац «What Happened» и советы «What to Change» были на русском.
+Пример: вы хотите, чтобы абзац «What Happened», заголовки проблем **What Went Wrong** и их строки «почему» были на русском. Промпты для агента всегда пишутся на английском.
 
 1. Откройте **Settings…** (⌘,) и прокрутите до блока **Lab**.
 2. В **Review language** выберите **Russian**.
@@ -4631,7 +4650,7 @@ AKit не знает цен моделей. Он показывает тольк
 **Разбор сессии:**
 
 - `akit lab new review SESSION [--harness pi] [--model M] [--mode call]` — разобрать сессию.
-- `akit analysis notes [SESSION]` — показать заметки.
+- `akit analysis notes [SESSION]` — показать заметки. В конце — пронумерованные проблемы, у каждой причина, «почему» и строка «Prompt:».
 
 ### Что есть только в CLI
 <!-- section: files-cli-only -->

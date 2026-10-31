@@ -242,13 +242,24 @@ public enum NotesPipeline {
             let noteIds: [String]?
         }
 
+        struct RawProblem: Decodable {
+            let title: String
+            let cause: String?
+            let why: String?
+            let noteIds: [String]?
+            let reactionIds: [String]?
+            let prompt: String?
+        }
+
         let requirements: [String]
         let outcome: Outcome
         let notes: [RawNote]
         let decisiveStep: Int?
         let observedStep: Int?
         let paragraph: String
-        let advice: [RawAdvice]
+        /// Notes prompt 1 and 2; prompt 3 asks for problems instead.
+        let advice: [RawAdvice]?
+        let problems: [RawProblem]?
         let checkpoints: [RawCheckpoint]?
         let loops: [RawLoop]?
         let diagnosis: RawDiagnosis?
@@ -271,7 +282,7 @@ public enum NotesPipeline {
                         symptomOf: raw.symptomOf.flatMap { $0.isEmpty ? nil : $0 }, costTokens: raw.costTokens,
                         costSteps: raw.costSteps, phase: modelPhase ?? phases[raw.step], cause: RootCause.parse(raw.cause))
         }
-        let advice = answer.advice.prefix(3).map {
+        let advice = (answer.advice ?? []).prefix(3).map {
             Advice(title: SecretFilter.masked($0.title), evidence: SecretFilter.masked($0.evidence ?? ""),
                    detail: SecretFilter.masked($0.detail), noteIDs: $0.noteIds ?? [])
         }
@@ -285,6 +296,17 @@ public enum NotesPipeline {
             clean(raw.headline).isEmpty ? nil
                 : Diagnosis(headline: clean(raw.headline), cause: RootCause.parse(raw.cause) ?? .none, why: clean(raw.why), fix: clean(raw.fix),
                             steps: raw.steps ?? [])
+        }
+        // A problem stands on notes: one that names none the answer has can't show its proof.
+        let ids = Set(notes.map(\.id))
+        result.problems = answer.problems.map { list in
+            list.prefix(3).compactMap { raw -> Problem? in
+                let noteIDs = (raw.noteIds ?? []).filter(ids.contains)
+                guard !clean(raw.title).isEmpty, !noteIDs.isEmpty else { return nil }
+                let cause = RootCause.parse(raw.cause)
+                return Problem(title: clean(raw.title), cause: cause == RootCause.none ? nil : cause, why: clean(raw.why),
+                               prompt: clean(raw.prompt), noteIDs: noteIDs, reactionIDs: raw.reactionIds ?? [])
+            }
         }
         result.checkpoints = answer.checkpoints.map { list in
             var seenIDs = Set<String>()
@@ -362,6 +384,8 @@ public enum NotesPipeline {
         }
         let accepted = Set(result.accepted.map(\.id))
         result.advice = result.advice.filter { !Set($0.noteIDs).isDisjoint(with: accepted) }
+        // Problems stay as the model wrote them: a later verifier may accept their notes again.
+        // `shownProblems` leaves out those whose notes are all rejected.
         let kept = result.accepted.count
         out("Verifier: \(kept) of \(result.notes.count) notes accepted.")
         return result
@@ -402,25 +426,25 @@ public enum NotesPipeline {
             + (review.map { "\n" + reviewInput($0) } ?? "")
     }
 
-    /// For the conclusion: the outcome, the paragraph, the advice and the notes rejected in
+    /// For the conclusion: the outcome, the paragraph, the problems and the notes rejected in
     /// code, which the conclusion must leave out.
     static func reviewInput(_ review: SessionNotes) -> String {
         let rejected = review.notes.filter { $0.source == .model && $0.verdict?.accepted == false }
             .map { "- \($0.id): \($0.description) (\($0.verdict?.reason ?? "rejected"))" }
-        let advice = review.advice.map { "- \($0.title) (rests on \($0.noteIDs.joined(separator: ", ")))" }
+        let advice = review.shownProblems.map { "- \($0.title) (rests on \($0.noteIDs.joined(separator: ", ")))" }
         return """
             ## Review to conclude
 
             Outcome: \(review.outcome.rawValue)
 
-            Diagnosis: \(review.diagnosis.map { "\($0.headline) Cause: \($0.cause.rawValue). Why: \($0.why)" } ?? "(none)")
+            Diagnosis: \(review.diagnosis.map { "\($0.headline) Cause: \($0.cause.rawValue)." + ($0.why.isEmpty ? "" : " Why: \($0.why)") } ?? "(none)")
 
             The user's reactions (ratings are not in the user turns above):
             \(review.reactions.map { $0.isEmpty ? "(none)" : UserReactions.text($0) } ?? "(none)")
 
             Paragraph: \(review.paragraph)
 
-            Advice:
+            Problems:
             \(advice.isEmpty ? "(none)" : advice.joined(separator: "\n"))
 
             Notes rejected before you:

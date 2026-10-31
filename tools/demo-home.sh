@@ -375,10 +375,17 @@ file "$DEMO/.akit/lab/analysis/notes/claude_$SESSION.json" <<EOF
       "detail": "A quick look at the screens the user named would have caught the lost button.", "noteIDs": ["n1", "n2"], "checkedByRepeating": false }
   ],
   "diagnosis": { "headline": "The agent rewrote the screen you asked to keep, then reported done without looking at it.",
-                 "cause": "ignored-instruction",
-                 "why": "You wanted a new forecast screen and the current one unchanged. The agent planned to put both into a TabView and treated CurrentView's body as free to replace (#7), so the refresh button went away and nothing checked it before the report (#16).",
-                 "fix": "Add a rule: before editing a file the user named as unchanged, ask first; after the edit, build and open that screen.",
-                 "steps": [7, 16] },
+                 "cause": "ignored-instruction", "why": "", "fix": "", "steps": [7, 16] },
+  "problems": [
+    { "title": "Rewrote the screen you asked to keep as it is.", "cause": "ignored-instruction",
+      "why": "You wanted a forecast screen next to the current one. The agent thought a tab bar was the simplest way and treated CurrentView's body as free to replace.",
+      "noteIDs": ["n1"], "reactionIDs": ["r2"],
+      "prompt": "When the user says to keep a file or screen as it is, don't edit it.\nIf the task seems to need that edit, stop and ask first, naming the file." },
+    { "title": "Reported done without opening the screen it changed.", "cause": "no-verification",
+      "why": "The agent took a green build as proof that the screens work, so nobody looked at the current screen before the report.",
+      "noteIDs": ["n2"], "reactionIDs": ["r3"],
+      "prompt": "Before you report a UI task done, build and open every screen you touched.\nSay in the report what you checked and what you saw." }
+  ],
   "reactions": [
     { "id": "r1", "kind": "interrupt", "step": 9, "text": "[Request interrupted by user]" },
     { "id": "r2", "kind": "pushback", "step": 10, "text": "No, don't touch CurrentView. I said keep it as it is." },
@@ -400,8 +407,8 @@ file "$DEMO/.akit/lab/analysis/notes/claude_$SESSION.json" <<EOF
     { "fromStep": 7, "toStep": 15, "what": "Edited CurrentView three times; each edit kept the TabView that hid the toolbar.", "rootStep": 5,
       "cause": "ignored-instruction" }
   ],
-  "notesConfig": { "step": "notes", "harness": "claude-code", "model": "opus", "promptVersion": 2, "scrubVersion": 1, "extra": {} },
-  "verifierConfig": { "step": "verifier", "harness": "claude-code", "model": "opus", "promptVersion": 4, "scrubVersion": 1, "extra": {} },
+  "notesConfig": { "step": "notes", "harness": "claude-code", "model": "opus", "promptVersion": 3, "scrubVersion": 1, "extra": {} },
+  "verifierConfig": { "step": "verifier", "harness": "claude-code", "model": "opus", "promptVersion": 5, "scrubVersion": 1, "extra": {} },
   "doneKeys": {},
   "routes": [
     { "noteID": "n1", "modeID": "user-constraint-violated", "confidence": 0.92, "reason": "The user asked to keep the screen as it is.", "by": "matching" },

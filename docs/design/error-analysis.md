@@ -11,6 +11,9 @@ review becomes the first step of this pipeline.
 reactions are its checkpoints, and it answers with a diagnosis and a root cause. See
 [Checkpoints and diagnosis](#checkpoints-and-diagnosis).
 
+2026-10-31: the review leads with up to three problems, each with a prompt for the agent
+(notes prompt 3, verifier prompt 5). See [Problems with a prompt](#problems-with-a-prompt).
+
 ## Goal
 
 Find out what goes wrong in agent sessions *again and again*, how often, at which step of
@@ -223,6 +226,34 @@ evidence of that, so the review now starts from it.
 - The reactions are facts from the log, so a review explains them rather than finding them.
   Pushback by keywords misses quiet corrections; the prompt asks the model to treat a later
   turn that repeats, corrects or narrows the request as pushback.
+
+## Problems with a prompt
+
+Added 2026-10-31 at the user's request: the review had too much noise and too little use. The
+same problem showed in the diagnosis, the reactions, the loops, the advice and the notes by
+type, and nothing in it could be handed to an agent. The user wants, per problem, the cause,
+the excerpt from the session, and a prompt to give the agent.
+
+- **Answer**: `problems` (0–3, the most costly first, one per root problem; notes, checkpoints
+  and loops of one root merge) replaces `advice`, and the diagnosis keeps only headline, cause
+  and steps (`why` and `fix` stay in the model for older reviews, empty in new ones). A problem:
+  `title` (≤ 15 words), `cause`, `why` (wanted → thought → did), `noteIds` (the first proves it
+  best), `reactionIds`, `prompt` (1–4 imperative lines for the agent, generic, always English:
+  when it applies, what to do, how to check).
+- **No new quote check**: the proof is the first accepted note of the problem (its quote is
+  already checked in code and by the verifier) and the user's reactions, verbatim from the
+  log. Parsing drops unknown note ids and a problem with none left; the verifier drops a
+  problem whose notes it all rejected, as it did advice.
+- **Older reviews**: `shownProblems` turns their advice into problems, the advice text
+  doubling as the prompt; the screen says so.
+- **Screen**: the card (outcome, headline, cause, a doubt), then **What Went Wrong** with one
+  card per problem (cause tag, why, «You said», «In the session», the prompt with Copy),
+  **Copy All Prompts** and **Copy Report** (`briefMarkdown`); accepted notes no problem names
+  fold under **Smaller problems**; reactions, loops, notes by type and the rest under
+  **Details**. Prompts are not translated: they go to agents.
+- `review.json` findings and `akit analysis` output carry the problems with their prompts.
+- Not built: a button that adds a prompt to an instruction file directly (Brain → Global
+  Instructions or a project's AGENTS.md). For now Copy and paste.
 
 ## Bootstrap labeling
 

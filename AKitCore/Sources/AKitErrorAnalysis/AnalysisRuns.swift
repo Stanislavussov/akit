@@ -72,15 +72,17 @@ public enum AnalysisRuns {
         let routedCount = Matching.currentRoutes(routed).values.filter { $0.modeID != nil }.count
         if routedCount > 0 { out("Matched \(routedCount) notes to modes.") }
         try ReviewRun.write(summary: notes.diagnosisText.map { $0 + "\n\n" + notes.paragraph } ?? notes.paragraph,
-                            findings: notes.advice.map { Review.Finding(title: $0.title, evidence: $0.evidence, detail: $0.detail) },
+                            findings: notes.shownProblems.map { Review.Finding(title: $0.title, evidence: $0.why, detail: $0.prompt) },
                             to: run.folder)
         out("")
         out("Outcome: \(notes.outcome.title). \(notes.accepted.count) notes accepted, \(notes.rejected.count) rejected.")
         if let diagnosis = notes.diagnosisText { out(diagnosis) }
         let negative = (notes.reactions ?? []).filter(\.kind.isNegative).count
-        if negative > 0 { out("Your reactions: \(negative) negative, each explained under Your Reactions.") }
-        out(notes.paragraph)
-        for (index, advice) in notes.advice.enumerated() { out("\(index + 1). \(advice.title)") }
+        if negative > 0 { out("Your reactions: \(negative) negative, explained under Details → Your Reactions.") }
+        for (index, problem) in notes.shownProblems.enumerated() {
+            out("\(index + 1). \(problem.title)")
+            if !problem.prompt.isEmpty { out("   Prompt: " + problem.prompt.replacingOccurrences(of: "\n", with: "\n           ")) }
+        }
         phase(.metrics)
         return RunResult(review: ReviewRun.status(in: run.folder))
     }

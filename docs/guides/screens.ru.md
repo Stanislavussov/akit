@@ -2250,7 +2250,7 @@ System prompt — это текст, который агент отправля�
 #### Сложно: попросить модель разобрать сессию
 <!-- section: sessions-review -->
 
-**Review in Terminal…** отправляет сессию модели. Модель пишет один абзац о том, что произошло, и до трёх улучшений. Пример: агент два раза пошёл не туда, и вы хотите получить совет, что поменять в настройке.
+**Review in Terminal…** отправляет сессию модели. Модель пишет, что пошло не так: до трёх проблем, у каждой промпт для агента. Пример: агент два раза пошёл не туда, и вы хотите получить совет, что поменять в настройке.
 
 1. Откройте сессию Claude Code или Pi и нажмите кнопку с колбой **Review in Terminal…**.
 2. Откроется окно **New Lab Run** с этой сессией. Проверьте поля **Harness** и **Model**.
@@ -3732,7 +3732,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 Нужно, когда одна сессия пошла плохо и вы хотите понять почему. Например: агент два часа добавлял экран прогноза в `weather-app` и сломал соседний экран.
 
-Модель читает сессию (секреты замаскированы) и числа AKit для неё. Потом она пишет абзац о том, что произошло, и до трёх улучшений. В ваших проектах ничего не меняется.
+Модель читает сессию (секреты замаскированы) и числа AKit для неё. Потом она пишет, что пошло не так: до трёх проблем, у каждой промпт для агента. В ваших проектах ничего не меняется.
 
 1. Нажмите **New Run…**. Откроется окно **New Lab Run**.
 2. Вверху выберите **Review a Session**.
@@ -3763,24 +3763,23 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 Нужно, когда разбор получил статус **Finished**.
 
 1. Выберите разбор в списке запусков. В строке **Kind** у него написано **Session review**.
-2. Прочитайте цветную карточку вверху. Это итог: достигнута ли цель сессии, сколько найдено проблем, главная проблема одной фразой, её причина (**Cause**), почему так вышло и одно исправление «👉 …».
-3. Прочитайте **Your Reactions**: где вы остановили агента, отказали, поставили оценку или поправили его, и почему агент пошёл туда. Подробно: [ваши реакции и причины](error-analysis#lab-read-notes).
-4. Если есть **Loops**, посмотрите, где повтор начался.
-5. Прочитайте **What to Change**. Это советы, не больше трёх. Строка **Evidence** под советом раскрывает заметки, на которых он основан.
-6. Прочитайте **Problems by Type**. Это принятые заметки, сгруппированные по режимам Error Analysis.
-7. Раскройте **Details: what happened, requirements, rejected notes**, если нужны подробности.
-8. Хотите читать на другом языке — нажмите **Translate** над карточкой итога. Подробно: [перевести разбор](#lab-translate).
+2. Прочитайте цветную карточку вверху. Это итог: достигнута ли цель сессии, сколько найдено проблем, главная проблема одной фразой и её причина (**Cause**).
+3. Прочитайте **What Went Wrong**. Это до трёх проблем, самая дорогая первой. У каждой: что пошло не так, почему, ваши слова («You said · step #n»), цитата из сессии («In the session · step #n») и промпт для агента. Подробно: [проблемы и промпты](error-analysis#lab-read-notes).
+4. Скопируйте промпт кнопкой **Copy** у проблемы или все промпты кнопкой **Copy All Prompts**. Вставьте их в AGENTS.md или CLAUDE.md (например, в [Brain → Global Instructions](#brain-global)) или отправьте агенту. **Copy Report** копирует весь отчёт в Markdown.
+5. Если есть **Smaller problems**, раскройте их: это принятые заметки, которые не вошли ни в одну проблему.
+6. Раскройте **Details: your reactions, loops, problems by type, what happened, rejected notes**, если нужны подробности: ваши реакции, повторы, заметки по режимам Error Analysis, абзац о ходе сессии и отклонённые заметки.
+7. Хотите читать на другом языке — нажмите **Translate** над карточкой итога. Подробно: [перевести разбор](#lab-translate).
 
-![Страница законченного разбора сессии в Lab: кнопки Re-check with Another Model…, Show in Finder, Remove…, строка Reviewed session с кнопками Show Session и Overview…, карточка итога: Partly done · 1 high · 1 medium, диагноз «The agent rewrote the screen you asked to keep, then reported done without looking at it.», Cause с меткой Ignored instruction, абзац «почему» и исправление «👉 Add a rule…»; ниже начало раздела Your Reactions](images/lab-review.png)
+![Страница законченного разбора сессии в Lab: кнопки Re-check with Another Model…, Show in Finder, Remove…, строка Reviewed session с кнопками Show Session и Overview…, карточка итога: Partly done · 1 high · 1 medium, диагноз «The agent rewrote the screen you asked to keep, then reported done without looking at it.», Cause с меткой Ignored instruction; ниже блок «What Went Wrong · 2» с кнопками Copy All Prompts и Copy Report и начало проблемы 1 «Rewrote the screen you asked to keep as it is.»: You said · step #10, In the session · step #7 и Prompt for the agent с кнопкой Copy](images/lab-review.png)
 
-Что есть у заметки:
+Что есть у заметки (в **Smaller problems** и в **Problems by Type** внутри **Details**):
 
 - Номер (`n1`), шаг сессии (`step #7`) и метки, например серьёзность **High**.
 - Текст: что пошло не так.
 - **Quote** — дословная цитата из этого шага.
 - **The verifier's case against it** — довод проверяющей модели «проблемы здесь нет» и её вердикт. Строка есть только у принятых заметок с серьёзностью **High**.
 
-![Страница разбора Review: Add a 5-day forecast screen, прокрученная к Problems by Type: режим Explicit user constraint violated · 1 с заметкой n1 step #7, метками Edit, High, Agent и раскрытыми Quote и The verifier's case against it; режим Overclaiming completion · 1 с заметкой n2 step #16 и меткой Type unconfirmed; ниже раскрытый блок Details: what happened, requirements, rejected notes с разделами What Happened, Requirements, Where It Went Off](images/lab-notes.png)
+![Раскрытый блок Details разбора: строка Notes by Claude Code · opus; verified by Claude Code · opus, раздел Your Reactions с реакциями Interrupted step #9, Pushed back step #10 и Rated bad step #16 (строки Wanted, Agent did, Agent thought и исправления 👉), свёрнутая строка Other messages and good ratings (1), раздел Loops «🔁 Steps #7–#15» со строкой Started at step #5; ниже начало раздела Problems by Type](images/lab-notes.png)
 
 Кнопки рядом со строкой «Reviewed session: …»:
 
@@ -3819,7 +3818,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Оригинал не меняется. Черновики для GitLab, заметки и советы остаются такими, как их написала модель. **Edit** у запроса Review правит оригинал.
 - Весь разбор переводится одним вызовом модели. Код, пути к файлам, команды, имена и ключи JSON остаются как есть.
 - Перевод сохраняется рядом с разбором, в папке `translations`. Повторный перевод на тот же язык той же моделью показывается сразу и ничего не стоит. Ответы Ask AKit не сохраняются.
-- Цитаты из сессии, строки **Evidence** и ваши собственные заметки не переводятся: они не уходят модели.
+- Цитаты из сессии, промпты для агента и ваши собственные заметки не переводятся: они не уходят модели. Промпты всегда на английском. Заголовки проблем и их строки «почему» переводятся.
 - Вызов подчиняется [правилам отправки](#settings-policy) и месячному лимиту. Если правила не пускают данные к модели перевода, окно перед отправкой называется «Can't translate to …»: в нём причина и что сделать (добавить адресата в **Sending policy** или выбрать другую [модель перевода](#settings-translation)). Кнопка одна — **OK**.
 - Ревью MR — исключение: если модели перевода его отдавать нельзя, его переводит модель Pi самого ревью. Подробно: [перевод ревью](review#screen-translate).
 - Пока идёт перевод, рядом стоит «Translating to …» и кнопка **Stop**: она останавливает агента.

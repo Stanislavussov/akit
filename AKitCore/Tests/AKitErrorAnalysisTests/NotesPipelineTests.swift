@@ -235,6 +235,66 @@ struct NotesPipelineTests {
         #expect(notes.notes.first?.cause == nil && notes.diagnosisText == nil)
     }
 
+    @Test func problemsCarryAPromptAndTheirProof() async throws {
+        let file = try session()
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((#"{"type":"user","timestamp":"2026-10-01T10:01:05Z","message":{"role":"user","content":"No, the tests still fail. Look at the output."}}"#
+            + "\n").utf8))
+        try handle.close()
+        var answer = notesAnswer
+        answer["advice"] = nil
+        answer["diagnosis"] = ["headline": "The agent said done while the tests failed.", "cause": "no-verification"]
+        answer["problems"] = [
+            ["title": "Claimed the tests pass after they failed.", "cause": "no-verification",
+             "why": "The user wanted Foo fixed; the agent saw exit 1 and still reported success.",
+             "noteIds": ["n1", "n9"], "reactionIds": ["r1"],
+             "prompt": "Before you say a task is done, run the tests again.\nQuote the last result line in your report."],
+            ["title": "Rests only on a rejected note.", "cause": "scope-drift", "why": "w", "noteIds": ["n3"], "prompt": "p"],
+            ["title": "Names no note the answer has.", "cause": "weak-model", "why": "w", "noteIds": ["n9"], "prompt": "p"],
+        ]
+        try fakeClaude(notes: answer, verdicts: verdicts)
+        let notes = try await review(file)
+
+        // Unknown note ids are dropped at once; a problem on rejected notes is kept for a later
+        // verifier but not shown.
+        let problem = try #require(notes.problems?.first)
+        #expect(notes.problems?.map(\.title) == ["Claimed the tests pass after they failed.", "Rests only on a rejected note."])
+        #expect(problem.noteIDs == ["n1"] && problem.reactionIDs == ["r1"] && problem.cause == .noVerification)
+        #expect(notes.shownProblems == [problem])
+        #expect(notes.evidence(of: problem)?.quote == "all tests pass")
+        #expect(notes.reactions(of: problem).map(\.text) == ["No, the tests still fail. Look at the output."])
+        #expect(notes.otherNotes.isEmpty)
+        #expect(notes.promptsText == "Before you say a task is done, run the tests again.\nQuote the last result line in your report.\n")
+        let brief = notes.briefMarkdown
+        #expect(brief.contains("**The agent said done while the tests failed.**"))
+        #expect(brief.contains("## 1. Claimed the tests pass after they failed."))
+        #expect(brief.contains("You said (step #4):\n> No, the tests still fail. Look at the output."))
+        #expect(brief.contains("In the session (step #3):\n> all tests pass"))
+        #expect(brief.contains("```\nBefore you say a task is done, run the tests again.\nQuote the last result line in your report.\n```"))
+        #expect(try #require(NotesStore(env: env).load(notes.sessionKey)).problems == notes.problems)
+        // Translate covers the title and why; the prompt stays as written, for the agent.
+        let parts = notes.translationSource(env: env).parts
+        #expect(parts.contains { $0.key == "problem:0:title" } && parts.contains { $0.key == "problem:0:why" })
+        #expect(!parts.contains { $0.text.contains("run the tests again") })
+    }
+
+    @Test func anOlderReviewsAdviceStandsInForProblems() {
+        var notes = SessionNotes(sessionKey: "claude:x", transcript: "/t.jsonl", title: nil, project: nil, requirements: [], outcome: .partly,
+                                 notes: [Note(id: "n1", source: .model, description: "d", step: 2, quote: "q", cause: .missingContext,
+                                              verdict: Verdict(accepted: true, reason: "r", by: .model)),
+                                         Note(id: "n2", source: .model, description: "d2", step: 5, quote: "q2",
+                                              verdict: Verdict(accepted: true, reason: "r", by: .model))],
+                                 deviation: Deviation(), paragraph: "", advice: [Advice(title: "Read the module first.", evidence: "e",
+                                                                                        detail: "Fewer wrong edits.", noteIDs: ["n1"])],
+                                 notesConfig: StepConfig(step: "notes"), verifierConfig: nil, doneKeys: [:], runID: nil)
+        #expect(notes.shownProblems == [Problem(title: "Read the module first.", cause: .missingContext, why: "Fewer wrong edits.",
+                                                prompt: "Read the module first.", noteIDs: ["n1"])])
+        #expect(notes.otherNotes.map(\.id) == ["n2"])
+        notes.problems = []
+        #expect(notes.shownProblems.isEmpty && notes.briefMarkdown.hasSuffix("No problem worth a prompt.\n"))
+    }
+
     @Test func aNewRatingReviewsTheSessionAgain() async throws {
         try fakeClaude(notes: notesAnswer, verdicts: verdicts)
         let file = try session()
