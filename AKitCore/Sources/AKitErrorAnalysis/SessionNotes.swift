@@ -175,6 +175,43 @@ public struct Loop: Codable, Hashable, Sendable {
     }
 }
 
+/// One root problem of the session, as the user reads it first: what went wrong, why, the
+/// notes and reactions that prove it, and a prompt that keeps an agent from doing it again.
+public struct Problem: Codable, Hashable, Sendable {
+    /// What went wrong, in one plain sentence.
+    public var title: String
+    /// nil for a problem made from an older review's advice.
+    public var cause: RootCause?
+    /// What the user wanted, what the agent thought, what it did.
+    public var why: String
+    /// An instruction for the agent: pasted into AGENTS.md or CLAUDE.md, or sent to it.
+    public var prompt: String
+    /// The notes it rests on, the one whose quote proves it best first.
+    public var noteIDs: [String]
+    /// The user's reactions it explains.
+    public var reactionIDs: [String]
+
+    public init(title: String, cause: RootCause?, why: String, prompt: String, noteIDs: [String], reactionIDs: [String] = []) {
+        self.title = title
+        self.cause = cause
+        self.why = why
+        self.prompt = prompt
+        self.noteIDs = noteIDs
+        self.reactionIDs = reactionIDs
+    }
+
+    // Lenient: a hand-edited or partial file must not fail the whole review.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decode(String.self, forKey: .title)
+        cause = try c.decodeIfPresent(RootCause.self, forKey: .cause)
+        why = try c.decodeIfPresent(String.self, forKey: .why) ?? ""
+        prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
+        noteIDs = try c.decodeIfPresent([String].self, forKey: .noteIDs) ?? []
+        reactionIDs = try c.decodeIfPresent([String].self, forKey: .reactionIDs) ?? []
+    }
+}
+
 /// The verifier's verdict on one note. Rejected notes are kept with the reason and stay out
 /// of the pool.
 public struct Verdict: Codable, Hashable, Sendable {
@@ -307,6 +344,9 @@ public struct SessionNotes: Codable, Hashable, Sendable {
     /// One reading per reaction, by its id.
     public var checkpoints: [Checkpoint]?
     public var loops: [Loop]?
+    /// The review's result: up to three root problems, each with a prompt for the agent (notes
+    /// prompt 3 on; nil in older reviews, whose advice stands in, see `shownProblems`).
+    public var problems: [Problem]?
     /// Who wrote the notes and who verified them, and the done keys of both steps.
     public var notesConfig: StepConfig
     public var verifierConfig: StepConfig?

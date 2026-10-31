@@ -11,7 +11,8 @@ extension AKitCLI {
 
           akit analysis notes [SESSION] [--json]
                                           A reviewed session's outcome, notes (accepted and rejected
-                                          by the verifier), deviation steps and advice. Without
+                                          by the verifier), deviation steps and problems with a
+                                          prompt for the agent. Without
                                           SESSION: every reviewed session. Review one with
                                           akit lab new review SESSION
           akit analysis signals [--json]  Compute cheap signals (interrupts, pushbacks, rejections, tool
@@ -145,7 +146,15 @@ extension AKitCLI {
             lines.append("    “\(note.quote)”")
             if let verdict = note.verdict, !verdict.accepted { lines.append("    rejected: \(verdict.reason)") }
         }
-        for (index, advice) in notes.advice.enumerated() { lines.append("\(index + 1). \(advice.title) (\(advice.noteIDs.joined(separator: ", ")))") }
+        for (index, problem) in notes.shownProblems.enumerated() {
+            lines.append("")
+            lines.append("\(index + 1). \(problem.title) (\(problem.noteIDs.joined(separator: ", ")))" + (problem.cause.map { " · \($0.title)" } ?? ""))
+            if !problem.why.isEmpty { lines.append("   \(problem.why)") }
+            if !problem.prompt.isEmpty {
+                lines.append("   Prompt:")
+                lines += problem.prompt.split(separator: "\n", omittingEmptySubsequences: false).map { "     \($0)" }
+            }
+        }
         return lines.joined(separator: "\n")
     }
 }

@@ -19,6 +19,8 @@ extension SessionNotes {
         public static let diagnosisDoubt = "diagnosis:doubt"
         public static func checkpoint(_ id: String, _ field: String) -> String { "checkpoint:\(id):\(field)" }
         public static func loop(_ index: Int) -> String { "loop:\(index)" }
+        public static func problemTitle(_ index: Int) -> String { "problem:\(index):title" }
+        public static func problemWhy(_ index: Int) -> String { "problem:\(index):why" }
     }
 
     /// The model-written texts of these notes, for one Translate call: the conclusion, the
@@ -38,6 +40,11 @@ extension SessionNotes {
                       OutputTranslation.Part(Key.checkpoint(checkpoint.id, "did"), checkpoint.agentDid),
                       OutputTranslation.Part(Key.checkpoint(checkpoint.id, "thought"), checkpoint.agentThought)]
             if let fix = checkpoint.fix { parts.append(OutputTranslation.Part(Key.checkpoint(checkpoint.id, "fix"), fix)) }
+        }
+        // A problem's prompt stays as written: it is for the agent, in English. An older
+        // review's problems are its advice, translated under the advice keys below.
+        for (index, problem) in (problems == nil ? [] : shownProblems).enumerated() {
+            parts += [OutputTranslation.Part(Key.problemTitle(index), problem.title), OutputTranslation.Part(Key.problemWhy(index), problem.why)]
         }
         for (index, loop) in (loops ?? []).enumerated() { parts.append(OutputTranslation.Part(Key.loop(index), loop.what)) }
         parts += requirements.enumerated().map { OutputTranslation.Part(Key.requirement($0.offset), $0.element) }

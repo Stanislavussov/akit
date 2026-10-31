@@ -174,7 +174,7 @@ struct LabBatchSection: View {
                         if session.steps.contains("notes") {
                             Button("Show Notes") { notesFor = SessionNotesTarget(sessionKey: session.pick.sessionKey) }
                                 .controlSize(.small)
-                                .help("Its outcome, notes, advice, routes and signals")
+                                .help("Its outcome, problems, notes, routes and signals")
                         } else {
                             Text("")
                         }

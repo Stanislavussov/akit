@@ -215,7 +215,7 @@ struct ModePage: View {
                         VStack(alignment: .trailing, spacing: 4) {
                             if found != nil {
                                 Button("Show Session Notes") { notesFor = SessionNotesTarget(sessionKey: ref.sessionKey) }
-                                    .help("The session's outcome, notes, advice, routes and signals")
+                                    .help("The session's outcome, problems, notes, routes and signals")
                             }
                             if let found, exemplars.count < ModeStore.maxExemplars,
                                !exemplars.contains(where: { $0.sessionKey == ref.sessionKey && $0.step == found.note.step }) {

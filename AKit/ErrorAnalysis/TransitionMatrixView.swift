@@ -287,7 +287,7 @@ private struct MatrixDrillSheet: View {
                         if notes != nil {
                             Button("Show Session Notes") { notesFor = SessionNotesTarget(sessionKey: key) }
                                 .controlSize(.small)
-                                .help("The session's outcome, paragraph, all notes, advice, routes and signals")
+                                .help("The session's outcome, problems, paragraph, all notes, routes and signals")
                         }
                     }
                     if let notes {

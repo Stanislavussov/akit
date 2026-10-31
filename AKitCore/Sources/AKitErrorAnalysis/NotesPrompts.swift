@@ -4,18 +4,20 @@ import Foundation
 /// are part of the done keys: changing a prompt reruns that step and every step after it.
 enum NotesPrompts {
     /// 2 (2026-10-29): the user's reactions as checkpoints, thinking in the digest, a diagnosis
-    /// with a root cause, loops, a cause per note.
-    static let notesVersion = 2
-    /// 4 (2026-10-29): also checks the diagnosis.
-    static let verifierVersion = 4
+    /// with a root cause, loops, a cause per note. 3 (2026-10-31): problems with a prompt for the
+    /// agent replace the diagnosis's why and fix and the advice.
+    static let notesVersion = 3
+    /// 4 (2026-10-29): also checks the diagnosis. 5 (2026-10-31): reads problems, not advice.
+    static let verifierVersion = 5
 
     /// The causes as the prompts list them.
     static let causes = RootCause.allCases.map(\.rawValue).map { "\"\($0)\"" }.joined(separator: ",")
 
     static let notesSystem = """
         You review one recorded coding-agent session for AKit's error analysis. Your reader is the
-        user who ran it. They want to know WHY it went wrong, not a retelling of what happened.
-        Be strict and concrete: name one cause, point at the step, say the one fix.
+        user who ran it. They want to know WHY it went wrong and what to tell the agent so it
+        doesn't happen again, not a retelling of what happened. Be strict and concrete: few
+        problems, each with one cause, the proof from the log and a prompt they can use today.
 
         The input is a digest of the transcript: items are numbered [#n] in order, user turns are
         verbatim, the agent's thinking is shortened, long tool output keeps its start, its end, its
@@ -93,27 +95,32 @@ enum NotesPrompts {
         6. decisiveStep: the step of the error that decided the outcome; observedStep: the first
            step where the problem became visible in the transcript or to the user. Both are
            approximate; leave them out when nothing went wrong.
-        7. diagnosis: the answer the user reads first.
+        7. diagnosis: the line the user reads first.
            - headline: one plain sentence, at most 20 words: the main thing that went wrong (or
              that the session went well). No hedging, no step numbers, no retelling.
            - cause: the one cause behind most of the user's negative reactions and the high
              notes; "none" when nothing went wrong.
-           - why: two or three sentences that link the user's requirement, the agent's reasoning
-             and its action: "The user wanted X. The agent thought Y (#n), so it did Z (#m)."
-           - fix: the one change worth making, concrete enough to do today.
            - steps: the steps that prove it.
         8. paragraph: 3 to 5 plain sentences written from the transcript, not only from the
            notes: what the session did, whether it went well, how efficient it was.
-        9. advice: at most 3 improvements, the most valuable first. Each is generic advice that
-           would help any future session meeting the same barrier, not a fix for this task: a
-           rule for AGENTS.md or CLAUDE.md, a skill, a hook, a setting, a way to prompt or to
-           split work. Its title names no feature, file, branch or tool of this project.
-           - title: the advice in one sentence.
-           - evidence: the facts from this session that prove the barrier: cite items (#n) and
-             numbers.
-           - detail: what following it would improve, in one sentence.
-           - noteIds: the ids of the notes it rests on (at least one).
-           0 or 1 pieces of advice are fine when the session went well.
+        9. problems: the review's result, what the user acts on. 0 to 3, the most costly first,
+           one per root problem: merge the notes, checkpoints and loops that share a root into
+           one problem; leave out small problems that cost little. An empty list is right when
+           nothing went wrong.
+           - title: what went wrong, one plain sentence, at most 15 words, no step numbers.
+           - cause: one cause from the list (not "none").
+           - why: one or two sentences: what the user wanted, what the agent thought (from its
+             thinking), what it did. No step numbers.
+           - noteIds: the notes it rests on, at least one; the first is the note whose quote
+             proves it best.
+           - reactionIds: the ids of the user's reactions it explains; empty when none.
+           - prompt: an instruction for the agent that keeps this from happening again; the user
+             pastes it into AGENTS.md or CLAUDE.md, or sends it to the agent. Write it to the
+             agent, in the imperative, 1 to 4 short lines: when it applies, what to do, how to
+             check it is done. It must help any future task that meets the same situation, so it
+             names no feature, file or branch of this task; a command or tool is fine when it is
+             the way to check. Always write the prompt in English, whatever language the rest is
+             in.
         """
 
     static let notesSchema = #"""
@@ -138,14 +145,15 @@ enum NotesPrompts {
           "diagnosis":{"type":"object","properties":{
             "headline":{"type":"string"},"cause":{"type":"string","enum":[CAUSES]},"why":{"type":"string"},
             "fix":{"type":"string"},"steps":{"type":"array","items":{"type":"integer"}}},
-            "required":["headline","cause","why","fix"]},
+            "required":["headline","cause"]},
           "decisiveStep":{"type":"integer"},"observedStep":{"type":"integer"},
           "paragraph":{"type":"string"},
-          "advice":{"type":"array","maxItems":3,"items":{"type":"object","properties":{
-            "title":{"type":"string"},"evidence":{"type":"string"},"detail":{"type":"string"},
-            "noteIds":{"type":"array","items":{"type":"string"}}},
-            "required":["title","evidence","detail","noteIds"]}}},
-          "required":["requirements","outcome","checkpoints","loops","notes","diagnosis","paragraph","advice"]}
+          "problems":{"type":"array","maxItems":3,"items":{"type":"object","properties":{
+            "title":{"type":"string"},"cause":{"type":"string","enum":[CAUSES]},"why":{"type":"string"},
+            "noteIds":{"type":"array","items":{"type":"string"}},"reactionIds":{"type":"array","items":{"type":"string"}},
+            "prompt":{"type":"string"}},
+            "required":["title","cause","why","noteIds","prompt"]}}},
+          "required":["requirements","outcome","checkpoints","loops","notes","diagnosis","paragraph","problems"]}
         """#.replacingOccurrences(of: "CAUSES", with: causes)
 
     static let verifierSystem = """
@@ -164,7 +172,7 @@ enum NotesPrompts {
         For a note of high severity, first write the strongest argument that there is no
         problem here (steelman), then decide.
 
-        Then check the reviewer's diagnosis (its headline, cause and why) against the user's turns
+        Then check the reviewer's diagnosis (its headline and cause) against the user's turns
         and the notes you supported: diagnosisHolds is false when it rests on a note you rejected,
         blames the wrong cause, or isn't what the user's reactions show; then diagnosisReason
         says in one sentence what is wrong with it. A diagnosis of "weak-model" holds only when the
@@ -173,7 +181,7 @@ enum NotesPrompts {
         Then write the review's conclusion for a busy reader, in one or two short plain
         sentences: was the session good, the problem that cost the most (only from notes you
         supported) and the one change worth making, if any. You get the outcome, the reviewer's
-        diagnosis, paragraph, advice and the notes rejected before you; leave out whatever rests on
+        diagnosis, paragraph, problems and the notes rejected before you; leave out whatever rests on
         a rejected note. Don't retell the session and don't use step numbers.
 
         Answer {"verdicts":[{"id":"n1","steelman":"…","supported":true,"reason":"…"}],
