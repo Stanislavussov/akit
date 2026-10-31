@@ -720,14 +720,7 @@ public enum ReviewPasses {
     /// AKit's child environment with the login shell's variables over it; the shell's PATH
     /// comes first, AKit's usual places after it.
     static func shellEnvironment(_ shell: LoginShell.Variables, env: HarnessEnvironment) -> [String: String] {
-        var variables = ChildProcess.harnessEnvironment(env).merging(shell.values) { $1 }
-        let paths = (shell.values["PATH"] ?? "").split(separator: ":").map { URL(filePath: String($0), directoryHint: .isDirectory) }
-        var lookup = env
-        lookup.executableSearchPaths = paths + env.executableSearchPaths
-        variables["PATH"] = lookup.pathForChildProcesses
-        variables["HOME"] = env.homeDirectory.path
-        for key in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"] { variables[key] = nil }
-        return variables
+        PiJSONStream.shellEnvironment(shell, env: env)
     }
 
     /// Gaps of Gather and of every pass, numbered again: `gaps.json`. A code-only run (no work
@@ -761,13 +754,7 @@ public enum ReviewPasses {
 
     // MARK: - Pi
 
-    struct PassOutput: Sendable {
-        var session: String?
-        var usage = SendUsage()
-        var answer: String?
-        var error: String?
-        var paths: [String] = []
-    }
+    typealias PassOutput = PiJSONStream.Output
 
     /// Runs one `pi -p --mode json` and reads its events. With `details`, each progress line
     /// carries its details after `ReviewLive`'s separator: the session id, the recorded usage,
@@ -904,45 +891,7 @@ public enum ReviewPasses {
         return args.isEmpty ? "" : ReviewLive.pretty(args)
     }
 
-    static func parse(_ lines: [String]) -> PassOutput {
-        var output = PassOutput()
-        for line in lines where line.hasPrefix("{") {
-            guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
-            switch event["type"] as? String {
-            case "session":
-                output.session = output.session ?? event["id"] as? String
-            case "tool_execution_start":
-                let name = event["toolName"] as? String ?? ""
-                if ["read", "grep", "find", "ls"].contains(name), let args = event["args"] as? [String: Any] {
-                    output.paths.append(args["path"] as? String ?? ".")
-                } else if name.hasPrefix("mcp__") {
-                    // What a pass read through MCP, by tool (never the arguments).
-                    output.paths.append("mcp:" + name)
-                }
-            case "message_end":
-                guard let message = event["message"] as? [String: Any], message["role"] as? String == "assistant" else { continue }
-                if let usage = message["usage"] as? [String: Any] {
-                    let tokens = PiLogFormat.tokens(fromPiUsage: usage)
-                    output.usage = output.usage + SendUsage(input: tokens.input + tokens.cacheWrite, cached: tokens.cacheRead,
-                                                            output: tokens.output, cost: PiLogFormat.cost(fromPiUsage: usage))
-                }
-                if message["stopReason"] as? String == "error" {
-                    output.error = SecretFilter.masked(String((message["errorMessage"] as? String ?? "The model call failed.").prefix(300)))
-                } else {
-                    output.error = nil
-                    let text = (message["content"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "text" }
-                        .compactMap { $0["text"] as? String }.joined(separator: "\n")
-                    if !text.isEmpty { output.answer = text }
-                }
-            default:
-                break
-            }
-        }
-        // Read twice is read once.
-        var seen = Set<String>()
-        output.paths = output.paths.filter { seen.insert($0).inserted }
-        return output
-    }
+    static func parse(_ lines: [String]) -> PassOutput { PiJSONStream.parse(lines) }
 
     /// Why a fetch pass read nothing, from its own records: the tools Pi called (from the pass's
     /// event stream), the calls AKit blocked, answers of servers the run doesn't use, the
@@ -977,9 +926,7 @@ public enum ReviewPasses {
     }
 
     /// `<dir>/<time>_<id>.jsonl`.
-    static func sessionFile(id: String, in folder: URL) -> URL? {
-        FileWalk.children(of: folder).first { $0.lastPathComponent.hasSuffix("_\(id).jsonl") }
-    }
+    static func sessionFile(id: String, in folder: URL) -> URL? { PiJSONStream.sessionFile(id: id, in: folder) }
 
     static func relative(_ path: String, to cwd: URL, run: URL) -> String {
         let absolute = path.hasPrefix("/") ? path : cwd.appending(path: path).standardizedFileURL.path
