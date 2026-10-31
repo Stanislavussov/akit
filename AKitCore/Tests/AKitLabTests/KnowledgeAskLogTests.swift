@@ -22,8 +22,8 @@ struct KnowledgeAskLogTests {
 
     @Test func theStreamBecomesStepsInOrderWithResultsAndTimes() {
         let t0 = Date(timeIntervalSince1970: 1_000)
-        let times = KnowledgeAskLog.ToolTimes(starts: [t0, t0.addingTimeInterval(1), t0.addingTimeInterval(5), t0.addingTimeInterval(9)],
-                                              ends: [t0.addingTimeInterval(2), t0.addingTimeInterval(4), t0.addingTimeInterval(6)])
+        let times = KnowledgeAskLog.ToolTimes(starts: ["c1": t0, "c2": t0.addingTimeInterval(1)], ends: ["c2": t0.addingTimeInterval(2), "c1": t0.addingTimeInterval(4)],
+                                              unnamedStarts: [t0.addingTimeInterval(5), t0.addingTimeInterval(9)], unnamedEnds: [t0.addingTimeInterval(6)])
         let steps = KnowledgeAskLog.steps(Self.stream, times: times)
         #expect(steps.map(\.kind) == [.thinking, .tool, .tool, .tool, .tool, .text, .error])
         #expect(steps[0].detail == "Search the base first.")
@@ -38,7 +38,64 @@ struct KnowledgeAskLogTests {
         #expect(steps[5].detail == "Billing reads it." && steps[6].detail == "rate limited")
     }
 
+    /// Review: what Pi read from a secret file never shows, in the steps or the full log.
+    @Test func secretFileOutputIsHidden() {
+        let stream = [
+            #"{"type":"tool_execution_start","toolName":"read","toolCallId":"r1","args":{"path":"/repo/.env"}}"#,
+            #"{"type":"tool_execution_update","toolName":"read","toolCallId":"r1","partialResult":{"content":[{"type":"text","text":"DB_PASS=hunter2hunter2"}]}}"#,
+            #"{"type":"tool_execution_end","toolName":"read","toolCallId":"r1","result":{"content":[{"type":"text","text":"DB_PASS=hunter2hunter2"}]}}"#,
+            #"{"type":"message_end","message":{"role":"toolResult","toolCallId":"r1","content":[{"type":"text","text":"DB_PASS=hunter2hunter2"}]}}"#,
+            #"{"type":"tool_execution_start","toolName":"bash","args":{"command":"cat ~/.pi/agent/mcp.json"}}"#,
+            #"{"type":"tool_execution_end","toolName":"bash","result":{"content":[{"type":"text","text":"{\"my_secret\": \"s3cr3tvalue\"}"}]}}"#,
+            #"{"type":"tool_execution_start","toolName":"bash","toolCallId":"b2","args":{"command":"cat README.md"}}"#,
+            #"{"type":"tool_execution_end","toolName":"bash","toolCallId":"b2","result":{"content":[{"type":"text","text":"Hello"}]}}"#,
+        ]
+        let steps = KnowledgeAskLog.steps(stream)
+        #expect(steps.map(\.result) == [SecretFilter.hiddenOutput, SecretFilter.hiddenOutput, "Hello"])
+        let text = KnowledgeAskLog.text(of: KnowledgeAskLog.Answer(entry: KnowledgeAsk.Entry(id: "q1", question: "Q", asked: .now), call: nil, steps: steps,
+                                                                    stream: URL(filePath: "/x")))
+        #expect(!text.contains("hunter2") && !text.contains("s3cr3t"))
+        let hider = PiSecretFiles()
+        let written = stream.map { JSONMask.jsonLine(hider.line($0)) }.joined(separator: "\n")
+        #expect(!written.contains("hunter2") && !written.contains("s3cr3t") && written.contains("Hello"))
+    }
+
+    /// Review: values under a secret-naming key are masked, in tool arguments and in JSON inside a result.
+    @Test func namedSecretsInArgumentsAreMasked() {
+        let line = #"{"type":"tool_execution_start","toolName":"mcp__api__call","toolCallId":"m1","args":{"headers":{"X-Api-Key":"Zq8xLm2Pq"},"password":"hunter2abc","query":"orders"}}"#
+        let masked = JSONMask.jsonLine(line)
+        #expect(!masked.contains("Zq8xLm2Pq") && !masked.contains("hunter2abc") && masked.contains("orders"))
+        let inner = JSONMask.string("Answer: {\"token\": \"abcdef\", \"name\": \"x\"}")
+        #expect(!inner.contains("abcdef") && inner.contains("\"name\":\"x\""))
+        #expect(JSONMask.jsonLine(masked) == masked, "masking masked text changes nothing")
+        let step = KnowledgeAskLog.steps([line, #"{"type":"tool_execution_end","toolName":"mcp__api__call","toolCallId":"m1","result":"ok"}"#]).first
+        #expect(step?.detail.contains("Zq8xLm2Pq") == false && step?.summary == "orders")
+    }
+
+    /// Lines that aren't whole JSON are skipped; an end with no start is a step of its own.
+    @Test func brokenLinesAndAnEndWithoutStart() {
+        let steps = KnowledgeAskLog.steps([
+            "not json", #"{"type":"tool_execution_start","toolName":"bash","toolCallId":"c1","args":{"command":"ls""#,
+            #"{"type":"tool_execution_end","toolName":"bash","toolCallId":"c9","result":"orphan"}"#,
+            #"{"type":"tool_execution_start","toolName":"read","args":{"path":"a.md"}}"#,
+            #"{"type":"tool_execution_end","toolName":"bash","toolCallId":"c1","result":"late"}"#,
+        ])
+        #expect(steps.count == 3)
+        #expect(steps[0].orphan && steps[0].result == "orphan" && steps[0].summary == "result without start")
+        #expect(steps[1].tool == "read" && steps[1].result == nil, "an end with a call id never closes a call without one")
+        #expect(steps[2].orphan && steps[2].result == "late")
+    }
+
+    @Test func longResultsAreCutButCounted() {
+        let big = String(repeating: "x", count: 5_000)
+        let steps = KnowledgeAskLog.steps([#"{"type":"tool_execution_start","toolName":"read","toolCallId":"c1","args":{"path":"a"}}"#,
+                                           #"{"type":"tool_execution_end","toolName":"read","toolCallId":"c1","result":"\#(big)"}"#], limit: 1_000)
+        #expect(steps[0].result?.count == 1_000 && steps[0].resultCount == 5_000)
+    }
+
     @Test func thinkingIsRememberedPerModel() {
+        #expect(KnowledgeAskLog.thinking(for: "", remembered: ["": "high"], fallback: "low", levels: LabHarness.pi.efforts) == "high",
+                "Pi's default model has a level of its own")
         let levels = LabHarness.pi.efforts
         let remembered = ["opencode-go/gpt-6-luna": "high", "zai/glm-5": "turbo"]
         #expect(KnowledgeAskLog.thinking(for: "opencode-go/gpt-6-luna", remembered: remembered, fallback: "low", levels: levels) == "high")

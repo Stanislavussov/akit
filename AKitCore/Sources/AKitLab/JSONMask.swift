@@ -72,6 +72,13 @@ public enum JSONMask {
             var changed = false
             var masked: [String: Any] = [:]
             for (key, item) in object {
+                // A value whose key names a secret (`"password": …`, `"X-Api-Key": …`) is masked
+                // whole, whatever it looks like.
+                if let string = item as? String, !string.isEmpty, string != SecretFilter.mask, isSecretName(key) {
+                    masked[key] = SecretFilter.mask
+                    changed = true
+                    continue
+                }
                 let (value, itemChanged) = json(item)
                 changed = changed || itemChanged
                 masked[key] = value
@@ -82,4 +89,9 @@ public enum JSONMask {
         }
     }
 
+    /// A key that names a secret: an API key, a token, a secret, a password, credentials, an
+    /// authorization header, a cookie.
+    public static func isSecretName(_ key: String) -> Bool {
+        key.range(of: #"api[_-]?key|token|secret|passw(or)?d|credential|authorization|cookie"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
 }

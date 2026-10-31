@@ -42,6 +42,10 @@ final class KnowledgeAskTests {
             echo '{"type":"tool_execution_start","toolName":"bash","args":{"command":"akit kb search orders"}}'
             mode=$(cat "$HOME/mode" 2>/dev/null)
             if [ "$mode" = "slow" ]; then sleep 30; fi
+            if [ "$mode" = "secret" ]; then
+              echo '{"type":"tool_execution_start","toolName":"read","toolCallId":"r1","args":{"path":"/repo/.env"}}'
+              echo '{"type":"tool_execution_end","toolName":"read","toolCallId":"r1","result":{"content":[{"type":"text","text":"DB_PASS=hunter2hunter2"}]}}'
+            fi
             if [ "$mode" = "propose" ]; then
               root=$(cat "$HOME/base-root")
               cp "$HOME/other.md" "$root/inbox/2020-01-02-payments-billing.md"
@@ -167,6 +171,26 @@ final class KnowledgeAskTests {
             #"{"type":"tool_execution_end","toolName":"bash","result":{"content":[{"type":"text","text":"inbox/x-3.md"}]}}"#,
         ]
         #expect(KnowledgeAsk.proposeOutputIDs(stream) == ["x-1"])
+    }
+
+    /// Review: a secret in the prompt is masked in the call record, and what Pi read from a
+    /// secret file never reaches the saved stream; a question after a lost entry gets new files.
+    @Test func secretsStayOutOfTheCallRecordAndTheStreamFile() async throws {
+        try mode("secret")
+        let chat = try KnowledgeAsk.newChat(note: Self.note, cwd: home, env: env())
+        let entry = try await KnowledgeAsk.ask("Is ghp_abcdefghijklmnopqrstuvwxyz0123456789 still valid?", noteText: "", in: chat, agent: Self.agent, env: env())
+        let record = try String(contentsOf: chat.folder.appending(path: "streams/q1.call.json"), encoding: .utf8)
+        #expect(!record.contains("ghp_abcdefghijklmnopqrstuvwxyz0123456789") && record.contains("still valid"))
+        let stream = try String(contentsOf: chat.folder.appending(path: "streams/q1.jsonl"), encoding: .utf8)
+        #expect(!stream.contains("hunter2") && stream.contains("Hidden by AKit"))
+        #expect(KnowledgeAskLog.load(entry, in: chat).steps.first { $0.tool == "read" }?.result == SecretFilter.hiddenOutput)
+        #expect(!KnowledgeAskLog.fullLog(chat).contains("hunter2"))
+
+        // A stream file whose entry was never saved: the next question doesn't overwrite it.
+        try Data("{}".utf8).write(to: chat.folder.appending(path: "streams/q2.jsonl"))
+        let next = try await KnowledgeAsk.ask("Again?", noteText: "", in: chat, agent: Self.agent, env: env())
+        let left = try String(contentsOf: chat.folder.appending(path: "streams/q2.jsonl"), encoding: .utf8)
+        #expect(next.id == "q3" && left == "{}")
     }
 
     @Test func piRunsInTheSpacesProjectFolderElseTheBase() throws {

@@ -460,7 +460,8 @@ struct KnowledgeAskPanel: View {
     /// Under an answer: the model and thinking it ran with, and its Log….
     private func answerFooter(_ entry: KnowledgeAsk.Entry) -> some View {
         HStack(spacing: 8) {
-            Text(["Pi", entry.model ?? "model not recorded", entry.thinking.map { "thinking \($0)" }].compactMap(\.self).joined(separator: " · "))
+            Text(["Pi", entry.model ?? (entry.thinking != nil ? "Pi's default model" : "model not recorded"), entry.thinking.map { "thinking \($0)" }]
+                    .compactMap(\.self).joined(separator: " · "))
                 .font(.caption).foregroundStyle(.tertiary)
             Button("Log…", systemImage: "doc.text.magnifyingglass") { logRequest = LogRequest(entry: entry.id) }
                 .buttonStyle(.borderless)

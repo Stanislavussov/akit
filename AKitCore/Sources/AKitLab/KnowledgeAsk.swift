@@ -302,7 +302,9 @@ public enum KnowledgeAsk {
         if Cancellation.isCancelled { throw Failure(message: "Stopped.") }
 
         let scrubbed = gate.scrub(prompt(question: body, passage: passage, note: chat.note, noteText: noteText, first: fork == nil))
-        let number = earlier.count + 1
+        // After the last saved question, and after any stream file a question left behind
+        // without saving its entry: one answer's files are never overwritten.
+        let number = max(earlier.count, lastStreamNumber(chat)) + 1
         var entry = Entry(id: "q\(number)", question: SecretFilter.masked(body), passage: passage.map(SecretFilter.masked), asked: .now)
         do {
             try Data(systemPrompt(chat.note).utf8).write(to: chat.folder.appending(path: "system.md"), options: .atomic)
@@ -328,10 +330,10 @@ public enum KnowledgeAsk {
         entry.proposals = made.isEmpty ? nil : made
         (entry.model, entry.thinking) = (agent.model.isEmpty ? nil : agent.model, agent.effort.isEmpty ? nil : agent.effort)
         // How Pi was called, for the Log… sheet (K34): masked, the prompt as it was sent.
-        let call = KnowledgeAskLog.Call(pi: pi.path, arguments: arguments.dropLast().map(SecretFilter.masked) + [SecretFilter.masked(scrubbed.text)],
+        let call = KnowledgeAskLog.Call(pi: pi.path, arguments: (arguments.dropLast() + [scrubbed.text]).map(JSONMask.text),
                                         cwd: directory.path, model: agent.model, thinking: agent.effort, fork: fork?.path,
                                         session: output.session.flatMap { PiJSONStream.sessionFile(id: $0, in: chat.folder.appending(path: "sessions"))?.path },
-                                        started: started, ended: entry.answered ?? .now, exitStatus: output.exitStatus, error: entry.error ?? output.error,
+                                        started: started, ended: entry.answered ?? .now, exitStatus: output.exitStatus, error: entry.error,
                                         usage: output.usage, tools: times.all)
         try? KnowledgeAskLog.save(call, question: number, in: chat)
         // Logged whenever Pi started, also when it was stopped or timed out: the prompt went out.
@@ -355,10 +357,20 @@ public enum KnowledgeAsk {
                     stream: URL, progress: @escaping @Sendable (String) -> Void,
                     times: KnowledgeAskLog.Times? = nil) async -> (PiJSONStream.Output, [String]) {
         await PiJSONStream.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout, stream: stream,
-                               timeoutMessage: "Pi took longer than \(Int(timeout / 60)) minutes and was stopped.") { line in
+                               timeoutMessage: "Pi took longer than \(Int(timeout / 60)) minutes and was stopped.",
+                               secretFiles: PiSecretFiles()) { line in
             times?.note(line)
             if let step = progressLine(line) { progress(step) }
         }
+    }
+
+    /// The highest `N` of the chat's `streams/qN.jsonl` (or `qN.call.json`); 0 without any.
+    static func lastStreamNumber(_ chat: Chat) -> Int {
+        FileWalk.children(of: chat.folder.appending(path: "streams")).compactMap { file -> Int? in
+            let name = file.lastPathComponent
+            guard name.hasPrefix("q"), let dot = name.firstIndex(of: ".") else { return nil }
+            return Int(name[name.index(after: name.startIndex)..<dot])
+        }.max() ?? 0
     }
 
     /// Pi runs in the base folder itself (no project folder of the space).

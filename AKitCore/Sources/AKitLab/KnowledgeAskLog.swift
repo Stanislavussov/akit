@@ -37,11 +37,25 @@ public enum KnowledgeAskLog {
         public var duration: TimeInterval { ended.timeIntervalSince(started) }
     }
 
+    /// When each tool call started and ended: by `toolCallId`, and in order for calls without one.
     public struct ToolTimes: Codable, Sendable, Hashable {
-        public var starts: [Date] = []
-        public var ends: [Date] = []
+        public var starts: [String: Date] = [:]
+        public var ends: [String: Date] = [:]
+        public var unnamedStarts: [Date] = []
+        public var unnamedEnds: [Date] = []
 
-        public init(starts: [Date] = [], ends: [Date] = []) { (self.starts, self.ends) = (starts, ends) }
+        public init(starts: [String: Date] = [:], ends: [String: Date] = [:], unnamedStarts: [Date] = [], unnamedEnds: [Date] = []) {
+            (self.starts, self.ends, self.unnamedStarts, self.unnamedEnds) = (starts, ends, unnamedStarts, unnamedEnds)
+        }
+
+        /// Reads what it can: a record of another shape gives no times rather than no call.
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            starts = (try? container.decodeIfPresent([String: Date].self, forKey: .starts)) ?? [:]
+            ends = (try? container.decodeIfPresent([String: Date].self, forKey: .ends)) ?? [:]
+            unnamedStarts = (try? container.decodeIfPresent([Date].self, forKey: .unnamedStarts)) ?? []
+            unnamedEnds = (try? container.decodeIfPresent([Date].self, forKey: .unnamedEnds)) ?? []
+        }
     }
 
     /// Notes when tool calls start and end while Pi runs.
@@ -52,9 +66,18 @@ public enum KnowledgeAskLog {
         public init() {}
 
         func note(_ line: String, at date: Date = .now) {
-            guard line.hasPrefix("{") else { return }
-            if line.contains("\"tool_execution_start\"") { lock.withLock { times.starts.append(date) } }
-            else if line.contains("\"tool_execution_end\"") { lock.withLock { times.ends.append(date) } }
+            guard line.hasPrefix("{"), line.contains("\"tool_execution_start\"") || line.contains("\"tool_execution_end\""),
+                  let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return }
+            let call = event["toolCallId"] as? String
+            lock.withLock {
+                switch event["type"] as? String {
+                case "tool_execution_start":
+                    if let call { times.starts[call] = date } else { times.unnamedStarts.append(date) }
+                case "tool_execution_end":
+                    if let call { times.ends[call] = date } else { times.unnamedEnds.append(date) }
+                default: break
+                }
+            }
         }
 
         var all: ToolTimes { lock.withLock { times } }
@@ -70,12 +93,17 @@ public enum KnowledgeAskLog {
         public var tool: String
         /// One line: the bash command, the path, the query, else the arguments in short.
         public var summary: String
-        /// The tool's arguments as pretty JSON, or the text or thinking.
+        /// The tool's arguments as pretty JSON, or the text or thinking; cut at the load's limit.
         public var detail: String
+        public var detailCount: Int
+        /// The tool's result, cut at the load's limit; nil while there is none.
         public var result: String?
+        public var resultCount: Int
         public var isError: Bool
         public var started: Date?
         public var ended: Date?
+        /// An end event with no start in the stream.
+        public var orphan = false
 
         public var duration: TimeInterval? { started.flatMap { start in ended.map { $0.timeIntervalSince(start) } } }
     }
@@ -92,6 +120,9 @@ public enum KnowledgeAskLog {
         }
     }
 
+    /// How much of a result or an argument list the sheet keeps (the full log reads it all).
+    public static let viewLimit = 200_000
+
     static func callFile(_ number: Int, in chat: KnowledgeAsk.Chat) -> URL {
         chat.folder.appending(path: "streams/q\(number).call.json")
     }
@@ -100,13 +131,14 @@ public enum KnowledgeAskLog {
         try KnowledgeAsk.encoder.encode(call).write(to: callFile(number, in: chat), options: .atomic)
     }
 
-    /// The log of one answer: its call file and its stream, whatever of them is there.
-    public static func load(_ entry: KnowledgeAsk.Entry, in chat: KnowledgeAsk.Chat) -> Answer {
+    /// The log of one answer: its call file and its stream, whatever of them is there. Results
+    /// are kept up to `limit` characters (nil: whole).
+    public static func load(_ entry: KnowledgeAsk.Entry, in chat: KnowledgeAsk.Chat, limit: Int? = viewLimit) -> Answer {
         let number = Int(entry.id.dropFirst()) ?? 0
         let stream = chat.folder.appending(path: "streams/q\(number).jsonl")
         let call = (try? Data(contentsOf: callFile(number, in: chat))).flatMap { try? KnowledgeAsk.decoder.decode(Call.self, from: $0) }
-        let lines = ((try? String(contentsOf: stream, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
-        return Answer(entry: entry, call: call, steps: steps(lines, times: call?.tools), stream: stream)
+        let data = (try? Data(contentsOf: stream, options: .mappedIfSafe)) ?? Data()
+        return Answer(entry: entry, call: call, steps: steps(data: data, times: call?.tools, limit: limit), stream: stream)
     }
 
     /// The chat's system prompt as Pi got it (`system.md`).
@@ -114,40 +146,70 @@ public enum KnowledgeAskLog {
         try? String(contentsOf: chat.folder.appending(path: "system.md"), encoding: .utf8)
     }
 
-    /// What Pi did, from its json stream: each tool call (start and end matched by `toolCallId`,
-    /// else by order), the assistant's text and thinking, a model error. Masked again (the stream
-    /// is saved masked already).
-    public static func steps(_ lines: [String], times: ToolTimes? = nil) -> [Step] {
+    /// `steps(data:)` of lines (tests, snapshots).
+    public static func steps(_ lines: [String], times: ToolTimes? = nil, limit: Int? = viewLimit) -> [Step] {
+        steps(data: Data(lines.joined(separator: "\n").utf8), times: times, limit: limit)
+    }
+
+    /// What Pi did, from its json stream, read line by line: each tool call (its end matched by
+    /// `toolCallId`; without one, by tool name, else the oldest open call without one; an end
+    /// with no start is a step of its own), the assistant's text and thinking, a model error.
+    /// A secret file's content is hidden (`PiSecretFiles`, also for streams saved before) and the
+    /// rest masked again. Lines that aren't whole JSON are skipped.
+    public static func steps(data: Data, times: ToolTimes? = nil, limit: Int? = viewLimit) -> [Step] {
+        let secrets = PiSecretFiles()
         var steps: [Step] = []
         var open: [(call: String?, index: Int)] = []
-        var starts = 0, ends = 0
-        for line in lines where line.hasPrefix("{") {
+        var unnamedStarts = 0, unnamedEnds = 0
+        func cut(_ text: String) -> String { limit.map { text.count > $0 ? String(text.prefix($0)) : text } ?? text }
+        for slice in data.split(separator: 0x0A) where slice.first == UInt8(ascii: "{") {
+            let line = secrets.line(String(decoding: slice, as: UTF8.self))
             guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
+            let call = event["toolCallId"] as? String
             switch event["type"] as? String {
             case "tool_execution_start":
                 let name = event["toolName"] as? String ?? "tool"
                 let args = event["args"] as? [String: Any] ?? [:]
-                let started = times.flatMap { starts < $0.starts.count ? $0.starts[starts] : nil }
-                starts += 1
-                steps.append(Step(id: steps.count, kind: .tool, tool: name, summary: summary(args), detail: pretty(args),
-                                  result: nil, isError: false, started: started, ended: nil))
-                open.append((event["toolCallId"] as? String, steps.count - 1))
+                let started: Date?
+                if let call { started = times?.starts[call] } else {
+                    started = times.flatMap { unnamedStarts < $0.unnamedStarts.count ? $0.unnamedStarts[unnamedStarts] : nil }
+                    unnamedStarts += 1
+                }
+                let detail = pretty(args)
+                steps.append(Step(id: steps.count, kind: .tool, tool: name, summary: summary(args), detail: cut(detail), detailCount: detail.count,
+                                  result: nil, resultCount: 0, isError: false, started: started, ended: nil))
+                open.append((call, steps.count - 1))
             case "tool_execution_end":
-                let ended = times.flatMap { ends < $0.ends.count ? $0.ends[ends] : nil }
-                ends += 1
-                let call = event["toolCallId"] as? String
                 let name = event["toolName"] as? String
-                guard let place = open.firstIndex(where: { call != nil && $0.call == call })
-                        ?? open.firstIndex(where: { name != nil && steps[$0.index].tool == name }) ?? open.indices.first else { continue }
-                let index = open.remove(at: place).index
-                steps[index].result = JSONMask.text(KnowledgeAsk.resultText(event["result"]))
+                let ended: Date?
+                let place: Int?
+                if let call {
+                    ended = times?.ends[call]
+                    place = open.firstIndex { $0.call == call }
+                } else {
+                    ended = times.flatMap { unnamedEnds < $0.unnamedEnds.count ? $0.unnamedEnds[unnamedEnds] : nil }
+                    unnamedEnds += 1
+                    place = open.firstIndex { $0.call == nil && name != nil && steps[$0.index].tool == name } ?? open.firstIndex { $0.call == nil }
+                }
+                let result = JSONMask.text(KnowledgeAsk.resultText(event["result"]))
+                let index: Int
+                if let place {
+                    index = open.remove(at: place).index
+                } else {
+                    steps.append(Step(id: steps.count, kind: .tool, tool: name ?? "tool", summary: "result without start", detail: "", detailCount: 0,
+                                      result: nil, resultCount: 0, isError: false, started: nil, ended: nil, orphan: true))
+                    index = steps.count - 1
+                }
+                steps[index].result = cut(result)
+                steps[index].resultCount = result.count
                 steps[index].isError = event["isError"] as? Bool == true
                 steps[index].ended = ended
             case "message_end":
                 guard let message = event["message"] as? [String: Any], message["role"] as? String == "assistant" else { continue }
                 if message["stopReason"] as? String == "error" {
                     let text = SecretFilter.masked(message["errorMessage"] as? String ?? "The model call failed.")
-                    steps.append(Step(id: steps.count, kind: .error, tool: "", summary: oneLine(text), detail: text, result: nil, isError: true))
+                    steps.append(Step(id: steps.count, kind: .error, tool: "", summary: oneLine(text), detail: text, detailCount: text.count,
+                                      result: nil, resultCount: 0, isError: true))
                 }
                 for part in message["content"] as? [[String: Any]] ?? [] {
                     let (kind, text): (Step.Kind?, String?) = switch part["type"] as? String {
@@ -156,7 +218,8 @@ public enum KnowledgeAskLog {
                     default: (nil, nil)
                     }
                     guard let kind, let text = text.map(JSONMask.text), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-                    steps.append(Step(id: steps.count, kind: kind, tool: "", summary: oneLine(text), detail: text, result: nil, isError: false))
+                    steps.append(Step(id: steps.count, kind: kind, tool: "", summary: oneLine(text), detail: cut(text), detailCount: text.count,
+                                      result: nil, resultCount: 0, isError: false))
                 }
             default:
                 break
@@ -198,12 +261,19 @@ public enum KnowledgeAskLog {
 
     /// The whole chat's log as plain text (Copy Full Log): masked, uncut.
     public static func fullLog(_ chat: KnowledgeAsk.Chat, only: String? = nil) -> String {
-        var out = ["Ask Pi log: \(chat.note.id) (\(chat.note.path)) in the base \(chat.note.base) at \(chat.note.baseRoot)",
-                   "Chat \(chat.id), started \(stamp(chat.created)), Pi runs in \(chat.cwd)"]
-        if let system = systemPrompt(chat) { out += ["", "## System prompt (appended)", system.trimmingCharacters(in: .newlines)] }
-        for entry in KnowledgeAsk.entries(chat) where only == nil || entry.id == only {
-            out += ["", text(of: load(entry, in: chat))]
+        let answers = KnowledgeAsk.entries(chat).filter { only == nil || $0.id == only }.map { load($0, in: chat, limit: nil) }
+        return fullLog(chat, system: systemPrompt(chat), answers: answers)
+    }
+
+    /// The log of answers already loaded (whole: `load(…, limit: nil)`) as plain text.
+    public static func fullLog(_ chat: KnowledgeAsk.Chat?, system: String?, answers: [Answer]) -> String {
+        var out: [String] = []
+        if let chat {
+            out += ["Ask Pi log: \(chat.note.id) (\(chat.note.path)) in the base \(chat.note.base) at \(chat.note.baseRoot)",
+                    "Chat \(chat.id), started \(stamp(chat.created)), Pi runs in \(chat.cwd)"]
         }
+        if let system { out += ["", "## System prompt (appended)", system.trimmingCharacters(in: .newlines)] }
+        for answer in answers { out += ["", text(of: answer)] }
         return out.joined(separator: "\n") + "\n"
     }
 
@@ -228,7 +298,7 @@ public enum KnowledgeAskLog {
             let time = step.duration.map { " (\(seconds($0)))" } ?? ""
             switch step.kind {
             case .tool:
-                out.append("- \(step.tool)\(step.isError ? " FAILED" : "")\(time): \(step.summary)")
+                out.append("- \(step.tool)\(step.isError ? " FAILED" : "")\(time): \(step.summary)" + (step.resultCount > (step.result?.count ?? 0) ? " (result cut)" : ""))
                 if !step.detail.isEmpty { out.append(indent(step.detail)) }
                 out.append(step.result.map { "  Result:\n" + indent($0) } ?? "  No result (stopped?)")
             case .text: out.append("- Pi wrote:\n" + indent(step.detail))
@@ -247,7 +317,7 @@ public enum KnowledgeAskLog {
         text.split(separator: "\n", omittingEmptySubsequences: false).map { "    " + $0 }.joined(separator: "\n")
     }
 
-    static func stamp(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
+    static func stamp(_ date: Date) -> String { date.formatted(.iso8601) }
 
     // MARK: - Thinking per model
 

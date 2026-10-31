@@ -78,15 +78,16 @@ struct KnowledgeAskLogSheet: View {
     }
 
     private func copyFullLog() {
-        let text: String
-        if let chat {
-            text = KnowledgeAskLog.fullLog(chat, only: focus)
-        } else {
-            text = (answers ?? []).map(KnowledgeAskLog.text(of:)).joined(separator: "\n\n")
+        let (chat, focus, answers, system) = (chat, focus, answers ?? [], system)
+        Task {
+            // The whole streams are read again, uncut: off the main thread.
+            let text = await Task.detached {
+                chat.map { KnowledgeAskLog.fullLog($0, only: focus) } ?? KnowledgeAskLog.fullLog(nil, system: system, answers: answers)
+            }.value
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied = true
         }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        copied = true
     }
 
     private func mono(_ text: String) -> some View {
@@ -110,7 +111,8 @@ struct KnowledgeAskLogSheet: View {
             #"{"type":"tool_execution_end","toolName":"mcp__gitlab__search","toolCallId":"c3","isError":true,"result":{"content":[{"type":"text","text":"401 Unauthorized"}]}}"#,
             #"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Two services read order created: billing and warehouse."}]}}"#,
         ]
-        let times = KnowledgeAskLog.ToolTimes(starts: [1, 3.5, 4.2].map(start.addingTimeInterval), ends: [2.1, 3.6, 6.0].map(start.addingTimeInterval))
+        let times = KnowledgeAskLog.ToolTimes(starts: ["c1": start.addingTimeInterval(1), "c2": start.addingTimeInterval(3.5), "c3": start.addingTimeInterval(4.2)],
+                                              ends: ["c1": start.addingTimeInterval(2.1), "c2": start.addingTimeInterval(3.6), "c3": start.addingTimeInterval(6)])
         return entries.map { entry in
             let call = KnowledgeAskLog.Call(
                 pi: "~/.local/bin/pi",
@@ -188,38 +190,37 @@ private struct AnswerLogView: View {
 }
 
 /// One step: a tool call (its arguments and result open under it), or Pi's text or thinking.
+/// Long texts show their first 2,000 characters; Show All shows what the sheet loaded (up to
+/// `KnowledgeAskLog.viewLimit`); beyond that, Copy Full Log or Open Stream have it all.
 private struct StepView: View {
     let step: KnowledgeAskLog.Step
-    /// Results longer than this show cut, with Show All.
     private static let preview = 2_000
-    @State private var all = false
+    @State private var allDetail = false
+    @State private var allResult = false
 
     var body: some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 6) {
                 if step.kind == .tool, !step.detail.isEmpty {
                     Text("Arguments").font(.caption.bold()).foregroundStyle(.secondary)
-                    mono(step.detail)
+                    long(step.detail, count: step.detailCount, all: $allDetail)
                 }
                 if step.kind == .tool {
                     Text("Result").font(.caption.bold()).foregroundStyle(.secondary)
                     if let result = step.result {
-                        mono(all || result.count <= Self.preview ? result : String(result.prefix(Self.preview)) + "…")
-                        if result.count > Self.preview, !all {
-                            Button("Show All (\(result.count.formatted()) characters)") { all = true }.buttonStyle(.link).font(.caption)
-                        }
+                        long(result, count: step.resultCount, all: $allResult)
                     } else {
                         Text("No result: Pi was stopped before the tool answered.").font(.caption).foregroundStyle(.secondary)
                     }
                 } else {
-                    mono(step.detail)
+                    long(step.detail, count: step.detailCount, all: $allDetail)
                 }
             }
             .padding(.leading, 4)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon).foregroundStyle(step.isError ? .red : .secondary)
-                    .help(step.isError ? "Failed" : step.kind.rawValue)
+                    .help(step.isError ? "Failed" : step.orphan ? "A result whose start isn't in the stream" : step.kind.rawValue)
                 if step.kind == .tool { Text(step.tool).bold() }
                 Text(step.summary).font(step.kind == .tool ? .callout.monospaced() : .callout).lineLimit(1).truncationMode(.tail)
                     .foregroundStyle(step.kind == .thinking ? .secondary : .primary)
@@ -229,9 +230,22 @@ private struct StepView: View {
         }
     }
 
+    /// A text cut at `preview`; Show All when the whole of it is loaded, else a pointer to the full log.
+    @ViewBuilder private func long(_ text: String, count: Int, all: Binding<Bool>) -> some View {
+        let shown = all.wrappedValue || count <= Self.preview ? text : String(text.prefix(Self.preview)) + "…"
+        mono(shown)
+        if count > Self.preview, !all.wrappedValue {
+            if count <= KnowledgeAskLog.viewLimit {
+                Button("Show All (\(count.formatted()) characters)") { all.wrappedValue = true }.buttonStyle(.link).font(.caption)
+            } else {
+                Text("\(count.formatted()) characters: Copy Full Log or Open Stream has all of it.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var icon: String {
         switch step.kind {
-        case .tool: step.isError ? "xmark.octagon" : step.result == nil ? "hourglass" : "wrench.and.screwdriver"
+        case .tool: step.isError ? "xmark.octagon" : step.orphan ? "questionmark.circle" : step.result == nil ? "hourglass" : "wrench.and.screwdriver"
         case .text: "text.bubble"
         case .thinking: "brain"
         case .error: "exclamationmark.triangle"
