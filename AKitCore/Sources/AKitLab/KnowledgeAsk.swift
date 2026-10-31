@@ -82,9 +82,9 @@ public enum KnowledgeAsk {
         public var isGood: Bool { session != nil && error == nil }
 
         public init(id: String, question: String, passage: String? = nil, asked: Date, answered: Date? = nil, answer: String? = nil,
-                    error: String? = nil, session: String? = nil, proposals: [ProposalRef]? = nil) {
+                    error: String? = nil, session: String? = nil, proposals: [ProposalRef]? = nil, model: String? = nil, thinking: String? = nil) {
             (self.id, self.question, self.passage, self.asked, self.answered) = (id, question, passage, asked, answered)
-            (self.answer, self.error, self.session, self.proposals) = (answer, error, session, proposals)
+            (self.answer, self.error, self.session, self.proposals, self.model, self.thinking) = (answer, error, session, proposals, model, thinking)
         }
     }
 

@@ -27,6 +27,12 @@ public enum KnowledgeAskLog {
         /// When each tool call started and ended, in the order of the stream's events.
         public var tools: ToolTimes?
 
+        public init(pi: String, arguments: [String], cwd: String, model: String, thinking: String, fork: String?, session: String?,
+                    started: Date, ended: Date, exitStatus: Int32?, error: String?, usage: SendUsage, tools: ToolTimes?) {
+            (self.pi, self.arguments, self.cwd, self.model, self.thinking, self.fork, self.session) = (pi, arguments, cwd, model, thinking, fork, session)
+            (self.started, self.ended, self.exitStatus, self.error, self.usage, self.tools) = (started, ended, exitStatus, error, usage, tools)
+        }
+
         public var prompt: String? { arguments.last }
         public var duration: TimeInterval { ended.timeIntervalSince(started) }
     }
@@ -34,6 +40,8 @@ public enum KnowledgeAskLog {
     public struct ToolTimes: Codable, Sendable, Hashable {
         public var starts: [Date] = []
         public var ends: [Date] = []
+
+        public init(starts: [Date] = [], ends: [Date] = []) { (self.starts, self.ends) = (starts, ends) }
     }
 
     /// Notes when tool calls start and end while Pi runs.
@@ -78,6 +86,10 @@ public enum KnowledgeAskLog {
         public var call: Call?
         public var steps: [Step]
         public var stream: URL
+
+        public init(entry: KnowledgeAsk.Entry, call: Call?, steps: [Step], stream: URL) {
+            (self.entry, self.call, self.steps, self.stream) = (entry, call, steps, stream)
+        }
     }
 
     static func callFile(_ number: Int, in chat: KnowledgeAsk.Chat) -> URL {

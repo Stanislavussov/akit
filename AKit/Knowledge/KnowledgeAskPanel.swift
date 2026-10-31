@@ -10,6 +10,10 @@ import SwiftUI
 final class KnowledgeAskModel {
     /// The Pi model the questions use; empty: Lab's default Pi agent.
     static let modelKey = "knowledgeAsk.model"
+    /// Snapshots with the made-up chat: `--tab knowledge-ask` and `--tab knowledge-ask-log`.
+    static let canned = ["knowledge-ask", "knowledge-ask-log"].contains(DebugSnapshot.options?.tab)
+    /// The thinking level last used with each model (K34), `[model: level]`.
+    static let thinkingKey = "knowledgeAsk.thinkingByModel"
     /// Destinations (`pi|provider`) "Don't ask again" was ticked for.
     static let skipConfirmKey = "knowledgeAsk.dontConfirmDestinations"
 
@@ -21,7 +25,8 @@ final class KnowledgeAskModel {
     }
 
     /// Snapshots: `--tab knowledge-ask` opens the panel with a made-up chat.
-    var isOpen = DebugSnapshot.options?.tab == "knowledge-ask"
+    /// Snapshots: `--tab knowledge-ask-log` opens its Log… sheet too.
+    var isOpen = KnowledgeAskModel.canned
     /// The note the panel is about.
     private(set) var note: KnowledgeAsk.Note?
     private(set) var chat: KnowledgeAsk.Chat?
@@ -53,7 +58,19 @@ final class KnowledgeAskModel {
     var agent: LabAgent {
         let fallback = LabRuns.defaultAgent(.pi, env: .current)
         let chosen = (UserDefaults.standard.string(forKey: Self.modelKey) ?? "").trimmingCharacters(in: .whitespaces)
-        return LabAgent(harness: .pi, model: chosen.isEmpty ? fallback.model : chosen, effort: fallback.effort)
+        let model = chosen.isEmpty ? fallback.model : chosen
+        let thinking = KnowledgeAskLog.thinking(for: model, remembered: thinkingByModel, fallback: fallback.effort, levels: LabHarness.pi.efforts)
+        return LabAgent(harness: .pi, model: model, effort: thinking)
+    }
+
+    /// The thinking level per model, as saved (K34).
+    private(set) var thinkingByModel: [String: String] =
+        UserDefaults.standard.dictionary(forKey: thinkingKey) as? [String: String] ?? [:]
+
+    /// The Thinking picker: remembered for the model in use now.
+    func setThinking(_ level: String) {
+        thinkingByModel[agent.model] = level
+        UserDefaults.standard.set(thinkingByModel, forKey: Self.thinkingKey)
     }
 
     /// Counts what the panel shows (another note, New Chat): a send that ends after a change
@@ -63,7 +80,7 @@ final class KnowledgeAskModel {
     /// Shows the panel for `note`, with its latest chat. The same note (base and id) with a new
     /// title (an outside edit) only updates the title: a running question goes on.
     func show(_ note: KnowledgeAsk.Note) {
-        if DebugSnapshot.options?.tab == "knowledge-ask" {
+        if Self.canned {
             self.note = note
             entries = Self.cannedChat
             return
@@ -189,7 +206,7 @@ final class KnowledgeAskModel {
     /// What `--tab knowledge-ask` snapshots print.
     var manifest: [String] {
         let model = agent.model.isEmpty ? "default" : agent.model
-        let head = "ask pi: \(note?.id ?? "-"), model \(model), \(entries.count) answer\(entries.count == 1 ? "" : "s")"
+        let head = "ask pi: \(note?.id ?? "-"), model \(model), thinking \(agent.effort), \(entries.count) answer\(entries.count == 1 ? "" : "s")"
             + (passage.map { ", passage \($0.count) characters" } ?? "")
         return [head] + entries.map(Self.line)
     }
@@ -197,7 +214,7 @@ final class KnowledgeAskModel {
     private static func line(_ entry: KnowledgeAsk.Entry) -> String {
         let result: String = entry.answer.map { "\($0.count) characters" } ?? entry.error ?? "-"
         let proposals: String = entry.proposals.map { ", proposals " + $0.map(\.id).joined(separator: ", ") } ?? ""
-        return "ask pi \(entry.id): \(entry.question)" + (entry.passage == nil ? "" : " (passage)") + " → " + result + proposals
+        return "ask pi \(entry.id) (\(entry.thinking ?? "-")): \(entry.question)" + (entry.passage == nil ? "" : " (passage)") + " → " + result + proposals
     }
 
     /// A made-up chat about the sample base's orders-api (snapshots, guide screenshots).
@@ -211,11 +228,12 @@ final class KnowledgeAskModel {
                                - `warehouse` in the space `logistics` reserves the goods.
 
                                Source: `akit kb search "order created"` and the note `payments/order-events`.
-                               """, error: nil, session: "demo-1"),
+                               """, error: nil, session: "demo-1", model: "opencode-go/gpt-6-luna", thinking: "low"),
         KnowledgeAsk.Entry(id: "q2", question: "What happens when billing is down?", passage: "## Events\n- order created\n- retry after 5 min",
                            asked: Date(timeIntervalSince1970: 1_761_900_100), answered: Date(timeIntervalSince1970: 1_761_900_150),
                            answer: "orders-api keeps the event and sends it again after 5 minutes (the *retry* line of this section). Nothing is lost while billing is down. billing's note doesn't say so yet: I proposed a section for it.",
-                           error: nil, session: "demo-2", proposals: [KnowledgeAsk.ProposalRef(id: "2026-10-24-payments-billing", created: nil)]),
+                           error: nil, session: "demo-2", proposals: [KnowledgeAsk.ProposalRef(id: "2026-10-24-payments-billing", created: nil)],
+                           model: "opencode-go/gpt-6-luna", thinking: "medium"),
     ]
 }
 
@@ -318,6 +336,13 @@ struct KnowledgeAskPanel: View {
     @Environment(AppModel.self) private var app
     @AppStorage(KnowledgeAskModel.modelKey) private var modelName = ""
     @State private var models: [String] = []
+    /// The Log… sheet: one answer, or the whole chat. Snapshots: `--tab knowledge-ask-log`.
+    @State private var logRequest: LogRequest? = DebugSnapshot.options?.tab == "knowledge-ask-log" ? LogRequest(entry: nil) : nil
+
+    struct LogRequest: Identifiable {
+        var entry: String?
+        var id: String { entry ?? "chat" }
+    }
     @State private var dontAskAgain = false
     @FocusState private var inputFocused: Bool
 
@@ -339,6 +364,7 @@ struct KnowledgeAskPanel: View {
                             if let answer = entry.answer {
                                 MarkdownText(text: answer).textSelection(.enabled)
                             }
+                            answerFooter(entry)
                             if let error = entry.error {
                                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout)
                                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -383,6 +409,9 @@ struct KnowledgeAskPanel: View {
                 """)
         }
         .dialogSuppressionToggle("Don't ask again", isSuppressed: $dontAskAgain)
+        .sheet(item: $logRequest) { request in
+            KnowledgeAskLogSheet(chat: ask.chat, entries: ask.entries, focus: request.entry)
+        }
         .onDisappear { if ask.consent != nil { answer(false) } }
         .task {
             models = await app.labModels(for: .pi)
@@ -401,6 +430,17 @@ struct KnowledgeAskPanel: View {
             .labelsHidden()
             .fixedSize()
             .disabled(ask.isRunning)
+            Picker("Thinking", selection: Binding(get: { ask.agent.effort }, set: { ask.setThinking($0) })) {
+                ForEach(LabHarness.pi.efforts, id: \.self) { Text($0).tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .disabled(ask.isRunning)
+            .id(modelName)
+            .help("How much Pi thinks before it answers (--thinking). AKit remembers it per model: picking a model brings back its level")
+            Button("Log…", systemImage: "doc.text.magnifyingglass") { logRequest = LogRequest(entry: nil) }
+                .disabled(ask.entries.isEmpty)
+                .help("How Pi was called for each answer of this chat and what it did: arguments, folder, model, tool calls with their results, timing, tokens")
             Button("Open in Pi", systemImage: "terminal") { ask.openInPi() }
                 .disabled(!ask.canOpenInPi)
                 .help("Go on with this conversation in an interactive Pi in a terminal, from Pi's last answer. What you ask there doesn't come back to this panel")
@@ -415,6 +455,19 @@ struct KnowledgeAskPanel: View {
         .controlSize(.small)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+    }
+
+    /// Under an answer: the model and thinking it ran with, and its Log….
+    private func answerFooter(_ entry: KnowledgeAsk.Entry) -> some View {
+        HStack(spacing: 8) {
+            Text(["Pi", entry.model ?? "model not recorded", entry.thinking.map { "thinking \($0)" }].compactMap(\.self).joined(separator: " · "))
+                .font(.caption).foregroundStyle(.tertiary)
+            Button("Log…", systemImage: "doc.text.magnifyingglass") { logRequest = LogRequest(entry: entry.id) }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .font(.caption)
+                .help("How Pi was called for this answer and what it did: the arguments, the prompt, each tool call with its result and time")
+        }
     }
 
     private func question(_ text: String, passage: String?) -> some View {

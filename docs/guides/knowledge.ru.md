@@ -415,7 +415,7 @@ Obsidian открывает только заметки из своих хран
 
 **Изменения базы — только с вашего согласия.** Попросите «поправь владельца» или «допиши раздел о повторах» — Pi не правит файлы сам, а делает предложение через `akit kb propose`. Оно появляется карточкой под ответом и во вкладке **Inbox**; вы смотрите разницу и принимаете или отклоняете. Ничего другого Pi менять не должен: так сказано в его инструкции, а инструменты `edit` и `write` у него убраны. Команды (`bash`) и ваши MCP-серверы у него остаются, поэтому следите, о чём просите.
 
-![Панель заметки orders-api, под ней панель Ask Pi about orders-api: список Model, кнопки Open in Pi, New Chat и крестик; вопрос «Which services read the order created event?» и ответ Pi списком: billing и warehouse, с источником akit kb search; цитата раздела ## Events, под ней второй вопрос «What happens when billing is down?» и ответ про повтор через 5 минут, под ним карточка Proposal: payments/billing с причиной, разницей и кнопками Accept…, Reject… и Show in Inbox; внизу поле Ask Pi about this note… и кнопка Send](images/knowledge-ask.png)
+![Панель заметки orders-api, под ней панель Ask Pi about orders-api: списки Model и Thinking, кнопки Log…, Open in Pi, New Chat и крестик; вопрос «Which services read the order created event?» и ответ Pi списком: billing и warehouse, с источником akit kb search, под ответом строка Pi · opencode-go/gpt-6-luna · thinking low и кнопка Log…; цитата раздела ## Events, под ней второй вопрос «What happens when billing is down?» и ответ про повтор через 5 минут, под ним карточка Proposal: payments/billing с причиной, разницей и кнопками Accept…, Reject… и Show in Inbox; внизу поле Ask Pi about this note… и кнопка Send](images/knowledge-ask.png)
 
 ### Просто: задать вопрос
 <!-- section: ask-pi-ask -->
@@ -461,6 +461,28 @@ Pi получает этот раздел цитатой и путь замет�
 - **New Chat** начинает новый разговор об этой заметке. Старый остаётся на диске.
 - **Open in Pi** открывает обычный Pi в терминале (Orca, herdr или Terminal) с этим же разговором: можно продолжить там, с полным интерфейсом Pi. Что вы спросите там, в панель не вернётся: панель продолжает от своего последнего ответа.
 - **Model** — модель Pi для ответов. **Lab default** — модель Pi по умолчанию из Lab. AKit помнит выбор.
+- Рядом — список **Thinking**: сколько Pi думает перед ответом (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, флаг `--thinking`). AKit помнит уровень для каждой модели: выбрали снова GPT-6 Luna — вернулся уровень, с которым вы её брали в прошлый раз. Для новой модели — уровень Pi по умолчанию из Lab.
+- Под каждым ответом мелко написано, какая модель и какой уровень его дали, например «Pi · opencode-go/gpt-6-luna · thinking low».
+
+### Средне: Log… — как Pi отвечал
+<!-- section: ask-pi-log -->
+
+**Что это:** окно **Ask Pi Log** показывает, как AKit запустил Pi и что Pi делал. Кнопка **Log…** под ответом открывает лог этого ответа, **Log…** в заголовке панели — лог всего чата.
+
+Для каждого ответа:
+
+- вызов: модель и **thinking**, путь к `pi`, папка, где он работал, **Fork** (от какой сессии продолжил), **Session** (файл сессии ответа), время и длительность, код выхода, токены и стоимость, если Pi их записал;
+- **Arguments** — все аргументы, как AKit их передал; **Prompt sent** — текст, который ушёл в Pi;
+- **Steps** — шаги по порядку: каждый вызов инструмента (`bash`, `read`, инструменты MCP) с командой или путём и временем. Нажмите шаг — откроются аргументы и результат. Красный значок — инструмент вернул ошибку, песочные часы — ответа не было (Pi остановили). Ещё в шагах — что Pi думал (значок мозга) и что написал;
+- предложения, которые Pi сделал в этом ответе.
+
+Сверху — **System prompt**: что AKit добавил к системному промпту Pi.
+
+Кнопки внизу: **Copy Full Log** — весь лог простым текстом, без сокращений; **Show in Finder** — папка чата; **Open Stream** — сохранённый поток событий Pi (`streams/qN.jsonl`). Секреты в логе скрыты, но в нём есть текст заметки и ответы инструментов: вставляйте его только туда, куда можно.
+
+Ответы, сохранённые до этой версии AKit, показывают то, что есть: шаги из потока, без данных вызова.
+
+![Окно Ask Pi Log: вверху часть System prompt; для q1 «Which services read the order created event?» модель opencode-go/gpt-6-luna · thinking low, путь pi, папка ~/Projects/orders-api, Fork, Session, время 40 с, токены; части Arguments и Prompt sent; Steps: мысль Pi, bash akit kb search, read areas/payments/order-events.md, mcp__gitlab__search с ошибкой и ответ Pi; внизу кнопки Show in Finder, Open Stream, Copy Full Log и Done](images/knowledge-ask-log.png)
 
 ### Сложно: что получает Pi и где лежит чат
 <!-- section: ask-pi-details -->

@@ -256,6 +256,8 @@ shot knowledge           $MAIN --section knowledge --select payments/orders-api
 shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
 # Ask Pi about the note: the panel under it with a made-up chat (no Pi runs), the second question about a section.
 shot knowledge-ask       $MAIN --section knowledge --select payments/orders-api --tab knowledge-ask
+# Log… of the made-up chat: how Pi was called and its steps (a made-up log; no Pi runs).
+shot knowledge-ask-log   $MAIN --section knowledge --select payments/orders-api --tab knowledge-ask-log
 # Hide Note List: the note gets the whole width.
 shot knowledge-list-hidden $MAIN --section knowledge --select payments/orders-api --tab hide-list
 # Add Folder… with the demo's handbook folder (no git: kind folder, README's line as the description).
