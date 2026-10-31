@@ -339,6 +339,13 @@ struct KnowledgeView: View {
             // Drag onto an open map: a block linked to the note (K6).
             .draggable(note.id)
             .contextMenu {
+                Button("Ask Pi About This Note") {
+                    Task {
+                        await model.closeMap()
+                        model.open(note.id)
+                        model.showAsk()
+                    }
+                }
                 Button("Show in Finder") {
                     if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(note.id)]) }
                 }

@@ -1,6 +1,7 @@
 import AKitBrain
 import AKitFoundation
 import AKitKnowledge
+import AKitLab
 import AppKit
 import Observation
 
@@ -168,6 +169,33 @@ final class KnowledgeModel {
     var home: URL { env.homeDirectory }
 
     init() { Self.current = self }
+
+    // MARK: - Ask Pi (K30)
+
+    /// The Ask Pi panel under the note.
+    let ask = KnowledgeAskModel()
+
+    /// The note in view as Ask Pi sees it.
+    var askNote: KnowledgeAsk.Note? {
+        guard let base, let entry = noteEntry else { return nil }
+        return KnowledgeAsk.Note(base: base.name, baseRoot: base.root.path, id: entry.id, path: entry.path, title: entry.title)
+    }
+
+    /// Where Pi runs for the note in view: its space's project folder, else the base folder.
+    func askWorkingFolder() -> URL? {
+        guard let base, let entry = noteEntry else { return nil }
+        let area = (try? base.settings(area: entry.area)) ?? KnowledgeArea()
+        return KnowledgeAsk.workingFolder(area: area, baseRoot: base.root, home: home, copies: lintProjects?.copies ?? [:])
+    }
+
+    /// Ask Pi (⌥⌘A, a list row, a section of the note): the panel opens for the note in view;
+    /// `passage` is what the next question is about.
+    func showAsk(passage: String? = nil) {
+        guard let note = askNote else { return }
+        ask.isOpen = true
+        ask.show(note)
+        if let passage { ask.passage = passage }
+    }
 
     var noteEntry: KnowledgeBase.NoteEntry? { note.flatMap { id in allNotes.first { $0.id == id } } }
     private var allNotes: [KnowledgeBase.NoteEntry] = []
@@ -731,6 +759,7 @@ final class KnowledgeModel {
             noteHashes[note] = KnowledgeWrite.hash(of: base.noteFile(note))
         }
         noteRelations = (try? base.mapGraph().relations(of: note)) ?? []
+        if ask.isOpen, let askNote { ask.show(askNote) }
     }
 
     // MARK: - Writes
@@ -1355,6 +1384,7 @@ final class KnowledgeModel {
         if let map { lines.append("map: \(map), \(mapEditing ? "Edit" : "view only")" + (mapIsEmpty ? ", empty" : "") + (noteBesideMap && note != nil ? ", note beside it" : "")) }
         if let mapConflict { lines.append("conflict: Changed on disk, \(mapConflict.id): Reload / Keep Mine") }
         lines.append("tabs: " + tabs.joined(separator: ", "))
+        if ask.isOpen { lines += ask.manifest }
         if let entry = noteEntry {
             lines.append("note: \(entry.title) (\(entry.id)\(entry.kind.map { ", kind \($0)" } ?? "")), \(editing ? "Edit" : "read")")
             if !noteRelations.isEmpty {

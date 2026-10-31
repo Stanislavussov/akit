@@ -72,6 +72,12 @@ public enum KnowledgeAsk {
         public var session: String?
         /// The answer can be forked: it has a session and no error.
         public var isGood: Bool { session != nil && error == nil }
+
+        public init(id: String, question: String, passage: String? = nil, asked: Date, answered: Date? = nil, answer: String? = nil,
+                    error: String? = nil, session: String? = nil) {
+            (self.id, self.question, self.passage, self.asked, self.answered) = (id, question, passage, asked, answered)
+            (self.answer, self.error, self.session) = (answer, error, session)
+        }
     }
 
     // MARK: - Storage
