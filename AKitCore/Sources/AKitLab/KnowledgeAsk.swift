@@ -22,8 +22,10 @@ public enum KnowledgeAsk {
 
     public struct Failure: Error, LocalizedError, Sendable {
         public let message: String
+        /// The question went to Pi (it answered, but the chat couldn't be saved): not to be asked again as it is.
+        public var sent = false
         public var errorDescription: String? { message }
-        public init(message: String) { self.message = message }
+        public init(message: String, sent: Bool = false) { (self.message, self.sent) = (message, sent) }
     }
 
     /// The note a chat is about.
@@ -256,11 +258,19 @@ public enum KnowledgeAsk {
         let earlier = entries(chat)
         let fork = try fork(chat, entries: earlier)
         let gate: SendGate
+        let cwd = URL(filePath: chat.cwd, directoryHint: .isDirectory)
         do {
             gate = try await SendGate.open(agent: agent, env: env)
             try gate.check(.knowledgeBase)
         } catch {
             throw Failure(message: error.localizedDescription)
+        }
+        // On a work Mac Pi in a project folder reads that project's code: it may go only where
+        // repository code may (the allowed list).
+        if gate.isWork, !runsInBase(cwd, chat: chat), !gate.decide(.code(.pi)).allowed {
+            throw Failure(message: "Not sent: this is a work Mac, and Pi would run in the space's project folder \(chat.cwd), so the project's code "
+                + "could reach \(gate.destination.label), which isn't on the allowed list. Pick a Pi model whose provider is on the list "
+                + "(Settings → Sending policy), or ask about a note whose space has no project folder.")
         }
         if Cancellation.isCancelled { throw Failure(message: "Stopped.") }
         guard await confirm(gate.destination) else { throw Failure(message: "Not sent.") }
@@ -277,7 +287,6 @@ public enum KnowledgeAsk {
         }
         let arguments = ["-p", "--mode", "json", "--offline"] + options(chat: chat, fork: fork, agent: agent) + ["--", scrubbed.text]
         let environment = PiJSONStream.shellEnvironment(await LoginShell.variables(in: env), env: env)
-        let cwd = URL(filePath: chat.cwd, directoryHint: .isDirectory)
         let base = KnowledgeBase(root: URL(filePath: chat.note.baseRoot, directoryHint: .isDirectory))
         let before = Set(base.proposals().map(\.id))
         progress("Pi is reading the question…")
@@ -289,40 +298,34 @@ public enum KnowledgeAsk {
         entry.error = output.error ?? (output.answer == nil ? "Pi gave no answer." : nil)
         let made = proposals(in: base, before: before, stream: stream)
         entry.proposals = made.isEmpty ? nil : made
-        if output.usage != SendUsage() {
+        // Logged whenever Pi started, also when it was stopped or timed out: the prompt went out.
+        if output.error != "Pi couldn't start." {
+            let system = systemPrompt(chat.note).count
             _ = SendLog.appendAfterRun(SendRecord(purpose: purpose, session: output.session, runID: chat.id, destination: gate.destination,
-                                                  model: agent.model, inputCharacters: scrubbed.text.count, usage: output.usage,
+                                                  model: agent.model, inputCharacters: scrubbed.text.count + system,
+                                                  systemCharacters: system, usage: output.usage,
                                                   scrubbed: scrubbed.counts.isEmpty ? nil : scrubbed.counts),
                                        env: env, out: { _ in })
         }
         do { try append(entry, to: chat) } catch {
-            throw Failure(message: "Pi answered, but AKit couldn't save the chat: \(error.localizedDescription)")
+            throw Failure(message: "Pi answered, but AKit couldn't save the chat: \(error.localizedDescription)", sent: true)
         }
         return entry
     }
 
-    /// Runs one `pi -p --mode json`: the stream (masked line by line) to `stream`, a short
-    /// progress line per tool call.
+    /// Runs one `pi -p --mode json` (`PiJSONStream.run`, the stream masked as JSON), with a short
+    /// progress line per tool call; also every line, for finding the answer's proposals.
     static func run(_ pi: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
                     stream: URL, progress: @escaping @Sendable (String) -> Void) async -> (PiJSONStream.Output, [String]) {
-        FileManager.default.createFile(atPath: stream.path, contents: nil)
-        let handle = try? FileHandle(forWritingTo: stream)
-        let collector = Collector()
-        let exit = await ChildProcess.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout) { line in
-            collector.add(line)
-            handle?.write(Data((SecretFilter.masked(line) + "\n").utf8))
+        await PiJSONStream.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout, stream: stream,
+                               timeoutMessage: "Pi took longer than \(Int(timeout / 60)) minutes and was stopped.") { line in
             if let step = progressLine(line) { progress(step) }
         }
-        try? handle?.close()
-        var output = PiJSONStream.parse(collector.lines)
-        if exit == nil { output.error = "Pi couldn't start." }
-        else if exit?.cancelled == true { output.error = "Stopped." }
-        else if exit?.timedOut == true { output.error = "Pi took longer than \(Int(timeout / 60)) minutes and was stopped." }
-        else if exit?.succeeded != true, output.error == nil {
-            let tail = collector.lines.filter { !$0.hasPrefix("{") }.suffix(5).joined(separator: " ")
-            output.error = "Pi exited with status \(exit?.status ?? -1)" + (tail.isEmpty ? "." : ": \(SecretFilter.masked(String(tail.suffix(300))))")
-        }
-        return (output, collector.lines)
+    }
+
+    /// Pi runs in the base folder itself (no project folder of the space).
+    static func runsInBase(_ cwd: URL, chat: Chat) -> Bool {
+        cwd.standardizedFileURL.path == URL(filePath: chat.note.baseRoot, directoryHint: .isDirectory).standardizedFileURL.path
     }
 
     /// The proposals Pi made in one answer (K32): new in the base's inbox since the question was
@@ -363,9 +366,9 @@ public enum KnowledgeAsk {
         }
         let text = """
             #!/bin/sh
-            # Ask Pi about \(chat.note.id) in AKit, continued in the terminal. Written by AKit; it writes it again each time.
+            # Ask Pi in AKit, continued in the terminal. Written by AKit; it writes it again each time.
             cd \(quoted(chat.cwd)) || exit 1
-            echo "AKit: Pi goes on with your questions about \(chat.note.id)."
+            printf '%s\\n' \(quoted("AKit: Pi goes on with your questions about \(chat.note.id.filter { !$0.isNewline })."))
             exec \(quoted(pi.path)) \(options(chat: chat, fork: fork, agent: agent).map(quoted).joined(separator: " "))
 
             """
@@ -382,12 +385,5 @@ public enum KnowledgeAsk {
 
     static func quoted(_ text: String) -> String {
         "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    private final class Collector: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored: [String] = []
-        func add(_ line: String) { lock.withLock { stored.append(line) } }
-        var lines: [String] { lock.withLock { stored } }
     }
 }

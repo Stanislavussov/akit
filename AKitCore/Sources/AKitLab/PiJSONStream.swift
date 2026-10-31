@@ -58,6 +58,42 @@ public enum PiJSONStream {
         return output
     }
 
+    /// Runs one `pi -p --mode json`: every line goes to `onLine` and, masked (`JSONMask`), to
+    /// `stream`; the events are read back with `parse`. An error says why the run ended badly:
+    /// it couldn't start, was stopped (the caller's `Cancellation` scope), timed out
+    /// (`timeoutMessage`), or exited with a status (with the last lines that aren't JSON).
+    /// Returns every line too, unmasked, for the caller to look into (never saved).
+    public static func run(_ pi: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
+                           stream: URL, timeoutMessage: String,
+                           onLine: (@Sendable (String) -> Void)? = nil) async -> (output: Output, lines: [String]) {
+        try? FileManager.default.createDirectory(at: stream.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: stream.path, contents: nil)
+        let handle = try? FileHandle(forWritingTo: stream)
+        let collector = Collector()
+        let exit = await ChildProcess.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout) { line in
+            collector.add(line)
+            handle?.write(Data((JSONMask.jsonLine(line) + "\n").utf8))
+            onLine?(line)
+        }
+        try? handle?.close()
+        var output = parse(collector.lines)
+        if exit == nil { output.error = "Pi couldn't start." }
+        else if exit?.cancelled == true { output.error = "Stopped." }
+        else if exit?.timedOut == true { output.error = timeoutMessage }
+        else if exit?.succeeded != true, output.error == nil {
+            let tail = collector.lines.filter { !$0.hasPrefix("{") }.suffix(5).joined(separator: " ")
+            output.error = "Pi exited with status \(exit?.status ?? -1)" + (tail.isEmpty ? "." : ": \(SecretFilter.masked(String(tail.suffix(300))))")
+        }
+        return (output, collector.lines)
+    }
+
+    private final class Collector: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [String] = []
+        func add(_ line: String) { lock.withLock { stored.append(line) } }
+        var lines: [String] { lock.withLock { stored } }
+    }
+
     /// A session Pi saved in `folder`: `<time>_<id>.jsonl`.
     public static func sessionFile(id: String, in folder: URL) -> URL? {
         FileWalk.children(of: folder).first { $0.lastPathComponent.hasSuffix("_\(id).jsonl") }

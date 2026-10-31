@@ -77,7 +77,8 @@ map relations. Knowledge needs nothing from Review, so the arrows still point do
 note to the user's own Pi) lives in `AKitLab`, beside `KnowledgeMapDrawer`. The reader of
 `pi -p --mode json` (`parse`, `sessionFile`, the login-shell environment) moved down from
 `AKitReview`'s `ReviewPasses` into `AKitLab` as `PiJSONStream`; Review calls it, so both read Pi
-the same way and the arrows still point down.
+the same way and the arrows still point down. After review the runner (`PiJSONStream.run`) and the
+JSON-aware masking of the streams (`JSONMask`, from `ReviewMask`) moved down too.
 
 ## Goal
 

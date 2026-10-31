@@ -55,6 +55,30 @@ final class KnowledgeSpaceOrderTests {
         await #expect(throws: KnowledgeBase.Failure.self) { try await base.move(space: "nowhere", by: 1, env: self.env) }
     }
 
+    /// Review finding 8: dragged down a space goes after the one it is dropped on, so the last
+    /// place can be reached; dragged up, before it.
+    @Test func aDroppedSpaceGoesAfterWhenMovedDownAndBeforeWhenMovedUp() async throws {
+        let base = try await base(["a", "b", "c"])
+        try await base.move(space: "a", onto: "c", env: env)
+        #expect(base.areas().map(\.name) == ["b", "c", "a"])
+        try await base.move(space: "a", onto: "b", env: env)
+        #expect(base.areas().map(\.name) == ["a", "b", "c"])
+        try await base.move(space: "a", onto: "b", env: env)
+        #expect(base.areas().map(\.name) == ["b", "a", "c"])
+        try await base.move(space: "a", onto: "a", env: env)
+        #expect(base.areas().map(\.name) == ["b", "a", "c"])
+    }
+
+    /// Review finding 15: a broken `.spaces.json` is read as none, and the next move writes it again.
+    @Test func aBrokenOrderFileIsIgnoredAndRewritten() async throws {
+        let base = try await base(["b", "a"])
+        try Data("{ not json".utf8).write(to: base.root.appending(path: ".spaces.json"))
+        #expect(base.areas().map(\.name) == ["a", "b"])
+        try await base.move(space: "b", by: -1, env: env)
+        #expect(base.areas().map(\.name) == ["b", "a"])
+        #expect(try saved(base).contains("\"b\",\n    \"a\""))
+    }
+
     @Test func aDeletedSpaceLeavesTheOrderInTheSameCommit() async throws {
         let base = try await base(["logistics", "payments"])
         try await base.newNote(area: "logistics", name: "warehouse", kind: nil, env: env)

@@ -30,7 +30,9 @@ final class KnowledgeModel {
     var expandedAreas: Set<String> = [] {
         didSet {
             guard let expandedKey, DebugSnapshot.options == nil, expandedAreas != oldValue else { return }
-            UserDefaults.standard.set(expandedAreas.sorted(), forKey: expandedKey)
+            // Spaces that are gone (deleted, or in another base) aren't kept.
+            let names = Set(areas.map(\.name))
+            UserDefaults.standard.set(expandedAreas.filter(names.contains).sorted(), forKey: expandedKey)
         }
     }
     /// The defaults key `expandedAreas` was read from: the base's folder.
@@ -341,13 +343,11 @@ final class KnowledgeModel {
         reload()
     }
 
-    /// A space dropped on another one in the list: it takes that one's place (K31).
-    func move(space name: String, before target: String) async {
+    /// A space dropped on another one in the list (K31): after it when dragged down, before it
+    /// when dragged up.
+    func move(space name: String, onto target: String) async {
         guard let base, name != target else { return }
-        var names = areas.map(\.name).filter { $0 != name }
-        guard let index = names.firstIndex(of: target), areas.contains(where: { $0.name == name }) else { return }
-        names.insert(name, at: index)
-        do { try await base.reorder(spaces: names, env: env) } catch { problem = error.message }
+        do { try await base.move(space: name, onto: target, env: env) } catch { problem = error.message }
         reload()
     }
 

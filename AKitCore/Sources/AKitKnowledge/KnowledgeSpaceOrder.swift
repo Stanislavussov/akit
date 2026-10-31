@@ -36,16 +36,40 @@ extension KnowledgeBase {
         }
     }
 
-    /// A space dragged to a new place: the whole order, written and committed at once. Names that
-    /// are no space are left out; spaces it misses keep their place after the others.
+    /// A new order: written and committed at once, under the base's git lock (the file is written
+    /// inside it, so two writers never mix). Names that are no space are left out; spaces it misses
+    /// keep their place after the others.
     public func reorder(spaces names: [String], env: HarnessEnvironment) async throws(Failure) {
         let spaces = areas().map(\.name)
         var seen = Set<String>()
         let wanted = names.map(Self.nfc).filter { spaces.contains($0) && seen.insert($0).inserted }
         let order = wanted + spaces.filter { !wanted.contains($0) }
         guard order != savedSpaceOrder() else { return }
+        let lockFile = root.appending(path: Self.queueLockName)
+        let lock: FileLock?
+        do { lock = try FileLock.acquire(lockFile, timeout: 2) } catch {
+            throw Failure(message: "Can't open the lock \(lockFile.path): \(error.localizedDescription)")
+        }
+        guard let lock else {
+            throw Failure(message: "Another AKit is writing to the knowledge base (\(lockFile.lastPathComponent) is held); try again in a moment.")
+        }
+        defer { lock.release() }
         try writeSpaceOrder(order)
-        try await commit([Self.spaceOrderName], message: "Reorder spaces", env: env)
+        do { try await KnowledgeGit(base: root, env: env).commit(paths: [Self.spaceOrderName], message: "Reorder spaces", alreadyLocked: lock) } catch {
+            throw Failure(message: "\(Self.spaceOrderName) was written, but not committed: \(error.message)")
+        }
+    }
+
+    /// A space dropped onto another (drag in the list): dragged down, it goes after that space;
+    /// dragged up, before it. So the last place can be reached too.
+    public func move(space name: String, onto target: String, env: HarnessEnvironment) async throws(Failure) {
+        var spaces = areas().map(\.name)
+        let (name, target) = (Self.nfc(name), Self.nfc(target))
+        guard name != target, let from = spaces.firstIndex(of: name), let to = spaces.firstIndex(of: target) else { return }
+        spaces.remove(at: from)
+        let index = spaces.firstIndex(of: target)! + (from < to ? 1 : 0)
+        spaces.insert(name, at: index)
+        try await reorder(spaces: spaces, env: env)
     }
 
     /// Move Up (`by: -1`) / Move Down (`by: 1`): one place in the order, committed at once. Nothing

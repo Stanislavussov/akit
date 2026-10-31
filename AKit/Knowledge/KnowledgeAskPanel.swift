@@ -49,15 +49,24 @@ final class KnowledgeAskModel {
         return LabAgent(harness: .pi, model: chosen.isEmpty ? fallback.model : chosen, effort: fallback.effort)
     }
 
-    /// Shows the panel for `note`, with its latest chat.
+    /// Counts what the panel shows (another note, New Chat): a send that ends after a change
+    /// leaves the panel as it is.
+    private var generation = 0
+
+    /// Shows the panel for `note`, with its latest chat. The same note (base and id) with a new
+    /// title (an outside edit) only updates the title: a running question goes on.
     func show(_ note: KnowledgeAsk.Note) {
         if DebugSnapshot.options?.tab == "knowledge-ask" {
             self.note = note
             entries = Self.cannedChat
             return
         }
-        guard note != self.note else { return }
+        if let current = self.note, current.baseRoot == note.baseRoot, current.id == note.id {
+            self.note = note
+            return
+        }
         if isRunning { stop() }
+        generation += 1
         self.note = note
         chat = KnowledgeAsk.latestChat(note: note.id, base: note.base, env: .current)
         entries = chat.map(KnowledgeAsk.entries) ?? []
@@ -66,6 +75,7 @@ final class KnowledgeAskModel {
 
     func newChat() {
         stop()
+        generation += 1
         (chat, entries, draft, passage, problem, openedIn) = (nil, [], "", nil, nil, nil)
     }
 
@@ -83,25 +93,33 @@ final class KnowledgeAskModel {
         let env = HarnessEnvironment.current
         let scope = Cancellation.Scope()
         self.scope = scope
+        let generation = generation
         (asking, step, problem) = ((question, passage), "Starting Pi…", nil)
         draft = ""
         self.passage = nil
         Task {
             do {
                 let chat = try self.chat ?? KnowledgeAsk.newChat(note: note, cwd: cwd, env: env)
-                self.chat = chat
+                if generation == self.generation { self.chat = chat }
                 let entry = try await Cancellation.$scope.withValue(scope) {
                     try await KnowledgeAsk.ask(question, passage: passage, noteText: noteText, in: chat, agent: agent, env: env,
                                                confirm: { destination in await self.confirm(destination, agent: agent) },
                                                progress: { line in Task { @MainActor in self.step = line } })
                 }
-                if self.chat == chat { entries.append(entry) }
+                if generation == self.generation { entries.append(entry) }
             } catch {
-                problem = error.localizedDescription
-                // Nothing was asked: the question goes back to the field.
-                if draft.isEmpty { draft = question }
-                if self.passage == nil { self.passage = passage }
+                // Only into the chat it was asked in: the panel may show another note by now.
+                if generation == self.generation {
+                    problem = error.localizedDescription
+                    // Not sent (refused, not confirmed): the question goes back to the field. One
+                    // Pi answered but AKit couldn't save stays out of it.
+                    if (error as? KnowledgeAsk.Failure)?.sent != true {
+                        if draft.isEmpty { draft = question }
+                        if self.passage == nil { self.passage = passage }
+                    }
+                }
             }
+            // The process is gone: the next question may start.
             asking = nil
             self.scope = nil
         }
@@ -340,7 +358,7 @@ struct KnowledgeAskPanel: View {
             .disabled(ask.isRunning)
             Button("Open in Pi", systemImage: "terminal") { ask.openInPi() }
                 .disabled(!ask.canOpenInPi)
-                .help("Go on with this conversation in an interactive Pi in a terminal, from Pi's last answer")
+                .help("Go on with this conversation in an interactive Pi in a terminal, from Pi's last answer. What you ask there doesn't come back to this panel")
             Button("New Chat", systemImage: "square.and.pencil") { ask.newChat() }
                 .disabled(ask.entries.isEmpty && !ask.isRunning)
                 .help("Start a new conversation about this note; the old one stays in ~/.akit/local/knowledge-ask")

@@ -303,10 +303,10 @@ struct KnowledgeView: View {
         .draggable(Self.spaceDragPrefix + area.name)
         .dropDestination(for: String.self) { items, _ in
             guard let name = items.first(where: { $0.hasPrefix(Self.spaceDragPrefix) })?.dropFirst(Self.spaceDragPrefix.count) else { return false }
-            Task { await model.move(space: String(name), before: area.name) }
+            Task { await model.move(space: String(name), onto: area.name) }
             return true
         }
-        .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")" + (area.title.map { " · \($0)" } ?? "") + ". Click to fold or unfold; drag onto another space to put it there")
+        .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")" + (area.title.map { " · \($0)" } ?? "") + ". Click to fold or unfold; drag onto another space to put it there (after it when dragged down)")
         .contextMenu {
             Button("New Note…") { model.newNoteRequest = KnowledgeModel.NewNoteRequest(area: area.name, name: "") }
             Button("Area Settings…") {

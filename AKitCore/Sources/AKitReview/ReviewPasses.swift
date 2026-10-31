@@ -761,25 +761,10 @@ public enum ReviewPasses {
     /// the last answer, an error, and the paths of the read tools. The raw stream goes to `stream`.
     static func runPi(_ pi: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
                       stream: URL, progress: (@Sendable (String) -> Void)? = nil, details: Bool = false) async -> PassOutput {
-        try? FileManager.default.createDirectory(at: stream.deletingLastPathComponent(), withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: stream.path, contents: nil)
-        let handle = try? FileHandle(forWritingTo: stream)
-        let collector = Collector()
-        let exit = await ChildProcess.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout) { line in
-            collector.add(line)
-            handle?.write(Data((ReviewMask.jsonLine(line) + "\n").utf8))
+        await PiJSONStream.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout,
+                               stream: stream, timeoutMessage: "The pass timed out.") { line in
             if let progress, let event = liveEvent(line, details: details) { progress(ReviewLive.line(event.title, detail: event.detail)) }
-        }
-        try? handle?.close()
-        var output = parse(collector.lines)
-        if exit == nil { output.error = "Pi couldn't start." }
-        else if exit?.cancelled == true { output.error = "Stopped." }
-        else if exit?.timedOut == true { output.error = "The pass timed out." }
-        else if exit?.succeeded != true, output.error == nil {
-            let tail = collector.lines.filter { !$0.hasPrefix("{") }.suffix(5).joined(separator: " ")
-            output.error = "Pi exited with status \(exit?.status ?? -1)" + (tail.isEmpty ? "." : ": \(SecretFilter.masked(String(tail.suffix(300))))")
-        }
-        return output
+        }.output
     }
 
     /// One Pi event as a line of the live log: what the pass does now. The title only; the
@@ -947,12 +932,6 @@ public enum ReviewPasses {
         return total
     }
 
-    private final class Collector: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored: [String] = []
-        func add(_ line: String) { lock.withLock { stored.append(line) } }
-        var lines: [String] { lock.withLock { stored } }
-    }
 }
 
 extension SendUsage {

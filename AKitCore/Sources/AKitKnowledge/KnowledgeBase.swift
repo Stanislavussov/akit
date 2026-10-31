@@ -382,16 +382,25 @@ public struct KnowledgeBase: Sendable, Hashable {
         do { _ = try trash(url) } catch {
             throw Failure(message: "Couldn't move \(path) to the Trash: \(error.localizedDescription)")
         }
-        // A deleted space leaves the order too (K31), in the same commit.
+        // A deleted space leaves the order too (K31), in the same commit. If the order can't be
+        // written, the removal is still committed and the message says so.
         var paths = [path]
+        var orderProblem: String?
         if let area, savedSpaceOrder().contains(Self.nfc(area)) {
-            try writeSpaceOrder(savedSpaceOrder().filter { $0 != Self.nfc(area) })
-            paths.append(Self.spaceOrderName)
+            do {
+                try writeSpaceOrder(savedSpaceOrder().filter { $0 != Self.nfc(area) })
+                paths.append(Self.spaceOrderName)
+            } catch {
+                orderProblem = error.message
+            }
         }
         do {
             try await KnowledgeGit(base: root, env: env).commit(paths: paths, message: "Delete \(label)")
         } catch {
             throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: \(error.message)")
+        }
+        if let orderProblem {
+            throw Failure(message: "\(path) is in the Trash and its removal is committed, but the order of the spaces wasn't updated: \(orderProblem)")
         }
     }
 

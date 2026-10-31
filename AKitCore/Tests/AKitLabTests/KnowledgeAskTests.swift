@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AKitBrain
 import AKitFoundation
 import AKitKnowledge
 @testable import AKitLab
@@ -200,8 +201,10 @@ final class KnowledgeAskTests {
         #expect(KnowledgeAsk.entries(chat).map(\.id) == ["q1", "q2", "q3"])
 
         let records = SendLog.records(env: env())
-        #expect(records.map(\.purpose) == ["knowledge-ask", "knowledge-ask"], "the failed answer recorded no usage")
+        #expect(records.map(\.purpose) == ["knowledge-ask", "knowledge-ask", "knowledge-ask"], "the failed answer was sent too")
         #expect(records.first?.usage.output == 9 && records.first?.runID == chat.id && records.first?.session == "s1")
+        let system = KnowledgeAsk.systemPrompt(chat.note).count
+        #expect(records.first?.systemCharacters == system && (records.first?.inputCharacters ?? 0) > system)
 
         let script = try KnowledgeAsk.openScript(chat, agent: Self.agent, env: env())
         let text = try String(contentsOf: script, encoding: .utf8)
@@ -223,6 +226,59 @@ final class KnowledgeAskTests {
             try await KnowledgeAsk.ask("Q?", noteText: "", in: chat, agent: Self.agent, env: noPi)
         }
         #expect(throws: KnowledgeAsk.Failure.self) { try KnowledgeAsk.openScript(chat, agent: Self.agent, env: self.env()) }
+        #expect(KnowledgeAsk.entries(chat).isEmpty && !fm.fileExists(atPath: home.appending(path: "count").path))
+    }
+
+    /// Review finding 1: a hostile note id can't break out of Open in Pi's script.
+    @Test func openInPiQuotesTheNoteId() async throws {
+        var note = Self.note
+        note.id = "a$(touch pwned)b`touch pwned2`\"\necho broken; touch pwned3"
+        let chat = try KnowledgeAsk.newChat(note: note, cwd: home, env: env())
+        _ = try await KnowledgeAsk.ask("Q?", noteText: "", in: chat, agent: Self.agent, env: env())
+        let script = try KnowledgeAsk.openScript(chat, agent: Self.agent, env: env())
+        let text = try String(contentsOf: script, encoding: .utf8)
+        #expect(!text.contains("\necho broken") && text.contains("printf '%s\\n' 'AKit: Pi goes on"))
+        let run = try #require(await ProcessRunner.run(URL(filePath: "/bin/sh"), arguments: [script.path], directory: home,
+                                                        environment: ["HOME": home.path, "PATH": "/usr/bin:/bin"], timeout: 20))
+        #expect(run.succeeded && run.output.contains("AKit: Pi goes on with your questions about a$(touch pwned)b"))
+        for name in ["pwned", "pwned2", "pwned3"] { #expect(!fm.fileExists(atPath: home.appending(path: name).path), "\(name)") }
+        #expect(try args(2).contains("--fork"), "the script ran the fake pi, forking the answer")
+    }
+
+    /// Review finding 4: on a work Mac Pi in a project folder sends that project's code: only to an
+    /// allowed destination. In the base folder it is knowledge base data, as everywhere.
+    @Test func aWorkMacSendsAProjectFolderOnlyToAnAllowedDestination() async throws {
+        try MachineProfile(kind: .work, name: "work").save(home: home)
+        let project = home.appending(path: "Projects/orders-api")
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let inProject = try KnowledgeAsk.newChat(note: Self.note, cwd: project, env: env())
+        await #expect(throws: KnowledgeAsk.Failure.self) {
+            try await KnowledgeAsk.ask("Q?", noteText: "", in: inProject, agent: Self.agent, env: self.env())
+        }
+        #expect(!fm.fileExists(atPath: home.appending(path: "count").path), "Pi never started")
+
+        var note = Self.note
+        note.baseRoot = home.appending(path: "kb").path
+        let inBase = try KnowledgeAsk.newChat(note: note, cwd: home.appending(path: "kb"), env: env())
+        #expect(try await KnowledgeAsk.ask("Q?", noteText: "", in: inBase, agent: Self.agent, env: env()).error == nil)
+
+        let account = SendDestination(harness: .pi, provider: "opencode-go", account: "me", org: "acme")
+        try LabSettings(allowedDestinations: [account], piAccounts: [PiAccount(provider: "opencode-go", account: "me", org: "acme")]).save(env: env())
+        #expect(try await KnowledgeAsk.ask("Q?", noteText: "", in: inProject, agent: Self.agent, env: env()).error == nil)
+    }
+
+    /// Review finding 15: Lab settings that can't be read stop the send before Pi starts.
+    @Test func unreadableLabSettingsSendNothing() async throws {
+        let file = LabSettings.file(env: env())
+        try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{ broken".utf8).write(to: file)
+        let chat = try KnowledgeAsk.newChat(note: Self.note, cwd: home, env: env())
+        do {
+            _ = try await KnowledgeAsk.ask("Q?", noteText: "", in: chat, agent: Self.agent, env: env())
+            Issue.record("sent")
+        } catch {
+            #expect((error as? KnowledgeAsk.Failure)?.message.hasPrefix("Not sent:") == true)
+        }
         #expect(KnowledgeAsk.entries(chat).isEmpty && !fm.fileExists(atPath: home.appending(path: "count").path))
     }
 
