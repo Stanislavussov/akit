@@ -15,6 +15,8 @@ public enum PiJSONStream {
         public var paths: [String] = []
         /// Pi's process started (`run`): the prompt went out, whatever happened after.
         public var started = false
+        /// Pi's exit status, when it exited by itself.
+        public var exitStatus: Int32?
 
         public init() {}
     }
@@ -81,6 +83,7 @@ public enum PiJSONStream {
         try? handle?.close()
         var output = parse(collector.lines)
         output.started = collector.started
+        if let exit, exit.exitedNormally { output.exitStatus = exit.status }
         if exit == nil { output.error = "Pi couldn't start." }
         else if exit?.cancelled == true { output.error = "Stopped." }
         else if exit?.timedOut == true { output.error = timeoutMessage }

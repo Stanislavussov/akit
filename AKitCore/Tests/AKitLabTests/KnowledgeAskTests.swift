@@ -216,6 +216,13 @@ final class KnowledgeAskTests {
         #expect(steps.all.contains("Runs bash akit kb search orders"))
         let one = try args(1)
         #expect(Array(one.prefix(4)) == ["-p", "--mode", "json", "--offline"] && !one.contains("--fork"))
+        // The call record of the Log… sheet (K34): as run, masked, with the session file and the thinking.
+        let call = try #require(KnowledgeAskLog.load(first, in: chat).call)
+        #expect(call.arguments.first == "-p" && call.arguments.contains("--exclude-tools") && call.prompt?.contains("Team A.") == true)
+        #expect(call.thinking == "low" && call.model == "opencode-go/gpt-6-luna" && call.fork == nil && call.exitStatus == 0)
+        #expect(call.session?.hasSuffix("_s1.jsonl") == true && call.cwd == cwd.path && call.usage.output == 9)
+        #expect(first.model == "opencode-go/gpt-6-luna" && first.thinking == "low")
+        #expect(KnowledgeAskLog.load(first, in: chat).steps.first?.summary == "akit kb search orders")
         #expect(one.contains("--exclude-tools") && one.joined(separator: "\n").contains("<note>\n# orders-api\nTeam A.\n</note>"))
         #expect(try String(contentsOf: home.appending(path: "cwd-1.txt"), encoding: .utf8).trimmingCharacters(in: .newlines) == cwd.path)
         #expect(fm.fileExists(atPath: chat.folder.appending(path: "system.md").path))

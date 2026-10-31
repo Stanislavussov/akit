@@ -74,6 +74,10 @@ public enum KnowledgeAsk {
         public var session: String?
         /// The proposals (`inbox/<id>.md`) Pi made in this answer (K32), for their cards.
         public var proposals: [ProposalRef]?
+        /// The Pi model and thinking level of the answer (K34); nil in chats saved before, or
+        /// Pi's own default.
+        public var model: String?
+        public var thinking: String?
         /// The answer can be forked: it has a session and no error.
         public var isGood: Bool { session != nil && error == nil }
 
@@ -311,14 +315,25 @@ public enum KnowledgeAsk {
         let base = KnowledgeBase(root: URL(filePath: chat.note.baseRoot, directoryHint: .isDirectory))
         let before = base.proposalIDs()
         progress("Pi is reading the question…")
-        let (output, stream) = await run(pi, arguments: arguments, directory: FileWalk.isDirectory(cwd) ? cwd : chat.folder, environment: environment,
-                               timeout: timeout, stream: chat.folder.appending(path: "streams/q\(number).jsonl"), progress: progress)
+        let times = KnowledgeAskLog.Times()
+        let started = Date.now
+        let directory = FileWalk.isDirectory(cwd) ? cwd : chat.folder
+        let (output, stream) = await run(pi, arguments: arguments, directory: directory, environment: environment,
+                               timeout: timeout, stream: chat.folder.appending(path: "streams/q\(number).jsonl"), progress: progress, times: times)
         entry.answered = .now
         entry.session = output.session
         entry.answer = output.answer.map(SecretFilter.masked)
         entry.error = output.error ?? (output.answer == nil ? "Pi gave no answer." : nil)
         let made = proposals(in: base, before: before, stream: stream)
         entry.proposals = made.isEmpty ? nil : made
+        (entry.model, entry.thinking) = (agent.model.isEmpty ? nil : agent.model, agent.effort.isEmpty ? nil : agent.effort)
+        // How Pi was called, for the Log… sheet (K34): masked, the prompt as it was sent.
+        let call = KnowledgeAskLog.Call(pi: pi.path, arguments: arguments.dropLast().map(SecretFilter.masked) + [SecretFilter.masked(scrubbed.text)],
+                                        cwd: directory.path, model: agent.model, thinking: agent.effort, fork: fork?.path,
+                                        session: output.session.flatMap { PiJSONStream.sessionFile(id: $0, in: chat.folder.appending(path: "sessions"))?.path },
+                                        started: started, ended: entry.answered ?? .now, exitStatus: output.exitStatus, error: entry.error ?? output.error,
+                                        usage: output.usage, tools: times.all)
+        try? KnowledgeAskLog.save(call, question: number, in: chat)
         // Logged whenever Pi started, also when it was stopped or timed out: the prompt went out.
         if output.started {
             let system = systemPrompt(chat.note).count
@@ -337,9 +352,11 @@ public enum KnowledgeAsk {
     /// Runs one `pi -p --mode json` (`PiJSONStream.run`, the stream masked as JSON), with a short
     /// progress line per tool call; also every line, for finding the answer's proposals.
     static func run(_ pi: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
-                    stream: URL, progress: @escaping @Sendable (String) -> Void) async -> (PiJSONStream.Output, [String]) {
+                    stream: URL, progress: @escaping @Sendable (String) -> Void,
+                    times: KnowledgeAskLog.Times? = nil) async -> (PiJSONStream.Output, [String]) {
         await PiJSONStream.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout, stream: stream,
                                timeoutMessage: "Pi took longer than \(Int(timeout / 60)) minutes and was stopped.") { line in
+            times?.note(line)
             if let step = progressLine(line) { progress(step) }
         }
     }
