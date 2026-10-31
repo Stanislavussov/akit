@@ -16,6 +16,9 @@ struct KnowledgeView: View {
     @State private var areaToDelete: String?
     /// Add Sample Base… / Remove Sample Base… waiting for confirmation. Snapshots: `--tab sample-remove`.
     @State private var sampleRequest: SampleRequest? = DebugSnapshot.options?.tab == "sample-remove" ? .remove : nil
+    /// Hide Note List: the note or map gets the whole width (K29). Snapshots: `--tab hide-list`.
+    @AppStorage("knowledgeNoteListHidden") private var listHiddenSetting = false
+    private var listHidden: Bool { DebugSnapshot.options.map { $0.tab == "hide-list" } ?? listHiddenSetting }
 
     enum SampleRequest { case add, remove }
 
@@ -60,12 +63,13 @@ struct KnowledgeView: View {
                 InboxPanel()
             } else {
                 HSplitView {
-                    spaces.safeAreaInset(edge: .bottom, spacing: 0) { IndexStatusLine() }
-                        .frame(minWidth: 150, idealWidth: 180, maxWidth: 260)
-                    Group {
-                        if model.searchText.trimmingCharacters(in: .whitespaces).isEmpty { noteList } else { SearchResultsList() }
+                    if !listHidden {
+                        Group {
+                            if model.searchText.trimmingCharacters(in: .whitespaces).isEmpty { noteList } else { SearchResultsList() }
+                        }
+                        .safeAreaInset(edge: .bottom, spacing: 0) { IndexStatusLine() }
+                        .frame(minWidth: 200, idealWidth: 260, maxWidth: 380)
                     }
-                    .frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
                     if model.map != nil {
                         MapPanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
                         if model.noteBesideMap, model.note != nil {
@@ -159,13 +163,18 @@ struct KnowledgeView: View {
                 .help("The knowledge base of one world (work, personal) on this Mac")
             }
         }
-        ToolbarItem {
-            Button("New Area…", systemImage: "folder.badge.plus") { sheet = .newArea }
-                .disabled(model.base == nil)
-                .help("Add a space: a folder in areas/ for one part of your work, like payments or logistics")
+        ToolbarItem(placement: .navigation) {
+            Button(listHidden ? "Show Note List" : "Hide Note List", systemImage: "sidebar.left") { listHiddenSetting.toggle() }
+                .keyboardShortcut("l", modifiers: [.command, .option])
+                .disabled(model.base == nil || model.screenTab != .notes)
+                .help(listHidden ? "Show the list of spaces, maps and notes again (⌥⌘L)"
+                      : "Hide the list of spaces, maps and notes, so the note or map gets the whole width (⌥⌘L)")
         }
         // One group: a toolbar takes at most 10 items.
         ToolbarItemGroup {
+            Button("New Area…", systemImage: "folder.badge.plus") { sheet = .newArea }
+                .disabled(model.base == nil)
+                .help("Add a space: a folder in areas/ for one part of your work, like payments or logistics")
             Button("New Note…", systemImage: "square.and.pencil") { sheet = .newNote }
                 .disabled(model.base == nil)
                 .help("Write a new note in a space; it is committed at once")
@@ -238,39 +247,11 @@ struct KnowledgeView: View {
         return count == 0 ? "Lint" : "Lint (\(count))"
     }
 
-    private var spaces: some View {
-        List(selection: Binding(get: { model.area }, set: { model.choose(area: $0) })) {
-            Section("Spaces") {
-                ForEach(model.areas, id: \.name) { area in
-                    HStack {
-                        Label(area.name, systemImage: "folder")
-                        Spacer()
-                        Text("\(area.notes)").foregroundStyle(.secondary).monospacedDigit()
-                    }
-                    .tag(Optional(area.name))
-                    .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")" + (area.title.map { " · \($0)" } ?? ""))
-                    .contextMenu {
-                        Button("Area Settings…") {
-                            model.choose(area: area.name)
-                            sheet = .areaSettings
-                        }
-                        Button("Show in Finder") {
-                            if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.areasFolder.appending(path: area.name)]) }
-                        }
-                        Button("Delete…", role: .destructive) { areaToDelete = area.name }
-                    }
-                }
-            }
-        }
-        .overlay {
-            if model.areas.isEmpty {
-                ContentUnavailableView("No spaces", systemImage: "folder",
-                                       description: Text("New Area… adds one, like payments."))
-            }
-        }
-    }
+    /// What a dragged space carries: this and its name (a dragged note carries its id).
+    static let spaceDragPrefix = "akit-space:"
 
-    /// The selection of the middle list: a note id, or `map:` and a map id.
+    /// The selection of the list: a note id, or `map:` and a map id. A space's own row isn't
+    /// selectable: a click folds or unfolds it.
     private var listSelection: Binding<String?> {
         Binding(get: { model.map.map { "map:" + $0 } ?? model.note }, set: { value in
             guard let value else { return }
@@ -285,42 +266,85 @@ struct KnowledgeView: View {
         })
     }
 
+    /// One column (K29): every space is a foldable group with its note count, and in it the
+    /// space's maps, then its notes.
     private var noteList: some View {
         List(selection: listSelection) {
-            if !model.maps.isEmpty {
-                Section("Maps") {
-                    // The row's ForEach id is its selection value (a .tag isn't), so it carries the "map:" itself.
-                    ForEach(model.maps.map { "map:" + $0 }, id: \.self) { row in
-                        let id = String(row.dropFirst("map:".count))
-                        Label(KnowledgeModel.mapName(id), systemImage: "point.3.connected.trianglepath.dotted")
-                            .lineLimit(1)
-                            .help("areas/\(id).excalidraw: click to view the map; click a block on it to open its note")
-                            .contextMenu {
-                                Button("Show in Finder") {
-                                    if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.mapFile(id)]) }
-                                }
-                                Button("Rename…") { model.renameRequest = id }
-                                Button("Delete…", role: .destructive) { model.mapDeleteRequest = id }
-                            }
-                    }
+            ForEach(model.areas, id: \.name) { area in
+                DisclosureGroup(isExpanded: Binding(get: { model.expandedAreas.contains(area.name) }, set: { open in
+                    if open { model.expandedAreas.insert(area.name) } else { model.expandedAreas.remove(area.name) }
+                    model.choose(area: area.name)
+                })) {
+                    areaRows(area.name)
+                } label: {
+                    spaceRow(area)
                 }
             }
-            if model.maps.isEmpty {
-                notesRows
-            } else {
-                Section("Notes") { notesRows }
-            }
         }
+        .listStyle(.sidebar)
         .overlay {
-            if model.notes.isEmpty, model.maps.isEmpty, model.area != nil {
-                ContentUnavailableView("No notes", systemImage: "doc.text",
-                                       description: Text("New Note… writes the first one in this space."))
+            if model.areas.isEmpty {
+                ContentUnavailableView("No spaces", systemImage: "folder",
+                                       description: Text("New Area… adds one, like payments."))
             }
         }
     }
 
-    @ViewBuilder private var notesRows: some View {
-        ForEach(model.notes, id: \.id) { note in
+    private func spaceRow(_ area: KnowledgeBase.Area) -> some View {
+        HStack {
+            Label(area.name, systemImage: "folder")
+                .fontWeight(area.name == model.area ? .semibold : .regular)
+            Spacer()
+            Text("\(area.notes)").foregroundStyle(.secondary).monospacedDigit()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { model.toggle(area: area.name) }
+        // Drag a space onto another to put it there (K31); a dropped note is no space.
+        .draggable(Self.spaceDragPrefix + area.name)
+        .dropDestination(for: String.self) { items, _ in
+            guard let name = items.first(where: { $0.hasPrefix(Self.spaceDragPrefix) })?.dropFirst(Self.spaceDragPrefix.count) else { return false }
+            Task { await model.move(space: String(name), onto: area.name) }
+            return true
+        }
+        .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")" + (area.title.map { " · \($0)" } ?? "") + ". Click to fold or unfold; drag onto another space to put it there (after it when dragged down)")
+        .contextMenu {
+            Button("New Note…") { model.newNoteRequest = KnowledgeModel.NewNoteRequest(area: area.name, name: "") }
+            Button("Area Settings…") {
+                model.choose(area: area.name)
+                sheet = .areaSettings
+            }
+            Button("Show in Finder") {
+                if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.areasFolder.appending(path: area.name)]) }
+            }
+            Divider()
+            Button("Move Up") { Task { await model.move(space: area.name, by: -1) } }
+                .disabled(model.areas.first?.name == area.name)
+            Button("Move Down") { Task { await model.move(space: area.name, by: 1) } }
+                .disabled(model.areas.last?.name == area.name)
+            Divider()
+            Button("Delete…", role: .destructive) { areaToDelete = area.name }
+        }
+    }
+
+    /// A space's maps, then its notes.
+    @ViewBuilder private func areaRows(_ area: String) -> some View {
+        let maps = model.maps(in: area)
+        let notes = model.notes(in: area)
+        // The row's ForEach id is its selection value (a .tag isn't), so it carries the "map:" itself.
+        ForEach(maps.map { "map:" + $0 }, id: \.self) { row in
+            let id = String(row.dropFirst("map:".count))
+            Label(KnowledgeModel.mapName(id), systemImage: "point.3.connected.trianglepath.dotted")
+                .lineLimit(1)
+                .help("areas/\(id).excalidraw: click to view the map; click a block on it to open its note")
+                .contextMenu {
+                    Button("Show in Finder") {
+                        if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.mapFile(id)]) }
+                    }
+                    Button("Rename…") { model.renameRequest = id }
+                    Button("Delete…", role: .destructive) { model.mapDeleteRequest = id }
+                }
+        }
+        ForEach(notes, id: \.id) { note in
             VStack(alignment: .leading, spacing: 2) {
                 Text(note.title).fontWeight(.medium).lineLimit(1)
                 Text([note.kind, note.id.split(separator: "/").dropFirst().joined(separator: "/")].compactMap(\.self).joined(separator: " · "))
@@ -331,12 +355,23 @@ struct KnowledgeView: View {
             // Drag onto an open map: a block linked to the note (K6).
             .draggable(note.id)
             .contextMenu {
+                Button("Ask Pi About This Note") {
+                    Task {
+                        await model.closeMap()
+                        model.open(note.id)
+                        model.showAsk()
+                    }
+                }
                 Button("Show in Finder") {
                     if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(note.id)]) }
                 }
                 Button("Rename…") { model.renameRequest = note.id }
                 Button("Delete…", role: .destructive) { model.deleteRequest = note.id }
             }
+        }
+        if maps.isEmpty, notes.isEmpty {
+            Text("No notes yet: New Note… writes one").font(.callout).foregroundStyle(.secondary)
+                .selectionDisabled()
         }
     }
 }

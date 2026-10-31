@@ -1,12 +1,16 @@
 import AKitKnowledge
+import AKitLab
 import AppKit
 import SwiftUI
 
 /// The open note tabs and the note in view: read (frontmatter and Markdown) or Edit, which saves
 /// the file at once; Properties (kind and fields), Copy, Paste, Open in Obsidian and Delete….
+/// Ask Pi (K30) opens a chat about the note under it.
 struct NotePanel: View {
     @Environment(KnowledgeModel.self) private var model
     @State private var draft = ""
+    /// The selection in Edit: Ask Pi asks about it.
+    @State private var selection: TextSelection?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,15 +34,14 @@ struct NotePanel: View {
                     NoteChecksView(findings: checks)
                     Divider()
                 }
-                if model.editing {
-                    TextEditor(text: $draft)
-                        .font(.body.monospaced())
-                        .scrollContentBackground(.hidden)
-                        .padding(8)
-                        .onChange(of: draft) { _, text in model.save(text) }
-                        .onChange(of: model.text) { _, text in if text != draft { draft = text } }
+                if model.ask.isOpen {
+                    VSplitView {
+                        noteText(checks)
+                            .frame(minHeight: 120, maxHeight: .infinity)
+                        KnowledgeAskPanel()
+                    }
                 } else {
-                    NoteReadView(text: model.text, section: model.sectionTarget, grey: Set(checks.compactMap(\.link))) { model.follow(link: $0) }
+                    noteText(checks)
                 }
             } else {
                 ContentUnavailableView("No note open", systemImage: "doc.text",
@@ -63,6 +66,52 @@ struct NotePanel: View {
         } message: {
             Text("The note \(model.noteConflict ?? "") changed on disk while you edit it, in another app like Obsidian or by git. Reload shows the version on disk. Keep Mine saves your text and backs up the one on disk in ~/.akit/backups.")
         }
+    }
+
+    @ViewBuilder private func noteText(_ checks: [KnowledgeLint.Finding]) -> some View {
+        if model.editing {
+            TextEditor(text: $draft, selection: $selection)
+                .font(.body.monospaced())
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .onChange(of: draft) { _, text in model.save(text) }
+                .onChange(of: model.text) { _, text in if text != draft { draft = text } }
+        } else {
+            NoteReadView(text: model.text, section: model.sectionTarget, grey: Set(checks.compactMap(\.link)),
+                         askAbout: { model.showAsk(passage: $0) }) { model.follow(link: $0) }
+        }
+    }
+
+    @ViewBuilder private var copyButtons: some View {
+        Button("Copy", systemImage: "doc.on.doc") { model.copy() }
+            .help("Copy the note's whole text")
+        Button("Paste", systemImage: "doc.on.clipboard") { model.paste() }
+            .help("Add the clipboard's text at the end of the note and save it")
+    }
+
+    @ViewBuilder private func otherButtons(_ entry: KnowledgeBase.NoteEntry) -> some View {
+        Button("Open in Obsidian", systemImage: "arrow.up.forward.app") { model.openInObsidian() }
+            .help("Open the note in Obsidian: the base is a plain Obsidian vault")
+        Button("Rename…", systemImage: "character.cursor.ibeam") { model.renameRequest = entry.id }
+            .help("Rename the note and every link to it in notes and maps, all or nothing, in one commit")
+        Button("Delete…", systemImage: "trash") { model.deleteRequest = entry.id }
+            .help("Move the note to the Trash and commit its removal")
+    }
+
+    private func moreMenu(_ help: String, @ViewBuilder _ items: () -> some View) -> some View {
+        Menu("More", systemImage: "ellipsis.circle", content: items)
+            .labelStyle(.iconOnly)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(help)
+    }
+
+    /// The text selected in Edit, when there is some.
+    private var selectedText: String? {
+        guard model.editing, let selection, case .selection(let range) = selection.indices, !range.isEmpty,
+              range.upperBound <= draft.endIndex else { return nil }
+        let text = String(draft[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     private var tabBar: some View {
@@ -98,26 +147,42 @@ struct NotePanel: View {
                 Text(entry.title).font(.headline).lineLimit(1)
                 Text(entry.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).textSelection(.enabled)
             }
-            Spacer()
+            .help(entry.path)
+            Spacer(minLength: 4)
             if let notice = model.notice {
                 Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Toggle("Edit", systemImage: "pencil", isOn: $model.editing)
                 .toggleStyle(.button)
+                .fixedSize()
                 .help("Edit the note's Markdown. Every change is saved to the file at once and committed when you close the tab, after 5 minutes without edits, or when AKit quits")
             Toggle("Properties", systemImage: "list.bullet.rectangle", isOn: $model.showingProperties)
                 .toggleStyle(.button)
+                .fixedSize()
                 .help("Change the note's kind and fields (its frontmatter), one line each; saved at once, committed with your other edits")
-            Button("Copy", systemImage: "doc.on.doc") { model.copy() }
-                .help("Copy the note's whole text")
-            Button("Paste", systemImage: "doc.on.clipboard") { model.paste() }
-                .help("Add the clipboard's text at the end of the note and save it")
-            Button("Open in Obsidian", systemImage: "arrow.up.forward.app") { model.openInObsidian() }
-                .help("Open the note in Obsidian: the base is a plain Obsidian vault")
-            Button("Rename…", systemImage: "character.cursor.ibeam") { model.renameRequest = entry.id }
-                .help("Rename the note and every link to it in notes and maps, all or nothing, in one commit")
-            Button("Delete…", systemImage: "trash") { model.deleteRequest = entry.id }
-                .help("Move the note to the Trash and commit its removal")
+            Button("Ask Pi", systemImage: "bubble.left.and.text.bubble.right") {
+                if model.ask.isOpen, selectedText == nil { model.ask.isOpen = false } else { model.showAsk(passage: selectedText) }
+            }
+            .keyboardShortcut("a", modifiers: [.command, .option])
+            .fixedSize()
+            .help("Ask your own Pi about this note in a chat under it (⌥⌘A); in Edit, about the selected text. Right-click a section to ask about it")
+            // The rest as wide as there is room for: titled, else Copy and Paste as icons and the
+            // others in a menu, else all in the menu. Labels are never cut.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    copyButtons
+                    otherButtons(entry)
+                }
+                HStack(spacing: 8) {
+                    copyButtons.labelStyle(.iconOnly)
+                    moreMenu("More: Open in Obsidian, Rename…, Delete…") { otherButtons(entry) }
+                }
+                moreMenu("More: Copy, Paste, Open in Obsidian, Rename…, Delete…") {
+                    copyButtons
+                    otherButtons(entry)
+                }
+            }
+            .layoutPriority(1)
         }
         .labelStyle(.titleAndIcon)
         .controlSize(.small)
@@ -239,6 +304,8 @@ struct NoteReadView: View {
     /// A heading to scroll to (a search hit's section).
     var section: String?
     var grey: Set<String> = []
+    /// Ask Pi About This Section: the section's Markdown. nil: no menu.
+    var askAbout: ((String) -> Void)?
     /// A clicked `[[link]]` or `akit:` link, as written.
     var follow: (String) -> Void = { _ in }
 
@@ -263,8 +330,10 @@ struct NoteReadView: View {
                         .padding(8)
                         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    MarkdownText(text: String(note.body), font: .body, large: true, diagrams: true, headingID: Self.anchor,
-                                 inlineText: { [grey] in Self.inline($0, grey: grey) })
+                    // One block per `##` section, so a right-click can ask about that section (K30).
+                    ForEach(Array(Self.chunks(note).enumerated()), id: \.offset) { _, chunk in
+                        NoteChunkView(text: chunk, grey: grey, askAbout: askAbout)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
@@ -280,6 +349,16 @@ struct NoteReadView: View {
                 Task { @MainActor in proxy.scrollTo(Self.anchor(section), anchor: .top) }
             }
         }
+    }
+
+    /// The note's body cut at its section headings: the text before the first, then each section
+    /// with its heading. Empty parts are left out.
+    static func chunks(_ note: KnowledgeNote) -> [String] {
+        let body = note.body
+        let starts = note.sections.map(\.headingRange.lowerBound).filter { $0 > body.startIndex && $0 < body.endIndex }
+        let bounds = [body.startIndex] + starts + [body.endIndex]
+        return zip(bounds, bounds.dropFirst()).map { String(note.text[$0..<$1]) }
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     /// The scroll id of a heading's line.
@@ -371,6 +450,37 @@ struct NoteReadView: View {
         }
         return out
     }
+}
+
+/// One section of a note in the read view. Selectable text keeps the system's own right-click
+/// menu, so Ask Pi About This Section is a button at the section's top right, shown while the
+/// pointer is over it (and the menu of the space around the text).
+private struct NoteChunkView: View {
+    let text: String
+    let grey: Set<String>
+    let askAbout: ((String) -> Void)?
+    @State private var hovering = DebugSnapshot.options?.tab == "knowledge-ask-section"
+
+    var body: some View {
+        MarkdownText(text: text, font: .body, large: true, diagrams: true, headingID: NoteReadView.anchor,
+                     inlineText: { [grey] in NoteReadView.inline($0, grey: grey) })
+            .padding(.trailing, askAbout == nil ? 0 : 22)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 || DebugSnapshot.options?.tab == "knowledge-ask-section" }
+            .overlay(alignment: .topTrailing) {
+                if let askAbout, hovering {
+                    Button("Ask Pi About This Section", systemImage: "bubble.left.and.text.bubble.right") { ask(askAbout) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("Ask Pi about this section: it goes with your next question as the passage")
+                }
+            }
+            .contextMenu {
+                if let askAbout { Button("Ask Pi About This Section") { ask(askAbout) } }
+            }
+    }
+
+    private func ask(_ askAbout: (String) -> Void) { askAbout(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
 }
 
 /// Relations: the arrows to and from the note on every map (read only; draw them on a map). The

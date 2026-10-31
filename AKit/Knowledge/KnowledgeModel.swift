@@ -1,6 +1,7 @@
 import AKitBrain
 import AKitFoundation
 import AKitKnowledge
+import AKitLab
 import AppKit
 import Observation
 
@@ -24,6 +25,18 @@ final class KnowledgeModel {
     private(set) var notes: [KnowledgeBase.NoteEntry] = []
     /// The maps (`.excalidraw` ids, `payments/maps/overview`) of the chosen area.
     private(set) var maps: [String] = []
+    /// The spaces unfolded in the note list (K29), remembered per base. Opening a note or map
+    /// unfolds its space. Snapshots show every space unfolded.
+    var expandedAreas: Set<String> = [] {
+        didSet {
+            guard let expandedKey, DebugSnapshot.options == nil, expandedAreas != oldValue else { return }
+            // Spaces that are gone (deleted, or in another base) aren't kept.
+            let names = Set(areas.map(\.name))
+            UserDefaults.standard.set(expandedAreas.filter(names.contains).sorted(), forKey: expandedKey)
+        }
+    }
+    /// The defaults key `expandedAreas` was read from: the base's folder.
+    private var expandedKey: String?
     /// The map in view; nil shows the note panel alone.
     private(set) var map: String?
     /// Open map tabs (ids), in the order they were opened. The tab bar shows those of the area
@@ -159,6 +172,33 @@ final class KnowledgeModel {
 
     init() { Self.current = self }
 
+    // MARK: - Ask Pi (K30)
+
+    /// The Ask Pi panel under the note.
+    let ask = KnowledgeAskModel()
+
+    /// The note in view as Ask Pi sees it.
+    var askNote: KnowledgeAsk.Note? {
+        guard let base, let entry = noteEntry else { return nil }
+        return KnowledgeAsk.Note(base: base.name, baseRoot: base.root.path, id: entry.id, path: entry.path, title: entry.title)
+    }
+
+    /// Where Pi runs for the note in view: its space's project folder, else the base folder.
+    func askWorkingFolder() -> URL? {
+        guard let base, let entry = noteEntry else { return nil }
+        let area = (try? base.settings(area: entry.area)) ?? KnowledgeArea()
+        return KnowledgeAsk.workingFolder(area: area, baseRoot: base.root, home: home, copies: lintProjects?.copies ?? [:])
+    }
+
+    /// Ask Pi (⌥⌘A, a list row, a section of the note): the panel opens for the note in view;
+    /// `passage` is what the next question is about.
+    func showAsk(passage: String? = nil) {
+        guard let note = askNote else { return }
+        ask.isOpen = true
+        ask.show(note)
+        if let passage { ask.passage = passage }
+    }
+
     var noteEntry: KnowledgeBase.NoteEntry? { note.flatMap { id in allNotes.first { $0.id == id } } }
     private var allNotes: [KnowledgeBase.NoteEntry] = []
     /// Every note and map of the base, for resolving a map's links (P1).
@@ -255,6 +295,10 @@ final class KnowledgeModel {
         areas = base.areas()
         if let area, !areas.contains(where: { $0.name == area }) { self.area = nil }
         if area == nil { area = areas.first?.name }
+        readExpandedAreas(of: base)
+        // Spaces that are gone aren't kept unfolded.
+        let names = Set(areas.map(\.name))
+        if !expandedAreas.isSubset(of: names) { expandedAreas.formIntersection(names) }
         allNotes = (try? base.notes()) ?? []
         notes = allNotes.filter { $0.area == area }
         targets = base.linkTargets()
@@ -289,6 +333,49 @@ final class KnowledgeModel {
         maps = Self.maps(of: area, in: targets)
     }
 
+    /// The notes of one space, for its group in the note list.
+    func notes(in area: String) -> [KnowledgeBase.NoteEntry] { allNotes.filter { $0.area == area } }
+
+    /// The maps of one space, for its group in the note list.
+    func maps(in area: String) -> [String] { Self.maps(of: area, in: targets) }
+
+    /// Move Up / Move Down of a space (K31): its place in `.spaces.json`, committed at once.
+    func move(space name: String, by offset: Int) async {
+        guard let base else { return }
+        do { try await base.move(space: name, by: offset, env: env) } catch { problem = error.message }
+        reload()
+    }
+
+    /// A space dropped on another one in the list (K31): after it when dragged down, before it
+    /// when dragged up.
+    func move(space name: String, onto target: String) async {
+        guard let base, name != target else { return }
+        do { try await base.move(space: name, onto: target, env: env) } catch { problem = error.message }
+        reload()
+    }
+
+    /// Folds or unfolds a space in the note list; it becomes the chosen space too.
+    func toggle(area name: String) {
+        choose(area: name)
+        if expandedAreas.contains(name) { expandedAreas.remove(name) } else { expandedAreas.insert(name) }
+    }
+
+    /// `expandedAreas` of this base, once per base: as saved, else just the chosen space. Snapshots
+    /// unfold every space.
+    private func readExpandedAreas(of base: KnowledgeBase) {
+        let key = "knowledgeExpandedAreas." + base.root.path
+        guard key != expandedKey else { return }
+        expandedKey = nil
+        if DebugSnapshot.options != nil {
+            expandedAreas = Set(areas.map(\.name))
+        } else if let saved = UserDefaults.standard.stringArray(forKey: key) {
+            expandedAreas = Set(saved)
+        } else {
+            expandedAreas = Set([area].compactMap(\.self))
+        }
+        expandedKey = key
+    }
+
     static func maps(of area: String?, in targets: KnowledgeLinks) -> [String] {
         guard let area else { return [] }
         return targets.maps.filter { $0.hasPrefix(area + "/") }
@@ -307,6 +394,7 @@ final class KnowledgeModel {
         }
         let area = String(id.split(separator: "/").first ?? "")
         if area != self.area { choose(area: area) }
+        expandedAreas.insert(area)
         mapHashes[id] = KnowledgeWrite.hash(data)
         mapIsEmpty = Self.isEmpty(map: data)
         showScene(id, data)
@@ -655,6 +743,7 @@ final class KnowledgeModel {
         guard let entry = allNotes.first(where: { $0.id == id }) else { return }
         sectionTarget = nil
         if entry.area != area { choose(area: entry.area) }
+        expandedAreas.insert(entry.area)
         if !tabs.contains(id) { tabs.append(id) }
         note = id
         readNote()
@@ -690,6 +779,7 @@ final class KnowledgeModel {
             noteHashes[note] = KnowledgeWrite.hash(of: base.noteFile(note))
         }
         noteRelations = (try? base.mapGraph().relations(of: note)) ?? []
+        if ask.isOpen, let askNote { ask.show(askNote) }
     }
 
     // MARK: - Writes
@@ -794,7 +884,9 @@ final class KnowledgeModel {
         do {
             try base.newArea(name)
             reload()
-            choose(area: name.trimmingCharacters(in: .whitespaces).precomposedStringWithCanonicalMapping)
+            let name = name.trimmingCharacters(in: .whitespaces).precomposedStringWithCanonicalMapping
+            choose(area: name)
+            expandedAreas.insert(name)
             return true
         } catch {
             problem = error.message
@@ -1304,12 +1396,15 @@ final class KnowledgeModel {
             }
         }
         lines.append("areas: " + areas.map { "\($0.name)\($0.name == area ? "*" : "") (\($0.notes))" }.joined(separator: ", "))
+        let hidden = DebugSnapshot.options?.tab == "hide-list"
+        lines.append("note list: " + (hidden ? "hidden" : "one column, unfolded: " + areas.map(\.name).filter { expandedAreas.contains($0) }.joined(separator: ", ")))
         lines.append("notes: " + notes.map(\.id).joined(separator: ", "))
         lines.append("maps: " + maps.map { $0 == map ? "\($0)*" : $0 }.joined(separator: ", "))
         if !mapTabs.isEmpty { lines.append("map tabs: " + mapTabs.joined(separator: ", ")) }
         if let map { lines.append("map: \(map), \(mapEditing ? "Edit" : "view only")" + (mapIsEmpty ? ", empty" : "") + (noteBesideMap && note != nil ? ", note beside it" : "")) }
         if let mapConflict { lines.append("conflict: Changed on disk, \(mapConflict.id): Reload / Keep Mine") }
         lines.append("tabs: " + tabs.joined(separator: ", "))
+        if ask.isOpen { lines += ask.manifest }
         if let entry = noteEntry {
             lines.append("note: \(entry.title) (\(entry.id)\(entry.kind.map { ", kind \($0)" } ?? "")), \(editing ? "Edit" : "read")")
             if !noteRelations.isEmpty {

@@ -118,7 +118,7 @@ public enum SendPolicy {
             return Decision(allowed: true, reason: "AKit Review runs Pi, and Pi sends the merge request to the model it is set up with.")
         }
         if origin == .knowledgeBase, destination.harness == .pi {
-            return Decision(allowed: true, reason: "The knowledge check runs Pi, and Pi sends the proposal to the model it is set up with.")
+            return Decision(allowed: true, reason: "Knowledge base data goes to Pi (the knowledge check, Ask Pi), and Pi sends it to the model it is set up with.")
         }
         if sameOrigin(origin, destination), !(isWork && origin.isCode) {
             return Decision(allowed: true, reason: "Same origin: \(destination.label) produced this data.")

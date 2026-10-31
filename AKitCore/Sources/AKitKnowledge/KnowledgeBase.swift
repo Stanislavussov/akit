@@ -260,12 +260,15 @@ public struct KnowledgeBase: Sendable, Hashable {
     /// The areas (folders in `areas/`), sorted by name, with their note and map counts and their
     /// `area.yaml` settings.
     public func areas() -> [Area] {
-        FileWalk.children(of: areasFolder).filter(FileWalk.isDirectory).map { folder in
+        let found = FileWalk.children(of: areasFolder).filter(FileWalk.isDirectory).map { folder in
             let files = Self.files(in: folder)
             return Area(name: Self.nfc(folder.lastPathComponent), notes: files.filter { $0.pathExtension == "md" }.count,
                         maps: files.filter { $0.pathExtension == "excalidraw" }.count,
                         settings: (try? KnowledgeArea.load(folder: folder)) ?? KnowledgeArea())
         }
+        // In the order of `.spaces.json` (K31), the rest by name.
+        let place = Dictionary(Self.ordered(found.map(\.name), saved: savedSpaceOrder()).enumerated().map { ($1, $0) }) { first, _ in first }
+        return found.sorted { place[$0.name, default: 0] < place[$1.name, default: 0] }
     }
 
     /// The notes of one area, or of every area, sorted by id.
@@ -379,10 +382,35 @@ public struct KnowledgeBase: Sendable, Hashable {
         do { _ = try trash(url) } catch {
             throw Failure(message: "Couldn't move \(path) to the Trash: \(error.localizedDescription)")
         }
+        // A deleted space leaves the order too (K31), in the same commit. If the order can't be
+        // written, the removal is still committed and the message says so.
+        // The order is written under the base's git lock, like a reorder.
+        let lockFile = root.appending(path: Self.queueLockName)
+        let lock: FileLock?
+        do { lock = try FileLock.acquire(lockFile, timeout: 2) } catch {
+            throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: can't open the lock \(lockFile.path): \(error.localizedDescription)")
+        }
+        guard let lock else {
+            throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: another AKit is writing to the base; it is committed with the next batch.")
+        }
+        defer { lock.release() }
+        var paths = [path]
+        var orderProblem: String?
+        if let area, savedSpaceOrder().contains(Self.nfc(area)) {
+            do {
+                try writeSpaceOrder(savedSpaceOrder().filter { $0 != Self.nfc(area) })
+                paths.append(Self.spaceOrderName)
+            } catch {
+                orderProblem = error.message
+            }
+        }
         do {
-            try await KnowledgeGit(base: root, env: env).commit(paths: [path], message: "Delete \(label)")
+            try await KnowledgeGit(base: root, env: env).commit(paths: paths, message: "Delete \(label)", alreadyLocked: lock)
         } catch {
             throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: \(error.message)")
+        }
+        if let orderProblem {
+            throw Failure(message: "\(path) is in the Trash and its removal is committed, but the order of the spaces wasn't updated: \(orderProblem)")
         }
     }
 
