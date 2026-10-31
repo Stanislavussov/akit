@@ -279,6 +279,11 @@ and notes; **Hide Note List** hides it), then a map (Excalidraw, in tabs) or the
 - Ask Pi's read view (K30) draws each `##` section as its own block, so a reference-style link
   (`[text][ref]`) or a footnote whose definition is in another section shows as plain text there.
   Rare in the bases so far; pass the definitions to every block if it shows up.
+- An Ask Pi proposal card (K32/K33) can show the wrong outcome when the same id is used twice
+  on one day for the same note outside its chat: chat A's proposal is rejected (an untracked
+  file leaves no commit), another chat or agent then proposes the same note and it is accepted;
+  A's card says Accepted. The fix, if it shows up: write the proposal's `created` into the
+  accept and close commit messages and match it in `state(ofProposal:)`.
 
 - Where `akit kb context` looks for the base when a Mac has more than one. (K16's words were
   chosen in 3.4, 2026-10-25: "## Knowledge base" and two lines, in `KnowledgePiTemplate.text`;
