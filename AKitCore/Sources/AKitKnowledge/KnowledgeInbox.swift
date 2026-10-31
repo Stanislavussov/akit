@@ -500,7 +500,7 @@ extension KnowledgeBase {
     }
 
     /// An ISO 8601 time (a proposal's `created`, git's `%cI`).
-    static func date(_ text: String) -> Date? { ISO8601DateFormatter().date(from: text) }
+    static func date(_ text: String) -> Date? { try? Date(text, strategy: .iso8601) }
 
     /// The ids of the files in `inbox/`, without reading them (no checks).
     public func proposalIDs() -> Set<String> {

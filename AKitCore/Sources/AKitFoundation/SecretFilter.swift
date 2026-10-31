@@ -12,11 +12,22 @@ public enum SecretFilter {
     /// `file_path`/`path` names one, or its shell `command` (up to any heredoc) has one
     /// as a word. Merely mentioning such a file in a prompt or file content doesn't count.
     public static func readsSecretFile(_ input: Any?) -> Bool {
-        guard let input = input as? [String: Any] else { return false }
+        readsSecretFile(input, depth: 0)
+    }
+
+    /// Also the inner `args` / `arguments` of an adapter's call (an MCP tool through Pi's
+    /// `mcp` or `codemode` tool), as an object or a JSON string, a few levels deep.
+    private static func readsSecretFile(_ input: Any?, depth: Int) -> Bool {
+        guard depth < 4, let input = input as? [String: Any] else { return false }
         for key in ["file_path", "path", "filePath", "notebook_path"] {
             if let path = input[key] as? String, isSecretFile(path) { return true }
         }
-        if let command = input["command"] as? String { return commandReadsSecretFile(command) }
+        if let command = input["command"] as? String, commandReadsSecretFile(command) { return true }
+        for key in ["args", "arguments", "input", "params"] {
+            var inner = input[key]
+            if let text = inner as? String, text.hasPrefix("{") { inner = try? JSONSerialization.jsonObject(with: Data(text.utf8)) }
+            if readsSecretFile(inner, depth: depth + 1) { return true }
+        }
         return false
     }
 
@@ -48,6 +59,13 @@ public enum SecretFilter {
         guard let name = parts.last.map(String.init) else { return false }
         let parent = parts.dropLast().last.map(String.init)
         if secretFileNames.contains(name) { return true }
+        // A glob that can name a secret file (`.e*`, `auth.*`, `.env?`) counts as one.
+        // As the shell expands it: a leading dot must be written (FNM_PERIOD), and a bare `*` or `?`
+        // (no letter in it) doesn't count.
+        if name.contains(where: { "*?[".contains($0) }), name.contains(where: { $0.isLetter || $0.isNumber }) {
+            let candidates = secretFileNames.union([".env", ".envrc", ".env.local"])
+            if candidates.contains(where: { fnmatch(name, $0, FNM_PERIOD) == 0 }) { return true }
+        }
         // .env, .env.local, .env* (glob), .envrc; not .envelope.ts
         if name == ".env" || name == ".envrc" || name.hasPrefix(".env.") || name.hasPrefix(".env*") { return true }
         if name.hasPrefix("id_"), parent == ".ssh", !name.hasSuffix(".pub") { return true }

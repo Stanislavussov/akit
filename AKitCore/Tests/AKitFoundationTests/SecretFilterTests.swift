@@ -3,6 +3,16 @@ import Testing
 @testable import AKitFoundation
 
 struct SecretFilterTests {
+    /// Globs that can name a secret file, and an adapter's inner arguments (2026-10-31).
+    @Test func globsAndNestedArgumentsCount() {
+        #expect(SecretFilter.isSecretFile(".e*") && SecretFilter.isSecretFile("/repo/.?nv") && SecretFilter.isSecretFile("auth.*"))
+        #expect(!SecretFilter.isSecretFile("*") && !SecretFilter.isSecretFile("*.md") && !SecretFilter.isSecretFile("e*"))
+        #expect(SecretFilter.commandReadsSecretFile("cat .e*") && !SecretFilter.commandReadsSecretFile("ls *"))
+        #expect(SecretFilter.readsSecretFile(["tool": "fs_read", "args": ["path": "/x/.env"]]))
+        #expect(SecretFilter.readsSecretFile(["arguments": #"{"file_path":"~/.pi/agent/auth.json"}"#]))
+        #expect(!SecretFilter.readsSecretFile(["args": ["path": "README.md"]]))
+    }
+
     @Test func masksTokenShapes() {
         let text = """
         ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789

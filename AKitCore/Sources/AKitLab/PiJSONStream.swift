@@ -15,6 +15,8 @@ public enum PiJSONStream {
         public var paths: [String] = []
         /// Pi's process started (`run`): the prompt went out, whatever happened after.
         public var started = false
+        /// Pi's exit status, when it exited by itself.
+        public var exitStatus: Int32?
 
         public init() {}
     }
@@ -60,13 +62,13 @@ public enum PiJSONStream {
         return output
     }
 
-    /// Runs one `pi -p --mode json`: every line goes to `onLine` and, masked (`JSONMask`), to
-    /// `stream`; the events are read back with `parse`. An error says why the run ended badly:
+    /// Runs one `pi -p --mode json`: every line goes to `onLine` and, masked (`JSONMask`, and
+    /// with secret files' content hidden when `secretFiles` is given), to `stream`; the events are read back with `parse`. An error says why the run ended badly:
     /// it couldn't start, was stopped (the caller's `Cancellation` scope), timed out
     /// (`timeoutMessage`), or exited with a status (with the last lines that aren't JSON).
     /// Returns every line too, unmasked, for the caller to look into (never saved).
     public static func run(_ pi: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
-                           stream: URL, timeoutMessage: String,
+                           stream: URL, timeoutMessage: String, secretFiles: PiSecretFiles? = nil,
                            onLine: (@Sendable (String) -> Void)? = nil) async -> (output: Output, lines: [String]) {
         try? FileManager.default.createDirectory(at: stream.deletingLastPathComponent(), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: stream.path, contents: nil)
@@ -75,12 +77,14 @@ public enum PiJSONStream {
         let exit = await ChildProcess.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout,
                                           onStart: { collector.start() }) { line in
             collector.add(line)
-            handle?.write(Data((JSONMask.jsonLine(line) + "\n").utf8))
+            // What a secret file held never reaches the disk (`secretFiles`), the rest is masked.
+            handle?.write(Data((JSONMask.jsonLine(secretFiles?.line(line) ?? line) + "\n").utf8))
             onLine?(line)
         }
         try? handle?.close()
         var output = parse(collector.lines)
         output.started = collector.started
+        if let exit, exit.exitedNormally { output.exitStatus = exit.status }
         if exit == nil { output.error = "Pi couldn't start." }
         else if exit?.cancelled == true { output.error = "Stopped." }
         else if exit?.timedOut == true { output.error = timeoutMessage }

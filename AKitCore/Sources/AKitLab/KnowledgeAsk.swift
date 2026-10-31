@@ -74,13 +74,17 @@ public enum KnowledgeAsk {
         public var session: String?
         /// The proposals (`inbox/<id>.md`) Pi made in this answer (K32), for their cards.
         public var proposals: [ProposalRef]?
+        /// The Pi model and thinking level of the answer (K34); nil in chats saved before, or
+        /// Pi's own default.
+        public var model: String?
+        public var thinking: String?
         /// The answer can be forked: it has a session and no error.
         public var isGood: Bool { session != nil && error == nil }
 
         public init(id: String, question: String, passage: String? = nil, asked: Date, answered: Date? = nil, answer: String? = nil,
-                    error: String? = nil, session: String? = nil, proposals: [ProposalRef]? = nil) {
+                    error: String? = nil, session: String? = nil, proposals: [ProposalRef]? = nil, model: String? = nil, thinking: String? = nil) {
             (self.id, self.question, self.passage, self.asked, self.answered) = (id, question, passage, asked, answered)
-            (self.answer, self.error, self.session, self.proposals) = (answer, error, session, proposals)
+            (self.answer, self.error, self.session, self.proposals, self.model, self.thinking) = (answer, error, session, proposals, model, thinking)
         }
     }
 
@@ -298,7 +302,9 @@ public enum KnowledgeAsk {
         if Cancellation.isCancelled { throw Failure(message: "Stopped.") }
 
         let scrubbed = gate.scrub(prompt(question: body, passage: passage, note: chat.note, noteText: noteText, first: fork == nil))
-        let number = earlier.count + 1
+        // After the last saved question, and after any stream file a question left behind
+        // without saving its entry: one answer's files are never overwritten.
+        let number = max(earlier.count, lastStreamNumber(chat)) + 1
         var entry = Entry(id: "q\(number)", question: SecretFilter.masked(body), passage: passage.map(SecretFilter.masked), asked: .now)
         do {
             try Data(systemPrompt(chat.note).utf8).write(to: chat.folder.appending(path: "system.md"), options: .atomic)
@@ -311,14 +317,25 @@ public enum KnowledgeAsk {
         let base = KnowledgeBase(root: URL(filePath: chat.note.baseRoot, directoryHint: .isDirectory))
         let before = base.proposalIDs()
         progress("Pi is reading the question…")
-        let (output, stream) = await run(pi, arguments: arguments, directory: FileWalk.isDirectory(cwd) ? cwd : chat.folder, environment: environment,
-                               timeout: timeout, stream: chat.folder.appending(path: "streams/q\(number).jsonl"), progress: progress)
+        let times = KnowledgeAskLog.Times()
+        let started = Date.now
+        let directory = FileWalk.isDirectory(cwd) ? cwd : chat.folder
+        let (output, stream) = await run(pi, arguments: arguments, directory: directory, environment: environment,
+                               timeout: timeout, stream: chat.folder.appending(path: "streams/q\(number).jsonl"), progress: progress, times: times)
         entry.answered = .now
         entry.session = output.session
         entry.answer = output.answer.map(SecretFilter.masked)
         entry.error = output.error ?? (output.answer == nil ? "Pi gave no answer." : nil)
         let made = proposals(in: base, before: before, stream: stream)
         entry.proposals = made.isEmpty ? nil : made
+        (entry.model, entry.thinking) = (agent.model.isEmpty ? nil : agent.model, agent.effort.isEmpty ? nil : agent.effort)
+        // How Pi was called, for the Log… sheet (K34): masked, the prompt as it was sent.
+        let call = KnowledgeAskLog.Call(pi: pi.path, arguments: (arguments.dropLast() + [scrubbed.text]).map(JSONMask.text),
+                                        cwd: directory.path, model: agent.model, thinking: agent.effort, fork: fork?.path,
+                                        session: output.session.flatMap { PiJSONStream.sessionFile(id: $0, in: chat.folder.appending(path: "sessions"))?.path },
+                                        started: started, ended: entry.answered ?? .now, exitStatus: output.exitStatus, error: entry.error,
+                                        usage: output.usage, tools: times.all)
+        try? KnowledgeAskLog.save(call, question: number, in: chat)
         // Logged whenever Pi started, also when it was stopped or timed out: the prompt went out.
         if output.started {
             let system = systemPrompt(chat.note).count
@@ -337,11 +354,23 @@ public enum KnowledgeAsk {
     /// Runs one `pi -p --mode json` (`PiJSONStream.run`, the stream masked as JSON), with a short
     /// progress line per tool call; also every line, for finding the answer's proposals.
     static func run(_ pi: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
-                    stream: URL, progress: @escaping @Sendable (String) -> Void) async -> (PiJSONStream.Output, [String]) {
+                    stream: URL, progress: @escaping @Sendable (String) -> Void,
+                    times: KnowledgeAskLog.Times? = nil) async -> (PiJSONStream.Output, [String]) {
         await PiJSONStream.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout, stream: stream,
-                               timeoutMessage: "Pi took longer than \(Int(timeout / 60)) minutes and was stopped.") { line in
+                               timeoutMessage: "Pi took longer than \(Int(timeout / 60)) minutes and was stopped.",
+                               secretFiles: PiSecretFiles()) { line in
+            times?.note(line)
             if let step = progressLine(line) { progress(step) }
         }
+    }
+
+    /// The highest `N` of the chat's `streams/qN.jsonl` (or `qN.call.json`); 0 without any.
+    static func lastStreamNumber(_ chat: Chat) -> Int {
+        FileWalk.children(of: chat.folder.appending(path: "streams")).compactMap { file -> Int? in
+            let name = file.lastPathComponent
+            guard name.hasPrefix("q"), let dot = name.firstIndex(of: ".") else { return nil }
+            return Int(name[name.index(after: name.startIndex)..<dot])
+        }.max() ?? 0
     }
 
     /// Pi runs in the base folder itself (no project folder of the space).
