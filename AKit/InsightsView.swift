@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitInsights
 import SwiftUI
@@ -21,6 +22,8 @@ struct InsightsView: View {
     /// The Changes list shows the newest `shortChanges` until Show All.
     @State private var allChanges = false
     @State private var loaded: Recommender.Loaded?
+    /// Stuck loops of Pi sessions in the same window and scope; nil until loaded or when it failed.
+    @State private var loops: LoopsReport?
     @State private var isLoading = false
     @State private var problem: String?
     @State private var patch: InsightsPatch?
@@ -244,6 +247,7 @@ struct InsightsView: View {
                         withAnimation { proxy.scrollTo(Self.recommendationsID, anchor: .top) }
                     }
                     .id(Self.usageTableID)
+                    if let loops { InsightsLoopsBox(report: loops).id(Self.loopsID) }
                     changes(loaded.changes)
                     footer(report)
                 }
@@ -255,6 +259,11 @@ struct InsightsView: View {
                 .padding(20)
                 .frame(maxWidth: 900, alignment: .leading)
             }
+            // Snapshots: `--query loops` shows Stuck Loops at the top once it is loaded.
+            .onChange(of: loops) {
+                guard DebugSnapshot.options?.query == "loops", loops != nil else { return }
+                proxy.scrollTo(Self.loopsID, anchor: .top)
+            }
             // Snapshots: `--tab skills|servers|tools` shows the table at the top.
             .task {
                 guard DebugSnapshot.options?.tab.flatMap(InsightsUsageTable.Kind.init(rawValue:)) != nil else { return }
@@ -265,6 +274,7 @@ struct InsightsView: View {
     }
 
     private static let usageTableID = "usage"
+    private static let loopsID = "loops"
     private static let recommendationsID = "recommendations"
 
     /// After a layer patch: the projects that pick it up only when they are set up again. Plan… opens
@@ -556,12 +566,19 @@ struct InsightsView: View {
         generation += 1
         let mine = generation
         isLoading = true
+        // The old window's loops would show under the new window's label until the scan ends.
+        loops = nil
         do {
             let result = try await Recommender.load(env: env, brain: model.brain, project: project, days: days, range: range,
                                                     projectsRoot: model.projectsRoot, projectFolder: project.flatMap { model.brainProjectFolders[$0] })
             guard mine == generation else { return }
             loaded = result
             problem = nil
+            // The signals scan reads changed session files: off the main actor.
+            let (days, range, project) = (days, range, project)
+            let report = try? await Task.detached { try LoopsLoad.report(env: env, days: days, range: range, project: project) }.value
+            guard mine == generation else { return }
+            loops = report
             // Snapshots: `--add` opens Apply… of the first layer patch.
             if DebugSnapshot.options?.add == true, patch == nil, let item = result.report.recommendations.first(where: \.isPatch) {
                 open(item, change: .manual)

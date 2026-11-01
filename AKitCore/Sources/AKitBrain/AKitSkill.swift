@@ -164,8 +164,13 @@ skills take ≈ context space (tokens × requests) and how often the model or th
 them (`--details` for every skill). `--unused` keeps the skills with no call in the window;
 `akit stats tools` does the same for tools and MCP servers. For a past period, use
 `--from YYYY-MM-DD [--to YYYY-MM-DD]` instead of `--days` (whole days, `--to` default today;
-calls after the last day don't count); it works with `akit stats`, `stats tools` and
-`stats listing`. `akit stats changes [--project X|--all] [--json]`
+calls after the last day don't count); it works with `akit stats`, `stats tools`,
+`stats listing` and `stats loops`. `akit stats loops [--project X|--all] [--days N] [--json]`
+lists stuck loops in Pi sessions: the user asked the same thing 3+ times in a row and the
+agent answered almost the same, by model and thinking level, with the advice (at the 2nd
+repeat raise thinking or switch the model). Use it when the user asks why the agent keeps
+repeating itself or which model gets stuck. (`akit loop-check --harness pi` is the Pi
+extension's live check; don't run it yourself.) `akit stats changes [--project X|--all] [--json]`
 compares first-request context before and after each `akit apply` and each
 `akit stats mark "<note>" [--at DATE]` (a change made by hand, e.g. a plugin disabled; mark
 it when the user makes one). Sizes marked ≈ are estimates; never talk about money.

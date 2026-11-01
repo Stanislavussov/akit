@@ -101,7 +101,7 @@ extension InsightsStatsTests {
 
         #expect(await rangeCLI("stats", "--to", label.last).err.contains("--to needs --from"))
         #expect(await rangeCLI("stats", "--days", "3", "--from", label.first).err.contains("don't go together"))
-        #expect(await rangeCLI("stats", "skill", "alpha", "--from", label.first).err.contains("go with akit stats, akit stats tools and akit stats listing"))
+        #expect(await rangeCLI("stats", "skill", "alpha", "--from", label.first).err.contains("go with akit stats, akit stats tools, akit stats listing and akit stats loops"))
         #expect(await rangeCLI("stats", "--from", "yesterday").err.contains("--from is a day"))
     }
 

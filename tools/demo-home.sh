@@ -820,6 +820,24 @@ SYSTEM_PROMPT=$(join \
     ai_title "Add a tags filter to the notes list"
 } | file "$CLAUDE_NOTESMAC/$SID.jsonl"
 
+# A Pi session of notes-mac that ends in a stuck loop: the same migration error three times, each
+# answered by one more edit of the same SQL file (Insights → Stuck Loops, the session's header).
+PI_LOOP="$DEMO/.pi/agent/sessions/--notes-mac--/$(date -u -v-3H +%Y-%m-%dT%H-%M-%S-000Z)_5e0f0000-0000-4000-8000-00000000a100.jsonl"
+MIGRATE_ERROR='pnpm db:migrate\nerror: relation \"notes\" already exists\n    at migrate (drizzle/0003_tags.sql:4)'
+{
+    printf '{"type":"session","version":3,"id":"5e0f0000-0000-4000-8000-00000000a100","timestamp":"%s","cwd":"%s"}\n' "$(ago 3H)" "$CWD"
+    printf '{"type":"model_change","id":"m0","parentId":null,"timestamp":"%s","provider":"openrouter","modelId":"qwen3-coder"}\n' "$(ago 3H)"
+    printf '{"type":"thinking_level_change","id":"t0","parentId":"m0","timestamp":"%s","thinkingLevel":"low"}\n' "$(ago 3H)"
+    parent=t0
+    for turn in 1 2 3; do
+        ask="$MIGRATE_ERROR"; [[ $turn == 3 ]] && ask="still the same error\\n$MIGRATE_ERROR"
+        printf '{"type":"message","id":"u%s","parentId":"%s","timestamp":"%s","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' $turn $parent "$(ago $((180 - turn * 10))M)" "$ask"
+        printf '{"type":"message","id":"a%s","parentId":"u%s","timestamp":"%s","message":{"role":"assistant","model":"qwen3-coder","provider":"openrouter","content":[{"type":"toolCall","id":"c%s","name":"edit","arguments":{"path":"%s/drizzle/0003_tags.sql","oldText":"CREATE TABLE","newText":"CREATE TABLE IF NOT EXISTS"}},{"type":"text","text":"Added IF NOT EXISTS to the CREATE TABLE statement in 0003_tags.sql. Run the migration again."}],"usage":{"input":4200,"output":160,"cacheRead":0,"cacheWrite":0,"totalTokens":4360}}}\n' $turn $turn "$(ago $((180 - turn * 10 - 1))M)" $turn "$CWD"
+        parent="a$turn"
+    done
+} | file "$PI_LOOP"
+touch -t "$(date -v-2H -v-30M +%Y%m%d%H%M)" "$PI_LOOP"
+
 # The session index (the fix's before/after reads it), then the checks over the sessions.
 "$AKIT" sessions import --quiet >/dev/null 2>&1 || true
 verdicts() { # checker, "key positive"...

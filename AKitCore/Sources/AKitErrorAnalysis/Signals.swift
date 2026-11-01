@@ -12,17 +12,27 @@ public enum SignalScanner {
     /// 2 (2026-10-08): interrupts, rejections, tool errors and repeated calls by `FailureSignals`.
     /// 3 (2026-10-08): outcomes read before secrets are hidden, the user's refusal alone undone
     /// by Esc, failed results with no text counted.
-    public static let version = 3
+    /// 4 (2026-10-28): stuck loops (`RepeatLoops`), stored with their steps in `repeat_loops`.
+    public static let version = 4
 
     /// Interrupts, rejections, tool errors and repeated calls are `FailureSignals`, as in Lab.
-    public static func signals(of items: [TranscriptItem]) -> SessionSignals {
+    /// `fallbackModel`: the model of a loop when the log has no model change (the session's last model).
+    public static func signals(of items: [TranscriptItem], fallbackModel: String? = nil) -> SessionSignals {
+        scan(items, fallbackModel: fallbackModel).signals
+    }
+
+    /// The signals and the stuck loops they count.
+    /// Stuck loops are looked for only in Pi sessions (`repeat-loops.md`, R7: the user's choice).
+    public static func scan(_ items: [TranscriptItem], fallbackModel: String? = nil, harness: String? = nil) -> (signals: SessionSignals, loops: [RepeatLoop]) {
         let facts = TranscriptFacts(items)
         let users = facts.userTurns
         let shared = FailureSignals(items)
         let pushbacks = users.filter { !FailureSignals.isInterrupt($0.text) && isPushback($0.text) }.count
-        return SessionSignals(interrupts: shared.interrupts, pushbacks: pushbacks, rejected: shared.rejected, toolErrors: shared.toolErrors,
-                              repeatedCalls: shared.repeatedCalls, unverifiedDone: unverifiedDone(facts), userTurns: users.count,
-                              steps: items.count)
+        let loops = harness == RepeatLoops.harness ? RepeatLoops.find(items, fallbackModel: fallbackModel) : []
+        let signals = SessionSignals(interrupts: shared.interrupts, pushbacks: pushbacks, rejected: shared.rejected,
+                                     toolErrors: shared.toolErrors, repeatedCalls: shared.repeatedCalls, repeatLoops: loops.count,
+                                     unverifiedDone: unverifiedDone(facts), userTurns: users.count, steps: items.count)
+        return (signals, loops)
     }
 
     /// The final report claims the work is done, and nothing ran a test, build or check after
@@ -72,8 +82,9 @@ public enum SignalScanner {
                 continue
             }
             computed += 1
-            fresh[session.key] = StoredSignals(signals: signals(of: transcript.items), fileSize: info.size, fileModified: modified,
-                                               version: version)
+            let scanned = scan(transcript.items, fallbackModel: transcript.models.last, harness: session.harness)
+            fresh[session.key] = StoredSignals(signals: scanned.signals, fileSize: info.size, fileModified: modified,
+                                               version: version, loops: scanned.loops)
             // Written in chunks so a long first run keeps what it has done.
             if fresh.count >= 50 {
                 try AnalysisIndex.store(fresh, in: database)

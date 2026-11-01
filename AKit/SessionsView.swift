@@ -64,6 +64,14 @@ struct SessionsView: View {
             }
         }
         .onAppear { selection = selection ?? filtered.first?.id }
+        // Insights → Stuck Loops → Show: every filter off, so the session is listed, then select it.
+        .onChange(of: model.revealSession, initial: true) {
+            guard let reveal = model.revealSession, model.sessions.contains(where: { $0.file.path == reveal.path }) else { return }
+            query = ""
+            harness = nil
+            project = .all
+            selection = reveal.path
+        }
         .onChange(of: model.sessions) { if selection.flatMap({ id in model.sessions.first { $0.id == id } }) == nil { selection = filtered.first?.id } }
         .onChange(of: project) { keepSelectionListed() }
         .onChange(of: harness) { keepSelectionListed() }
@@ -245,6 +253,8 @@ private struct SessionDetailView: View {
     /// The project the session's folder belongs to, if any.
     let projectID: String?
     @State private var transcript: SessionTranscript?
+    /// Stuck loops of a Pi session (`RepeatLoops`, the rules of the index; no model call), found once per load.
+    @State private var loops: [RepeatLoop] = []
     @State private var error: String?
     @State private var copied = false
     @State private var showReview = DebugSnapshot.options?.add == true && DebugSnapshot.options?.section == .sessions
@@ -289,14 +299,23 @@ private struct SessionDetailView: View {
         // Reload on selection change and after every rescan (⌘R).
         .task(id: "\(session.id)|\(session.modified.timeIntervalSince1970)") {
             transcript = nil
+            loops = []
             error = nil
             do {
                 let loaded = try await model.transcript(of: session)
                 guard !Task.isCancelled else { return }
                 transcript = loaded
+                if session.harness == .pi { loops = RepeatLoops.find(loaded.items, fallbackModel: loaded.models.last) }
+                // Insights → Stuck Loops → Show: the loop's first ask.
+                if let reveal = model.revealSession, reveal.path == session.file.path {
+                    tab = .conversation
+                    focus = reveal.step
+                    model.revealSession = nil
+                }
             } catch {
                 guard !Task.isCancelled else { return }
                 self.error = error.localizedDescription
+                if model.revealSession?.path == session.file.path { model.revealSession = nil }
             }
         }
     }
@@ -351,6 +370,18 @@ private struct SessionDetailView: View {
                 row("File", "\(session.file.tildePath) · \(session.size.formatted(.byteCount(style: .file)))", monospaced: true)
                 if let version = session.harnessVersion {
                     row("Version", version)
+                }
+                if !loops.isEmpty {
+                    GridRow {
+                        Text("Stuck loops").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(loops, id: \.firstStep) { loop in
+                                loopLink(loop)
+                            }
+                            Text(LoopsReport.advice(thinking: loops.last?.thinking))
+                                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
                 if let ratings = model.ratings[session.file.path], !ratings.isEmpty {
                     GridRow {
@@ -408,6 +439,21 @@ private struct SessionDetailView: View {
             try? await Task.sleep(for: .seconds(1.5))
             copied = false
         }
+    }
+
+    /// One loop; a click shows its first ask in the conversation.
+    private func loopLink(_ loop: RepeatLoop) -> some View {
+        Button {
+            tab = .conversation
+            focus = loop.firstStep
+        } label: {
+            Text("⟳ Asked \(loop.asks)× with almost the same answer"
+                 + [loop.model, loop.thinking.map { "thinking \($0)" }].compactMap { $0 }.map { " · \($0)" }.joined())
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(.link)
+        .help("Show the first ask of this loop in the conversation")
     }
 
     /// One rating and the prompt of its run; a click shows the run's end in the conversation.
