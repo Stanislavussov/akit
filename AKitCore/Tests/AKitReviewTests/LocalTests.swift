@@ -94,7 +94,7 @@ extension ReviewProcessTests {
             let run = try await ReviewRunFixture(home: home, head: target.head, folder: folder).playAndRun()
             #expect(run.plan != nil)
             await #expect(throws: ReviewWorkflow.Failure.self) { try await ReviewWorkflow.send(folder, env: home.env) }
-            await ReviewGather.removeWorktree(run: folder, checkout: target.path, env: home.env)
+            await ReviewGather.removeWorktree(run: folder, env: home.env)
             #expect(home.git(repo, "worktree", "list").split(separator: "\n").count == 1)
         }
 

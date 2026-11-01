@@ -31,6 +31,8 @@ public struct ReviewRunChoices: Sendable, Hashable {
     public var fromCommit: String?
     /// Other merge requests reviewed in the same run, in order (`akit review URL URL…`).
     public var linked: [ReviewMergeRequestEntry] = []
+    /// Setup commands for this run only (`--setup`), after the profile's `setup:`.
+    public var setup: [String] = []
 
     public init(scenario: String? = nil, rolesOn: [String] = [], rolesOff: [String] = [], settings: ReviewSettingsPatch = ReviewSettingsPatch(),
                 workItems: [Int] = [], notes: String = "", links: [String] = [], extraServers: [String] = []) {
@@ -180,6 +182,11 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     /// `akit_kb_search` / `akit_kb_show` read (`AKIT_REVIEW_KB_BASE`); nil without a base.
     public var knowledgeBasePath: String?
     public var gather: [ReviewProfile.GatherCommand]
+    /// Commands run in the worktree before the passes: the profile's `setup:`, then the run's;
+    /// nil when none (or in runs made before 2026-11-01).
+    public var setup: [ReviewProfile.GatherCommand]?
+    /// Filled by Gather: the clone the worktree came from and what git told before the fetch pass.
+    public var repository: ReviewRepository.Use?
     public var workItems: [Int]
     /// Filled by Gather: the commit the worktree and every finding refer to.
     public var headSHA: String?
@@ -376,6 +383,10 @@ public enum ReviewResolver {
             workItems: choices.workItems, headSHA: nil, tracker: profile?.tracker, mcp: access)
         spec.notes = notes
         spec.links = links.isEmpty ? nil : links
+        let runSetup = choices.setup.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.enumerated()
+            .map { ReviewProfile.GatherCommand(name: "run-setup-\($0.offset + 1)", run: $0.element, timeoutSeconds: ReviewProfile.setupTimeout) }
+        let setup = (profile?.setup ?? []) + runSetup
+        spec.setup = setup.isEmpty ? nil : setup
         spec.mcpServers = servers
         spec.fullReview = choices.fullReview ? true : nil
         spec.maxChangedLines = pick(\.maxChangedLines, fallback: 6000)
@@ -530,6 +541,9 @@ public enum ReviewResolver {
         if let base = spec.knowledgeBase { lines.append(line("knowledge_base", base.value, base.source)) }
         if let budget = spec.knowledgeBudget { lines.append(line("knowledge_budget", String(budget.value), budget.source)) }
         if !spec.gather.isEmpty { lines += ["Gather commands [project]:"] + spec.gather.map { "  \($0.name): \($0.run)" } }
+        if let setup = spec.setup, !setup.isEmpty {
+            lines += ["Setup commands:"] + setup.map { "  \($0.name)\($0.name.hasPrefix("run-") ? " [run]" : " [project]"): \($0.run)" }
+        }
         let access = spec.access
         let source = spec.project == nil ? "default" : "project"
         lines += ["MCP (Pi's servers) [\(source)]:",

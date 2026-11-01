@@ -41,6 +41,8 @@ struct NewReviewSheet: View {
     @State private var summaryLanguage: LabLanguage?
     @State private var notes = ""
     @State private var links = ""
+    /// Setup commands for this run only, one per line.
+    @State private var setup = ""
     @State private var extraServers: Set<String> = []
     @State private var catalog: ReviewCatalog?
     @State private var steps: [String] = []
@@ -69,6 +71,7 @@ struct NewReviewSheet: View {
         }
         _scenario = State(initialValue: again.scenario.value)
         _notes = State(initialValue: again.notes ?? "")
+        _setup = State(initialValue: (again.setup ?? []).filter { $0.name.hasPrefix("run-setup-") }.map(\.run).joined(separator: "\n"))
         _links = State(initialValue: (again.links ?? []).joined(separator: "\n"))
         _extraServers = State(initialValue: Set((again.mcpServers ?? []).filter { $0.source == .run }.map(\.name)))
         if again.passes.source == .run { _passesModel = State(initialValue: again.passes.value.model) }
@@ -149,6 +152,7 @@ struct NewReviewSheet: View {
                 }
                 }
                 contextSection
+                setupSection
                 Section("Scenario and roles") {
                     Picker("Scenario", selection: $scenario) {
                         ForEach(scenarios) { Text($0.title).tag($0.id) }
@@ -278,7 +282,7 @@ struct NewReviewSheet: View {
         if let found = catalog?.profile(for: entry.mergeRequest) {
             text += " · profile \(found.slug).yaml"
         } else {
-            text += " · no project profile: no checkout, tracker or rules (Review Settings… adds one)"
+            text += " · no project profile: AKit's own clone, no tracker or rules (Review Settings… adds one)"
         }
         return text
     }
@@ -377,6 +381,38 @@ struct NewReviewSheet: View {
         piLibrary = await Task.detached { ReviewPiLibrary.load(env: env) }.value
         if let pi = env.findExecutable("pi"), let help = await ReviewPiCommands.help(pi: pi, env: env) {
             flagSuggestions = ReviewPiFlags.suggestions(help: help)
+        }
+    }
+
+    /// Where the worktree comes from, and the setup commands run in it before the passes.
+    @ViewBuilder private var setupSection: some View {
+        Section {
+            if source == .local {
+                Text("The worktree is a copy of your workspace.").font(.callout)
+            } else if let checkout = profile?.checkout {
+                Text("The worktree comes from your checkout \(checkout).").font(.callout)
+            } else if profile?.clone == false {
+                Text("The profile turns the clone off (clone: false): the review reads only the diff.").font(.callout)
+            } else {
+                Text("The worktree comes from AKit's own clone in ~/.akit/local/review/repos, on a branch akit-review/<run>. The first run clones the project; deleting the run removes the worktree and the branch.")
+                    .font(.callout)
+            }
+            let persistent = profile?.setup ?? []
+            if !persistent.isEmpty {
+                Text("The project's setup commands run first: " + persistent.map(\.run).joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Setup commands for this run")
+                TextEditor(text: $setup)
+                    .font(.callout.monospaced())
+                    .frame(height: 44)
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
+                Text("One command per line, for example npm ci. They run in the worktree, after the project's, before the review, and run the merge request's own code. Commands for every run: Review Settings… → Setup commands.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Repository and setup")
         }
     }
 
@@ -567,6 +603,7 @@ struct NewReviewSheet: View {
         choices.settings.summaryLanguage = summaryLanguage
         choices.notes = notes
         choices.links = (try? checkedLinks.get()) ?? []
+        choices.setup = setup.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         choices.extraServers = extraServers.sorted()
         choices.pi = ReviewPiExtras(flags: ReviewPiFlags.split(piFlags), steps: steps.map { ReviewStepConfig(command: $0) })
         if source == .local, let inspection {
@@ -598,6 +635,8 @@ struct ReviewSettingsSheet: View {
     /// The profile's knowledge_base and knowledge_budget as set here ("" = none), saved with Save Knowledge….
     @State private var knowledgeBase = ""
     @State private var knowledgeBudget = ReviewKnowledgeCard.defaultBudget
+    /// The profile's setup: commands, one per line.
+    @State private var setupText = ""
     @State private var bases: [KnowledgeBase] = []
 
     private var profile: ReviewProfile? { catalog?.profiles.first { $0.slug == rules } }
@@ -664,6 +703,7 @@ struct ReviewSettingsSheet: View {
                 }
                 overviewSection
                 if let profile {
+                    repositorySection(profile)
                     knowledgeSection(profile)
                 }
                 Section {
@@ -852,6 +892,51 @@ struct ReviewSettingsSheet: View {
     private func loadKnowledge() {
         knowledgeBase = profile?.knowledgeBase ?? ""
         knowledgeBudget = profile?.knowledgeBudget ?? ReviewKnowledgeCard.defaultBudget
+        setupText = (profile?.setup ?? []).map(\.run).joined(separator: "\n")
+    }
+
+    /// Where the project's worktrees come from, and its setup commands.
+    @ViewBuilder private func repositorySection(_ profile: ReviewProfile) -> some View {
+        let lines = setupText.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let clone = ReviewRepository.folder(home: model.home, host: profile.gitlabHost, projectPath: profile.gitlabProjectPath)
+        Section {
+            if let checkout = profile.checkout {
+                LabeledContent("Worktrees from", value: "your checkout \(checkout)")
+            } else if !profile.clone {
+                LabeledContent("Worktrees from", value: "none (clone: false): only the diff")
+            } else if let clone {
+                HStack {
+                    LabeledContent("Worktrees from", value: "AKit's clone " + FileWalk.tilde(clone, home: model.home))
+                    if FileManager.default.fileExists(atPath: clone.path) {
+                        Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([clone]) }
+                    }
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Setup commands")
+                TextEditor(text: $setupText)
+                    .font(.callout.monospaced())
+                    .frame(height: 54)
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
+            }
+            if lines != profile.setup.map(\.run) {
+                HStack {
+                    Spacer()
+                    Button("Save Setup Commands…") {
+                        do {
+                            save = try ReviewConfigEditor.setup(lines, profile: rules, home: model.home, brain: brain)
+                        } catch {
+                            message = error.localizedDescription
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Repository and setup")
+        } footer: {
+            Text("Without checkout:, AKit clones the project once into ~/.akit/local/review/repos and fetches it before each run; each run's worktree is on a branch akit-review/<run>, and deleting the run removes both. Setup commands (setup: of the profile, one per line, e.g. npm ci) run in every run's worktree before the review, then the run's own from New Review…. They run the merge request's own code.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     /// Save Knowledge…: the profile's knowledge_base and knowledge_budget, shown as a diff first.

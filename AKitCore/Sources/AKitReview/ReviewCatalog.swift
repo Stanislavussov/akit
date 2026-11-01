@@ -13,6 +13,8 @@ public struct ReviewPaths: Sendable {
     public var projects: URL { folder.appending(path: "projects", directoryHint: .isDirectory) }
     public var runs: URL { folder.appending(path: "runs", directoryHint: .isDirectory) }
     public func run(_ id: String) -> URL { runs.appending(path: id, directoryHint: .isDirectory) }
+    /// AKit's own clones of the reviewed projects, kept between runs (`ReviewRepository`).
+    public var repos: URL { folder.appending(path: "repos", directoryHint: .isDirectory) }
     public func profile(_ slug: String) -> URL { projects.appending(path: "\(slug).yaml") }
     /// A project's own roles and scenarios: `projects/<slug>/skills/review-<id>/SKILL.md`,
     /// `projects/<slug>/scenarios/<id>.yaml`.

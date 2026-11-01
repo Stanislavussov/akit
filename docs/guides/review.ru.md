@@ -59,7 +59,7 @@
 Пример: коллега прислал MR `shop/orders-service!42` «Stop logging the Authorization header (AB#4512)». Это исправление бага.
 
 1. **Начало.** Вы нажимаете **New Review…**, вставляете адрес MR и выбираете сценарий **Bugfix**. Сценарий включает роли `bug-hunter`, `requirements`, `tests`.
-2. **Сбор (Gather) — проход `fetch`.** Pi читает MR через свои MCP-серверы: версии, diff, треды, ваши черновики, ваше имя в GitLab и задачу #4512. Расширение AKit сохраняет каждый ответ сервера слово в слово. AKit сам разбирает эти ответы: он верит ответам серверов, а не пересказу модели. Если в профиле есть `checkout`, AKit сам делает worktree и diff через git. Потом AKit кладёт всё в пакет контекста.
+2. **Сбор (Gather) — проход `fetch`.** Pi читает MR через свои MCP-серверы: версии, diff, треды, ваши черновики, ваше имя в GitLab и задачу #4512. Расширение AKit сохраняет каждый ответ сервера слово в слово. AKit сам разбирает эти ответы: он верит ответам серверов, а не пересказу модели. Перед этим AKit готовит копию репозитория: ваш `checkout` из профиля или свой клон. Из неё AKit сам делает worktree и diff через git. Потом AKit кладёт всё в пакет контекста.
 3. **Оценка.** AKit оценивает цену в кредитах. Проход `fetch` уже потратил кредиты, они тоже входят в предел. Если оценка выше предела, AKit спрашивает вас.
 4. **Проходы.** Pi делает brief (краткое описание MR), потом по проходу на каждую роль, потом проход verifier. Проходы могут дочитать нужное через MCP, но только инструментами чтения.
 5. **План.** AKit превращает подтверждённые находки в запросы по правилам шума.
@@ -128,7 +128,7 @@
 - «Ревью упало: The fetch pass read no merge request … that AKit understands» → [проверьте MCP-серверы Pi](#setup-mcp).
 - «В Context gaps написано, что задача не прочитана» → [сервер трекера в Pi](#setup-mcp) и трекер в профиле.
 - «Ревью остановилось с Not allowed» → [разрешите адресата](#setup-policy).
-- «Агент видит только diff, а не весь файл» → в профиле нет `checkout`: [профиль проекта](#setup-profile).
+- «Агент видит только diff, а не весь файл» → AKit не смог склонировать проект (или в профиле `clone: false`): [репозиторий и установка](#setup-repository).
 
 ![Окно Review Settings…: блок Pi's MCP servers со списком Rules of (Default) и кнопкой Check Servers, строка Pick a project profile in Rules of to add context servers to it (mcp: extra_servers)., подпись: Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens, а ревью пишет только одобренные черновики слово в слово, никогда не публикует, а Context server (Figma, Confluence, вики) добавляется сверху и только читает; блок Overview and other repositories со списками Other repositories и Summary language и подписью о review.yaml в brain; блок Project profiles со строкой orders-service, адресом https://gitlab.example.com/shop/orders-service · MCP: gitlab, azure-devops и кнопкой Edit…, кнопками New Profile… и Show Folder и подписью о папке ~/.akit/local/review/projects; кнопка Done](images/review-settings.png)
 
@@ -185,10 +185,10 @@ AKit не хранит токены. С GitLab, Azure DevOps и другими �
 ### Средне: создать профиль проекта
 <!-- section: setup-profile -->
 
-Профиль говорит AKit, где ваша копия репозитория, какой трекер, какие MCP-серверы можно звать и какие у проекта правила. Без профиля ревью работает, но хуже: агент видит только diff, а Pi может звать любой включённый сервер.
+Профиль говорит AKit, какой трекер, какие MCP-серверы можно звать, какие у проекта правила и какие команды установки запускать. Без профиля ревью работает, но хуже: нет трекера и правил, а Pi может звать любой включённый сервер.
 
 1. В **Review Settings…** нажмите **New Profile…**. AKit создаст файл `new-project.yaml` с подсказками и откроет его в редакторе.
-2. Заполните `project`, `gitlab` и `checkout`. Назовите серверы в `mcp: servers`. Остальное можно оставить.
+2. Заполните `project` и `gitlab`. Назовите серверы в `mcp: servers`. Остальное можно оставить.
 3. Переименуйте файл: имя файла (a-z, 0-9, -) — это id профиля. Пример: `orders-service.yaml`.
 4. Закройте и снова откройте **Review Settings…**. Профиль появится в блоке **Project profiles**. Если профиль называет серверы, строка покажет их: «· MCP: gitlab, azure-devops».
 
@@ -197,7 +197,7 @@ AKit не хранит токены. С GitLab, Azure DevOps и другими �
 ```yaml
 project: orders-service
 gitlab: { host: https://gitlab.example.com, project_path: shop/orders-service }
-checkout: ~/work/orders-service
+setup: ["npm ci"]
 tracker: { kind: azure-devops, org: acme, project: Orders, wi_ref_regex: "(?i)(?:COL-|AB#|WI-)(\\d+)" }
 mcp:
   servers: [gitlab, azure-devops]
@@ -210,7 +210,29 @@ default_scenario: bugfix
 - Файл с ошибкой показан оранжевой строкой под профилями. AKit его пропускает, но не угадывает.
 - AKit сам находит профиль для MR: по серверу GitLab и пути проекта.
 
-> **Почему так:** `checkout` — ваша копия репозитория. Из неё AKit сам делает отдельный worktree на коммите MR и сам считает diff через git. Агент читает целые файлы именно этого коммита, а ваша рабочая папка не меняется.
+> **Почему так:** агенту нужны целые файлы, а не только diff. AKit сам клонирует проект и делает отдельный worktree на коммите MR (см. ниже). Ваша рабочая папка не меняется.
+
+### Просто: репозиторий и установка пакетов
+<!-- section: setup-repository -->
+
+AKit держит свой клон каждого проекта в `~/.akit/local/review/repos/<сервер>/<путь проекта>`. Первое ревью проекта клонирует его, это может занять несколько минут. Перед каждым следующим ревью AKit только делает `git fetch`.
+
+Для каждого ревью AKit делает в клоне ветку `akit-review/<id ревью>` и worktree на коммите MR в папке ревью. Агент читает там целые файлы, ищет, кто использует изменённый код, и видит тесты. Через GitLab MCP для этого ничего звать не нужно.
+
+Когда вы удаляете ревью (правый щелчок по ревью в списке → **Move to Trash**), AKit удаляет его worktree и ветку `akit-review/…` из клона. Сам клон остаётся для следующих ревью.
+
+Команды установки (например, `npm ci`) идут в worktree до проходов модели. Есть два места:
+
+1. **Для всех ревью проекта.** Откройте **Review Settings…**, в **Rules of** выберите профиль. В блоке **Repository and setup** впишите команды в **Setup commands**, по одной на строку. Нажмите **Save Setup Commands…**, проверьте diff и нажмите **Save**. В профиле это `setup: ["npm ci"]`.
+2. **Для одного ревью.** В **New Review…** в блоке **Repository and setup** впишите команды в **Setup commands for this run**. Они идут после команд профиля. В терминале это `--setup "npm ci"` (можно несколько раз).
+
+Строка **Worktrees from** в **Review Settings…** говорит, откуда worktree: «AKit's clone …» (кнопка **Show** открывает клон в Finder) или «your checkout …».
+
+- Если команда упала, следующие не идут. В пробелах контекста будет «Setup command …», а полный лог — в `setup/<имя>.log` папки ревью.
+- Агент видит результат в `context/setup.md`: какая команда прошла и конец вывода упавшей.
+- Команды запускают код из MR. AKit даёт им только PATH, HOME, язык и временную папку, как командам `gather`.
+
+> **Важно:** AKit клонирует по SSH, потом по HTTPS, без вопросов о пароле. Если не получилось, нужен SSH-ключ или git credential helper на этом Mac. Другой адрес задаёт `clone_url:`. Свою копию вместо клона AKit задаёт `checkout:`.
 
 ### Средне: карточка базы знаний
 <!-- section: setup-knowledge-card -->
@@ -250,7 +272,10 @@ default_scenario: bugfix
 
 - `project` — имя проекта на экране.
 - `gitlab: { host, project_path }` — сервер и путь проекта в GitLab.
-- `checkout` — путь к вашей копии репозитория. Если коммита MR в ней нет, AKit сам скачает его из `refs/merge-requests/<iid>/head`.
+- `checkout` — путь к вашей копии репозитория, вместо клона AKit. Если коммита MR в ней нет, AKit сам скачает его из `refs/merge-requests/<iid>/head`. Worktree в вашей копии без ветки (detached).
+- `clone_url` — откуда AKit клонирует проект. Пример: `git@gitlab.example.com:shop/orders-service.git`. Без него — SSH, потом HTTPS по `gitlab`.
+- `clone: false` — без клона: ревью видит только diff.
+- `setup` — команды установки, по одной строке: `["npm ci", "npm run codegen"]`. Или `{ name, run, timeout_s }`. По умолчанию 15 минут на команду. См. [репозиторий и установка](#setup-repository).
 - `tracker: { kind: azure-devops, org, project, wi_ref_regex }` — трекер задач. Это подсказка проходу `fetch`: где искать задачи. `wi_ref_regex` находит номер задачи только в ветке MR (source branch). Заголовок и описание не считаются. По умолчанию он находит `COL-`, `col-`, `AB#` и `WI-`. Пример: ветка `feature/COL-317494-login` даёт задачу 317494. Если в ветке номера нет, ревью проверяет только код: контракты и регрессии. Роль `requirements` тогда не работает, и пробела про задачу нет.
 - `mcp` — MCP-серверы Pi и инструменты, которые может звать ревью этого проекта:
   - `servers: [gitlab, azure-devops]` — имена серверов в Pi. Нет списка — только серверы с `gitlab`, `azure`, `devops` в имени или `ado`. Трекер с другим именем (например, `jira`) впишите сюда явно.
@@ -311,7 +336,7 @@ default_scenario: bugfix
 
 - «… is not a merge request address …» — в строке не адрес MR.
 - «from the merge base» — ревью смотрит весь MR: от merge base, точки, где ветка отошла от целевой ветки.
-- «no project profile: no checkout, tracker or rules (Review Settings… adds one)» — профиля нет. Ревью пойдёт без checkout, трекера и правил проекта, а Pi может звать любой включённый MCP-сервер.
+- «no project profile: AKit's own clone, no tracker or rules (Review Settings… adds one)» — профиля нет. Ревью пойдёт с клоном AKit, но без трекера и правил проекта, а Pi может звать любой включённый MCP-сервер.
 
 **Start Review** активна, как только в поле есть адрес MR. Работают ли серверы Pi, окно не проверяет: это делает **Check Servers** в **Review Settings…**.
 
@@ -330,7 +355,7 @@ default_scenario: bugfix
 2. Под полем у каждой строки своя подпись. У второй и следующих — «Linked: …».
 3. Нажмите **Start Review**.
 
-![Окно New Review… с двумя MR в поле Merge requests: shop/orders-service!42 и shop/web-mfe!17 с коммитом 3f9c2ab; под полем строки shop/orders-service!42, from the merge base · profile orders-service.yaml и Linked: shop/web-mfe!17, from commit 3f9c2ab · no project profile: no checkout, tracker or rules (Review Settings… adds one); ниже подсказка One per line. The first sets the profile, scenario and roles; the others are linked merge requests of the same change…](images/review-new-linked.png)
+![Окно New Review… с двумя MR в поле Merge requests: shop/orders-service!42 и shop/web-mfe!17 с коммитом 3f9c2ab; под полем строки shop/orders-service!42, from the merge base · profile orders-service.yaml и Linked: shop/web-mfe!17, from commit 3f9c2ab · no project profile: AKit's own clone, no tracker or rules (Review Settings… adds one); ниже подсказка One per line. The first sets the profile, scenario and roles; the others are linked merge requests of the same change…](images/review-new-linked.png)
 
 Что происходит:
 
@@ -348,12 +373,12 @@ default_scenario: bugfix
 **С какого коммита.** После адреса можно написать коммит, через пробел или через `@`: `…/merge_requests/17 3f9c2ab`. Тогда ревью сообщает только о строках, изменённых после этого коммита. Остальной MR остаётся контекстом. Без коммита ревью смотрит весь MR от merge base.
 
 - Коммит должен быть в истории ветки MR. Иначе ревью смотрит весь MR и пишет пробел в контексте: «The changes after …».
-- Нужен `checkout` в профиле: AKit сравнивает коммиты через git.
+- Нужна копия репозитория (клон AKit или `checkout`): AKit сравнивает коммиты через git.
 - Находка не на этих строках остаётся только в AKit: «Not on a line changed after 3f9c2ab: you asked to review only what came after it.». **Move Inline** всё равно отправит её в GitLab.
 
 Тонкости:
 
-- Связанный MR без профиля читается только по diff: без worktree и без `checkout`.
+- Связанный MR тоже получает клон своего проекта и свой worktree, даже без профиля.
 - Если связанный MR не прочитался, ревью идёт дальше без него. В контексте будет пробел «The linked merge request …».
 - В одном ревью не больше 6 MR. Один адрес дважды нельзя.
 - Повторное ревью после push сравнивает с прошлым ревью только первый MR. Связанные MR каждый раз смотрятся целиком. Черновики AKit в них не дублируются.
@@ -541,7 +566,9 @@ default_scenario: bugfix
 - `history.md` — история изменённых файлов:
   - последние 8 коммитов каждого файла (не больше 40 файлов, новые файлы пропускаются; только при worktree);
   - `git blame` на базовом коммите для строк, которые меняет каждый фрагмент diff: кто и зачем менял их последним (только при worktree);
-  - треды людей в прошлых MR по этим файлам: проход `fetch` читает до 10 смерженных MR (по 3 на файл, не больше 25 вызовов). Это часто готовые правила команды.
+  - прошлые MR по этим файлам: AKit берёт их номера из истории git («See merge request …!N», по 3 на файл, не больше 10), и проход `fetch` читает только их треды. Без клона проход ищет их сам (не больше 25 вызовов). Треды — это часто готовые правила команды.
+- `setup.md` — команды установки и как каждая закончилась.
+- `tests.md` — тестовые файлы изменённых файлов (по имени) и файлы без теста.
 - `commands/<name>.txt` — вывод команд `gather` из профиля.
 - `knowledge/…` — заметки из папок `knowledge` (кроме папок, которые сами являются базой знаний).
 - `knowledge-card.md` — [карточка базы знаний](#setup-knowledge-card): системы, которые задевает MR, их связи и соседи.
@@ -600,7 +627,7 @@ default_scenario: bugfix
   Проверьте `pi mcp list` или `akit review check`: сервер GitLab должен быть подключён и отвечать в JSON GitLab.
 - Если diff нет ни в ответе GitLab, ни у git (нет `checkout`), ревью не начнётся: «There is no diff of …: the fetch pass read none, and there is no checkout to make it with git.».
 - Ревью остаётся на диске после выхода из AKit: это папка. Проходы снова запускает **Run Passes** (он есть у ревью **Gathered**, **Failed**, **Stopped** и у прерванного на **Gathering** или **Passes**) или `akit review passes RUN`.
-- Правый щелчок по ревью в списке: **Show in Finder** открывает папку ревью, **Move to Trash** убирает worktree из вашей копии и перемещает папку в Корзину.
+- Правый щелчок по ревью в списке: **Show in Finder** открывает папку ревью, **Move to Trash** убирает worktree и его ветку `akit-review/…` из клона (или из вашей копии) и перемещает папку в Корзину.
 - Пустая модель brief и ролей — модель Pi по умолчанию. Модель verifier обязательна: без неё ревью не начнётся (ни папки ревью, ни трат).
 
 ## Контекст ревью: заметки, ссылки, дополнительные серверы

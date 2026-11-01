@@ -30,6 +30,9 @@ public struct WorkItem: Codable, Sendable, Hashable {
     public var changes: [Change]
     /// Why Gather read it: given, found in the MR, parent of …, related to ….
     public var reason: String
+    /// Names of its attached files and of the images in its texts: AKit reads text only, so the
+    /// roles know a screenshot exists and isn't in the pack. nil when none.
+    public var attachments: [String]? = nil
 }
 
 /// Reads Azure DevOps's JSON, as its REST API and the Azure DevOps MCP servers that pass it on
@@ -50,6 +53,16 @@ public enum AzureDevOpsJSON {
             default: break
             }
         }
+        var attachments: [String] = []
+        for relation in object.objects("relations") where relation.string("rel") == "AttachedFile" {
+            let name = relation.object("attributes")?.string("name") ?? relation.string("url").map { ($0 as NSString).lastPathComponent } ?? "a file"
+            attachments.append(name)
+        }
+        for key in ["System.Description", "Microsoft.VSTS.TCM.ReproSteps", "Microsoft.VSTS.Common.AcceptanceCriteria"] {
+            let html = fields.string(key) ?? ""
+            let images = html.components(separatedBy: "<img").count - 1
+            if images > 0 { attachments.append("\(images) image\(images == 1 ? "" : "s") in \(key.split(separator: ".").last ?? "")") }
+        }
         // Some servers give the parent only as a field.
         if let parent = fields.int("System.Parent"), !parents.contains(parent) { parents.append(parent) }
         func text(_ key: String) -> String { HTMLText.plain(fields.string(key) ?? "") }
@@ -57,7 +70,7 @@ public enum AzureDevOpsJSON {
                         state: fields.string("System.State") ?? "", description: text("System.Description"),
                         acceptanceCriteria: text("Microsoft.VSTS.Common.AcceptanceCriteria"),
                         reproSteps: text("Microsoft.VSTS.TCM.ReproSteps"), parents: parents, related: related, children: children,
-                        comments: [], changes: [], reason: "")
+                        comments: [], changes: [], reason: "", attachments: attachments.isEmpty ? nil : attachments)
     }
 
     /// One comment (`…/comments`): the item it belongs to and the comment.

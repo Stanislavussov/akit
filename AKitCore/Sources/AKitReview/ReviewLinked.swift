@@ -166,14 +166,7 @@ public enum ReviewLinked {
     /// each worktree's `.git` file), then their folders.
     public static func removeWorktrees(run folder: URL, env: HarnessEnvironment) async {
         for tree in FileWalk.children(of: folder.appending(path: "linked")).map({ $0.appending(path: "worktree") }) {
-            let link = (try? String(contentsOf: tree.appending(path: ".git"), encoding: .utf8)) ?? ""
-            if let line = link.split(separator: "\n").first, line.hasPrefix("gitdir: "),
-               let range = line.range(of: "/.git/worktrees/"), let git = env.findExecutable("git") {
-                let clone = String(line.dropFirst("gitdir: ".count)[..<range.lowerBound])
-                _ = await ProcessRunner.run(git, arguments: ["-C", clone, "worktree", "remove", "--force", tree.path],
-                                            environment: env.gitVariables, timeout: 60)
-            }
-            try? FileManager.default.removeItem(at: tree)
+            await ReviewRepository.removeWorktree(tree, clones: ReviewGather.knownClones(run: folder, env: env), env: env)
         }
     }
 
@@ -310,18 +303,21 @@ extension ReviewGather {
         }
         let head = refs.headSHA
         let worktree = ReviewLinked.worktree(folder, key: key)
-        let checkout = profile?.checkout.map { env.expand($0) }
-        if let checkout {
+        // The profile's checkout, else AKit's own clone of that project.
+        let got = await ReviewRepository.source(for: ref, profile: profile, env: env, progress: options.progress)
+        let checkout = got.source?.checkout
+        if let source = got.source {
             options.progress("Making a worktree of \(ref.label) at \(head.prefix(10))…")
             try? FileManager.default.createDirectory(at: worktree.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if let problem = await makeWorktree(checkout: checkout, at: worktree, head: head, iid: ref.iid, env: env) {
+            let branch = source.owned ? ReviewRepository.branch(for: "\(spec.id)-\(key)") : nil
+            if let problem = await makeWorktree(checkout: source.checkout, at: worktree, head: head, iid: ref.iid, branch: branch, env: env) {
                 gap("repository", "Full files of \(ref.label) at \(head.prefix(10))", problem,
-                    how: "Check the profile's checkout and that git can fetch from it.",
+                    how: source.owned ? "Check that git can fetch into AKit's clone \(source.checkout.path)." : "Check the profile's checkout and that git can fetch from it.",
                     effect: "Only its diff can be read: findings that need the whole file are less certain.")
             }
         } else {
-            gap("repository", "Full files of \(ref.label)", "No project profile with a checkout matches \(ref.projectPath).",
-                how: "Add a profile with checkout: <path of your clone> in Review Settings….",
+            gap("repository", "Full files of \(ref.label)", got.problem ?? "There is no clone of \(ref.projectPath).",
+                how: got.how.isEmpty ? "Add a profile with checkout: <path of your clone> in Review Settings…." : got.how,
                 effect: "Only its diff can be read: findings that need the whole file are less certain.")
         }
         let hasWorktree = FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path)

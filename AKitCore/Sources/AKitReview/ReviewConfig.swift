@@ -270,8 +270,15 @@ public struct ReviewProfile: Sendable, Hashable {
     /// `https://gitlab.corp.example`.
     public var gitlabHost: String
     public var gitlabProjectPath: String
-    /// The local clone the worktree is made from.
+    /// The user's own clone the worktree is made from; nil = AKit's own clone (`ReviewRepository`).
     public var checkout: String?
+    /// `clone: false`: no AKit clone when there is no `checkout:`, so a run reads only the diff.
+    public var clone = true
+    /// `clone_url:`: where AKit clones from; nil = SSH, then HTTPS, from the GitLab host and path.
+    public var cloneURL: String?
+    /// `setup:`: commands run in every run's worktree before the passes (install packages,
+    /// generate code). They run the merge request's own code, like `gather:`.
+    public var setup: [GatherCommand] = []
     public var tracker: Tracker?
     /// Which of Pi's MCP servers and tools the review may use.
     public var mcp: ReviewMCPAccess
@@ -366,6 +373,17 @@ public struct ReviewProfile: Sendable, Hashable {
                              rolesOff: ReviewYAML.strings(roles["off"]), rolesAdd: ReviewYAML.strings(roles["add"]),
                              settings: try ReviewSettingsPatch.parse(map["review"] as? [String: Any] ?? [:], where: where_), file: file)
         profile.pi = try ReviewPiExtras.parse(map["pi"], where: where_)
+        if let value = map["clone"], !(value is NSNull) {
+            guard let on = value as? Bool else { throw ReviewRole.Failure(message: "\(where_): clone is true or false.") }
+            profile.clone = on
+        }
+        if let value = map["clone_url"], !(value is NSNull) {
+            guard let url = value as? String, ReviewRepository.isCloneURL(url) else {
+                throw ReviewRole.Failure(message: "\(where_): clone_url is a git URL (https://…, ssh://… or git@host:path).")
+            }
+            profile.cloneURL = url
+        }
+        profile.setup = try setupCommands(map["setup"], where: where_)
         if let value = map["knowledge_base"], !(value is NSNull) {
             guard let base = value as? String, !base.trimmingCharacters(in: .whitespaces).isEmpty else {
                 throw ReviewRole.Failure(message: "\(where_): knowledge_base is a world name or a folder path.")
@@ -380,6 +398,30 @@ public struct ReviewProfile: Sendable, Hashable {
         }
         return profile
     }
+}
+
+extension ReviewProfile {
+    /// `setup:` entries: a command line, or `{ name, run, timeout_s }`; 15 minutes each by default.
+    static func setupCommands(_ value: Any?, where where_: String) throws -> [GatherCommand] {
+        guard let value, !(value is NSNull) else { return [] }
+        guard let list = value as? [Any] else { throw ReviewRole.Failure(message: "\(where_): setup is a list of commands.") }
+        var result: [GatherCommand] = []
+        for (index, entry) in list.enumerated() {
+            if let run = entry as? String {
+                guard !run.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+                result.append(GatherCommand(name: "setup-\(index + 1)", run: run, timeoutSeconds: setupTimeout))
+            } else if let map = entry as? [String: Any], let run = map["run"] as? String {
+                let name = map["name"] as? String ?? "setup-\(index + 1)"
+                guard ReviewYAML.isID(name) else { throw ReviewRole.Failure(message: "\(where_): setup name \(name) is not an id (a-z, 0-9, -).") }
+                result.append(GatherCommand(name: name, run: run, timeoutSeconds: map["timeout_s"] as? Int ?? setupTimeout))
+            } else {
+                throw ReviewRole.Failure(message: "\(where_): each setup entry is a command or { name, run, timeout_s }.")
+            }
+        }
+        return result
+    }
+
+    static let setupTimeout = 900
 }
 
 /// Small YAML helpers shared by the config readers.
