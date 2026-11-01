@@ -13,6 +13,9 @@ APP="$ROOT/build/Build/Products/Debug/AKit.app/Contents/MacOS/AKit"
 "$ROOT/tools/demo-home.sh" "$DEMO" >/dev/null
 DEMO="$(cd "$DEMO" && pwd -P)"
 mkdir -p "$OUT"
+# Lab runs need an akit command; without one the screen shows a warning over the list.
+AKIT_CMD="$(command -v akit || true)"
+[[ -n "$AKIT_CMD" ]] && ln -sf "$AKIT_CMD" "$DEMO/.local/bin/akit"
 
 shot() { # name, flags...
     local name="$1"; shift
@@ -26,5 +29,18 @@ shot() { # name, flags...
     done
 }
 
+# Ids that tools/demo-home.sh makes.
+LAB_REVIEW=20261001-120000-demo
+REVIEW_RUN=20261015-091500-orders-service-42
+
 shot brain --section brain --select take-home
 shot setup --section brain --tab setup --project weather-app
+shot skills --section skills
+shot mcp --section mcp
+shot sessions --section sessions --tab analysis
+shot insights --section insights --delay 8
+shot lab --section lab --select "$LAB_REVIEW"
+shot review --section review --select "$REVIEW_RUN" --tab requests
+shot knowledge --section knowledge --select payments/orders-api
+shot notebook --section notebook
+shot worklog --section worklog

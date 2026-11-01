@@ -168,6 +168,17 @@ The sidebar has five groups. Hover an item for a one-line hint; right-click it f
 | **MCP Servers** | Every MCP server per agent and project. Add one from a form, pasted JSON or the public catalogs (Anthropic's directory, the MCP Registry); edit, delete or turn it off in one project or everywhere. **Check Connection** asks the agent itself whether the server connects; Sign In, Set Variable and Approve fix what's missing; Copy to moves a server between Pi and Claude Code. |
 | **Instructions** | The `AGENTS.md` and `CLAUDE.md` files each agent loads in a project, in the order the model gets them, with their size, files it skips, and sections it gets twice. Remove one copy of a section. |
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/skills-dark.png">
+    <img src="docs/assets/skills-light.png" alt="The Skills screen: every skill by where it lives, with the agents that see it and its mode per agent" width="49%">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mcp-dark.png">
+    <img src="docs/assets/mcp-light.png" alt="The MCP Servers screen: a server that needs a variable, its connection check and the Set in Keychain button" width="49%">
+  </picture>
+</p>
+
 ### Setup: what the agents should have
 
 | Screen | What it does |
@@ -181,6 +192,13 @@ The sidebar has five groups. Hover an item for a one-line hint; right-click it f
 | **Sessions** | Saved conversations of every agent, newest first, with token use and Pi ratings. Copy one as Markdown or JSON. A session gets an Analysis tab (calls, fresh tokens, where the context went, friction, commits) and **Review in Terminal…**, which starts a Lab review. |
 | **Usage** | Tokens and cost per day and subscription, from the agents' own session files. Only what they recorded; the one exception, Claude Code sessions that saved no cost, is marked as an estimate. |
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/sessions-dark.png">
+    <img src="docs/assets/sessions-light.png" alt="The Sessions screen: a session with its Analysis tab, cost and context rent" width="70%">
+  </picture>
+</p>
+
 ### Improve: what costs too much, what goes wrong, did a fix help
 
 | Screen | What it does |
@@ -188,6 +206,17 @@ The sidebar has five groups. Hover an item for a one-line hint; right-click it f
 | **Insights** | What the skill list costs in every request, which skills, MCP servers and tools the model never calls in a date range, and whether Claude Code's skill listing fits its budget. Recommendations come with a button: make a skill manual in its layer, move it to the one project that uses it, or remove it. Before/after shows how an apply changed the first request. |
 | **Lab** | The queue of runs that start an agent or a model, one at a time, in an Orca or herdr tab or in the background. **Review** a session: a diagnosis with up to three problems, each with a quote as proof and a prompt for the agent. **Replay** a commit: redo it from its parent in an isolated clone under different setups, and the commit's own tests judge it. Numbers come from the transcript and git, never from the agent. **Sends** logs what went out and at what cost. |
 | **Error Analysis** | Finds what goes wrong across many sessions: a model writes notes per session (checked by a verifier), you label a bootstrap set, notes are grouped into failure modes, and each mode's frequency comes from a code check or a validated judge, with intervals. Fixes are judged before/after and on control tasks. |
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/insights-dark.png">
+    <img src="docs/assets/insights-light.png" alt="The Insights screen: context per request by owner and recommendations with Apply and Remove Everywhere buttons" width="49%">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/lab-dark.png">
+    <img src="docs/assets/lab-light.png" alt="The Lab screen: a session review with its diagnosis, the problem, its proof and a prompt for the agent" width="49%">
+  </picture>
+</p>
 
 ### Work: agents for your daily work
 
@@ -197,6 +226,28 @@ The sidebar has five groups. Hover an item for a one-line hint; right-click it f
 | **Knowledge** | Notes about your services, flows and teams, by space, with Excalidraw maps whose arrows are relations. Agents read it through `/akit-context` and `akit kb`, and may only propose changes, which you accept or reject. **Ask Pi** about a note. Open the base in Obsidian. |
 | **Notebook** | Short notes, plans and to-dos, one tab per Markdown file in the knowledge base: check boxes, images, links, Today, drawings. `akit://notebook/<tab>` opens a tab (Raycast). |
 | **Work Log** | What you did, one short line at a time; the day and time are added for you, with minutes per kind. **Auto-Fill** proposes a day's entries from your prompts in agent sessions. |
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/review-dark.png">
+    <img src="docs/assets/review-light.png" alt="The Review screen: a merge request review with a proposed comment on a code line, Approve and Send Drafts" width="49%">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/knowledge-dark.png">
+    <img src="docs/assets/knowledge-light.png" alt="The Knowledge screen: a service note with its relations, properties and sections" width="49%">
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/notebook-dark.png">
+    <img src="docs/assets/notebook-light.png" alt="The Notebook screen: a tab with dated to-dos, links and a small drawing" width="49%">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/worklog-dark.png">
+    <img src="docs/assets/worklog-light.png" alt="The Work Log screen: entries per day with kinds, durations and minutes per kind" width="49%">
+  </picture>
+</p>
 
 **Everywhere in the app:**
 
