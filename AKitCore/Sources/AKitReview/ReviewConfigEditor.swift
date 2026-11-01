@@ -264,6 +264,49 @@ public enum ReviewConfigEditor {
         return try plan(.profile, id: slug, text: text, level: .project(slug), home: home, brain: brain)
     }
 
+    /// Review Settings… → Setup commands: the profile's top-level `setup:` as a list of command
+    /// lines (an empty list removes it), the rest of the file as it was. Nothing is written; the
+    /// save shows its diff.
+    public static func setup(_ commands: [String], profile slug: String, home: URL, brain: URL) throws -> Save {
+        let lines = commands.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if lines.contains(where: { $0.contains("\n") }) { throw Failure(message: "A setup command is one line.") }
+        let url = file(.profile, id: slug, level: .project(slug), home: home, brain: brain)
+        guard let old = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(message: "There is no project profile \(slug).") }
+        // A JSON list of strings is a YAML flow list, with every quote escaped.
+        let value = lines.isEmpty ? nil : (try? JSONSerialization.data(withJSONObject: lines, options: [.withoutEscapingSlashes]))
+            .flatMap { String(data: $0, encoding: .utf8) }
+        let text = settingTopLevelBlock("setup", value, in: old)
+        // An entry with its own name or time limit would lose them in a list of command lines.
+        if let current = try? ReviewProfile.parse(old, slug: slug),
+           current.setup.enumerated().contains(where: { $0.element.name != "setup-\($0.offset + 1)" || $0.element.timeoutSeconds != ReviewProfile.setupTimeout }) {
+            throw Failure(message: "\(url.lastPathComponent) has setup entries with their own name or timeout_s. Edit… the file to change them.")
+        }
+        guard let before = try? ReviewProfile.parse(old, slug: slug), var after = try? ReviewProfile.parse(text, slug: slug),
+              after.setup.map(\.run) == lines else {
+            throw Failure(message: "AKit couldn't change \(url.lastPathComponent) by itself. Edit… the file and set setup: to the commands.")
+        }
+        // The edit may change setup: and nothing else.
+        after.setup = before.setup
+        guard after == before else {
+            throw Failure(message: "AKit couldn't change \(url.lastPathComponent) by itself. Edit… the file and set setup: to the commands.")
+        }
+        return try plan(.profile, id: slug, text: text, level: .project(slug), home: home, brain: brain)
+    }
+
+    /// `settingTopLevel` for a key whose value may be a block: the indented or `- ` lines under
+    /// the key go with it.
+    static func settingTopLevelBlock(_ key: String, _ value: String?, in original: String) -> String {
+        let crlf = original.contains("\r\n")
+        var lines = (crlf ? original.replacingOccurrences(of: "\r\n", with: "\n") : original).components(separatedBy: "\n")
+        if let at = lines.firstIndex(where: { $0.hasPrefix(key + ":") }) {
+            var end = at + 1
+            while end < lines.count, lines[end].hasPrefix(" ") || lines[end].hasPrefix("\t") || lines[end].hasPrefix("- ") { end += 1 }
+            lines.removeSubrange((at + 1)..<end)
+        }
+        let result = settingTopLevel(key, value, in: lines.joined(separator: "\n"))
+        return crlf ? result.replacingOccurrences(of: "\n", with: "\r\n") : result
+    }
+
     /// The YAML text with a top-level `key: value` set (its line replaced, its trailing comment
     /// kept) or removed with a nil value. A commented-out `# key:` line becomes the setting; else
     /// it goes at the end. Other lines stay byte for byte; CRLF line ends stay too.

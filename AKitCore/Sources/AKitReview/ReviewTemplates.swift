@@ -39,7 +39,10 @@ public enum ReviewTemplates {
     # AKit review project profile. The file name (a-z, 0-9, -) is the profile's id.
     project: my-service
     gitlab: { host: https://gitlab.example.com, project_path: group/my-service }
-    checkout: ~/work/my-service            # your clone: the worktree at the reviewed commit comes from it
+    # checkout: ~/work/my-service          # your own clone; without it AKit keeps its own in ~/.akit/local/review/repos
+    # clone_url: git@gitlab.example.com:group/my-service.git   # where AKit clones from (default: SSH, then HTTPS)
+    # clone: false                         # no clone at all: the review reads only the diff
+    setup: []                              # e.g. - "npm ci"; runs in each run's worktree before the review, the MR's own code
     # tracker: { kind: azure-devops, org: my-org, project: MyProject, wi_ref_regex: "(?i)(?:COL-|AB#|WI-)(\\\\d+)" }
     # mcp:                                 # Pi's MCP servers review may use (pi mcp list); none = those named gitlab, azure, devops, ado
     #   servers: [gitlab, azure-devops]

@@ -14,8 +14,8 @@ extension AKitCLI {
       akit review MR-URL[@COMMIT] [MR-URL[@COMMIT]…] [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--verifier-thinking L] [--cap CREDITS] [--brain DIR]
                          [--note TEXT]… [--note-file PATH]… [--link URL]… [--extra-server NAME]…
-                         [--impact auto|off|always] [--summary-language CODE] [--gather-only]
-                         [--anyway] [--full]
+                         [--impact auto|off|always] [--summary-language CODE] [--setup COMMAND]…
+                         [--gather-only] [--anyway] [--full]
                                         Gather: Pi reads the merge request and its work items through
                                         its MCP servers; AKit adds the worktree at head_sha, the diff,
                                         history, commands and knowledge into a context pack. Then the
@@ -72,6 +72,12 @@ extension AKitCLI {
                                         neighbours), over the profile's knowledge_base
       --knowledge-budget N              The card's size limit (default 8000, about 32 KB; 4 bytes
                                         each), over the profile's knowledge_budget
+      --setup COMMAND                   A setup command for this run (install packages, generate
+                                        code), run in the worktree after the profile's setup:
+                                        commands and before the passes; it runs the MR's own code.
+                                        Without checkout: AKit clones the project itself to
+                                        ~/.akit/local/review/repos and puts the run's worktree on
+                                        a branch akit-review/<run>; deleting the run removes both
       --step COMMAND                    A Pi step after the roles: /run AGENT [TASK] (a pi-subagents
                                         agent), /TEMPLATE [ARGS], /skill:NAME [REQUEST] or plain text.
                                         AKit runs it as its own pass with the review's reading tools
@@ -225,6 +231,7 @@ extension AKitCLI {
         choices.fullReview = args.flag("--full")
         choices.knowledgeBase = args.value("--knowledge-base")
         choices.knowledgeBudget = try positiveNumber(args.value("--knowledge-budget"), "--knowledge-budget")
+        choices.setup = args.values("--setup").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         choices.extraServers = args.values("--extra-server").flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
             .filter { !$0.isEmpty }
         for change in roleChanges {

@@ -342,7 +342,18 @@ Without `--project` a role or scenario goes to the brain layer `review` (every p
 Mac; committed). With `--project P` it is that project's own copy, only on this Mac
 (`~/.akit/local/review/projects/P/`): use it for anything that names work systems, hosts or
 people. The profile P must exist: `akit review profile new P` writes a template; fill in its
-`gitlab:` and `checkout:` before a review uses it. On a work Mac a brain save warns about such words; then save it with `--project`.
+`gitlab:` before a review uses it. On a work Mac a brain save warns about such words; then save it with `--project`.
+
+The worktree: with `checkout: PATH` it comes from the user's clone; without it AKit clones the
+project itself into `~/.akit/local/review/repos/<host>/<path>` (SSH, then HTTPS; `clone_url:`
+overrides, `clone: false` turns it off) and fetches before each run; the run's worktree is on
+a branch `akit-review/<run>`, and deleting the run removes both. With the clone git gives the
+diff, the merge base and the earlier merge requests, so the fetch pass reads less through
+GitLab's MCP server. `setup:` in the profile (a list of command lines, e.g. `- npm ci`; Review
+Settings… → Setup commands) runs in every run's worktree before the passes; `--setup COMMAND`
+(repeatable; New Review… → Setup commands for this run) adds commands for one run. They run
+the merge request's own code; a failed one stops the rest and becomes a `setup` gap
+(`context/setup.md`, full logs in `<run>/setup/`).
 
 A role is one SKILL.md. Write `name: review-<id>` (a-z, 0-9, -), a one-line `description:`, and an
 `akit-review:` block, then the checklist as a list the model can follow:

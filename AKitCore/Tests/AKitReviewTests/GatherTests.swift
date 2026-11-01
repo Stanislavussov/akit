@@ -254,7 +254,7 @@ extension ReviewProcessTests {
             let env = try String(contentsOf: home.url.appending(path: "fake/env-fetch.txt"), encoding: .utf8)
             #expect(env.contains("AKIT_REVIEW_MODE=fetch"))
             #expect(FileManager.default.fileExists(atPath: folder.appending(path: "fetch").path), "the fetch pass works in its own empty folder")
-            await ReviewGather.removeWorktree(run: folder, checkout: "~/work/app", env: home.env)
+            await ReviewGather.removeWorktree(run: folder, env: home.env)
             #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "worktree").path))
         }
 

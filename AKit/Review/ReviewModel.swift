@@ -273,14 +273,12 @@ final class ReviewModel {
         }
     }
 
-    /// Moves a run to the Trash, after removing its worktree from the checkout.
+    /// Moves a run to the Trash, after removing its worktrees and their `akit-review/…` branches
+    /// from the clones they came from (AKit's own, the profile's checkout or the local workspace).
     func delete(_ id: String) {
         let folder = ReviewPaths(home: home).run(id)
-        // The worktree leaves the clone it came from: the local workspace, or the profile's checkout.
-        let spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json"))
-        let checkout = spec?.local?.path ?? catalogProfile(for: spec)?.checkout
         Task {
-            await ReviewGather.removeWorktree(run: folder, checkout: checkout, env: env)
+            await ReviewGather.removeWorktree(run: folder, env: env)
             await ReviewLinked.removeWorktrees(run: folder, env: env)
             attempt { _ = try Trash.move(folder) }
             if run?.id == id { run = nil }
@@ -289,11 +287,6 @@ final class ReviewModel {
     }
 
     func catalog(brain: URL) -> ReviewCatalog { ReviewCatalog.load(home: home, brain: brain) }
-
-    private func catalogProfile(for spec: ReviewRunSpec?) -> ReviewProfile? {
-        guard let slug = spec?.project else { return nil }
-        return ReviewCatalog.load(home: home, brain: nil).profiles.first { $0.slug == slug }
-    }
 
     private func attempt(_ body: () throws -> Void) {
         do {

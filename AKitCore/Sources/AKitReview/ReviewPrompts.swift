@@ -515,6 +515,29 @@ public enum ReviewPrompts {
             + "with its relations (expand relations or all). Read the related items (`System.LinkTypes.Related`) of the named item, "
             + "one level only. When the tracker tools are deferred, load them with `tool_search` first. "
             + "When the branch names no item, read none: the review then checks the code alone."
+        // AKit's clone already holds the diff and names the earlier merge requests: the pass doesn't look for them.
+        // Only a plan with a base: git can make the diff and read the history from it.
+        let plan = spec.repository?.plan.flatMap { $0.base == nil ? nil : $0 }
+        let diffStep = plan == nil
+            ? "2. Its diff versions, and the changed files with their diffs (every page)."
+            : "2. Its diff versions only. Don't read the changed files' diffs: AKit has the repository and makes them with git."
+        let diffsCall = plan == nil
+            ? "with `include: [\"diffs\"]` and `detail: \"full_patch\"` (`diffs_first: 100`, then `diffs_after` for every further page), "
+            : ""
+        let earlier = plan?.earlierNumbers ?? []
+        let historyStep: String
+        if plan == nil {
+            historyStep = "7. The history of the changed files, after everything above: for up to 10 changed files, the merge requests merged "
+                + "before this one that changed them (for example the file's recent commits, then each commit's merge requests), at most "
+                + "3 per file and 10 in all, each with its discussion threads. Pass each merge request's own number in every call about "
+                + "it. Spend at most 25 calls on this step, and skip it when your tools can't do it."
+        } else if earlier.isEmpty {
+            historyStep = "7. Nothing more: git names no earlier merge request on the changed files."
+        } else {
+            historyStep = "7. After everything above, the earlier merge requests git names for the changed files (don't search for others): "
+                + earlier.map { "!\($0)" }.joined(separator: ", ") + ". For each, the merge request itself and its discussion threads, "
+                + "passing its own number in every call; at most 2 calls each."
+        }
         return """
         AKit review, step Gather. Read GitLab merge request \(mr.url) (project `\(mr.projectPath)`, merge request number \(mr.iid)) \
         and its work items with your MCP tools, through `codemode`. Don't review anything yet.
@@ -527,20 +550,16 @@ public enum ReviewPrompts {
         Never answer "done" before you have looked for the GitLab tools that way.
         1. The merge request itself, with its diff refs (base, start and head commit), whether it is a draft, and its head \
         pipeline (status and commit).
-        2. Its diff versions, and the changed files with their diffs (every page).
+        \(diffStep)
         3. Every discussion thread with all its notes and positions, resolved ones too (every page).
-        4. Your own pending draft notes on it.
+        4. Your own pending draft notes on it (skip this when no tool reads draft notes: it is not a gap).
         5. The signed-in user (who you are on GitLab).
         6. \(items)
 
         GitLab's own MCP server (`get_merge_request` with an `include` list) gives one part per call: call it once with no \
-        `include`, then with `include: ["diffs"]` and `detail: "full_patch"` (`diffs_first: 100`, then `diffs_after` for every \
-        further page), `include: ["commits"]`, `include: ["discussions"]` and `include: ["pipelines"]`; the user is \
+        `include`, then \(diffsCall)`include: ["commits"]`, `include: ["discussions"]` and `include: ["pipelines"]`; the user is \
         `get_user` with `me: true`.
-        7. The history of the changed files, after everything above: for up to 10 changed files, the merge requests merged \
-        before this one that changed them (for example the file's recent commits, then each commit's merge requests), at most \
-        3 per file and 10 in all, each with its discussion threads. Pass each merge request's own number in every call about \
-        it. Spend at most 25 calls on this step, and skip it when your tools can't do it.\(links.isEmpty ? "" : "\n8. The developer's links, after the merge request:\n\n" + linksStep(links))
+        \(historyStep)\(links.isEmpty ? "" : "\n8. The developer's links, after the merge request:\n\n" + linksStep(links))
 
         Pass the merge request number (\(mr.iid)) as its own argument in every call about it, as the tools name it.
         When a tool answers in prose instead of JSON, hand what it said to `akit_submit_context` with GitLab's and Azure \
