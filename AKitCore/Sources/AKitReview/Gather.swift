@@ -203,9 +203,15 @@ public enum ReviewGather {
         // A local review copies its own workspace; Pi never reads the workspace itself.
         let checkoutURL = local.map { URL(filePath: $0.path) } ?? source?.checkout
         if let checkout = checkoutURL {
-            progress("Making a worktree at \(head.prefix(10))…")
             let branch = local == nil ? spec.repository?.branch : nil
-            if let problem = await makeWorktree(checkout: checkout, at: worktree, head: head, iid: ref.iid, branch: branch, env: env) {
+            // A new run of the same merge request takes the earlier run's worktree (R65).
+            let taken = local == nil
+                ? await ReviewWorktreeReuse.take(into: folder, spec: spec, clone: checkout, branch: branch, head: head,
+                                                 sourceBranch: mr.sourceBranch, env: env, progress: progress)
+                : nil
+            spec.repository?.reusedFrom = taken?.from
+            if taken == nil { progress("Making a worktree at \(head.prefix(10))…") }
+            if taken == nil, let problem = await makeWorktree(checkout: checkout, at: worktree, head: head, iid: ref.iid, branch: branch, env: env) {
                 gap("repository", "Full files at \(head.prefix(10))", problem,
                     how: source?.owned == true ? "Check that git can fetch into AKit's clone \(checkout.path)." : "Check the profile's checkout and that git can fetch from it.",
                     effect: "Only the diff can be read: findings that need the whole file are less certain.")

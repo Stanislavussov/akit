@@ -199,6 +199,69 @@ extension ReviewProcessTests {
             #expect(FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path))
         }
 
+        /// R65: a new run of the merge request takes the earlier run's worktree: a push is pulled,
+        /// a rewritten branch is reset to origin; the earlier run can make a new one.
+        @Test func newRunTakesTheEarlierWorktreeAndUpdatesIt() async throws {
+            let home = TempHome()
+            let (remote, head) = try remote(home)
+            let clone = try #require(ReviewRepository.folder(home: home.url, host: "https://gitlab.test", projectPath: "team/app"))
+            #expect(await ReviewRepository.ensureClone(at: clone, urls: [remote.path], iid: 7, env: home.env, progress: { _ in }) == nil)
+            home.write(".akit/local/review/projects/app.yaml", "gitlab: { host: https://gitlab.test, project_path: team/app }\n")
+            let diff = "@@ -1,3 +1,4 @@\n import Foundation\n func auth(header: String) {\n+    log(\"Auth: \\(header)\")\n }\n"
+            FakeMergeRequest.serve(home, head: head, diff: diff)
+            try ReviewRunFixture.prepare(home)
+            let first = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: home.env, brain: nil)
+            let firstFolder = ReviewPaths(home: home.url).run(first.spec.id)
+            #expect(first.spec.repository?.reusedFrom == nil)
+            // Something only this worktree has: installed packages, say.
+            home.write(".akit/local/review/runs/\(first.spec.id)/worktree/node_modules.txt", "kept")
+
+            // The author pushes once more: the next run pulls it.
+            home.git(remote, "checkout", "-q", "fix/COL-41-auth-log")
+            home.write("remote/app/src/Auth.swift", "import Foundation\nfunc auth(header: String) {\n    log(\"Auth: \\(header)\")\n    check()\n}\n")
+            home.git(remote, "commit", "-q", "-am", "Check auth")
+            let pushed = home.git(remote, "rev-parse", "HEAD")
+            home.git(remote, "update-ref", "refs/merge-requests/7/head", pushed)
+            FakeMergeRequest.serve(home, head: pushed, diff: diff)
+            try await Task.sleep(for: .seconds(1.1))   // a new run id (seconds)
+            let lines = LockedBox<[String]>([])
+            let second = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: home.env,
+                                                    brain: nil, options: .init(progress: { line in lines.update { $0.append(line) } }))
+            let secondTree = ReviewPaths(home: home.url).run(second.spec.id).appending(path: "worktree")
+            #expect(second.spec.repository?.reusedFrom == first.spec.id)
+            #expect(home.git(secondTree, "rev-parse", "HEAD") == pushed)
+            #expect(FileManager.default.fileExists(atPath: secondTree.appending(path: "node_modules.txt").path))
+            #expect(lines.value.contains { $0.contains("(pull)") }, "\(lines.value)")
+            #expect(home.git(clone, "branch", "--list", "akit-review/\(second.spec.id)").contains(second.spec.id))
+            #expect(home.git(clone, "branch", "--list", "akit-review/\(first.spec.id)").isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: firstFolder.appending(path: "worktree").path))
+            #expect(ReviewCleanup.removed(firstFolder)?.movedTo == second.spec.id)
+
+            // A setup command rewrote a tracked file: the next run doesn't read that edit.
+            home.write(".akit/local/review/runs/\(second.spec.id)/worktree/src/Auth.swift", "edited by setup\n")
+            // The author rewrites the branch: the pull fails, the reset to origin takes the new head.
+            home.write("remote/app/src/Auth.swift", "import Foundation\nfunc auth(header: String) {\n    log(\"Auth!\")\n}\n")
+            home.git(remote, "commit", "-q", "--amend", "-am", "Check auth, rewritten")
+            let rewritten = home.git(remote, "rev-parse", "HEAD")
+            home.git(remote, "update-ref", "refs/merge-requests/7/head", rewritten)
+            FakeMergeRequest.serve(home, head: rewritten, diff: diff)
+            try await Task.sleep(for: .seconds(1.1))
+            lines.update { $0 = [] }
+            let third = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: home.env,
+                                                   brain: nil, options: .init(progress: { line in lines.update { $0.append(line) } }))
+            let thirdTree = ReviewPaths(home: home.url).run(third.spec.id).appending(path: "worktree")
+            #expect(third.spec.repository?.reusedFrom == second.spec.id)
+            #expect(home.git(thirdTree, "rev-parse", "HEAD") == rewritten)
+            #expect(lines.value.contains { $0.contains("reset to origin/fix/COL-41-auth-log") }, "\(lines.value)")
+            #expect(home.git(thirdTree, "status", "--porcelain", "--untracked-files=no").isEmpty)
+            #expect(FileManager.default.fileExists(atPath: thirdTree.appending(path: "node_modules.txt").path))
+
+            // The first run gets a worktree of its own again, at its own commit.
+            #expect(await ReviewCleanup.restore(firstFolder, env: home.env) == nil)
+            #expect(home.git(firstFolder.appending(path: "worktree"), "rev-parse", "HEAD") == head)
+            #expect(home.git(thirdTree, "rev-parse", "HEAD") == rewritten)
+        }
+
         @Test func mergeBaseFromGitWhenGitLabGivesNoRefs() async throws {
             let home = TempHome()
             let (remote, head) = try remote(home)
