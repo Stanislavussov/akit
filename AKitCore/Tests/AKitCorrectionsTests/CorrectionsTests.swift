@@ -101,6 +101,22 @@ struct CorrectionsTests {
         #expect(CorrectionRules.removing(bullet, from: "No heading") == nil)
     }
 
+    @Test func crlfFilesAndHeadingVariantsKeepTheirLineEnds() throws {
+        let file = "# Project\r\n\r\n## rules  from Corrections\r\n\r\n- Ask first.\r\n"
+        let added = CorrectionRules.adding("- Run the tests.", to: file)
+        #expect(added == "# Project\r\n\r\n## rules  from Corrections\r\n\r\n- Ask first.\r\n- Run the tests.\r\n")
+        #expect(CorrectionRules.contains("- Run the tests.", in: added) && !CorrectionRules.contains("- Other.", in: added))
+        #expect(CorrectionRules.removing("- Run the tests.", from: added) == file)
+        let fresh = CorrectionRules.adding("- A.", to: "Text.\r\n")
+        #expect(fresh == "Text.\r\n\r\n## Rules from corrections\r\n\r\n- A.\r\n")
+    }
+
+    @Test func ruleLinesKeepBoldAndSplitCRLF() throws {
+        let answer = #"{"patterns":[{"title":"t","reactionIds":["s1.r1","s2.r1"],"rule":"**Always** run tests.\r\n- Say which."}]}"#
+        let pattern = try #require(try Corrections.checked(answer: answer, pick: pick, now: Date()).first)
+        #expect(pattern.rule == ["**Always** run tests.", "Say which."])
+    }
+
     @Test func projectFileIsTheOneTheHarnessesRead() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "akit-corrections-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

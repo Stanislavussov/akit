@@ -65,6 +65,9 @@ struct CorrectionsCLITests {
 
         let plan = await akit("corrections", "find")
         #expect(plan.code == 0 && plan.out.contains("would send 2 corrections from 2 sessions"), "\(plan)")
+        let planJSON = await akit("corrections", "find", "--json")
+        let planObject = try #require(try JSONSerialization.jsonObject(with: Data(planJSON.out.utf8)) as? [String: Any], "\(planJSON)")
+        #expect(planObject["corrections"] as? Int == 2 && planObject["sessions"] as? Int == 2)
         let shown = await akit("corrections", "find", "--show")
         #expect(shown.out.contains("user: \"no, run the tests before you say done\""), "\(shown.out)")
         #expect(shown.out.contains("[agent] Done, the screen is added."), "\(shown.out)")
@@ -90,6 +93,9 @@ struct CorrectionsCLITests {
         #expect(file == "## Rules from corrections\n\n- Before you say a change is done, run the tests.\n  Name the command you ran.\n")
         let spool = try fm.contentsOfDirectory(atPath: home.appending(path: ".akit/index/spool").path)
         #expect(!spool.isEmpty)
+
+        let twice = await akit("corrections", "apply", pattern.id, "--to", project.path)
+        #expect(twice.code != 0 && twice.err.contains("already"), "\(twice)")
 
         let rules = await akit("corrections", "rules")
         #expect(rules.code == 0 && rules.out.contains("\(pattern.id)  waiting  Says done before running the tests"), "\(rules)")

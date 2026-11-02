@@ -2,6 +2,7 @@ import AKitBrain
 import AKitCorrections
 import AKitFoundation
 import AKitInsights
+import AKitLab
 import AKitProjectSetup
 import Foundation
 
@@ -41,7 +42,7 @@ extension AKitCLI {
         func failure(_ error: Error) -> Failure { Failure(message: (error as? LocalizedError)?.errorDescription ?? "\(error)") }
         var project: String?
         if let projectArgument { project = await projectID(argument: projectArgument, cwd: cwd, projectsRoot: projectsRoot, env: env) }
-        if windowed {
+        if windowed || subcommand == "rules" {
             let database = try IndexSchema.open(InsightsPaths(env: env).database)
             _ = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
         }
@@ -54,7 +55,13 @@ extension AKitCLI {
             let report = try Corrections.report(env: env, days: days, project: project)
             let pick = CorrectionExcerpts.pick(report, env: env)
             if show {
-                out(pick.input.isEmpty ? "Nothing to send." : pick.input)
+                // Shown as the scrub leaves it: a tool result may hold a token.
+                out(pick.input.isEmpty ? "Nothing to send." : Scrubber.scrub(pick.input, own: LabSettings.load(env: env).scrub).text)
+                return 0
+            }
+            if options.json, !options.yes {
+                struct Plan: Encodable { let version = 1, corrections: Int, sessions: Int, approxTokens: Int, cut: Int }
+                out(encode(Plan(corrections: pick.excerpts.count, sessions: pick.sessions, approxTokens: pick.approxTokens, cut: pick.cut)))
                 return 0
             }
             guard options.yes else {
@@ -63,7 +70,7 @@ extension AKitCLI {
                              + "to one model call, after the sending policy and the scrub."]
                 if pick.cut > 0 { lines.append("\(pick.cut) more session\(pick.cut == 1 ? "" : "s") left out: the input's cap.") }
                 if pick.sessions < 2 { lines.append("A pattern needs corrections in at least 2 sessions; there is nothing to send.") }
-                else { lines.append("--show prints it (before the scrub); run again with --yes to send.") }
+                else { lines.append("--show prints it; run again with --yes to send.") }
                 out(lines.joined(separator: "\n"))
                 return 0
             }
@@ -79,11 +86,15 @@ extension AKitCLI {
             out(patterns.map(patternText).joined(separator: "\n\n"))
             return 0
         case "dismiss":
-            var state: CorrectionsState
-            do { state = try CorrectionsState.load(env: env) } catch { throw failure(error) }
-            guard let pattern = state.pattern(id!) else { throw Failure(message: "No pattern \(id!). See akit corrections find.") }
-            state.dismiss(pattern)
-            do { try state.save(env: env) } catch { throw failure(error) }
+            let pattern: CorrectionPattern?
+            do {
+                pattern = try CorrectionsState.update(env: env) { state in
+                    let found = state.pattern(id!)
+                    if let found { state.dismiss(found) }
+                    return found
+                }
+            } catch { throw failure(error) }
+            guard let pattern else { throw Failure(message: "No pattern \(id!). See akit corrections find.") }
             out("Dismissed \(pattern.id): it isn't shown again.")
             return 0
         case "rules":

@@ -13,7 +13,8 @@ public enum SignalScanner {
     /// 3 (2026-10-08): outcomes read before secrets are hidden, the user's refusal alone undone
     /// by Esc, failed results with no text counted.
     /// 4 (2026-10-28): stuck loops (`RepeatLoops`), stored with their steps in `repeat_loops`.
-    /// 5 (2026-11-02): the user's own refusals (`userRefusals`); "не то" only as words, not in "не только".
+    /// 5 (2026-11-02): the user's own refusals (`userRefusals`); "не то" only as words, not in "не только";
+    /// the task (the first turn) is no pushback.
     public static let version = 5
 
     /// Interrupts, rejections, tool errors and repeated calls are `FailureSignals`, as in Lab.
@@ -28,7 +29,9 @@ public enum SignalScanner {
         let facts = TranscriptFacts(items)
         let users = facts.userTurns
         let shared = FailureSignals(items)
-        let pushbacks = users.filter { !FailureSignals.isInterrupt($0.text) && isPushback($0.text) }.count
+        // The first turn that isn't an interrupt is the task, not a reaction (as in `UserReactions`).
+        let replies = users.drop { FailureSignals.isInterrupt($0.text) }.dropFirst()
+        let pushbacks = replies.filter { !FailureSignals.isInterrupt($0.text) && isPushback($0.text) }.count
         let loops = harness == RepeatLoops.harness ? RepeatLoops.find(items, fallbackModel: fallbackModel) : []
         let signals = SessionSignals(interrupts: shared.interrupts, pushbacks: pushbacks, rejected: shared.rejected,
                                      userRefusals: userRefusals(items),
@@ -49,7 +52,7 @@ public enum SignalScanner {
                 guard let outcome = item.resultOutcome else { continue }
                 escapes.result(tool: name ?? "", outcome)
                 if outcome.userRefusal, !isQuestion(name) { count += 1 }
-            case .user: count -= escapes.userText(item.text).count
+            case .user: count -= escapes.userText(item.text).filter { !isQuestion($0) }.count
             default: break
             }
         }

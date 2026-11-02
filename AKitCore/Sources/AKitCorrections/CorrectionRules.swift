@@ -50,11 +50,12 @@ public enum CorrectionRules {
     /// The text with the bullet at the end of the `## Rules from corrections` section, which is
     /// added at the end when there is none. Every other byte stays.
     public static func adding(_ bullet: String, to text: String) -> String {
+        let (text, crlf) = unix(text)
         var lines = text.components(separatedBy: "\n")
         let isBlank: (String) -> Bool = { $0.trimmingCharacters(in: .whitespaces).isEmpty }
-        guard let start = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "## \(heading)" }) else {
+        guard let start = lines.firstIndex(where: isOurHeading) else {
             let body = text.trimmingCharacters(in: .newlines)
-            return (body.isEmpty ? "" : body + "\n\n") + "## \(heading)\n\n\(bullet)\n"
+            return back((body.isEmpty ? "" : body + "\n\n") + "## \(heading)\n\n\(bullet)\n", crlf)
         }
         var end = lines[(start + 1)...].firstIndex(where: isHeading) ?? lines.count
         while end > start + 1, isBlank(lines[end - 1]) { end -= 1 }
@@ -62,15 +63,41 @@ public enum CorrectionRules {
         if end == start + 1 { insert.insert("", at: 0) }
         lines.insert(contentsOf: insert, at: end)
         let result = lines.joined(separator: "\n")
-        return result.hasSuffix("\n") ? result : result + "\n"
+        return back(result.hasSuffix("\n") ? result : result + "\n", crlf)
+    }
+
+    /// Whether the bullet is already in the `## Rules from corrections` section.
+    public static func contains(_ bullet: String, in text: String) -> Bool {
+        let lines = unix(text).text.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: isOurHeading) else { return false }
+        let end = lines[(start + 1)...].firstIndex(where: isHeading) ?? lines.count
+        let own = bullet.components(separatedBy: "\n")
+        return (start + 1..<max(start + 1, end - own.count + 1)).contains { Array(lines[$0..<($0 + own.count)]) == own }
+    }
+
+    /// The heading line, in any case and spacing.
+    static func isOurHeading(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces).lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            == "## \(heading)".lowercased()
+    }
+
+    /// The text with `\n` line ends, and whether it had `\r\n` (written back the same way).
+    static func unix(_ text: String) -> (text: String, crlf: Bool) {
+        let crlf = text.contains("\r\n")
+        return (crlf ? text.replacingOccurrences(of: "\r\n", with: "\n") : text, crlf)
+    }
+
+    static func back(_ text: String, _ crlf: Bool) -> String {
+        crlf ? text.replacingOccurrences(of: "\n", with: "\r\n") : text
     }
 
     /// The text without the bullet; the heading goes too when its section is left empty. nil when
     /// the bullet isn't in the section (it was changed or moved by hand).
     public static func removing(_ bullet: String, from text: String) -> String? {
+        let (text, crlf) = unix(text)
         var lines = text.components(separatedBy: "\n")
         let isBlank: (String) -> Bool = { $0.trimmingCharacters(in: .whitespaces).isEmpty }
-        guard let start = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "## \(heading)" }) else { return nil }
+        guard let start = lines.firstIndex(where: isOurHeading) else { return nil }
         let end = lines[(start + 1)...].firstIndex(where: isHeading) ?? lines.count
         let own = bullet.components(separatedBy: "\n")
         guard let at = (start + 1..<max(start + 1, end - own.count + 1)).first(where: { Array(lines[$0..<($0 + own.count)]) == own }) else {
@@ -86,7 +113,7 @@ public enum CorrectionRules {
         }
         var result = lines.joined(separator: "\n")
         while result.hasSuffix("\n\n") { result.removeLast() }
-        return result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : result
+        return result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : back(result, crlf)
     }
 
     static func isHeading(_ line: String) -> Bool {
@@ -119,7 +146,10 @@ public enum CorrectionRules {
                                  env: HarnessEnvironment) throws(Failure) -> Plan {
         try plan(id: pattern.id, target: target, brain: brain, rendered: rendered, env: env,
                  harnesses: Set(pattern.reactions.map { String($0.sessionKey.prefix { $0 != ":" }) })) { text throws(Failure) in
-            adding(bullet(pattern.rule), to: text)
+            guard !contains(bullet(pattern.rule), in: text) else {
+                throw Failure(message: "This rule is already under “## \(heading)” there.")
+            }
+            return adding(bullet(pattern.rule), to: text)
         }
     }
 
@@ -179,18 +209,27 @@ public enum CorrectionRules {
     @discardableResult
     public static func apply(_ plan: Plan, pattern: CorrectionPattern, brain: Brain?, context: SkillMove.Context?, env: HarnessEnvironment,
                              now: Date = Date()) async throws(Failure) -> [String] {
-        var state: CorrectionsState
-        do { state = try CorrectionsState.load(env: env) } catch { throw Failure(message: error.message) }
-        let written = try await write(plan, brain: brain, context: context, env: env)
+        let current: CorrectionsState
+        do { current = try CorrectionsState.load(env: env) } catch { throw Failure(message: error.message) }
+        if current.activeRule(pattern.id) != nil {
+            throw Failure(message: "The rule of \(pattern.id) is applied already. See akit corrections rules.")
+        }
+        var written = try await write(plan, brain: brain, context: context, env: env)
+        // Recorded right after the write: a rule in a file without a record would have no verdict and no Remove.
+        do {
+            try CorrectionsState.update(env: env) { state in
+                state.rules.removeAll { $0.id == pattern.id }
+                state.rules.append(CorrectionRule(id: pattern.id, title: pattern.title, rule: pattern.rule, scope: plan.target.scope,
+                                                  target: plan.file?.file.path ?? globalTarget, applied: now,
+                                                  places: pattern.places.sorted()))
+            }
+        } catch {
+            throw Failure(message: "The rule was written, but not recorded: \(error.message) Take it out by hand under “## \(heading)”.")
+        }
         let note = "Rule from corrections \(pattern.id): \(pattern.title)"
         do { try Spool.mark(String(note.prefix(Spool.maxNoteLength)), at: now, home: env.homeDirectory, now: now) } catch {
-            throw Failure(message: "The rule was written, but its mark wasn't: \(error.message)")
+            written.append("The mark for Changes wasn't written (\(error.message)); the verdict still counts from now.")
         }
-        state.rules.removeAll { $0.id == pattern.id }
-        state.rules.append(CorrectionRule(id: pattern.id, title: pattern.title, rule: pattern.rule, scope: plan.target.scope,
-                                          target: plan.file?.file.path ?? globalTarget, applied: now,
-                                          places: pattern.places.sorted()))
-        do { try state.save(env: env) } catch { throw Failure(message: error.message) }
         return written
     }
 
@@ -198,14 +237,17 @@ public enum CorrectionRules {
     @discardableResult
     public static func remove(_ plan: Plan, brain: Brain?, context: SkillMove.Context?, env: HarnessEnvironment,
                               now: Date = Date()) async throws(Failure) -> [String] {
-        var state: CorrectionsState
-        do { state = try CorrectionsState.load(env: env) } catch { throw Failure(message: error.message) }
-        guard let index = state.rules.firstIndex(where: { $0.id == plan.ruleID && $0.removed == nil }) else {
-            throw Failure(message: "No applied rule \(plan.ruleID).")
-        }
+        let current: CorrectionsState
+        do { current = try CorrectionsState.load(env: env) } catch { throw Failure(message: error.message) }
+        guard current.activeRule(plan.ruleID) != nil else { throw Failure(message: "No applied rule \(plan.ruleID).") }
         let written = try await write(plan, brain: brain, context: context, env: env)
-        state.rules[index].removed = now
-        do { try state.save(env: env) } catch { throw Failure(message: error.message) }
+        do {
+            try CorrectionsState.update(env: env) { state in
+                if let index = state.rules.firstIndex(where: { $0.id == plan.ruleID && $0.removed == nil }) { state.rules[index].removed = now }
+            }
+        } catch {
+            throw Failure(message: error.message)
+        }
         return written
     }
 

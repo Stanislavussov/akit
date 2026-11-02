@@ -70,8 +70,8 @@ public enum Corrections {
         guard pick.sessions >= 2 else {
             throw Failure(message: "Corrections in fewer than 2 sessions: a pattern needs at least 2. Nothing was sent.")
         }
-        var state: CorrectionsState
-        do { state = try CorrectionsState.load(env: env) } catch { throw Failure(message: error.message) }
+        // A broken state file stops the call before anything is sent.
+        do { _ = try CorrectionsState.load(env: env) } catch { throw Failure(message: error.message) }
         let text: String
         do {
             let available = await LabRuns.models(for: .pi, env: env)
@@ -91,10 +91,16 @@ public enum Corrections {
             throw Failure(message: error.localizedDescription)
         }
         let patterns = try checked(answer: text, pick: pick, now: now)
-        let applied = Set(state.rules.map(\.id))
-        state.patterns = state.patterns.filter { applied.contains($0.id) } + patterns.filter { !applied.contains($0.id) }
-        do { try state.save(env: env) } catch { throw Failure(message: error.message) }
-        return patterns.filter(state.shows)
+        // Read again after the call: an Apply or Dismiss may have happened meanwhile.
+        do {
+            return try CorrectionsState.update(env: env) { state in
+                let applied = Set(state.rules.map(\.id))
+                state.patterns = state.patterns.filter { applied.contains($0.id) } + patterns.filter { !applied.contains($0.id) }
+                return patterns.filter(state.shows)
+            }
+        } catch {
+            throw Failure(message: error.message)
+        }
     }
 
     /// The origin of each picked session's log: every one must be allowed at the destination.
@@ -127,8 +133,8 @@ public enum Corrections {
             var seen = Set<String>()
             let reactions = ids.compactMap { byID[$0.trimmingCharacters(in: .whitespaces).lowercased()] }.filter { seen.insert($0.id).inserted }
             let rule = strings(entry["rule"] ?? entry["rules"])
-                .flatMap { $0.split(separator: "\n").map(String.init) }
-                .map { $0.trimmingCharacters(in: .whitespaces).trimmingPrefix(while: { "-*•".contains($0) }).trimmingCharacters(in: .whitespaces) }
+                .flatMap { $0.components(separatedBy: .newlines) }
+                .map { $0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: #"^[-*•]\s+"#, with: "", options: .regularExpression) }
                 .filter { !$0.isEmpty }
                 .prefix(ruleLines)
             guard !title.isEmpty, !rule.isEmpty, Set(reactions.map(\.sessionKey)).count >= 2 else { continue }

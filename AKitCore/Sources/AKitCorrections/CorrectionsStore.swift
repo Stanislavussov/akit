@@ -102,6 +102,25 @@ public struct CorrectionsState: Codable, Equatable, Sendable {
         }
     }
 
+    /// Loads, changes and saves the state under one lock, so the app and `akit` (or a find that
+    /// waited a minute for the model) never write over each other's newer state. Blocks up to 5
+    /// seconds: never call it on the main actor.
+    @discardableResult
+    public static func update<T>(env: HarnessEnvironment, _ change: (inout CorrectionsState) throws(Failure) -> T) throws(Failure) -> T {
+        let lockFile = file(env: env).deletingLastPathComponent().appending(path: "state.lock")
+        let lock: FileLock?
+        do { lock = try FileLock.acquire(lockFile, timeout: 5) } catch { throw Failure(message: error.localizedDescription) }
+        guard let lock else { throw Failure(message: "Another AKit is changing \(file(env: env).path). Try again.") }
+        defer { lock.release() }
+        var state = try load(env: env)
+        let result = try change(&state)
+        try state.save(env: env)
+        return result
+    }
+
+    /// The rule of this pattern that is in a file now.
+    public func activeRule(_ id: String) -> CorrectionRule? { rules.first { $0.id == id && $0.removed == nil } }
+
     /// Whether a pattern is shown: not dismissed and not applied already (same reactions, or a
     /// rule with the same title).
     public func shows(_ pattern: CorrectionPattern) -> Bool {

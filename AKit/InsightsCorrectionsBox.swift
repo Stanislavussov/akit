@@ -171,15 +171,20 @@ struct InsightsCorrectionsBox: View {
     static func shortProject(_ id: String) -> String { id.split(separator: "/").last.map(String.init) ?? id }
 
     private func dismiss(_ pattern: CorrectionPattern) {
-        do {
-            var fresh = try CorrectionsState.load(env: .current)
-            fresh.dismiss(pattern)
-            try fresh.save(env: .current)
-            notice = "Dismissed: it isn't shown again."
-        } catch {
-            notice = error.localizedDescription
+        let env = HarnessEnvironment.current
+        Task {
+            // The state's lock may wait: off the main actor.
+            let problem = await Task.detached { () -> String? in
+                do {
+                    try CorrectionsState.update(env: env) { $0.dismiss(pattern) }
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            notice = problem ?? "Dismissed: it isn't shown again."
+            reloads += 1
         }
-        reloads += 1
     }
 
     private func load() async {
@@ -205,6 +210,8 @@ struct FindPatternSheet: View {
     let onDone: (Int) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var pick: CorrectionPick?
+    /// The input as the scrub leaves it, for the preview (a tool result may hold a token).
+    @State private var shown = ""
     @State private var models: [String] = []
     @State private var defaultModel: String?
     @State private var chosen = ""
@@ -231,9 +238,9 @@ struct FindPatternSheet: View {
                     .help("Pi's thinking level: a weak model finds patterns better with some thought (default medium)")
                 }
                 .formStyle(.grouped)
-                DisclosureGroup("What is sent (before the scrub)") {
+                DisclosureGroup("What is sent") {
                     ScrollView {
-                        Text(pick.input).font(.caption.monospaced()).textSelection(.enabled)
+                        Text(shown).font(.caption.monospaced()).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(height: 220)
@@ -257,7 +264,11 @@ struct FindPatternSheet: View {
         .frame(width: 620)
         .task {
             let env = HarnessEnvironment.current, report = report
-            pick = await Task.detached { CorrectionExcerpts.pick(report, env: env) }.value
+            let made = await Task.detached { () -> (CorrectionPick, String) in
+                let pick = CorrectionExcerpts.pick(report, env: env)
+                return (pick, Scrubber.scrub(pick.input, own: LabSettings.load(env: env).scrub).text)
+            }.value
+            (pick, shown) = made
             let available = await LabRuns.models(for: .pi, env: env)
             models = available
             defaultModel = KnowledgeCheckModel.defaultModel(for: .pi, available: available)
@@ -290,8 +301,15 @@ struct CorrectionRuleSheet: View {
     let onDone: ([String]) -> Void
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    /// `global` or a project id.
-    @State private var target = CorrectionRules.globalTarget
+    /// `global` or a project id; AKit's proposal first (the pattern's project when it has one).
+    @State private var target: String
+
+    init(change: Change, onDone: @escaping ([String]) -> Void) {
+        self.change = change
+        self.onDone = onDone
+        if case .apply(let pattern) = change, let scope = pattern.scope { _target = State(initialValue: scope) }
+        else { _target = State(initialValue: CorrectionRules.globalTarget) }
+    }
     @State private var plan: CorrectionRules.Plan?
     @State private var problem: String?
     @State private var writing = false
@@ -346,7 +364,8 @@ struct CorrectionRuleSheet: View {
         .padding(20)
         .frame(width: 620)
         .onAppear {
-            if case .apply(let pattern) = change, let scope = pattern.scope, model.brainProjectFolders[scope] != nil { target = scope }
+            // A project this Mac doesn't have: Global Instructions.
+            if target != CorrectionRules.globalTarget, model.brainProjectFolders[target] == nil { target = CorrectionRules.globalTarget }
         }
         .task(id: target) { await makePlan() }
     }
@@ -369,6 +388,8 @@ struct CorrectionRuleSheet: View {
                 return .failure(error)
             }
         }.value
+        // A plan for a target the picker no longer shows must not be written.
+        guard !Task.isCancelled, target == self.target else { return }
         switch result {
         case .success(let made):
             plan = made

@@ -65,6 +65,17 @@ Read on this Mac's index (50 sessions in 14 days, 49 of them Claude Code), no mo
 | C11 | The pattern's scope is set by code (the projects of its reactions), not by the model; Apply's project file is the one its harnesses read (`CLAUDE.md` when it exists or for Claude Code sessions, else `AGENTS.md`) | A weak model gets a smaller schema; Claude Code skips `AGENTS.md` when there is a `CLAUDE.md` |
 | C12 | Dismissed patterns live in `state.json` (id and title), not in Insights' `Dismissals` | `Dismissals` is about recommendations and their context space |
 
+Review round (2026-11-02, a separate reviewer): the state is changed under a lock (`state.json` is
+read again after the model call, so Apply or Dismiss meanwhile isn't lost); a rule is recorded right
+after its write, before the mark; Apply refuses a rule already applied or a bullet already there; the
+heading is found in any case and a `\r\n` file keeps its line ends; the task (first turn) is no
+pushback; Esc on a question doesn't take away a real refusal; the previews show the text as the scrub
+leaves it; `find --json` without `--yes` prints the plan as JSON.
+
+Known limits: a project rule is written into the main checkout and not committed, so sessions in its
+other worktrees count as "after" before they have it; a global rule whose home blocks couldn't be
+written still counts from the moment of Apply.
+
 ## The flow
 
 ```
