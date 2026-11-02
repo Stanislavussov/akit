@@ -27,7 +27,7 @@ what is wrong, never a secret (no auth files, tokens, MCP env or header values,
 | Brain | path, exists, git repo, remote, ahead/behind, problems of its layers |
 | Tools | each harness found: config folder, version; `PI_CODING_AGENT_DIR` |
 | Project folders | the roots setting, how many projects found |
-| Projects | each set-up project: its folder on this Mac or "not on this Mac", local only or committed, exclude block present (or broken, with the fix by hand: `akit apply` can't fix it), worktrees and the links each one lacks |
+| Projects | each set-up project: its folder on this Mac or "not on this Mac", local only or committed, exclude block present (or broken, with the fix by hand: `akit apply` can't fix it), worktrees and the links each one lacks; a problem when the brain changed since the last Apply (files a plain Apply would change; this Mac's saved answers only), and the same for the home folder and the core layer (2026-11-02) |
 | Logs | crash reports of AKit in `~/Library/Logs/DiagnosticReports`, the newest three by name and date; `~/.akit/backups` size |
 
 A line starting with `!` is a problem, with what to do. Exit code 0 even with problems

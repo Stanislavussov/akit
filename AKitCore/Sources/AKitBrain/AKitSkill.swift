@@ -74,7 +74,8 @@ files:
     when: stack == node         # field == v, field != v, or a bare field (set/true); list = all
 ```
 
-Templates use `{{field}}`, `{{project_name}}`, `{{target}}`. Claude gets `CLAUDE.md`
+Templates and skills use `\{{field}}`, `\{{project_name}}`, `\{{target}}` (`\\{{…}}` keeps the braces
+as they are). Claude gets `CLAUDE.md`
 (`@AGENTS.md`) and `.claude/skills -> ../.agents/skills` automatically. The same skill or
 non-Markdown file from two layers needs `override: true` on the one that wins.
 

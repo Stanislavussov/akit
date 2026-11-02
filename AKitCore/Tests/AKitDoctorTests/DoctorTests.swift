@@ -146,6 +146,32 @@ struct DoctorTests {
         #expect(report.contains("! local/task: AKit's block in .git/info/exclude doesn't match the files AKit wrote; run akit apply ~/Projects/task."))
     }
 
+    @Test func aProjectBehindTheBrainIsAProblem() async throws {
+        try await setUp()
+        func report() async -> String { await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")])) }
+        #expect(!(await report()).contains("behind the brain"))
+        // The brain's skill changes after the last Apply: the project's copy is behind.
+        try write(".akit/registry/skills/tdd/SKILL.md", "---\nname: tdd\ndescription: Tests first, always\n---\n")
+        #expect(await report().contains("! local/task: 1 file behind the brain; see them with akit plan ~/Projects/task, then apply."))
+        // A hand edit is the project's: a plain Apply skips it, so it is not "behind".
+        try write("Projects/task/.agents/skills/tdd/SKILL.md", "mine\n")
+        #expect(!(await report()).contains("behind the brain"))
+    }
+
+    @Test func theHomeFolderBehindTheCoreLayerIsAProblem() async throws {
+        try await setUp()
+        func report() async -> String { await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")])) }
+        let brain = try #require(Brain.load(from: brainRoot))
+        let store = ProjectStore.brain(brainRoot)
+        let id = ProjectRecords.homeID(machineName: nil)
+        let plan = ProjectSetup.plan(project: home, id: id, answers: ProjectAnswers(layers: ["core"], targets: ["claude"]),
+                                     brain: brain, store: store, forHome: true, env: env)
+        _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        #expect(await report().contains("  home folder: up to date with the core layer"))
+        try write(".akit/registry/skills/akit/SKILL.md", "---\nname: akit\ndescription: Changed in the brain\n---\n")
+        #expect(await report().contains("! home folder: 1 file behind the brain; see them with akit plan --home, then apply."))
+    }
+
     @Test func aBrokenBlockIsAProblemToFixByHand() async throws {
         try await setUp()
         let exclude = project.appending(path: ".git/info/exclude")
