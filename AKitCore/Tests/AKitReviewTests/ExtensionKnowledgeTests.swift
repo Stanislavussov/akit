@@ -72,9 +72,9 @@ extension ReviewProcessTests {
             home.write("bin/akit", "#!/bin/sh\nfor a in \"$@\"; do echo \"[$a]\"; done\n", executable: true)
         }
 
-        @Test func versionFourteen() {
-            #expect(ReviewExtension.version == 14)
-            #expect(ReviewExtension.source.hasPrefix("// akit-review.ts v14:"))
+        @Test func versionFifteen() {
+            #expect(ReviewExtension.version == 15)
+            #expect(ReviewExtension.source.hasPrefix("// akit-review.ts v15:"))
             #expect(ReviewExtension.source.contains("const kbTimeout = 20000;") && ReviewExtension.source.contains("const kbOutputCap = 65536;"))
             #expect(ReviewExtension.source.contains("execFile(akit, argv, { shell: false, timeout: kbTimeout, maxBuffer: kbOutputCap"))
             #expect(!ReviewExtension.source.contains("execSync") && !ReviewExtension.source.contains("spawn("), "no shell")

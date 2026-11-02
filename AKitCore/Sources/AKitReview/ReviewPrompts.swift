@@ -603,9 +603,29 @@ public enum ReviewPrompts {
         """
     }
 
-    static func send(spec: ReviewRunSpec, count: Int, mergeRequests: [MergeRequestRef]? = nil) -> String {
+    /// `publish` (R66): the user confirmed that the comments may go live at once through
+    /// `save_merge_request_review`, for a GitLab MCP server without draft notes.
+    static func send(spec: ReviewRunSpec, count: Int, mergeRequests: [MergeRequestRef]? = nil, publish: Bool = false) -> String {
         let all = mergeRequests ?? [spec.mergeRequest]
         let named = all.map { "\($0.url) (project `\($0.projectPath)`, merge request number \($0.iid))" }.joined(separator: "; ")
+        let fallback = publish ? """
+        If your GitLab MCP tools have no draft-note tool but have `save_merge_request_review`, use it: the user agreed to \
+        publish these comments right away (everyone on the merge request sees them at once). Only create requests can go this \
+        way; one call per request, with `project_id` (one of `mr.projects`), `merge_request_iid` (`mr.iid`), `body` unchanged \
+        and `method`: `reply_discussion` with `discussion_id` when the request has one; `create_diff_note` with `old_path`, \
+        `new_path`, `old_line` and `new_line` from its `position` (only the lines the position has) when it has a position; \
+        else `create_note`. No other argument and no other method. Draft-note tools, when there are any, come first.
+        """ : """
+        If your GitLab MCP tools have no draft-note tool but have `save_merge_request_review`, call it for each create request \
+        anyway, with `project_id` (one of `mr.projects`), `merge_request_iid` (`mr.iid`), `body` unchanged and `method`: \
+        `reply_discussion` with `discussion_id` when the request has one; `create_diff_note` with `old_path`, `new_path`, \
+        `old_line` and `new_line` from its `position` (only the lines the position has) when it has a position; else \
+        `create_note`. AKit doesn't let it through now: it would publish at once, so AKit asks the user first. When AKit \
+        blocks such a call, don't retry it; go on with the next request.
+        """
+        let never = publish
+            ? "Never approve, resolve, merge or submit a review, and never publish anything but these requests' texts."
+            : "Never publish the drafts or the review, never approve, merge or resolve anything: the user does that in GitLab."
         return """
         AKit review, step Send Drafts. The user approved \(count) request(s) for GitLab merge request\(all.count == 1 ? "" : "s") \
         \(named). Carry them out as draft notes of the user's pending review\(all.count == 1 ? "" : " in each merge request"), with \
@@ -624,8 +644,9 @@ public enum ReviewPrompts {
            didn't match: fix the arguments, never the text.
         4. Make one call per request. If a call fails, try once more; then go on with the next request.
 
-        Never publish the drafts or the review, never approve, merge or resolve anything: the user does that in GitLab. \
-        At the end, answer with one line per request: its id and what GitLab answered.
+        \(fallback)
+
+        \(never) At the end, answer with one line per request: its id and what GitLab answered, or why you didn't send it.
         """
     }
 }

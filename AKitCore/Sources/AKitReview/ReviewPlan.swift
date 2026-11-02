@@ -48,6 +48,10 @@ public struct ReviewRequest: Codable, Sendable, Hashable, Identifiable {
         public var draftID: Int?
         /// What GitLab answered when it refused; nil when it worked.
         public var error: String?
+        /// Published at once through `save_merge_request_review` (R66), not a draft; nil for a draft.
+        public var published: Bool? = nil
+        /// The published note's id, when GitLab's answer has one.
+        public var noteID: Int? = nil
     }
 
     public var id: String

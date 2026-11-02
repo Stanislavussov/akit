@@ -19,12 +19,16 @@ import Foundation
 /// MCP calls (R2–R3): every call of a Pi MCP tool, direct or from a codemode script, passes the
 /// policy of `ReviewMCPPolicy`. Reading tools of the run's servers are allowed; a writing tool
 /// only in `send` mode and only with the text of a request the user approved
-/// (`<run>/send/approved.json`); publishing, approving, merging and resolving never. Every answer
+/// (`<run>/send/approved.json`); publishing, approving, merging and resolving never. One exception
+/// (v15, R66): GitLab's own MCP server has no drafts, only `save_merge_request_review`, which
+/// publishes at once. Its comment methods carry an approved request like a draft tool, but pass
+/// only with `AKIT_REVIEW_PUBLISH=1` (the user confirmed Publish Now…); without it a matching call
+/// is blocked and logged with `needsPublish`, so AKit can ask. Every answer
 /// is saved word for word in `<run>/mcp/calls/`, and every write in `<run>/send/log.jsonl`:
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 14
+    public static let version = 15
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -139,7 +143,7 @@ public enum ReviewExtension {
     """#
 
     public static let source = #"""
-    // akit-review.ts v14: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v15: written by AKit for one review run. Do not edit: AKit writes it again.
     import { execFile } from "node:child_process";
     import * as fs from "node:fs";
     import * as path from "node:path";
@@ -194,6 +198,12 @@ public enum ReviewExtension {
     const forbiddenWords = ["publish", "submit", "approve", "unapprove", "vote", "resolve", "unresolve", "rebase"];
     const readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"];
     const writeVerbs = ["create", "add", "post", "new", "update", "edit", "modify", "put", "patch", "delete", "remove", "destroy"];
+    // GitLab's own MCP server has no draft notes: its one review tool publishes at once (R66), so
+    // only its comment methods, and only after the user confirmed (AKIT_REVIEW_PUBLISH=1).
+    const publishTool = "save_merge_request_review";
+    const publishMethods = ["create_note", "create_diff_note", "reply_discussion"];
+    const publishArguments = ["project_id", "merge_request_iid", "method", "body", "discussion_id", "old_path", "new_path", "old_line", "new_line"];
+    const publishAllowed = mode === "send" && process.env.AKIT_REVIEW_PUBLISH === "1";
     const knownReads = ["mr_discussions", "wit_work_item", "wit_query", "wit_work_item_attachment", "repo_pull_request",
       "repo_pull_request_thread", "repo_file", "repo_repository", "repo_branch", "wiki"];
     const knownExactReads = ["resolve-library-id", "resolve_library_id", "query-docs", "query_docs", "get-library-docs", "get_library_docs"];
@@ -268,7 +278,7 @@ public enum ReviewExtension {
     }
 
     // The same rules as ReviewMCPPolicy.kind in AKit. null: not an MCP tool.
-    function mcpKind(name: string, hints: any): "read" | "write" | "blocked" | null {
+    function mcpKind(name: string, hints: any): "read" | "write" | "publish" | "blocked" | null {
       const parts = split(name);
       if (parts === null) return null;
       const { server, tool } = parts;
@@ -276,6 +286,8 @@ public enum ReviewExtension {
       if (knownExactReads.includes(tool.toLowerCase())) return "read";
       const words = tool.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 0);
       if (words.some((w) => forbiddenWords.includes(w))) return "blocked";
+      // Never a read, whatever a pattern or a hint says; a context or open server never writes.
+      if (tool.toLowerCase() === publishTool) return serverBase(server) ? "publish" : "blocked";
       // An open server (reached only through every-server reading): only a tool its server marks
       // read-only, or one named like a plain read with no word that acts anywhere in the name.
       if (!serverBase(server) && !serverExtra(server)) {
@@ -319,8 +331,46 @@ public enum ReviewExtension {
       return a !== undefined && a !== null && b !== undefined && b !== null && String(a).trim() === String(b).trim();
     }
 
+    function absent(value: any): boolean {
+      return value === undefined || value === null;
+    }
+
+    // The method of save_merge_request_review an approved request needs.
+    function publishMethod(request: any): string {
+      return request.discussion_id ? "reply_discussion" : request.position ? "create_diff_note" : "create_note";
+    }
+
+    // Why a save_merge_request_review call is not exactly this approved request; null when it is.
+    // Only a new comment or reply: an update or a delete touches a draft, which this server lacks.
+    function publishMismatch(request: any, input: any): string | null {
+      if (request.action !== "create") return "another action";
+      if (input === null || typeof input !== "object" || Array.isArray(input)) return "no arguments";
+      for (const [key, value] of Object.entries(input)) {
+        if (!absent(value) && !publishArguments.includes(key)) return `the argument ${key}`;
+      }
+      const want = publishMethod(request);
+      if (input.method !== want) return `the method ${input.method ?? "(none)"}: this request needs ${want}`;
+      if (absent(input.project_id) || !(request.mr?.projects ?? []).some((q: any) => same(input.project_id, q))) return "another project";
+      if (!same(input.merge_request_iid, request.mr?.iid)) return "another merge request";
+      if (!same(input.body, request.body)) return "another text";
+      if (want === "reply_discussion" ? !same(input.discussion_id, request.discussion_id) : !absent(input.discussion_id)) return "another thread";
+      const position = want === "create_diff_note" ? request.position : null;
+      if (position) {
+        for (const key of ["old_line", "new_line"]) {
+          if (absent(position[key]) !== absent(input[key])) return "another place in the diff";
+          if (!absent(position[key]) && !same(position[key], input[key])) return "another place in the diff";
+        }
+        if (!same(input.new_path, position.new_path)) return "another place in the diff";
+        if (!absent(input.old_path) && !same(input.old_path, position.old_path)) return "another place in the diff";
+      } else if (["old_path", "new_path", "old_line", "new_line"].some((key) => !absent(input[key]))) {
+        return "a position the request doesn't have";
+      }
+      return null;
+    }
+
     // Why a write's arguments are not exactly this approved request; null when they are.
     function mismatch(request: any, name: string, input: any): string | null {
+      if ((split(name)?.tool ?? "").toLowerCase() === publishTool) return publishMismatch(request, input);
       if (request.action !== verb(name)) return "another action";
       if (input === null || typeof input !== "object" || Array.isArray(input)) return "no arguments";
       const known = Object.values(fields).flat();
@@ -359,8 +409,8 @@ public enum ReviewExtension {
         if (claimed.has(request.id)) continue;
         const wrong = mismatch(request, name, input);
         if (wrong === null) return { request, why: "" };
-        // The reason of a request with the call's own action says what to fix.
-        if (wrong !== "another action" || why === "no approved request is waiting") why = wrong;
+        // The reason of a request with the call's own action (and method) says what to fix.
+        if ((wrong !== "another action" && !wrong.startsWith("the method ")) || why === "no approved request is waiting") why = wrong;
       }
       return { request: null, why };
     }
@@ -850,6 +900,30 @@ public enum ReviewExtension {
           if (parts !== null && limitApplies(pass, serverBase(parts.server), serverExtra(parts.server)) && tooMuchFor(event.input)) {
             return refuse(name, `AKit review sends ${parts.server} only short queries without line breaks (at most ${openArgumentLimit} `
               + "characters each): ask with names of libraries, APIs or pages, never with code or file contents.");
+          }
+          if (kind === "publish") {
+            if (mode !== "send") return refuse(name, "Only Send Drafts writes, and only what the user approved.");
+            const method = event.input?.method;
+            if (!publishMethods.includes(method)) {
+              return refuse(name, `AKit review never calls ${name} with the method ${method ?? "(none)"}: it only adds the approved `
+                + `comments (${publishMethods.join(", ")}), and never approves, resolves or submits a review.`);
+            }
+            const { request, why } = approvedMatch(name, event.input);
+            if (request === null) {
+              return refuse(name, `This call carries none of the approved requests exactly (${why}). Pass project_id (from mr.projects), `
+                + "merge_request_iid (mr.iid), the request's body unchanged, the method it needs (reply_discussion with its "
+                + "discussion_id, create_diff_note with old_path, new_path, old_line and new_line from its position, else create_note), "
+                + "and no other argument.");
+            }
+            if (!publishAllowed) {
+              append("send/log.jsonl", JSON.stringify({ request: request.id, tool: name, needsPublish: true, isError: true,
+                text: "Not sent: this server has no draft notes, so the comment would be published at once; AKit asks the user first." }));
+              return refuse(name, "Your GitLab MCP server has no draft notes: this call would publish the comment at once, so AKit "
+                + "asks the user first. Don't retry this request; go on with the next one.");
+            }
+            claimed.add(request.id);
+            pending.set(String(event.toolCallId), request.id);
+            return undefined;
           }
           if (kind === "write") {
             if (mode !== "send") return refuse(name, "Only Send Drafts writes, and only what the user approved.");

@@ -7,7 +7,8 @@ import Testing
 
 /// A gathered run of `team/app!7` (bugfix: bug-hunter, contracts, requirements, tests) and a fake Pi that
 /// plays each pass from `~/fake/<pass>.json`; its fetch pass copies `~/fake/calls/` (the MCP
-/// answers) into the run, its send pass appends `~/fake/send-log.jsonl` to the run's send log.
+/// answers) into the run, its send pass appends `~/fake/send-log.jsonl` to the run's send log;
+/// `~/fake/answer-<pass>.jsonl` replaces a pass's last answer.
 struct ReviewRunFixture {
     let home: TempHome
     let head: String
@@ -80,8 +81,17 @@ struct ReviewRunFixture {
       echo '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"quota exceeded","usage":{"input":10,"output":0,"cacheRead":0,"cacheWrite":0}}}'
       exit 1
     fi
+    if [ -f "$HOME/fake/answer-$AKIT_REVIEW_PASS.jsonl" ]; then cat "$HOME/fake/answer-$AKIT_REVIEW_PASS.jsonl"; exit 0; fi
     echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Intent: log less."}],"usage":{"input":2000,"output":300,"cacheRead":1000,"cacheWrite":0,"totalTokens":3300,"cost":{"total":0.01}},"stopReason":"stop"}}'
     """#
+
+    /// The pass answers with `text` (`~/fake/answer-<pass>.jsonl`) instead of the brief's line.
+    func answer(_ pass: String, _ text: String) throws {
+        let event: [String: Any] = ["type": "message_end", "stopReason": "stop",
+                                    "message": ["role": "assistant", "content": [["type": "text", "text": text]], "stopReason": "stop",
+                                                "usage": ["input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0]]]
+        home.write("fake/answer-\(pass).jsonl", String(decoding: try JSONSerialization.data(withJSONObject: event), as: UTF8.self) + "\n")
+    }
 
     func fake(_ pass: String, _ json: String) { home.write("fake/\(pass).json", json) }
 

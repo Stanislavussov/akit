@@ -370,9 +370,17 @@ extension ReviewProcessTests {
             {"request":"r9","tool":"mcp__gitlab__create_draft_note","isError":false,"text":"{}"}
 
             """)
-            let report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
+            // Pi's own line about r2 says why it didn't send it (the reason used to be lost).
+            try run.answer("send-1", "r1 — draft 502\nr2 — Not sent: the GitLab MCP tools available here don't expose draft-note creation.")
+            var report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
             #expect(report.sent == ["r1"])
-            #expect(report.failed.map(\.id) == ["r2"] && report.failed[0].message == "The send pass didn't send it.")
+            #expect(report.failed.map(\.id) == ["r2"]
+                    && report.failed[0].message == "Pi: r2 — Not sent: the GitLab MCP tools available here don't expose draft-note creation.")
+            // Without an answer: the old text.
+            try run.answer("send-2", "")
+            run.home.write("fake/send-log.jsonl", "")
+            report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
+            #expect(report.failed.map(\.message) == ["The send pass didn't send it."])
             let again = try #require(ReviewWorkflow.load(run.folder).plan)
             #expect(again.requests[0].sent?.draftID == 502 && !again.requests[1].isSent)
         }

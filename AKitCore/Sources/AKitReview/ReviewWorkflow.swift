@@ -197,6 +197,44 @@ public enum ReviewWorkflow {
         public var sent: [String] = []
         /// Request id → what GitLab (or AKit's safety check) said.
         public var failed: [(id: String, message: String)] = []
+        /// Requests the GitLab MCP server can only publish at once (no draft notes, R66): they wait
+        /// for Publish Now… (`send(…, publish: true)`). Each is in `failed` too.
+        public var needsPublish: [String] = []
+        /// The sent requests that were published at once, not added as drafts.
+        public var published: [String] = []
+
+        public init() {}
+    }
+
+    /// The message of a request that can only be published at once (R66).
+    public static let needsPublishMessage = "Your GitLab MCP server has no draft notes: this comment can only be published right away."
+
+    static func publishHostsFile(_ env: HarnessEnvironment) -> URL {
+        ReviewPaths(home: env.homeDirectory).folder.appending(path: "publish-hosts.json")
+    }
+
+    /// Whether AKit learned that the GitLab MCP server of `host` has no draft notes, so Send
+    /// Drafts… asks to publish at once (R66).
+    public static func publishesDirectly(host: String, env: HarnessEnvironment) -> Bool {
+        (ReviewJSON.read([String].self, from: publishHostsFile(env)) ?? []).contains(host)
+    }
+
+    /// Remembers (or, with `false`, forgets: Try Drafts Again) that `host` publishes at once.
+    public static func setPublishesDirectly(_ on: Bool, host: String, env: HarnessEnvironment) throws {
+        try ReviewJSON.update(publishHostsFile(env), empty: [String]()) { hosts in
+            hosts.removeAll { $0 == host }
+            if on { hosts.append(host) }
+        }
+    }
+
+    /// The model's line about one request in its last answer (`r1 — Not sent: …`), or the
+    /// answer's start; masked. nil without an answer.
+    static func piSaid(_ answer: String?, about id: String) -> String? {
+        guard let answer = answer?.trimmingCharacters(in: .whitespacesAndNewlines), !answer.isEmpty else { return nil }
+        let word = "(?<![A-Za-z0-9_])" + NSRegularExpression.escapedPattern(for: id) + "(?![A-Za-z0-9_])"
+        let line = answer.split(whereSeparator: \.isNewline).first { $0.range(of: word, options: .regularExpression) != nil }
+        let text = (line.map(String.init) ?? answer).trimmingCharacters(in: .whitespacesAndNewlines)
+        return "Pi: " + SecretFilter.masked(String(text.prefix(300)))
     }
 
     /// Sends the approved requests that weren't sent yet, as draft notes (R5: never publishes):
@@ -206,7 +244,10 @@ public enum ReviewWorkflow {
     /// be AKit's, by what the run's fetch pass read (R12).
     /// `shown`: the requests the user saw when they pressed Send, by id, with the hash of their
     /// text (`ReviewNotes.textHash(request.text)`); one that changed since, or wasn't shown, waits.
-    public static func send(_ folder: URL, env: HarnessEnvironment, shown: [String: String]? = nil,
+    /// `publish` (R66, the user confirmed Publish Now…): a GitLab MCP server without draft notes
+    /// may publish the comments at once through `save_merge_request_review`. Without it, such a
+    /// call is blocked and the request is reported in `needsPublish`.
+    public static func send(_ folder: URL, env: HarnessEnvironment, shown: [String: String]? = nil, publish: Bool = false,
                             options: ReviewPasses.Options = .init()) async throws -> SendReport {
         let run = try load(folder)
         guard run.spec.local == nil else { throw Failure(message: "\(run.id) is a local review: its findings stay in AKit, nothing goes to GitLab.") }
@@ -305,36 +346,53 @@ public enum ReviewWorkflow {
         // Lines, not bytes: masking may rewrite a line after the pass.
         let before = ((try? Data(contentsOf: logFile)) ?? Data()).split(separator: 0x0A).count
         var passError: String?
+        var answer: String?
         do {
-            try await ReviewPasses.send(folder: folder, spec: run.spec, count: approved.count, mergeRequests: used, env: env, options: options)
+            answer = try await ReviewPasses.send(folder: folder, spec: run.spec, count: approved.count, mergeRequests: used, publish: publish,
+                                                 env: env, options: options)
         } catch {
             passError = error.localizedDescription
         }
         // What the extension saw GitLab answer, for each request this send carried.
-        var outcome: [String: (draftID: Int?, error: String?)] = [:]
+        var outcome: [String: (draftID: Int?, error: String?, published: Bool)] = [:]
+        var needsPublish = Set<String>()
         let data = (try? Data(contentsOf: logFile)) ?? Data()
         for line in data.split(separator: 0x0A).dropFirst(before) {
             guard let object = (try? JSONSerialization.jsonObject(with: Data(line))) as? JSONObject, let id = object.string("request"),
                   bodies[id] != nil else { continue }
             let text = object.string("text") ?? ""
-            if !object.bool("isError") {
+            let viaPublish = (object.string("tool") ?? "").lowercased().hasSuffix("__" + ReviewMCPPolicy.publishTool)
+            if object.bool("needsPublish") {
+                // The extension blocked it: the server can only publish, and the user hasn't said yes.
+                needsPublish.insert(id)
+            } else if !object.bool("isError") {
                 let answer = ReviewMCPCall.json(text) as? JSONObject
                     ?? text.firstIndex(of: "{").flatMap { ReviewMCPCall.json(String(text[$0...])) as? JSONObject }
-                outcome[id] = (answer?.int("id"), nil)
+                let returned = answer?.int("id") ?? answer?.object("note")?.int("id") ?? answer?.objects("notes").first?.int("id")
+                outcome[id] = (returned, nil, viaPublish)
             } else if outcome[id] == nil || outcome[id]?.error != nil {
                 // A retry that worked wins over the failure before it.
-                outcome[id] = (nil, "GitLab: " + SecretFilter.masked(String(text.prefix(300))))
+                outcome[id] = (nil, "GitLab: " + SecretFilter.masked(String(text.prefix(300))), viaPublish)
             }
         }
         // Drafts by merge request: nil key = the first.
         var drafts: [String?: [GitLabDraft]] = [nil: run.snapshot?.drafts ?? []]
         for (key, snapshot) in run.linked { drafts[key] = snapshot.drafts }
         var changed = Set<String?>()
+        // The hosts whose GitLab MCP server turned out to have no drafts (R66).
+        var publishedHosts = Set<String>()
         for entry in approved {
             guard let id = entry["id"] as? String, let (body, request) = bodies[id] else { continue }
             let key = target(request)?.key
             var sent = ReviewRequest.Sent(date: .now, draftID: request.draftID, error: nil)
-            if let result = outcome[id], result.error == nil {
+            if let result = outcome[id], result.error == nil, result.published {
+                // Published at once (R66): a note in the merge request, not a draft to remember.
+                sent.published = true
+                sent.noteID = result.draftID
+                report.sent.append(id)
+                report.published.append(id)
+                if let host = target(request)?.ref.host { publishedHosts.insert(host) }
+            } else if let result = outcome[id], result.error == nil {
                 if let draftID = result.draftID { sent.draftID = draftID }
                 report.sent.append(id)
                 // The snapshot learns the drafts just sent, so a later plan (Move Inline, a
@@ -349,8 +407,13 @@ public enum ReviewWorkflow {
                                                                     discussionID: request.discussionID))
                     }
                 }
+            } else if needsPublish.contains(id), outcome[id] == nil || outcome[id]?.error != nil {
+                sent.error = needsPublishMessage
+                report.failed.append((id, needsPublishMessage))
+                report.needsPublish.append(id)
+                if let host = target(request)?.ref.host { publishedHosts.insert(host) }
             } else {
-                sent.error = outcome[id]?.error ?? passError ?? "The send pass didn't send it."
+                sent.error = outcome[id]?.error ?? passError ?? piSaid(answer, about: id) ?? "The send pass didn't send it."
                 report.failed.append((id, sent.error ?? ""))
             }
             try ReviewJSON.update(folder.appending(path: "requests.json"), empty: plan) { file in
@@ -367,6 +430,7 @@ public enum ReviewWorkflow {
                 try? ReviewJSON.write(snapshot, to: folder.appending(path: "gitlab/snapshot.json"))
             }
         }
+        for host in publishedHosts.sorted() { try? setPublishesDirectly(true, host: host, env: env) }
         return report
     }
 }

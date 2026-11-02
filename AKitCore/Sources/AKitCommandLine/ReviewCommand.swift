@@ -104,10 +104,13 @@ extension AKitCLI {
       akit review inline RUN FINDING    Move an "only in AKit" finding inline (missed-by-filter)
       akit review missed RUN TEXT [--file F --line N]
                                         What the reviewer missed (label missed); stays in AKit
-      akit review post RUN [--yes]
+      akit review post RUN [--yes] [--publish] [--json]
                                         Print the requests; --yes sends the approved ones as draft
                                         notes through Pi's GitLab MCP server, word for word (you
-                                        publish them in GitLab with Submit review)
+                                        publish them in GitLab with Submit review). A server
+                                        without drafts (GitLab's own) can only publish at once:
+                                        those are listed as needing --publish; --yes --publish
+                                        publishes them right away
       akit review discuss RUN           Write the Discuss in Pi… script (pi --fork of the verifier's
                                         session) and print how to start it
       akit review apply RUN             Make a new version of the findings from what Pi submitted in
@@ -344,32 +347,51 @@ extension AKitCLI {
             return 0
         case "post":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review post RUN.") }
+            let publish = args.flag("--publish"), json = args.flag("--json")
             try args.finish()
+            if publish, !yes { throw Failure(message: "--publish posts comments that everyone sees at once: it needs --yes.") }
             let folder = try runFolder(id, env: env)
             let run = try ReviewWorkflow.load(folder)
-            out(requestsText(run))
-            if run.spec.local != nil {
-                out("A local review stays in AKit: nothing goes to GitLab. Approve or reject requests to keep your verdicts.")
+            // With --json the requests go to stderr, so stdout stays one JSON object.
+            (json ? err : out)(requestsText(run))
+            func report(_ report: ReviewWorkflow.SendReport, note: String? = nil) throws {
+                var object: [String: Any] = ["sent": report.sent, "published": report.published, "needsPublish": report.needsPublish,
+                                             "failed": report.failed.map { ["id": $0.id, "message": $0.message] }]
+                if let note { object["note"] = note }
+                out(String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
+            }
+            func early(_ note: String) throws -> Int32 {
+                if json { try report(.init(), note: note) } else { out(note) }
                 return 0
+            }
+            if run.spec.local != nil {
+                return try early("A local review stays in AKit: nothing goes to GitLab. Approve or reject requests to keep your verdicts.")
             }
             guard yes else {
-                out("Nothing was sent. Approve requests (akit review approve \(id) r1 …), then: akit review post \(id) --yes")
-                return 0
+                return try early("Nothing was sent. Approve requests (akit review approve \(id) r1 …), then: akit review post \(id) --yes")
             }
             let approved = run.plan?.requests.filter { $0.decision == .approved && !$0.isSent } ?? []
-            guard !approved.isEmpty else {
-                out("No approved request is waiting to be sent.")
-                return 0
-            }
+            guard !approved.isEmpty else { return try early("No approved request is waiting to be sent.") }
             // Exactly what was printed above.
             let shown = Dictionary(uniqueKeysWithValues: approved.map { ($0.id, ReviewNotes.textHash($0.text)) })
             let lines = LineBox()
-            let report = try await ReviewWorkflow.send(folder, env: env, shown: shown, options: ReviewPasses.Options(progress: { lines.add($0) }))
+            let sent = try await ReviewWorkflow.send(folder, env: env, shown: shown, publish: publish,
+                                                     options: ReviewPasses.Options(progress: { line in if !json { lines.add(line) } }))
+            if json {
+                try report(sent)
+                return sent.failed.isEmpty ? 0 : 1
+            }
             lines.drain(out)
-            out("Sent as drafts: \(report.sent.isEmpty ? "none" : report.sent.joined(separator: ", ")).")
-            for failure in report.failed { err("akit: \(failure.id): \(failure.message)") }
-            out("Publish them in GitLab with Submit review: \(run.spec.mergeRequest.url)")
-            return report.failed.isEmpty ? 0 : 1
+            let drafts = sent.sent.filter { !sent.published.contains($0) }
+            out("Sent as drafts: \(drafts.isEmpty ? "none" : drafts.joined(separator: ", ")).")
+            if !sent.published.isEmpty { out("Published in the merge request: \(sent.published.joined(separator: ", ")).") }
+            for failure in sent.failed { err("akit: \(failure.id): \(failure.message)") }
+            if !sent.needsPublish.isEmpty {
+                out("Your GitLab MCP server has no draft notes: \(sent.needsPublish.joined(separator: ", ")) can only be published right away, "
+                    + "and everyone on the merge request sees them at once. To publish them: akit review post \(id) --yes --publish")
+            }
+            if !drafts.isEmpty { out("Publish them in GitLab with Submit review: \(run.spec.mergeRequest.url)") }
+            return sent.failed.isEmpty ? 0 : 1
         case "discuss":
             guard let id = args.positional() else { throw Failure(message: "akit review discuss RUN.") }
             try args.finish()
@@ -799,9 +821,14 @@ extension AKitCLI {
             if let warning = ReviewMCPAccess.warning(forServer: server.name), !access.isBase(server: server.name) {
                 lines.append("    ! \(warning)")
             }
-            for kind in [ReviewMCPPolicy.Kind.read, .write] {
+            for kind in [ReviewMCPPolicy.Kind.read, .write, .publish] {
                 let names = server.tools.filter { $0.kind == kind }.map(\.name)
-                if !names.isEmpty, used { lines.append("    \(kind == .read ? "read" : "write"): \(names.joined(separator: ", "))") }
+                let label = switch kind {
+                case .read: "read"
+                case .write: "write"
+                default: "publish at once (no drafts; Send Drafts asks you first)"
+                }
+                if !names.isEmpty, used { lines.append("    \(label): \(names.joined(separator: ", "))") }
             }
         }
         for server in access.extrasTakenAsBase {
