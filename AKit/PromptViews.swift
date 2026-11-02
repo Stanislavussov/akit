@@ -95,6 +95,10 @@ struct PromptSnapshotView<Caption: View>: View {
                     }
                 }
 
+                if !snapshot.instructionFiles.isEmpty {
+                    InstructionFilesList(snapshot: snapshot)
+                }
+
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(Array(snapshot.sections.enumerated()), id: \.offset) { index, section in
@@ -135,6 +139,7 @@ struct PromptSnapshotView<Caption: View>: View {
     private var summary: String {
         var parts = ["≈ \(snapshot.estimatedTokens.formatted()) tokens"]
         if snapshot.sections.count > 1 { parts.append("\(snapshot.sections.count) blocks") }
+        if !snapshot.instructionFiles.isEmpty { parts.append("\(snapshot.instructionFiles.count) instruction files") }
         parts.append("\(snapshot.tools.count) tools")
         if !snapshot.context.isEmpty { parts.append("\(snapshot.context.count) context parts") }
         return parts.joined(separator: " · ")
@@ -144,6 +149,70 @@ struct PromptSnapshotView<Caption: View>: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.headline)
             content()
+        }
+    }
+}
+
+/// The instruction files (CLAUDE.md, AGENTS.md…) the harness joined into the prompt:
+/// where each one lives, in the order the model gets them.
+private struct InstructionFilesList: View {
+    let snapshot: PromptSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Instruction files (\(snapshot.instructionFiles.count))").font(.headline)
+            Text(caption).font(.callout).foregroundStyle(.secondary)
+            ForEach(snapshot.instructionFiles) { file in
+                row(file)
+            }
+        }
+    }
+
+    private var caption: String {
+        snapshot.harness == .pi
+            ? "Pi joined these files into the system prompt, in this order."
+            : "\(snapshot.harness.displayName) sent these files with the first message, in this order."
+    }
+
+    private func row(_ file: PromptInstructionFile) -> some View {
+        let url = URL(filePath: file.path)
+        let exists = FileManager.default.fileExists(atPath: file.path)
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text("\(file.id + 1).").monospacedDigit().foregroundStyle(.secondary)
+                Text(file.scope.title)
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(tint(file.scope).opacity(0.18), in: Capsule())
+                    .foregroundStyle(tint(file.scope))
+                Text(url.tildePath)
+                    .font(.callout.monospaced())
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(file.path)
+                Spacer()
+                Text("≈ \((file.text.count / 4).formatted()) tokens").font(.caption).foregroundStyle(.secondary)
+                Button("Show in Finder", systemImage: "folder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .disabled(!exists)
+                .help(exists ? "Show this file in Finder" : "The file isn't there anymore")
+            }
+            Collapsible(title: "Text", icon: "doc.plaintext", tint: .secondary,
+                        text: file.text.isEmpty ? "(no text recorded)" : file.text, monospaced: true)
+                .padding(.leading, 22)
+        }
+    }
+
+    private func tint(_ scope: PromptInstructionFile.Scope) -> Color {
+        switch scope {
+        case .global, .managed: .purple
+        case .above: .orange
+        case .project, .local: .blue
+        case .memory: .teal
+        case .other: .gray
         }
     }
 }

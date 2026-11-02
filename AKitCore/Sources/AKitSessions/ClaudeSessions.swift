@@ -210,6 +210,7 @@ extension ClaudeSessions {
         let assistant = Data("\"type\":\"assistant\"".utf8)
         var sections: [String]?
         var tools: [PromptTool] = []
+        var files: [PromptInstructionFile] = []
         var context: [PromptContextPart] = []
         var beforeFirstAnswer = true
 
@@ -226,12 +227,37 @@ extension ClaudeSessions {
                 let listed = PromptTool.list(attachment["tools"])
                 if !listed.isEmpty { tools = listed }
             } else if beforeFirstAnswer {
-                context += contextParts(of: attachment, startingAt: context.count)
+                if attachment["type"] as? String == "instructions" {
+                    let cwd = (entry["cwd"] as? String).map { URL(filePath: $0, directoryHint: .isDirectory) }
+                    for file in instructionFiles(of: attachment, cwd: cwd) where !files.contains(where: { $0.path == file.path }) {
+                        files.append(PromptInstructionFile(id: files.count, path: file.path, scope: file.scope, text: file.text))
+                    }
+                } else {
+                    context += contextParts(of: attachment, startingAt: context.count)
+                }
             }
         }
         guard let sections else { return nil }
         return PromptSnapshot(harness: .claudeCode, source: .recorded(session: file), sections: sections,
-                              tools: tools, context: context)
+                              tools: tools, instructionFiles: files, context: context)
+    }
+
+    /// The files of an `instructions` attachment, in the order Claude Code sends them.
+    /// Its `type` says where each one comes from: `User`, `Managed`, `Project`, `Local`, `AutoMem`.
+    static func instructionFiles(of attachment: Object, cwd: URL?) -> [PromptInstructionFile] {
+        (attachment["files"] as? [Object] ?? []).enumerated().compactMap { index, file in
+            guard let path = file["path"] as? String, let text = file["content"] as? String else { return nil }
+            let kind = file["type"] as? String ?? ""
+            let scope: PromptInstructionFile.Scope = switch kind.lowercased() {
+            case "user": .global
+            case "managed": .managed
+            case "local": PromptInstructionFile.folderScope(of: path, cwd: cwd) == .above ? .above : .local
+            case "automem": .memory
+            case "project": PromptInstructionFile.folderScope(of: path, cwd: cwd) ?? .project
+            default: .other(kind.isEmpty ? "Instructions" : kind)
+            }
+            return PromptInstructionFile(id: index, path: path, scope: scope, text: SecretFilter.masked(text))
+        }
     }
 
     /// Only attachment types known to be model context are shown. Others (account data,
@@ -247,16 +273,6 @@ extension ClaudeSessions {
         }
 
         switch type {
-        case "instructions":
-            let files = attachment["files"] as? [Object] ?? []
-            return files.enumerated().compactMap { index, file in
-                guard let text = file["content"] as? String else { return nil }
-                let path = file["path"] as? String
-                let name = path.map { URL(filePath: $0).lastPathComponent } ?? "Instructions"
-                let kind = file["type"] as? String
-                return PromptContextPart(id: id + index, title: kind.map { "\(name) · \($0)" } ?? name,
-                                         source: path, text: SecretFilter.masked(text))
-            }
         case "skill_listing":
             let count = attachment["skillCount"] as? Int
             return part(count.map { "Skills (\($0))" } ?? "Skills", attachment["content"] as? String)
