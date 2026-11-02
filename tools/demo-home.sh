@@ -801,7 +801,7 @@ SYSTEM_PROMPT=$(join \
 {
     AT="$(ago 26M)"
     prompt u1 "Add a tags filter to the notes list. Keep the search field as it is."
-    entry attachment I "\"attachment\":{\"type\":\"instructions\",\"files\":[{\"path\":\"$CWD/AGENTS.md\",\"type\":\"Project\",\"content\":\"$(json_text "$CWD/AGENTS.md")\"}]}"
+    entry attachment I "\"attachment\":{\"type\":\"instructions\",\"files\":[{\"path\":\"$DEMO/.claude/CLAUDE.md\",\"type\":\"User\",\"content\":\"# My rules\\n\\nAnswer in short sentences. Run the tests before you say the work is done.\\n\"},{\"path\":\"$CWD/AGENTS.md\",\"type\":\"Project\",\"content\":\"$(json_text "$CWD/AGENTS.md")\"}]}"
     skill_listing
     entry attachment G "\"attachment\":{\"type\":\"agent_listing_delta\",\"addedTypes\":[\"general-purpose\",\"Explore\",\"Plan\"],\"addedLines\":[\"- general-purpose: Researches a question or carries out a task with many steps, with every tool.\",\"- Explore: Searches a codebase and reports where things are; it reads and never edits.\",\"- Plan: Designs the steps of a change and names the files and the risks before any code is written.\"]}"
     entry attachment M "\"attachment\":{\"type\":\"mcp_instructions_delta\",\"addedNames\":[\"github\",\"playwright\"],\"addedBlocks\":[\"## github\\nIssues, pull requests and code search of GitHub repositories. Name the repository as owner/name.\",\"## playwright\\nDrives a browser. Take a snapshot of the page before you click or type.\"]}"
