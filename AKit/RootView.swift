@@ -250,6 +250,8 @@ struct RootView: View {
         }
         // Lab runs start and end outside AKit: keep the badge and the queue current.
         .task { if DebugSnapshot.options == nil { await model.watchLab() } else { await model.reloadLab() } }
+        // Review runs unused for 14 days give their worktrees back (R61).
+        .task { if DebugSnapshot.options == nil { await review.watchCleanup() } }
         .overlay(alignment: .bottom) {
             if rebuild.state == .building {
                 HStack(spacing: 8) {
