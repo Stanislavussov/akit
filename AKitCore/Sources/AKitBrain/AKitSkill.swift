@@ -289,6 +289,14 @@ verifier model reads the full log and says what went wrong and what to change; `
 the model. Use it when the user asks why a review missed something, failed or found too little.
 The report is saved in `<run>/debug/`. In the app: Review → a run → Debug… (next to Log…), and
 Copy Full Log in Log….
+`akit review why-missed RUN MISSED [--question TEXT] [--json]` asks why the review missed an item
+the user added with `akit review missed` (ids m1, m2, … in `akit review show RUN`): AKit traces it
+through the run (in the change? which roles read the file, what they found near it and what became
+of it), then Pi with the run's verifier model, reading only, names the cause and one to three
+changes (a role rule ready to paste first). Again with `--question`: a follow-up in the same
+thread. Use it when the user asks why a review didn't find a specific thing; `--json` gives {id,
+missed, question, answer, error, model, credits}. Nothing changes, nothing is sent. In the app:
+Why Missed? under Missed by the reviewer, with a follow-up chat; Add and Ask Why in Add Missed….
 
 `akit review points [PATH] --find TEXT [--kind branches|tags|commits] [--json]` lists the branches, remote branches, tags and
 commits of a local workspace whose name, commit message, author or id start holds every word of

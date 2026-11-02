@@ -1042,7 +1042,7 @@ To review: commits and uncommitted changes.
 - **Requests** с подписью «Nothing goes to GitLab until you approve it.» — карточки запросов. Если у ревью нет обзора, **Translate** стоит здесь.
 - **Only in AKit (N)** — находки, которые не идут в GitLab (см. [Only in AKit](#noise-move)).
 - **Context gaps (N)** — пробелы контекста (см. [пробелы](#gaps)).
-- **Missed by the reviewer (N)** — что вы добавили через **Add Missed…** (см. [Add Missed…](#quality-missed)).
+- **Missed by the reviewer (N)** — что вы добавили через **Add Missed…** (см. [Add Missed…](#quality-missed)), с кнопкой **Why Missed?** у каждой записи (см. [Why Missed?](#why-missed)).
 
 Нижняя строка:
 
@@ -2088,6 +2088,29 @@ Accepted = fixed / (fixed + dismissed + ignored), по ролям и по мод
 
 Запись видна в блоке **Missed by the reviewer** и в «Missed» на странице **Quality**. В GitLab она не уходит никогда.
 
+Кнопка **Add and Ask Why** в том же окне сразу добавляет запись и спрашивает Pi, почему ревью её пропустило (см. ниже).
+
+### Средне: Why Missed? — почему ревью это пропустило
+<!-- section: why-missed -->
+
+Пропуск полезен, когда понятна причина. **Why Missed?** её ищет.
+
+1. Откройте блок **Missed by the reviewer** внизу страницы ревью.
+2. У записи нажмите **Why Missed?**.
+3. AKit без модели проходит по записям прогона: есть ли файл и строка в изменении, какие роли открыли файл, что роли нашли рядом со строкой и что с этим стало (отброшено, отклонено верификатором, оставлено только в AKit).
+4. Pi (модель верификатора прогона, только чтение) читает это, полный лог прогона, правила ролей и код. Ответ приходит под записью:
+   - **Why it was missed** — причина и цитата из лога. Пример: «роль security не открыла ни одного файла».
+   - **How to catch it next time** — 1–3 изменения. Правило для роли дано готовым текстом для `roles/<id>/SKILL.md`.
+5. Под ответом есть поле «Ask a follow-up…». Задайте уточняющий вопрос и нажмите Return. Pi помнит разговор об этой записи. Пример: «Хватит ли правила только в роли security?».
+
+![Блок Missed by the reviewer (1) на странице ревью: запись m1 src/Auth/AuthMiddleware.cs:16 «Не проверяется срок действия токена (exp): просроченный токен проходит.», под ней вопрос Why did the review miss this?, ответ Pi с разделами Why it was missed (роль security не открыла ни одного файла) и How to catch it next time (правило для roles/security/SKILL.md), строка модели github-copilot/claude-opus-5-5 · 6.4 credits и ссылка Copy, второй вопрос Хватит ли правила только в роли security? с ответом, внизу поле Ask a follow-up: which role, what to add to it…](images/review-why-missed.png)
+
+- **Copy** под ответом копирует его как Markdown: например, чтобы вставить правило в роль через **Roles → Edit…**.
+- **Stop** останавливает ответ, пока Pi думает.
+- Если ответ не пришёл, нажмите **Ask Why Again**.
+- Ничего не меняется в находках и ничего не уходит в GitLab. Кредиты ответа не входят в кредиты ревью.
+- В терминале: `akit review why-missed RUN m1`, уточнение — `--question "…"`.
+
 ### Сложно: как исправлять роль по числам
 <!-- section: quality-fix -->
 
@@ -2096,7 +2119,7 @@ Accepted = fixed / (fixed + dismissed + ignored), по ролям и по мод
 - Много **Wrong line** → попросите роль цитировать точную строку в проверках.
 - Много **Lacked context** → закройте пробел в профиле (см. [пробелы](#gaps-fix)).
 - Часто **Move Inline** → пороги слишком строгие: снизьте `confidence_threshold` для проекта.
-- Много записей **Add Missed…** → допишите проверку в роль или добавьте роль в сценарий.
+- Много записей **Add Missed…** → спросите **Why Missed?**, допишите проверку в роль или добавьте роль в сценарий.
 
 После правки сравните точность на следующих ревью.
 

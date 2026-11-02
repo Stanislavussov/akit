@@ -223,6 +223,8 @@ struct ReviewRunDetail: View {
     let run: ReviewWorkflow.Run
     @State private var showSend = false
     @State private var showMissed = false
+    /// "Missed by the reviewer" is open. Snapshots: `--tab why-missed` opens it.
+    @State private var showMissedList = DebugSnapshot.options?.tab == "why-missed"
     /// Ask… / Add Note… on the whole review. Snapshots: `--tab ask` opens Add Note….
     @State private var reviewAskKind: ReviewConversationEntry.Kind? = DebugSnapshot.options?.tab == "ask" ? .note : nil
     /// Snapshots: `--tab log` opens it.
@@ -297,9 +299,15 @@ struct ReviewRunDetail: View {
                     gaps
                     ReviewKnowledgeGapsSection(gaps: knowledgeGaps, run: run.id,
                                                base: run.spec.knowledgeBasePath.map { URL(filePath: $0, directoryHint: .isDirectory) })
-                    missed
+                    missed.id("missed")
                 }
                 .padding(20)
+                .task(id: model.askingWhy?.missed) {
+                    // Why Missed? opens the list at the bottom of the page; show it.
+                    guard model.askingWhy != nil || DebugSnapshot.options?.tab == "why-missed" else { return }
+                    try? await Task.sleep(for: .milliseconds(300))
+                    withAnimation { proxy.scrollTo("missed", anchor: .bottom) }
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
@@ -318,7 +326,7 @@ struct ReviewRunDetail: View {
                 try? await Task.sleep(for: .seconds(3))
             }
         }
-        .sheet(isPresented: $showMissed) { AddMissedSheet(files: run.snapshot?.diffs.map(\.newPath) ?? []) }
+        .sheet(isPresented: $showMissed) { AddMissedSheet(files: run.snapshot?.diffs.map(\.newPath) ?? [], canAsk: run.passes != nil) }
         .task(id: filesKey) {
             let folder = run.folder
             let found = await Task.detached {
@@ -628,11 +636,13 @@ struct ReviewRunDetail: View {
 
     @ViewBuilder private var missed: some View {
         if !run.missed.isEmpty {
-            DisclosureGroup("Missed by the reviewer (\(run.missed.count))") {
-                ForEach(run.missed) { item in
-                    Text((item.file.map { "\($0)\(item.line.map { ":\($0)" } ?? ""): " } ?? "") + item.text).font(.callout)
+            DisclosureGroup("Missed by the reviewer (\(run.missed.count))", isExpanded: $showMissedList) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(run.missed) { item in ReviewMissedRow(run: run, item: item) }
                 }
+                .padding(.top, 4)
             }
+            .onChange(of: model.askingWhy?.missed) { _, asking in if asking != nil { showMissedList = true } }
         }
     }
 
