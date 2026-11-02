@@ -304,14 +304,19 @@ public enum ReviewResolver {
         func deleted(_ id: String) -> Bool { catalog.removedRoles.contains(id) && !available.contains { $0.id == id } }
         var picked: [(id: String, reason: String)] = definition.required.filter { !deleted($0) }.map { ($0, "required by \(definition.id)") }
         for id in profile?.rolesAdd ?? [] where !picked.contains(where: { $0.id == id }) && !deleted(id) { picked.append((id, "added by the project")) }
-        for id in choices.rolesOn where !picked.contains(where: { $0.id == id }) {
+        // Turned-on roles run in the scenario's order, then the others in the catalog's.
+        let order = definition.optional + available.map(\.id)
+        let turnedOn = choices.rolesOn.sorted { (order.firstIndex(of: $0) ?? .max) < (order.firstIndex(of: $1) ?? .max) }
+        for id in turnedOn where !picked.contains(where: { $0.id == id }) {
             picked.append((id, definition.optional.contains(id) ? "optional, turned on" : "added for this run"))
         }
         let off = Set((profile?.rolesOff ?? []) + choices.rolesOff)
         picked.removeAll { off.contains($0.id) && !choices.rolesOn.contains($0.id) }
         let roles = try picked.map { pick -> ReviewRole in
             guard let role = available.first(where: { $0.id == pick.id }) else {
-                throw Failure(message: "There is no role \(pick.id) (\(pick.reason)). Known: \(available.map(\.id).joined(separator: ", ")).")
+                let elsewhere = catalog.projectRoles.filter { $0.value.contains { $0.id == pick.id } }.keys.sorted()
+                let hint = elsewhere.isEmpty ? "" : " It is a project role of \(elsewhere.joined(separator: ", ")) only: pick that project, or make the role in the brain."
+                throw Failure(message: "There is no role \(pick.id) (\(pick.reason)).\(hint) Known: \(available.map(\.id).joined(separator: ", ")).")
             }
             return role
         }

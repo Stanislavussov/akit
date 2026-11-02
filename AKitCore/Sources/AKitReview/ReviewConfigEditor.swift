@@ -88,7 +88,17 @@ public enum ReviewConfigEditor {
             let profile = level.slug.flatMap { slug in catalog.profiles.first { $0.slug == slug } }
             let roles = Set(catalog.roles(for: profile).map(\.id))
             let unknown = scenario.roleIDs.filter { !roles.contains($0) }
-            if !unknown.isEmpty { notes.append("There is no role " + unknown.joined(separator: ", ") + " at this level: a run skips a deleted one and stops on any other.") }
+            for role in unknown {
+                let elsewhere = catalog.projectRoles.filter { $0.value.contains { $0.id == role } }.keys.sorted()
+                if !elsewhere.isEmpty {
+                    notes.append("Role \(role) is only a project role of \(elsewhere.joined(separator: ", ")): a run at this level stops on it. "
+                                 + "Save the scenario in that project, or make the role in the brain.")
+                } else if catalog.removedRoles.contains(role) {
+                    notes.append("Role \(role) was deleted: a run skips it.")
+                } else {
+                    notes.append("There is no role \(role) at this level: a run stops on it. Known: \(roles.sorted().joined(separator: ", ")).")
+                }
+            }
         case .defaults:
             _ = try ReviewSettingsPatch.parse(ReviewYAML.map(text), where: "review.yaml")
         case .profile:
