@@ -190,6 +190,10 @@ struct RenderTests {
         #expect(Render.manualOnly("\u{FEFF}---\n\"disable-model-invocation\" : false\n---\n") == "\u{FEFF}---\ndisable-model-invocation: true\n---\n")
         #expect(ProjectBundle.substitute("{{a}} {{ b }} {{c}} {{", ["a": .text("1"), "b": .list(["x", "y"])])
                 == ("1 x, y {{c}} {{", ["c"]))
+        // `\{{…}}` explains the syntax: written as `{{…}}`, never replaced, never "unknown".
+        #expect(ProjectBundle.substitute(#"Use \{{a}} and \{{ zz }}: {{a}}"#, ["a": .text("1")], markdown: true) == ("Use {{a}} and {{ zz }}: 1", []))
+        // Other files keep `\{{` for their own tools (Handlebars).
+        #expect(ProjectBundle.substitute(#"\{{a}}"#, ["a": .text("1")]) == (#"\1"#, []))
         #expect(Render.manualOnly("---\nname: x\ndisable-model-invocation: false\n---\nbody") == "---\nname: x\ndisable-model-invocation: true\n---\nbody")
         #expect(Render.manualOnly("no header") == nil)
         #expect(ProjectBundle.matches([Condition(parsing: "target == pi")!], ["target": .list(["claude", "pi"])]))

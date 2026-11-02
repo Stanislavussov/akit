@@ -185,6 +185,9 @@ AKit reads it with Yams; mistakes are shown per layer, never silently dropped.
   `.pi/settings.json`) is parsed first and `{{field}}` is filled only inside its string values (see [JSON merge](#json-merge-built-2026-10-08)).
 - Skills fill `{{field}}` only in Markdown files; unknown names are left as is
   (a warning for templates).
+- In Markdown (skills, `.md` templates) `\{{field}}` is written as `{{field}}` without filling
+  it: a text that explains the syntax (the /akit skill does). Other files keep `\{{` as is.
+  Built 2026-11-02.
 - Fields never hold secrets. Secrets come from Keychain (see MCP below).
 
 ### Skill modes

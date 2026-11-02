@@ -140,6 +140,15 @@ public enum Doctor {
         // Projects
         lines += ["", "Projects"]
         let projects = (brain?.addingProjects(from: store).projects ?? []).filter { !$0.isHome }
+        if let brain {
+            let homeID = ProjectRecords.homeID(machineName: machine.homeName)
+            if brain.layers.contains(where: { $0.name == "core" }), var answers = ProjectRecords.savedAnswers(id: homeID, in: store) {
+                answers.layers = ["core"]
+                let plan = ProjectSetup.plan(project: home, id: homeID, answers: answers, brain: brain, store: store, forHome: true,
+                                             piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true, env: env)
+                lines.append(behindLine(plan, name: "home folder", planCommand: "akit plan --home") ?? "  home folder: up to date with the core layer")
+            }
+        }
         if projects.isEmpty { lines.append("  none set up") }
         if !projects.isEmpty {
             let folders: [String: URL]
@@ -150,6 +159,11 @@ public enum Doctor {
             }
             for project in projects {
                 lines += projectLines(project, folder: folders[project.id], store: store, env: env, tilde: tilde)
+                // Only answers in this Mac's store, as `akit plan` reads them (a work Mac keeps its own).
+                if let brain, let folder = folders[project.id], let answers = ProjectRecords.savedAnswers(id: project.id, in: store) {
+                    let plan = ProjectSetup.plan(project: folder, id: project.id, answers: answers, brain: brain, store: store, env: env)
+                    if let line = behindLine(plan, name: project.id, planCommand: "akit plan \(tilde(folder))") { lines.append(line) }
+                }
             }
         }
 
@@ -237,6 +251,23 @@ public enum Doctor {
             }
         }
         return found.compactMapValues { GitCheckout.preferred($0) }
+    }
+
+    /// A problem line when the brain changed since the last Apply: the files a plain Apply would
+    /// write or move to the Trash (not hand-edited or unmanaged ones, which it skips). Offers to
+    /// the project's own files don't count: a plain Apply doesn't take them, some stay offered.
+    /// nil when nothing is due or the plan can't apply (its errors show in `akit plan`).
+    static func behindLine(_ plan: ProjectSetup.Plan, name: String, planCommand: String) -> String? {
+        guard plan.canApply else { return nil }
+        let due = plan.changes.filter { change in
+            switch change.kind {
+            case .create, .remove: true
+            case .update: !change.editedSinceRender && !change.replacesUnmanaged
+            default: false
+            }
+        }.count
+        guard due > 0 else { return nil }
+        return "! \(name): \(due) file\(due == 1 ? "" : "s") behind the brain; see them with \(planCommand), then apply."
     }
 
     /// One project: its folder, local only or committed, AKit's exclude block, its worktrees.
