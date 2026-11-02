@@ -49,6 +49,9 @@ public struct SessionSignals: Codable, Sendable, Hashable {
     public var pushbacks: Int
     /// Tool calls that the user, a permission rule, a hook, the auto mode classifier or a Pi extension refused.
     public var rejected: Int
+    /// Of those, the user's own refusals ("doesn't want to proceed"), without Esc at the permission
+    /// prompt (an interrupt): the refusals that count as corrections (`docs/design/corrections.md`).
+    public var userRefusals: Int
     /// Failed tool calls, without rejected and interrupted ones.
     public var toolErrors: Int
     /// Runs of 3 or more calls of the same tool with the same input in a row, each run once.
@@ -62,11 +65,12 @@ public struct SessionSignals: Codable, Sendable, Hashable {
     /// Transcript items: the session's length in steps.
     public var steps: Int
 
-    public init(interrupts: Int = 0, pushbacks: Int = 0, rejected: Int = 0, toolErrors: Int = 0, repeatedCalls: Int = 0,
+    public init(interrupts: Int = 0, pushbacks: Int = 0, rejected: Int = 0, userRefusals: Int = 0, toolErrors: Int = 0, repeatedCalls: Int = 0,
                 repeatLoops: Int = 0, unverifiedDone: Bool = false, userTurns: Int = 0, steps: Int = 0) {
         self.interrupts = interrupts
         self.pushbacks = pushbacks
         self.rejected = rejected
+        self.userRefusals = userRefusals
         self.toolErrors = toolErrors
         self.repeatedCalls = repeatedCalls
         self.repeatLoops = repeatLoops
@@ -126,10 +130,11 @@ public enum AnalysisIndex {
         var result: [String: StoredSignals] = [:]
         for row in try database.rows("""
             SELECT session_key, file_size, file_mtime, version, interrupts, pushbacks, tool_errors, repeated_calls,
-              unverified_done, user_turns, steps, rejected, repeat_loops FROM signals
+              unverified_done, user_turns, steps, rejected, repeat_loops, user_refusals FROM signals
             """) {
             guard let key = row[0].text else { continue }
             let signals = SessionSignals(interrupts: row[4].int ?? 0, pushbacks: row[5].int ?? 0, rejected: row[11].int ?? 0,
+                                         userRefusals: row[13].int ?? 0,
                                          toolErrors: row[6].int ?? 0,
                                          repeatedCalls: row[7].int ?? 0, repeatLoops: row[12].int ?? 0,
                                          unverifiedDone: (row[8].int ?? 0) != 0,
@@ -146,15 +151,15 @@ public enum AnalysisIndex {
                 let s = stored.signals
                 try database.run("""
                     INSERT INTO signals(session_key, file_size, file_mtime, version, interrupts, pushbacks, tool_errors,
-                      repeated_calls, unverified_done, user_turns, steps, rejected, repeat_loops)
-                      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      repeated_calls, unverified_done, user_turns, steps, rejected, repeat_loops, user_refusals)
+                      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(session_key) DO UPDATE SET file_size = excluded.file_size, file_mtime = excluded.file_mtime,
                       version = excluded.version, interrupts = excluded.interrupts, pushbacks = excluded.pushbacks,
                       tool_errors = excluded.tool_errors, repeated_calls = excluded.repeated_calls,
                       unverified_done = excluded.unverified_done, user_turns = excluded.user_turns, steps = excluded.steps,
-                      rejected = excluded.rejected, repeat_loops = excluded.repeat_loops
+                      rejected = excluded.rejected, repeat_loops = excluded.repeat_loops, user_refusals = excluded.user_refusals
                     """, key, stored.fileSize, stored.fileModified, stored.version, s.interrupts, s.pushbacks, s.toolErrors,
-                                 s.repeatedCalls, s.unverifiedDone, s.userTurns, s.steps, s.rejected, s.repeatLoops)
+                                 s.repeatedCalls, s.unverifiedDone, s.userTurns, s.steps, s.rejected, s.repeatLoops, s.userRefusals)
                 _ = try database.run("DELETE FROM repeat_loops WHERE session_key = ?", key)
                 for loop in stored.loops {
                     _ = try database.run("""

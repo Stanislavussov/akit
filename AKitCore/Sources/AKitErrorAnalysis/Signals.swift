@@ -13,7 +13,9 @@ public enum SignalScanner {
     /// 3 (2026-10-08): outcomes read before secrets are hidden, the user's refusal alone undone
     /// by Esc, failed results with no text counted.
     /// 4 (2026-10-28): stuck loops (`RepeatLoops`), stored with their steps in `repeat_loops`.
-    public static let version = 4
+    /// 5 (2026-11-02): the user's own refusals (`userRefusals`); "не то" only as words, not in "не только";
+    /// the task (the first turn) is no pushback.
+    public static let version = 5
 
     /// Interrupts, rejections, tool errors and repeated calls are `FailureSignals`, as in Lab.
     /// `fallbackModel`: the model of a loop when the log has no model change (the session's last model).
@@ -27,13 +29,38 @@ public enum SignalScanner {
         let facts = TranscriptFacts(items)
         let users = facts.userTurns
         let shared = FailureSignals(items)
-        let pushbacks = users.filter { !FailureSignals.isInterrupt($0.text) && isPushback($0.text) }.count
+        // The first turn that isn't an interrupt is the task, not a reaction (as in `UserReactions`).
+        let replies = users.drop { FailureSignals.isInterrupt($0.text) }.dropFirst()
+        let pushbacks = replies.filter { !FailureSignals.isInterrupt($0.text) && isPushback($0.text) }.count
         let loops = harness == RepeatLoops.harness ? RepeatLoops.find(items, fallbackModel: fallbackModel) : []
         let signals = SessionSignals(interrupts: shared.interrupts, pushbacks: pushbacks, rejected: shared.rejected,
+                                     userRefusals: userRefusals(items),
                                      toolErrors: shared.toolErrors, repeatedCalls: shared.repeatedCalls, repeatLoops: loops.count,
                                      unverifiedDone: unverifiedDone(facts), userTurns: users.count, steps: items.count)
         return (signals, loops)
     }
+
+    /// Tool results that are the user's own refusal, less those Esc at the permission prompt wrote
+    /// (an interrupt follows them), as `FailureSignals` undoes them.
+    static func userRefusals(_ items: [TranscriptItem]) -> Int {
+        var escapes = PromptEscapes()
+        var count = 0
+        for item in items {
+            switch item.kind {
+            case .toolCall: escapes.toolCall()
+            case .toolResult(let name, _):
+                guard let outcome = item.resultOutcome else { continue }
+                escapes.result(tool: name ?? "", outcome)
+                if outcome.userRefusal, !isQuestion(name) { count += 1 }
+            case .user: count -= escapes.userText(item.text).filter { !isQuestion($0) }.count
+            default: break
+            }
+        }
+        return max(0, count)
+    }
+
+    /// Claude Code's question dialog: refusing it means "I'll answer in the chat", not a correction.
+    public static func isQuestion(_ tool: String?) -> Bool { tool == "AskUserQuestion" }
 
     /// The final report claims the work is done, and nothing ran a test, build or check after
     /// the last edit.
@@ -43,13 +70,17 @@ public enum SignalScanner {
         return !facts.calls.contains { $0.step > lastEdit.step && facts.phases[$0.step] == .verify }
     }
 
-    /// "no", "not that", "I asked for", a revert; the Russian forms the user writes too.
+    /// "no", "not that", "I asked for", a revert; the Russian forms the user writes too. Since signals 5
+    /// also "you forgot", "over-engineered", "still not", "стоп", "не надо", "так и не", the answer's
+    /// language ("по-русски"): quiet corrections found on a real index (`corrections.md`, step 0).
     static func isPushback(_ text: String) -> Bool {
         let start = text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)
         let patterns = [
             #"(?i)^(no|nope|wrong|stop|wait)\b"#,
             #"(?i)\b(not that|that'?s not|that is not what|not what i|i asked (for|you)|i said|i told you|don'?t do that|why did you|revert|undo (that|it|this)|roll ?back)\b"#,
-            #"(?i)^нет\b|не то|я (же )?просил|я же сказал|откати|верни как было|зачем ты"#,
+            #"(?i)\b(you forgot|over-?engineer\w*|still (not|doesn'?t|don'?t|isn'?t|no))\b"#,
+            #"(?i)^нет\b|(?<![\p{L}])не то(?![\p{L}])|я (же )?просил|я же сказал|откати|верни как было|зачем ты"#,
+            #"(?i)^стоп\b|^не надо\b|(ты|мы) забыл|так и не\b|(всё|все) ещ[её] не\b|опять не\b|по-?русски|на русск"#,
         ]
         return patterns.contains { start.range(of: $0, options: .regularExpression) != nil }
     }

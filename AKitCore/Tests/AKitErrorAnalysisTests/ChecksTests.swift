@@ -159,6 +159,28 @@ struct ChecksTests {
         #expect(signals.pushbacks == 2 && signals.interrupts == 1 && signals.toolErrors == 1 && signals.repeatedCalls == 0)
         #expect(signals.userTurns == 4 && signals.steps == 8 && signals.raised)
         #expect(!SignalScanner.isPushback("Now add the menu item"))
+        // Quiet corrections from a real index (corrections.md, step 0); "не только" is not "не то".
+        for text in ["avoid that, not overengineer!", "стоп нужно только число", "Мы забыли туда добавить график",
+                     "Я так и не понял, как открыть", "Переведи на русский то, что ты сделал.", "it still doesn't build"] {
+            #expect(SignalScanner.isPushback(text), "\(text)")
+        }
+        #expect(!SignalScanner.isPushback("Я бы хотел, чтобы оно было детальным, а не только список"))
+        // The task itself is no pushback, even when it says "still not".
+        let task = SignalScanner.signals(of: [item(0, .user, "the login still doesn't work, fix it"), item(1, .assistant, "OK")])
+        #expect(task.pushbacks == 0)
+    }
+
+    @Test func userRefusalsLeaveOutQuestionsAndEsc() {
+        let refusal = "The user doesn't want to proceed with this tool use. The tool use was rejected."
+        let items = [item(0, .user, "Fix it"), item(1, .toolCall(name: "Bash"), "rm -rf build"),
+                     item(2, .toolCall(name: "AskUserQuestion"), "which?"),
+                     item(3, .toolResult(name: "Bash", isError: true), refusal),
+                     item(4, .toolResult(name: "AskUserQuestion", isError: true), refusal),
+                     item(5, .user, "[Request interrupted by user for tool use]")]
+        // Esc closed both prompts: the Bash refusal was an interrupt, the question doesn't count.
+        #expect(SignalScanner.signals(of: items).userRefusals == 0)
+        let kept = Array(items.prefix(5)) + [item(5, .user, "do it another way")]
+        #expect(SignalScanner.signals(of: kept).userRefusals == 1)
     }
 
     // MARK: Over the index

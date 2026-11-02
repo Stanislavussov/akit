@@ -148,7 +148,9 @@ error flag).
 Signals that only one parser has stay with it: Lab's `compactions` and `rereads`; the
 scanner's `pushbacks`, `unverified_done`, `user_turns`, `steps` and `repeat_loops` (stuck loops,
 `RepeatLoops` in `AKitSessions`, rules in `repeat-loops.md`, Pi sessions only; scanner version 4, schema v11, with one
-`repeat_loops` row per loop: steps, asks, model, thinking level, no text).
+`repeat_loops` row per loop: steps, asks, model, thinking level, no text) and `user_refusals` (scanner version 5,
+schema v12: the `rejected` results that are the user's own refusal, "doesn't want to proceed", less Esc at the
+prompt and refused AskUserQuestion dialogs; corrections count these, `corrections.md`, C8).
 
 | Signal | Counted from | Known noise |
 |---|---|---|

@@ -248,6 +248,7 @@ struct InsightsView: View {
                     }
                     .id(Self.usageTableID)
                     if let loops { InsightsLoopsBox(report: loops).id(Self.loopsID) }
+                    InsightsCorrectionsBox(project: project).id(Self.correctionsID)
                     changes(loaded.changes)
                     footer(report)
                 }
@@ -264,6 +265,12 @@ struct InsightsView: View {
                 guard DebugSnapshot.options?.query == "loops", loops != nil else { return }
                 proxy.scrollTo(Self.loopsID, anchor: .top)
             }
+            // Snapshots: `--query corrections` (and `corrections-apply`) shows Corrections at the top.
+            .task(id: loaded != nil) {
+                guard DebugSnapshot.options?.query?.hasPrefix("corrections") == true, loaded != nil else { return }
+                try? await Task.sleep(for: .milliseconds(300))
+                proxy.scrollTo(Self.correctionsID, anchor: .top)
+            }
             // Snapshots: `--tab skills|servers|tools` shows the table at the top.
             .task {
                 guard DebugSnapshot.options?.tab.flatMap(InsightsUsageTable.Kind.init(rawValue:)) != nil else { return }
@@ -275,6 +282,7 @@ struct InsightsView: View {
 
     private static let usageTableID = "usage"
     private static let loopsID = "loops"
+    private static let correctionsID = "corrections"
     private static let recommendationsID = "recommendations"
 
     /// After a layer patch: the projects that pick it up only when they are set up again. Plan… opens
