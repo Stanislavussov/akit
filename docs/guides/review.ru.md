@@ -1195,7 +1195,7 @@ To review: commits and uncommitted changes.
 4. Расширение AKit пропускает вызов записи, только если в нём одобренный запрос слово в слово. Ответ GitLab на каждый вызов оно пишет в `<run>/send/log.jsonl`.
 5. AKit читает этот журнал и отмечает каждый запрос: отправлен или ошибка.
 
-После отправки карточка получит метку **Sent** и кнопки исчезнут. Карточка с ошибкой показывает «GitLab: …» и остаётся одобренной. Её можно отправить снова. Запрос, который Pi так и не отправил, показывает строку Pi о нём. Пример: «Pi: r1 — Not sent: …». Если Pi ничего о нём не сказал, ошибка — «The send pass didn't send it.».
+После отправки карточка получит метку **Sent** и кнопки исчезнут. Карточка с ошибкой показывает «GitLab: …» и остаётся одобренной. Её можно отправить снова. Запрос, который Pi так и не отправил, показывает строку Pi о нём. Пример: «Pi: r1 — Not sent: …». Если Pi ничего о нём не сказал, ошибка — «The send pass didn't send it.». Если Pi ответил, но не назвал ни один из нескольких запросов, его ответ один раз стоит под списком: «Pi's answer: …».
 
 #### Сервер без черновиков: Publish Now…
 
@@ -1204,7 +1204,12 @@ To review: commits and uncommitted changes.
 1. Нажмите **Send Drafts**, как обычно. Pi пробует `save_merge_request_review`. AKit не пропускает вызов и ничего не публикует.
 2. Окно пишет оранжевым: «N can't be drafts: your GitLab MCP server has no draft notes.». Рядом кнопка **Publish Now…**. Эти запросы остаются неотправленными, с ошибкой «Your GitLab MCP server has no draft notes: this comment can only be published right away.».
 3. Нажмите **Publish Now…**. AKit спросит: «Publish N comments to GitLab now?» и объяснит: «Everyone on the merge request sees them at once; there are no drafts to check first. AKit lets through only these texts, word for word.».
-4. Нажмите **Publish**. Pi публикует те же запросы. Окно покажет «N published in the merge request.».
+4. Нажмите **Publish**. Pi публикует те же запросы. Окно покажет «N published in the merge request.». Строка про черновики первой отправки и подсказка про **Submit review** остаются.
+5. Карточка опубликованного запроса получает метку **Published** вместо **Sent**.
+
+Перед публикацией комментария к строке AKit спрашивает git, какой сейчас head у MR (`git ls-remote origin refs/merge-requests/<iid>/head`). GitLab ставит такой комментарий на свой последний diff. Если автор с тех пор запушил, строки могли сдвинуться. Тогда AKit не публикует этот запрос и пишет: «The merge request changed since the review, so its lines may have moved. Review Again…, then publish.». Если git не смог ответить, ошибка начинается с «AKit couldn't check the merge request's head: …». Комментарии к MR и ответы в обсуждениях уходят всё равно.
+
+Если вызов публикации начался, но GitLab не ответил ясным отказом (например, оборвалась связь), комментарий мог уже появиться в MR. Карточка пишет оранжевым: «It may have been published: check the merge request in GitLab before you publish it again. AKit sends it again only after you approve it again.». Pi не повторяет такой вызов, и AKit сам его больше не отправит. Проверьте MR в GitLab. Если комментария там нет, нажмите **Undo Approve**, потом **Approve**, и отправьте снова.
 
 Пример: вы одобрили комментарий к строке 8 и итог. После **Publish** автор MR сразу видит оба комментария. **Submit review** в GitLab не нужен.
 

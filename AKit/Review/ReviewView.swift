@@ -253,7 +253,8 @@ struct ReviewRunDetail: View {
     }
 
     private var requests: [ReviewRequest] { run.plan?.requests ?? [] }
-    private var approved: [ReviewRequest] { requests.filter { $0.decision == .approved && !$0.isSent } }
+    /// A publish that may have gone through waits until the user approves it again (R66).
+    private var approved: [ReviewRequest] { requests.filter { $0.decision == .approved && !$0.isSent && !$0.isUncertain } }
 
     var body: some View {
         // The actions stand under the scroll view, not in a safe-area inset: in the HSplitView the
@@ -765,7 +766,9 @@ struct ReviewRequestCard: View {
                 Label("Not in Czech: Send won't send it. AKit sends only Czech comments to GitLab; edit it into Czech.",
                       systemImage: "character.bubble").font(.caption).foregroundStyle(.orange)
             }
-            if let error = request.sent?.error {
+            if request.isUncertain, let error = request.sent?.error {
+                Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+            } else if let error = request.sent?.error {
                 Label("GitLab: \(error)", systemImage: "xmark.octagon").font(.caption).foregroundStyle(.red).textSelection(.enabled)
             }
             if let id = request.findingID { ReviewThreadView(run: run, finding: id) }
@@ -779,7 +782,7 @@ struct ReviewRequestCard: View {
 
     @ViewBuilder private var state: some View {
         if request.isSent {
-            Label("Sent", systemImage: "paperplane.fill").font(.caption).foregroundStyle(.green)
+            Label(request.sent?.published == true ? "Published" : "Sent", systemImage: "paperplane.fill").font(.caption).foregroundStyle(.green)
         } else if request.decision == .approved {
             Label(request.edited == nil ? "Approved" : "Approved, edited", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
         } else if request.decision == .rejected {

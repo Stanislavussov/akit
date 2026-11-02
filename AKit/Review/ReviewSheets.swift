@@ -1016,6 +1016,7 @@ struct SendDraftsSheet: View {
                             direct = false
                         }
                         .controlSize(.small)
+                        .disabled(sending)
                         .help("Send them as drafts again, for a GitLab MCP server that has draft notes now.")
                     }
                 } else {
@@ -1093,6 +1094,9 @@ struct SendDraftsSheet: View {
         ForEach(report.failed.filter { !report.needsPublish.contains($0.id) }, id: \.id) { failure in
             Label("\(failure.id): \(failure.message)", systemImage: "xmark.octagon").foregroundStyle(.red).textSelection(.enabled)
         }
+        if let note = report.note {
+            Text(note).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+        }
         if !drafts.isEmpty {
             Text("Open the merge request in GitLab, check the drafts beside your own comments, and publish them with Submit review.")
                 .foregroundStyle(.secondary)
@@ -1104,7 +1108,8 @@ struct SendDraftsSheet: View {
         Task {
             let result = await model.send(requests, publish: publish)
             sending = false
-            if let result { report = result } else if report == nil { dismiss() }
+            // Publish Now… keeps what the first send did: its drafts and the Submit review hint.
+            if let result { report = report.map { $0.merged(with: result) } ?? result } else if report == nil { dismiss() }
         }
     }
 }
