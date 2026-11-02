@@ -520,7 +520,7 @@ public enum ReviewPrompts {
         let plan = spec.repository?.plan.flatMap { $0.base == nil ? nil : $0 }
         let diffStep = plan == nil
             ? "2. The changed files with their diffs (every page), and its diff versions (skip the versions when no tool reads them: it is not a gap)."
-            : "2. Nothing about the diff: AKit has the repository and makes the diff and its refs with git. Don't read the diff versions "
+            : "2. Nothing more about the diff: AKit has the repository and makes the diff with git. Don't read the diff versions "
                 + "or the changed files' diffs, and don't report them as a gap."
         let diffsCall = plan == nil
             ? "with `include: [\"diffs\"]` and `detail: \"full_patch\"` (`diffs_first: 100`, then `diffs_after` for every further page), "

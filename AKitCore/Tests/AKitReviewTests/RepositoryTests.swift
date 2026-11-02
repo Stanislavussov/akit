@@ -87,7 +87,7 @@ struct RepositoryUnitTests {
                                                plan: .init(head: "a1b2c3d4", base: "b1b2c3d4", files: ["a.ts"], earlier: ["a.ts": [12, 8]]))
         let planned = ReviewPrompts.fetch(spec: spec)
         #expect(!planned.contains("diffs_first") && planned.contains("Don't read the diff versions or the changed files' diffs"))
-        #expect(!planned.contains("Its diff versions") && plain.contains("it is not a gap"))
+        #expect(!planned.contains("Its diff versions") && plain.contains("skip the versions when no tool reads them"))
         #expect(planned.contains("!12, !8") && !planned.contains("Spend at most 25 calls"))
     }
 }

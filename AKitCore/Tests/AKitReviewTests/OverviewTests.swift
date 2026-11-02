@@ -33,6 +33,11 @@ struct OverviewTests {
         // No text anywhere in the chain: a gap for the named item only, never for a bug.
         #expect(ReviewGather.withoutCriteria([bare(4, "Task", parent: 3), bare(3, "User Story")], named: [4]) == [4])
         #expect(ReviewGather.withoutCriteria([bare(5, "Bug")], named: [5]).isEmpty)
+        // Each named item has its own chain: a related item's text or another named item's doesn't count.
+        var related = bare(9, "Bug")
+        related.description = "Something else."
+        #expect(ReviewGather.withoutCriteria([bare(4, "Task"), related], named: [4]) == [4])
+        #expect(ReviewGather.withoutCriteria([bare(4, "Task"), commented.with(id: 6)], named: [4, 6]) == [4])
     }
 
     @Test func anEmptyCriteriaFieldPointsToTheOtherTexts() {
@@ -419,5 +424,13 @@ extension ReviewProcessTests {
             #expect(prompt.contains("System.LinkTypes.Hierarchy-Reverse") && prompt.contains("`System.Parent`") && prompt.contains("at most 6 levels"))
             #expect(prompt.contains("ALL its comments") && prompt.contains("`tool_search`"))
         }
+    }
+}
+
+private extension WorkItem {
+    func with(id: Int) -> WorkItem {
+        var copy = self
+        copy.id = id
+        return copy
     }
 }

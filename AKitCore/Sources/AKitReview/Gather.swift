@@ -1029,14 +1029,24 @@ public enum ReviewGather {
     }
 
     /// The named items with nothing to check against. An empty criteria field is no gap: the roles
-    /// take the criteria from the item's text, its comments and its parents. Only a chain with no
-    /// text at all says nothing about what the change must do. A bug has its repro steps instead.
+    /// take the criteria from the item's text, its comments and its parents (not its related
+    /// items). Only an item whose own chain has no text says nothing about what the change must
+    /// do. A bug has its repro steps instead.
     static func withoutCriteria(_ items: [WorkItem], named ids: [Int]) -> [Int] {
-        let saysWhat = items.contains {
-            !$0.acceptanceCriteria.isEmpty || !$0.description.isEmpty || !$0.reproSteps.isEmpty || !$0.comments.isEmpty
+        let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func saysWhat(_ item: WorkItem) -> Bool {
+            !item.acceptanceCriteria.isEmpty || !item.description.isEmpty || !item.reproSteps.isEmpty || !item.comments.isEmpty
         }
-        if saysWhat { return [] }
-        return items.filter { ids.contains($0.id) && $0.type != "Bug" }.map(\.id)
+        return ids.filter { id in
+            guard let item = byID[id], item.type != "Bug" else { return false }
+            var seen: Set<Int> = []
+            var chain = [item]
+            while let next = chain.popLast(), seen.insert(next.id).inserted {
+                if saysWhat(next) { return false }
+                chain += next.parents.compactMap { byID[$0] }
+            }
+            return true
+        }
     }
 
     static func workItemText(_ item: WorkItem, depth: Int = 1) -> String {

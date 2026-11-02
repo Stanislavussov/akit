@@ -277,6 +277,8 @@ extension ReviewGather {
         fetchSpec.links = []
         fetchSpec.workItems = []
         fetchSpec.linked = nil
+        // The main clone's plan is not this merge request's: its fetch reads the diff itself.
+        fetchSpec.repository = nil
         fetchSpec.tracker = profile?.tracker
         let pass = "fetch-\(key)"
         do {
