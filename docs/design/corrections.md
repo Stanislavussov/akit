@@ -1,8 +1,16 @@
 # Corrections: from the user's repeated corrections to one rule, with proof
 
-Status: proposal 2026-11-02, from a feature research ("which missing feature brings the most
-value"). Decided the same day by the user: the model runs only on a click (C1), it sees only
-excerpts around the user's reactions (C2), and the proof is code only (C3). Not built.
+Status: built 2026-11-02 (steps 0–5), on the branch `corrections-design`. Proposed the same day
+from a feature research ("which missing feature brings the most value"); decided by the user: the
+model runs only on a click (C1), it sees only excerpts around the user's reactions (C2), and the
+proof is code only (C3). Step 0 changed four things (C7–C10, below); C4 is Insights, C5 stays open
+with the numbers of step 0, C6 is not built.
+
+Where it lives: module `AKitCorrections` (excerpts, the call, the checks, Apply, Remove, the verdict,
+`~/.akit/corrections/state.json`); the count by code is `CorrectionStats` / `CorrectionsReport` in
+`AKitInsights` (it needs the index's scope query); `akit corrections` in `AKitCommandLine`; the card
+is `AKit/InsightsCorrectionsBox.swift`; the guide is `screens.ru.md`, "Средне: что вы поправляете
+снова и снова"; the `/akit` skill has a Corrections part.
 
 ## Goal
 
@@ -34,6 +42,28 @@ Why this and not something else (research 2026-11-02):
 | C1 | When does the model run? | Only on a click (**Find Pattern…** / `--yes`). Without a click the feature costs 0 tokens: code counts the reactions and shows the card |
 | C2 | What does the model see of a session? | Only excerpts: each negative reaction verbatim and the 2–3 agent steps before it, cut short. About 1–3k tokens a session instead of 20–100k |
 | C3 | How is a rule proved? | Code only: the share of sessions with a negative reaction, before and after the rule's mark, in the rule's scope. 0 tokens |
+
+## Step 0: facts on this Mac (2026-11-02)
+
+Read on this Mac's index (50 sessions in 14 days, 49 of them Claude Code), no model call.
+
+| Question | Found | What changed |
+|---|---|---|
+| Sessions a week with a negative reaction | 3–7 of 5–26 by the old signals; 11 of 50 in 14 days | — |
+| What the reactions are | of 13 excerpts, 6 were refusals by Claude Code's auto mode classifier, 2 were refused question dialogs (AskUserQuestion: "I'll answer in the chat"), 1 a false pushback ("не то" inside "не только") | C8, C9: 5 of 50 sessions (10%) after the fix |
+| Excerpt size | 8 sessions, 13 reactions: ≈ 3.7k tokens (≈ 0.5k a reaction with 3 steps of 240 characters) | caps: 8 sessions, 3 reactions each, 240 characters a step, 600 the user's words, 60,000 characters the whole input (≈ 15k tokens) |
+| Quiet corrections (C5) | of 101 follow-up turns, about 15–20 are corrections by reading ("стоп …", "avoid … not overengineer!", "все должно быть через акит", "Русский, пожалуйста", "release" asked again and again); the old keywords found 0 of them | C10: a few clear forms added; they find 5. Most quiet corrections read like plain requests, so C5 stays open |
+| Groups for the proof | Claude Code's version changed every 2–4 days; groups of one harness version and model had 1–17 sessions | C7 |
+| "10 sessions" | 15–25 sessions a week here: a global rule gets 10 in about a week, a project's rule in 1–3 weeks | kept at 10 |
+
+| # | Decision (step 0, 2026-11-02) | Why |
+|---|---|---|
+| C7 | The proof compares within one harness and model, not the harness version | A version group rarely reaches 10 sessions after a rule (table above). `ChangesReport` keeps the version: the system prompt it measures changes with it; corrections don't |
+| C8 | A refused tool call counts only when it is the user's own refusal ("doesn't want to proceed"), not a permission rule's, a hook's or the auto mode classifier's; Esc at the prompt is the interrupt; a refused AskUserQuestion doesn't count. Signals version 5, schema v12: `user_refusals` | Half the "corrections" were the classifier's, not the user's |
+| C9 | The user's words of a refusal are the text after "the user said:"; without words, and for an interrupt, the next turn is the words; an interrupt right before a pushback is one excerpt | The refusal text is boilerplate; the next turn says what was wrong |
+| C10 | Pushback also: "you forgot", "over-engineered", "still not", "стоп", "не надо", "(ты/мы) забыл", "так и не", "всё ещё не", "по-русски", "на русск"; "не то" only as words | Forms seen in step 0. The same rule feeds error analysis's `pushbacks` |
+| C11 | The pattern's scope is set by code (the projects of its reactions), not by the model; Apply's project file is the one its harnesses read (`CLAUDE.md` when it exists or for Claude Code sessions, else `AGENTS.md`) | A weak model gets a smaller schema; Claude Code skips `AGENTS.md` when there is a `CLAUDE.md` |
+| C12 | Dismissed patterns live in `state.json` (id and title), not in Insights' `Dismissals` | `Dismissals` is about recommendations and their context space |
 
 ## The flow
 
@@ -134,6 +164,6 @@ Compare: one session review sends the whole digest, 20–100k tokens, for one se
 
 | # | Question | Proposal |
 |---|---|---|
-| C4 | Where the card lives: Insights (proposal) or Error Analysis | Insights: it is the daily screen; Error Analysis stays the deep tool |
-| C5 | Does a plain follow-up turn that narrows the task count as a correction? Keywords miss quiet corrections | Not in step 1; step 0 measures how many are missed |
-| C6 | Does the session review's problem prompt get the same Apply… button (the "not built" line in `error-analysis.md`)? | Yes, in step 3: same sheet, same targets |
+| C4 | Where the card lives: Insights (proposal) or Error Analysis | Built on Insights, after Stuck Loops |
+| C5 | Does a plain follow-up turn that narrows the task count as a correction? Keywords miss quiet corrections | Step 0: about 15–20 of 101 follow-ups are corrections, keywords find 5 (C10). Proposal: Find Pattern… also sends the follow-up turns of the window's sessions (on the click, still excerpts) and the model marks which are corrections; the card's count stays code-only |
+| C6 | Does the session review's problem prompt get the same Apply… button (the "not built" line in `error-analysis.md`)? | Not built yet: `CorrectionRules` takes a pattern; a prompt would need its own small type. Next step if wanted |

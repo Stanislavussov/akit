@@ -80,6 +80,14 @@ note to the user's own Pi) lives in `AKitLab`, beside `KnowledgeMapDrawer`. The 
 the same way and the arrows still point down. After review the runner (`PiJSONStream.run`) and the
 JSON-aware masking of the streams (`JSONMask`, from `ReviewMask`) moved down too.
 
+2026-11-02 (corrections, `corrections.md`): new module `AKitCorrections` (20 library targets now), on
+Foundation, Model, Sessions, Insights, Lab, ErrorAnalysis, Brain and ProjectSetup: the excerpts and
+the one model call (`ModelCall`, purpose `corrections`), the checks, Apply and Remove (Global
+Instructions through `GlobalInstructions`, a project's file through `InstructionEdit`), the verdict.
+`AKitCommandLine → AKitCorrections` (`akit corrections`); the app imports it. The count by code,
+`CorrectionStats`, is in `AKitInsights` next to `LoopStats`: it needs the index's scope query.
+Corrections sits above ErrorAnalysis and ProjectSetup and below CommandLine, so the arrows still point down.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).

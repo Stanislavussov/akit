@@ -838,6 +838,50 @@ MIGRATE_ERROR='pnpm db:migrate\nerror: relation \"notes\" already exists\n    at
 } | file "$PI_LOOP"
 touch -t "$(date -v-2H -v-30M +%Y%m%d%H%M)" "$PI_LOOP"
 
+# Corrections (Insights → Corrections): three sessions where the user corrects the agent the same way
+# (it says "done" before running the tests), in notes-mac and weather-app; then the patterns a Find
+# Pattern… call would have kept, and one rule applied two days ago that waits for its verdict.
+WEATHER="$DEMO/Projects/weather-app"
+corrected() { # session id, folder, hours ago, task, the user's correction
+    local id="$1" cwd="$2" at; at="$(ago "$3"H)"
+    file "$DEMO/.claude/projects/${cwd//\//-}/$id.jsonl" <<EOF
+{"type":"user","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"u1","message":{"role":"user","content":"$4"}}
+{"type":"assistant","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"a1","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"$cwd/Sources/App.swift","old_string":"let a = 1","new_string":"let a = 2"}}],"usage":{"input_tokens":900,"output_tokens":30}}}
+{"type":"user","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"u2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"The file has been updated."}]}}
+{"type":"assistant","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"a2","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"Done: the change is in Sources/App.swift."}],"usage":{"input_tokens":950,"output_tokens":20}}}
+{"type":"user","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"u3","message":{"role":"user","content":"$5"}}
+{"type":"ai-title","aiTitle":"$4"}
+EOF
+}
+COR1=9c0f0000-0000-4000-8000-00000000c001
+COR2=9c0f0000-0000-4000-8000-00000000c002
+COR3=9c0f0000-0000-4000-8000-00000000c003
+corrected $COR1 "$NOTESMAC" 100 "Add a search field to the notes list" "No, you said done but never ran the tests. Run swift test first."
+corrected $COR2 "$WEATHER" 70 "Show the temperature in Fahrenheit too" "You forgot the tests again: run them before you say it works."
+corrected $COR3 "$NOTESMAC" 30 "Keep the sort order after a restart" "Stop. I asked to keep the existing style, not a new helper file."
+excerpt() { # id, session id, folder, project, words, hours ago
+    printf '{ "id": "%s", "sessionKey": "claude:%s", "file": "%s", "project": "%s", "step": 4, "kind": "pushback", "words": "%s", "started": "%s",
+        "before": [ { "label": "tool Edit", "text": "file_path: Sources/App.swift" }, { "label": "result", "text": "The file has been updated." },
+                    { "label": "agent", "text": "Done: the change is in Sources/App.swift." } ] }' \
+        "$1" "$2" "$DEMO/.claude/projects/${3//\//-}/$2.jsonl" "$4" "$5" "$(ago "$6"H | sed 's/\.000Z/Z/')"
+}
+file "$DEMO/.akit/corrections/state.json" <<EOF
+{
+  "patterns": [
+    { "id": "p-3f9a1c07", "title": "Says done before running the tests", "found": "$(ago 1H | sed 's/\.000Z/Z/')", "scope": null,
+      "rule": ["Before you say a change is done or works, run the project's tests.", "Say which command ran and whether it passed."],
+      "reactions": [ $(excerpt s1.r1 $COR1 "$NOTESMAC" github.com/acme/notes-mac "No, you said done but never ran the tests. Run swift test first." 100),
+                     $(excerpt s2.r1 $COR2 "$WEATHER" github.com/acme/weather-app "You forgot the tests again: run them before you say it works." 70) ] }
+  ],
+  "dismissed": [],
+  "rules": [
+    { "id": "p-7b2e4d11", "title": "Adds a new helper file instead of the existing style", "scope": "github.com/acme/notes-mac",
+      "target": "$NOTESMAC/CLAUDE.md", "applied": "$(ago 48H | sed 's/\.000Z/Z/')", "places": [],
+      "rule": ["Before you add a new file or helper, look for the existing one and follow its style."] }
+  ]
+}
+EOF
+
 # The session index (the fix's before/after reads it), then the checks over the sessions.
 "$AKIT" sessions import --quiet >/dev/null 2>&1 || true
 verdicts() { # checker, "key positive"...

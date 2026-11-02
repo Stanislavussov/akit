@@ -175,6 +175,20 @@ compares first-request context before and after each `akit apply` and each
 `akit stats mark "<note>" [--at DATE]` (a change made by hand, e.g. a plugin disabled; mark
 it when the user makes one). Sizes marked ≈ are estimates; never talk about money.
 
+## Corrections
+
+`akit corrections [--days N] [--project X] [--json]` counts the sessions where the user
+corrected the agent (interrupt, pushback, their own refusal of a tool call, bad rating), by
+code. `akit corrections find [--show]` prints what Find Pattern would send (`--show` the text);
+with `--yes` it makes one model call (Pi, GPT-6 Luna; `--model`, `--thinking`) and prints up to
+3 patterns, each with the user's words verbatim and a rule. Use it when the user asks what they
+keep correcting; ask before `--yes` (it sends session excerpts). `akit corrections apply ID
+[--to global|PROJECT]` shows the diff of the rule under "## Rules from corrections"; after a
+yes, `--yes` writes it (Global Instructions are committed and written home; a project's file is
+never committed) and marks it. `akit corrections dismiss ID` hides a pattern. `akit corrections
+rules [--json]` gives each rule's verdict after 10 sessions: fewer, no change or more
+corrections; for no change or more, offer `akit corrections remove ID` (diff, then `--yes`).
+
 ## Recommendations
 
 `akit recommend [--project ID|PATH | --all] [--details] [--json]` lists auto skills listed

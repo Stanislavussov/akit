@@ -216,7 +216,7 @@ public enum AKitCLI {
           akit corrections find [--days N] [--project ID|PATH] [--model M] [--thinking T] [--show | --yes] [--json]
                                           Find Pattern: what you correct again and again, as up to 3
                                           rules. Prints how much would be sent (--show: the text); --yes makes the one model
-                                          call (Pi, GPT-6 Luna by default, ≈ 10–25k tokens)
+                                          call (Pi, GPT-6 Luna by default, ≤ ≈ 15k tokens)
           akit corrections apply ID [--to global|PROJECT] [--yes]
                                           Put a pattern's rule under "## Rules from corrections" in
                                           Global Instructions or a project's instruction file (diff

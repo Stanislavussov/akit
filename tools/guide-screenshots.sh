@@ -190,6 +190,8 @@ shot insights-tools      $MAIN --section insights --delay 8 --tab tools
 shot insights-unused     $MAIN --section insights --delay 8 --tab tools --query unused
 shot insights-capture    $MAIN --section insights --delay 8 --capture
 shot insights-loops      $MAIN --section insights --delay 8 --query loops
+shot insights-corrections $MAIN --section insights --delay 10 --query corrections
+shot insights-corrections-apply $MAIN --section insights --delay 10 --query corrections-apply
 shot sessions-loop       $MAIN --section sessions --harness pi
 shot lab                 $MAIN --section lab --select $BATCH_B
 shot lab-new             $MAIN --section lab --add

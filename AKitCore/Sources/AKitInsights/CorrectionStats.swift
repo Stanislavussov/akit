@@ -171,7 +171,7 @@ public struct CorrectionsReport: Encodable, Equatable, Sendable {
     /// Lines for the terminal.
     public var text: String {
         var lines = ["Corrections, last \(days) days\(project.map { " in \($0)" } ?? ""): \(sessionsCorrected) of \(sessionsScanned) "
-                     + "scanned sessions (\(Int((share * 100).rounded()))%) had an interrupt, a pushback, a refused tool call or a bad rating."]
+                     + "scanned sessions (\(Int((share * 100).rounded()))%) had an interrupt, a pushback, your refusal of a tool call or a bad rating."]
         guard !sessions.isEmpty else { return lines.joined(separator: "\n") }
         if project == nil, !byProject.isEmpty {
             lines.append("")
@@ -190,7 +190,7 @@ public struct CorrectionsReport: Encodable, Equatable, Sendable {
                          + (session.project.map { "  \($0)" } ?? session.cwd.map { "  \(($0 as NSString).lastPathComponent)" } ?? ""))
         }
         lines.append("")
-        lines.append("Find Pattern (one model call, about 10–25k tokens): akit corrections find")
+        lines.append("Find Pattern (one model call, at most about 15k tokens of excerpts): akit corrections find")
         return lines.joined(separator: "\n")
     }
 }

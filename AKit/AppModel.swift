@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitCorrections
 import AKitDoctor
 import AKitErrorAnalysis
 import AKitFoundation
@@ -495,6 +496,42 @@ final class AppModel {
     }
 
     private static let noBrain = NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded."])
+
+    // MARK: Corrections
+
+    /// Insights → Corrections → Apply…: the rule into Global Instructions (a brain commit, in line
+    /// with the other layer edits, then the global files, holding the home folder's worktree sync)
+    /// or a project's file. Returns lines of what was written.
+    func applyCorrectionRule(_ plan: CorrectionRules.Plan, pattern: CorrectionPattern) async throws -> [String] {
+        defer { Task { await refresh() } }
+        let context = homeContext()
+        guard plan.target == .global else {
+            return try await CorrectionRules.apply(plan, pattern: pattern, brain: nil, context: nil, env: context.env)
+        }
+        var lines: [String] = []
+        try await oneLayerEditAtATime { brain in
+            lines = try await self.holdingWorktrees(all: [context.homeID]) {
+                try await CorrectionRules.apply(plan, pattern: pattern, brain: brain, context: context, env: context.env)
+            }
+        }
+        return lines
+    }
+
+    /// Remove Rule…: the same ways back out.
+    func removeCorrectionRule(_ plan: CorrectionRules.Plan) async throws -> [String] {
+        defer { Task { await refresh() } }
+        let context = homeContext()
+        guard plan.target == .global else {
+            return try await CorrectionRules.remove(plan, brain: nil, context: nil, env: context.env)
+        }
+        var lines: [String] = []
+        try await oneLayerEditAtATime { brain in
+            lines = try await self.holdingWorktrees(all: [context.homeID]) {
+                try await CorrectionRules.remove(plan, brain: brain, context: context, env: context.env)
+            }
+        }
+        return lines
+    }
 
     // MARK: Project setup
 
