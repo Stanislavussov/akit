@@ -148,6 +148,56 @@ extension ReviewProcessTests {
             #expect(!home.git(clone, "worktree", "list").contains(worktree.path))
         }
 
+        /// R61: a run unused for 14 days loses its worktree and branch; restoring makes both
+        /// again at the same commit and runs the setup commands.
+        @Test func cleanupRemovesOldWorktreesAndRestoreMakesThemAgain() async throws {
+            let home = TempHome()
+            let (remote, head) = try remote(home)
+            let clone = try #require(ReviewRepository.folder(home: home.url, host: "https://gitlab.test", projectPath: "team/app"))
+            #expect(await ReviewRepository.ensureClone(at: clone, urls: [remote.path], iid: 7, env: home.env, progress: { _ in }) == nil)
+            home.write(".akit/local/review/projects/app.yaml", """
+            gitlab: { host: https://gitlab.test, project_path: team/app }
+            setup: ["echo installed > installed.txt"]
+            """)
+            FakeMergeRequest.serve(home, head: head, diff: "@@ -1,3 +1,4 @@\n import Foundation\n func auth(header: String) {\n+    log(\"Auth: \\(header)\")\n }\n")
+            try ReviewRunFixture.prepare(home)
+            let result = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: home.env, brain: nil)
+            let folder = ReviewPaths(home: home.url).run(result.spec.id)
+            let worktree = folder.appending(path: "worktree")
+            let branch = "akit-review/\(result.spec.id)"
+            #expect(FileManager.default.fileExists(atPath: worktree.appending(path: "installed.txt").path))
+
+            // Used today: nothing to remove.
+            #expect(ReviewCleanup.candidates(home: home.url).isEmpty)
+            let old = Date.now.addingTimeInterval(-20 * 86_400)
+            for file in FileWalk.children(of: folder) where !file.hasDirectoryPath {
+                try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: file.path)
+            }
+            #expect(ReviewCleanup.candidates(home: home.url).map(\.id) == [result.spec.id])
+            #expect(ReviewCleanup.candidates(home: home.url, skip: [result.spec.id]).isEmpty)
+            #expect(ReviewCleanup.candidates(home: home.url, days: 30).isEmpty)
+
+            let pruned = await ReviewCleanup.pruneOld(env: home.env)
+            #expect(pruned.map(\.id) == [result.spec.id] && pruned[0].bytes > 0)
+            #expect(!FileManager.default.fileExists(atPath: worktree.path))
+            #expect(home.git(clone, "branch", "--list", branch).isEmpty)
+            #expect(FileManager.default.fileExists(atPath: folder.appending(path: "run.json").path))
+            #expect(try ReviewWorkflow.load(folder).removed?.worktrees == ["worktree"])
+            #expect(ReviewCleanup.removed(folder)?.days == 14)
+            #expect(ReviewCleanup.candidates(home: home.url).isEmpty)
+
+            let restored = await ReviewCleanup.restore(folder, env: home.env)
+            #expect(restored == nil)
+            #expect(home.git(worktree, "rev-parse", "HEAD") == head)
+            #expect(home.git(clone, "branch", "--list", branch).contains(branch))
+            #expect(FileManager.default.fileExists(atPath: worktree.appending(path: "installed.txt").path))
+            #expect(ReviewCleanup.removed(folder) == nil)
+            // Restored counts as used.
+            #expect(ReviewCleanup.candidates(home: home.url).isEmpty)
+            #expect(await ReviewCleanup.prune(folder, env: home.env) == nil)
+            #expect(FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path))
+        }
+
         @Test func mergeBaseFromGitWhenGitLabGivesNoRefs() async throws {
             let home = TempHome()
             let (remote, head) = try remote(home)

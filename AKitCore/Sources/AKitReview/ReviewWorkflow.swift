@@ -31,6 +31,8 @@ public enum ReviewWorkflow {
         public var missed: [ReviewMissed]
         /// The snapshot of each linked merge request that Gather read, by key.
         public var linked: [String: ReviewSnapshot] = [:]
+        /// What a cleanup removed after 14 days without use (R61); nil while the worktrees are there.
+        public var removed: ReviewCleanup.Removed?
 
         public var id: String { spec.id }
         public var worktree: URL? {
@@ -63,7 +65,8 @@ public enum ReviewWorkflow {
                    gaps: ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json")) ?? [],
                    plan: ReviewJSON.read(ReviewPlanFile.self, from: folder.appending(path: "requests.json")),
                    snapshot: ReviewJSON.read(ReviewSnapshot.self, from: folder.appending(path: "gitlab/snapshot.json")),
-                   missed: ReviewJSON.read([ReviewMissed].self, from: folder.appending(path: "missed.json")) ?? [], linked: linked)
+                   missed: ReviewJSON.read([ReviewMissed].self, from: folder.appending(path: "missed.json")) ?? [], linked: linked,
+                   removed: ReviewCleanup.removed(folder))
     }
 
     /// Plans the requests from the findings, against the drafts and threads the run's fetch pass

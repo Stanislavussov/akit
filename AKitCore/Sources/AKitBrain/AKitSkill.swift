@@ -342,7 +342,11 @@ people. The profile P must exist: `akit review profile new P` writes a template;
 The worktree: with `checkout: PATH` it comes from the user's clone; without it AKit clones the
 project itself into `~/.akit/local/review/repos/<host>/<path>` (SSH, then HTTPS; `clone_url:`
 overrides, `clone: false` turns it off) and fetches before each run; the run's worktree is on
-a branch `akit-review/<run>`, and deleting the run removes both. With the clone git gives the
+a branch `akit-review/<run>`, and deleting the run removes both. A run unused for 14 days
+loses its worktree and branch (the app checks at launch and every 6 hours; `akit review prune
+[--days N] [--json]` lists them, `--yes` removes them); findings and requests stay. The passes,
+`ask` and `discuss` make it again on their own, `akit review restore RUN` (Restore Files) at
+once: fetch, worktree at the same commit, setup commands. With the clone git gives the
 diff, the merge base and the earlier merge requests, so the fetch pass reads less through
 GitLab's MCP server. `setup:` in the profile (a list of command lines, e.g. `- npm ci`; Review
 Settings… → Setup commands) runs in every run's worktree before the passes; `--setup COMMAND`

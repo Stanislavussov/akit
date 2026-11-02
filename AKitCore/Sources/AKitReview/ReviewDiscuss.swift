@@ -54,6 +54,7 @@ public enum ReviewDiscuss {
         }
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         _ = try await ReviewPasses.gate(model: run.spec.verifier.value.model, env: env)
+        await ReviewCleanup.restoreIfRemoved(folder, env: env, progress: { _ in })
         let worktree = run.worktree
         try ReviewPasses.write(ReviewPrompts.system(spec: run.spec, hasWorktree: worktree != nil) + "\n\n" + opening,
                                to: folder.appending(path: "prompts/discuss.md"))

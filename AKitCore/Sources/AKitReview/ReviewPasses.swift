@@ -333,6 +333,7 @@ public enum ReviewPasses {
         }
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         if let problem = spec.verifierProblem { throw Failure(message: problem) }
+        await ReviewCleanup.restoreIfRemoved(folder, env: env, progress: options.progress)
         // A rerun needs the earlier run's findings (R28); without them (moved to the Trash) the
         // run reviews the whole merge request, so no earlier thread is taken for fixed.
         let previousFindings = spec.rerun.flatMap { rerun in

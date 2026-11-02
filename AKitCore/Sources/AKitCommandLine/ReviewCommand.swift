@@ -87,6 +87,14 @@ extension AKitCLI {
                                         and the flags a pass may take (from pi --help)
       akit review passes RUN [--anyway]
                                         Run the passes again on a gathered run
+      akit review prune [--days N] [--yes] [--json]
+                                        Runs unused for N days (default 14) with a worktree on disk
+                                        and its size; --yes removes those worktrees and their
+                                        akit-review branches (the app does it on its own). The
+                                        findings, requests and sessions stay
+      akit review restore RUN           Make a removed worktree again at the run's commit: fetch the
+                                        clone, add the worktree, run the setup commands. The passes,
+                                        ask and discuss do it on their own
       akit review show RUN              The run: passes, the requests with their decisions, what stays
                                         in AKit, the context gaps
       akit review approve RUN REQ…      Approve requests (r1 r2 …); --text FILE replaces one's text
@@ -614,6 +622,46 @@ extension AKitCLI {
                 for suggestion in ReviewPiFlags.suggestions(help: help) { out("  \(suggestion.flag)  \(suggestion.help)") }
             }
             for problem in library.problems { err(problem) }
+            return 0
+        case "prune":
+            let json = args.flag("--json")
+            let days = try positiveNumber(args.value("--days"), "--days") ?? ReviewCleanup.defaultDays
+            try args.finish()
+            var runs = ReviewCleanup.candidates(home: env.homeDirectory, days: days)
+            if yes {
+                runs = await ReviewCleanup.pruneOld(env: env, days: days)
+            } else {
+                for index in runs.indices {
+                    runs[index].bytes = runs[index].worktrees.reduce(0) { $0 + ReviewCleanup.size(of: runs[index].folder.appending(path: $1)) }
+                }
+            }
+            if json {
+                out(String(decoding: try ReviewJSON.encoder.encode(runs), as: UTF8.self))
+                return 0
+            }
+            let total = ByteCountFormatter.string(fromByteCount: runs.reduce(0) { $0 + $1.bytes }, countStyle: .file)
+            if runs.isEmpty { out("No run has gone \(days) days without use with a worktree on disk.") }
+            for run in runs {
+                out("\(run.id)  last used \(run.lastUsed.formatted(date: .abbreviated, time: .omitted))  "
+                    + ByteCountFormatter.string(fromByteCount: run.bytes, countStyle: .file) + "  " + run.worktrees.joined(separator: ", "))
+            }
+            if !runs.isEmpty {
+                out(yes ? "Removed the worktrees of \(runs.count) run(s), \(total). akit review restore RUN makes one again."
+                        : "\(total) in \(runs.count) run(s). Run again with --yes to remove these worktrees and their akit-review branches.")
+            }
+            return 0
+        case "restore":
+            guard let id = args.positional() else { throw Failure(message: "Which run? akit review restore RUN.") }
+            try args.finish()
+            let folder = try runFolder(id, env: env)
+            guard ReviewCleanup.removed(folder) != nil else {
+                out("\(id) has its worktrees; nothing to restore.")
+                return 0
+            }
+            let lines = LineBox()
+            let problem = await ReviewCleanup.restore(folder, env: env, progress: { lines.add($0) })
+            lines.drain(out)
+            if let problem { throw Failure(message: problem) }
             return 0
         case "passes":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review passes RUN.") }

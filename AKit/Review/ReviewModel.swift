@@ -197,6 +197,40 @@ final class ReviewModel {
         try await ReviewPasses.run(folder: folder, env: env, options: options)
     }
 
+    // MARK: - Cleanup (R61)
+
+    /// What the last cleanup removed, for a line on the Review screen.
+    var cleanupNotice: String?
+
+    /// While AKit is open: at launch and every 6 hours, runs unused for 14 days give their
+    /// worktrees back. The run AKit works on now is left alone.
+    func watchCleanup() async {
+        while !Task.isCancelled {
+            let skip = Set([activity?.runID, run?.id].compactMap { $0 })
+            let env = env
+            let pruned = await Task.detached { await ReviewCleanup.pruneOld(env: env, skip: skip) }.value
+            if !pruned.isEmpty {
+                let bytes = ByteCountFormatter.string(fromByteCount: pruned.reduce(0) { $0 + $1.bytes }, countStyle: .file)
+                cleanupNotice = "Removed the worktrees of \(pruned.count) review\(pruned.count == 1 ? "" : "s") unused for 14 days (\(bytes))."
+                reload(select: run?.id)
+            }
+            try? await Task.sleep(for: .seconds(6 * 3600))
+        }
+    }
+
+    /// Restore Files: the run's worktrees again at its commits, with the setup commands.
+    func restore(_ id: String) {
+        guard task == nil else { return }
+        activity = Activity(runID: id, title: "Restoring the worktree")
+        let folder = ReviewPaths(home: home).run(id)
+        let env = env
+        task = Task { [weak self] in
+            let problem = await ReviewCleanup.restore(folder, env: env, progress: { line in Task { @MainActor in self?.log(line) } })
+            if let problem { self?.problem = problem }
+            self?.finish()
+        }
+    }
+
     func stop() {
         scope.cancel()
         task?.cancel()
@@ -341,8 +375,14 @@ final class ReviewModel {
     var discussChanges: ReviewDiscuss.Changes?
 
     func discuss() {
-        guard let run else { return }
+        guard let run, !isBusy else { return }
         Task {
+            // A removed worktree comes back first, in the live log: setup commands take minutes.
+            if run.removed != nil {
+                activity = Activity(runID: run.id, title: "Restoring the worktree")
+                _ = await ReviewCleanup.restore(run.folder, env: env, progress: { [weak self] line in Task { @MainActor in self?.log(line) } })
+                activity = nil
+            }
             await attemptAsync {
                 let script = try await ReviewDiscuss.script(run.folder, env: self.env)
                 let place = try await Launcher.openInteractive(script: script, folder: run.worktree ?? run.folder,

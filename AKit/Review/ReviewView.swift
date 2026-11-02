@@ -66,6 +66,17 @@ struct ReviewView: View {
                 .background(.yellow.opacity(0.18))
                 .overlay(alignment: .bottom) { Divider() }
             }
+            if let notice = model.cleanupNotice {
+                HStack {
+                    Label(notice, systemImage: "externaldrive.badge.minus")
+                    Spacer()
+                    Button("Dismiss") { model.cleanupNotice = nil }
+                }
+                .font(.callout)
+                .padding(8)
+                .background(.secondary.opacity(0.08))
+                .overlay(alignment: .bottom) { Divider() }
+            }
             if let problem = model.problem {
                 HStack {
                     Label(problem, systemImage: "exclamationmark.triangle").textSelection(.enabled)
@@ -355,6 +366,25 @@ struct ReviewRunDetail: View {
     }
 
     @ViewBuilder private var discussBanner: some View {
+        if let removed = run.removed {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Label("AKit removed this review's worktree on \(removed.date.formatted(date: .abbreviated, time: .omitted)) after \(removed.days ?? 14) days without use "
+                          + "(\(ByteCountFormatter.string(fromByteCount: removed.bytes, countStyle: .file))).", systemImage: "externaldrive.badge.minus")
+                    Spacer()
+                    Button("Restore Files") { model.restore(run.id) }
+                        .disabled(model.isBusy)
+                        .help("Fetch the clone, make the worktree again at the reviewed commit and run the setup commands")
+                }
+                Text("Findings and requests stay. Run Passes, Ask… and Discuss in Pi… restore it on their own; code snippets show again after.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let problem = removed.problem {
+                    Text("The last restore failed: \(problem)").font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                }
+            }
+            .padding(10)
+            .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        }
         if model.pendingDiscuss > 0 {
             HStack {
                 Label("Pi sent \(model.pendingDiscuss) change\(model.pendingDiscuss == 1 ? "" : "s") from the discussion.", systemImage: "bubble.left.and.text.bubble.right")
