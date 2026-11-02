@@ -377,8 +377,13 @@ struct ReviewRunDetail: View {
         if let removed = run.removed {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Label("AKit removed this review's worktree on \(removed.date.formatted(date: .abbreviated, time: .omitted)) after \(removed.days ?? 14) days without use "
-                          + "(\(ByteCountFormatter.string(fromByteCount: removed.bytes, countStyle: .file))).", systemImage: "externaldrive.badge.minus")
+                    if let later = removed.movedTo {
+                        Label("A newer review of this merge request (\(later)) took this review's worktree on "
+                              + "\(removed.date.formatted(date: .abbreviated, time: .omitted)).", systemImage: "arrow.right.doc.on.clipboard")
+                    } else {
+                        Label("AKit removed this review's worktree on \(removed.date.formatted(date: .abbreviated, time: .omitted)) after \(removed.days ?? 14) days without use "
+                              + "(\(ByteCountFormatter.string(fromByteCount: removed.bytes, countStyle: .file))).", systemImage: "externaldrive.badge.minus")
+                    }
                     Spacer()
                     Button("Restore Files") { model.restore(run.id) }
                         .disabled(model.isBusy)

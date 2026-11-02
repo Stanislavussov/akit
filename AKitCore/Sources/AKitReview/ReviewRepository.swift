@@ -42,6 +42,8 @@ public enum ReviewRepository {
         /// The worktree's branch in AKit's clone; nil in the user's checkout (a detached worktree).
         public var branch: String?
         public var plan: Plan?
+        /// The earlier run whose worktree this run took (R65); nil = a worktree of its own.
+        public var reusedFrom: String?
     }
 
     // MARK: - Where

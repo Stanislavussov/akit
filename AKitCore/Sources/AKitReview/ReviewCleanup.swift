@@ -22,6 +22,8 @@ public enum ReviewCleanup {
         public var problem: String?
         /// The days without use that let the cleanup take them; nil = 14.
         public var days: Int?
+        /// The later run of the same merge request that took the worktree (R65); nil = a cleanup.
+        public var movedTo: String?
     }
 
     /// A run whose worktrees a cleanup may remove.
@@ -117,6 +119,13 @@ public enum ReviewCleanup {
         let record = Removed(date: .now, worktrees: earlier + trees.filter { !earlier.contains($0) }, bytes: bytes, days: days)
         try? ReviewJSON.write(record, to: folder.appending(path: markerName))
         return record
+    }
+
+    /// A later run took the run's worktree (R65): restoring makes it a new one, as after a cleanup.
+    static func recordMoved(_ folder: URL, to run: String, bytes: Int64) {
+        let earlier = removed(folder)?.worktrees ?? []
+        let record = Removed(date: .now, worktrees: earlier.contains("worktree") ? earlier : earlier + ["worktree"], bytes: bytes, movedTo: run)
+        try? ReviewJSON.write(record, to: folder.appending(path: markerName))
     }
 
     /// What a cleanup removed from the run; nil when its worktrees are there (or it never had one).
@@ -219,8 +228,9 @@ public enum ReviewCleanup {
     /// Before the run is continued: restores what a cleanup removed. A failure is a progress
     /// line, not an error: the run goes on with the diff alone, as without a clone.
     public static func restoreIfRemoved(_ folder: URL, env: HarnessEnvironment, progress: @escaping @Sendable (String) -> Void) async {
-        guard removed(folder) != nil else { return }
-        progress("AKit removed this run's worktree to save disk space; making it again…")
+        guard let record = removed(folder) else { return }
+        progress(record.movedTo.map { "The newer review \($0) took this run's worktree; making a new one…" }
+                 ?? "AKit removed this run's worktree to save disk space; making it again…")
         if let problem = await restore(folder, env: env, progress: progress) {
             progress("The worktree couldn't be restored: \(problem)")
         }
