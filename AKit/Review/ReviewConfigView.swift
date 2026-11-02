@@ -141,6 +141,8 @@ struct ReviewConfigView: View {
                 }
                 Text(sourceText(item)).font(.caption).foregroundStyle(.secondary)
                 if item.id != "review.yaml" { skillsRow }
+                if kind == .scenario, item.id != "review.yaml" { scenarioRolesBox }
+                if kind == .role { roleScenariosRow(item) }
                 TextEditor(text: $text)
                     .font(.body.monospaced())
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
@@ -209,6 +211,151 @@ struct ReviewConfigView: View {
             .fixedSize()
             .help("Link a skill from the brain, ~/.claude/skills, ~/.pi/agent/skills or ~/.agents/skills: the review passes load it with this \(kind.rawValue)")
             Spacer()
+        }
+    }
+
+    /// The scenario's roles in run order, edited with buttons: required or optional, earlier or
+    /// later, removed, or added from the roles at this level. Each changes the text only; Save…
+    /// shows the diff.
+    @ViewBuilder private var scenarioRolesBox: some View {
+        if let scenario = try? ReviewScenario.parse(text, source: .brain) {
+            let known = Set((catalog?.roles(for: profile) ?? []).map(\.id))
+            let free = (catalog?.roles(for: profile) ?? []).filter { !scenario.roleIDs.contains($0.id) }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Roles, in run order:").font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Menu("Add Role") {
+                        if free.isEmpty { Text("Every role at this level is in it") }
+                        ForEach(free) { role in
+                            Menu(role.id) {
+                                Button("Required") { editRoles { try ReviewScenarioRoles.adding(role.id, required: true, to: scenario) } }
+                                Button("Optional") { editRoles { try ReviewScenarioRoles.adding(role.id, required: false, to: scenario) } }
+                            }
+                            .help(role.description)
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Add a role of this level: required runs every time, optional is a switch in New Review…")
+                }
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(scenario.roleIDs, id: \.self) { id in
+                            scenarioRoleRow(id, scenario: scenario, known: known.contains(id))
+                        }
+                    }
+                }
+                .frame(maxHeight: 180)
+            }
+        }
+    }
+
+    private func scenarioRoleRow(_ id: String, scenario: ReviewScenario, known: Bool) -> some View {
+        let required = scenario.required.contains(id)
+        let list = required ? scenario.required : scenario.optional
+        return HStack(spacing: 6) {
+            Text(id).font(.callout.weight(.medium))
+            if !known {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.caption)
+                    .help("There is no role \(id) at this level: a run stops on it. Make it in Roles, or remove it here")
+            }
+            Spacer()
+            Picker("", selection: Binding(get: { required }, set: { on in
+                editRoles { try ReviewScenarioRoles.adding(id, required: on, to: scenario) }
+            })) {
+                Text("Required").tag(true)
+                Text("Optional").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .disabled(required && scenario.required.count == 1)
+            .help(required && scenario.required.count == 1 ? "A scenario needs one required role"
+                  : "Required: runs every time. Optional: off by default, a switch in New Review…")
+            Button { editRoles { try ReviewScenarioRoles.moving(id, by: -1, in: scenario) } } label: { Image(systemName: "arrow.up") }
+                .disabled(list.first == id)
+                .help("Run it one place earlier")
+            Button { editRoles { try ReviewScenarioRoles.moving(id, by: 1, in: scenario) } } label: { Image(systemName: "arrow.down") }
+                .disabled(list.last == id)
+                .help("Run it one place later")
+            Button { editRoles { try ReviewScenarioRoles.removing(id, from: scenario) } } label: { Image(systemName: "xmark") }
+                .disabled(required && scenario.required.count == 1)
+                .help(required && scenario.required.count == 1 ? "A scenario needs one required role" : "Take \(id) out of this scenario")
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func editRoles(_ edit: () throws -> String) {
+        do {
+            text = try edit()
+            message = nil
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    /// The scenarios that run this role, with Add to Scenario and a × per scenario. Each shows the
+    /// scenario's diff before it is saved at this level.
+    @ViewBuilder private func roleScenariosRow(_ item: Item) -> some View {
+        let scenarios = catalog?.scenarios(for: profile) ?? []
+        let uses = ReviewScenarioRoles.uses(of: item.id, in: scenarios)
+        let free = scenarios.filter { scenario in !uses.contains { $0.scenario.id == scenario.id } }
+        // A scenario save reloads the role's text: unsaved edits would go.
+        let edited = text != item.text
+        HStack(spacing: 6) {
+            Text("Scenarios:").font(.callout).foregroundStyle(.secondary)
+            if uses.isEmpty {
+                Label("none: no review runs it", systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.orange)
+                    .help("Add it to a scenario, or turn it on for one run in New Review…")
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+            ForEach(uses, id: \.scenario.id) { use in
+                HStack(spacing: 3) {
+                    Text(use.scenario.id + (use.required ? "" : "?")).font(.caption.weight(.medium)).lineLimit(1)
+                        .help(use.required ? "Required in \(use.scenario.title): runs every time" : "Optional in \(use.scenario.title): a switch in New Review…")
+                    Button { planScenario(use.scenario) { try ReviewScenarioRoles.removing(item.id, from: $0) } } label: {
+                        Image(systemName: "xmark").font(.caption2)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(edited)
+                    .help(edited ? "Save or revert the role first" : "Take \(item.id) out of \(use.scenario.id); you see the diff first")
+                }
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(.quaternary.opacity(0.5), in: Capsule())
+                .fixedSize()
+            }
+            }
+            }
+            Menu("Add to Scenario") {
+                if free.isEmpty { Text("Every scenario runs it") }
+                ForEach(free) { scenario in
+                    Menu(scenario.title) {
+                        Button("Required") { planScenario(scenario) { try ReviewScenarioRoles.adding(item.id, required: true, to: $0) } }
+                        Button("Optional") { planScenario(scenario) { try ReviewScenarioRoles.adding(item.id, required: false, to: $0) } }
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(edited)
+            .help(edited ? "Save or revert the role first"
+                  : "Run this role in a scenario: required every time, or optional as a switch in New Review…. You see the diff first")
+            Spacer()
+        }
+    }
+
+    /// A scenario's save with its roles changed, at the level picked on the left.
+    private func planScenario(_ scenario: ReviewScenario, _ edit: (ReviewScenario) throws -> String) {
+        do {
+            save = try ReviewConfigEditor.plan(.scenario, id: scenario.id, text: try edit(scenario), level: level, home: model.home, brain: brain)
+            message = nil
+        } catch {
+            message = error.localizedDescription
         }
     }
 
