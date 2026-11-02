@@ -152,12 +152,13 @@ AKit не хранит токены. С GitLab, Azure DevOps и другими �
 - «context · N read · K blocked» — дополнительный сервер проекта: только читает (см. [контекст ревью](#context-settings)).
 - Флажок **Context server** — сделать сервер дополнительным для профиля из **Rules of**. Есть только у серверов, которые не GitLab и не трекер, и только когда выбран профиль.
 - «Send Drafts may call: …» — имена инструментов записи. Пример: `create_draft_note, update_draft_note, delete_draft_note`.
+- «No draft notes: Send Drafts may publish comments with save_merge_request_review, after you confirm» — у сервера нет черновиков. Так у собственного MCP-сервера GitLab (GitLab 19.4+). **Send Drafts…** может опубликовать комментарии сразу, но только после вашего подтверждения (см. [сервер без черновиков](#screen-send)).
 
 Список **Rules of** выбирает, по чьим правилам считать: **Default** (правила по умолчанию) или профиль проекта с его блоком `mcp:`.
 
 Если у Pi нет серверов, блок пишет: «Pi has no MCP servers. Add your GitLab and tracker servers to Pi (pi mcp add …, or the MCP screen).».
 
-> **Важно:** у сервера GitLab должно быть хотя бы несколько инструментов чтения. Без них ревью не начнётся. Если в «write drafts» ноль, **Send Drafts…** не сможет создать черновики.
+> **Важно:** у сервера GitLab должно быть хотя бы несколько инструментов чтения. Без них ревью не начнётся. Если в «write drafts» ноль, **Send Drafts…** не сможет создать черновики. Если у сервера есть `save_merge_request_review`, AKit предложит опубликовать комментарии сразу.
 
 Как AKit делит инструменты:
 
@@ -1194,14 +1195,40 @@ To review: commits and uncommitted changes.
 4. Расширение AKit пропускает вызов записи, только если в нём одобренный запрос слово в слово. Ответ GitLab на каждый вызов оно пишет в `<run>/send/log.jsonl`.
 5. AKit читает этот журнал и отмечает каждый запрос: отправлен или ошибка.
 
-После отправки карточка получит метку **Sent** и кнопки исчезнут. Карточка с ошибкой показывает «GitLab: …» и остаётся одобренной. Её можно отправить снова. Запрос, который Pi так и не отправил, получает ошибку «The send pass didn't send it.».
+После отправки карточка получит метку **Sent** и кнопки исчезнут. Карточка с ошибкой показывает «GitLab: …» и остаётся одобренной. Её можно отправить снова. Запрос, который Pi так и не отправил, показывает строку Pi о нём. Пример: «Pi: r1 — Not sent: …». Если Pi ничего о нём не сказал, ошибка — «The send pass didn't send it.». Если Pi ответил, но не назвал ни один из нескольких запросов, его ответ один раз стоит под списком: «Pi's answer: …».
+
+#### Сервер без черновиков: Publish Now…
+
+У собственного MCP-сервера GitLab (GitLab 19.4+) нет черновиков. Есть только инструмент `save_merge_request_review`, и он публикует комментарий сразу. Тогда отправка идёт в два шага.
+
+1. Нажмите **Send Drafts**, как обычно. Pi пробует `save_merge_request_review`. AKit не пропускает вызов и ничего не публикует.
+2. Окно пишет оранжевым: «N can't be drafts: your GitLab MCP server has no draft notes.». Рядом кнопка **Publish Now…**. Эти запросы остаются неотправленными, с ошибкой «Your GitLab MCP server has no draft notes: this comment can only be published right away.».
+3. Нажмите **Publish Now…**. AKit спросит: «Publish N comments to GitLab now?» и объяснит: «Everyone on the merge request sees them at once; there are no drafts to check first. AKit lets through only these texts, word for word.».
+4. Нажмите **Publish**. Pi публикует те же запросы. Окно покажет «N published in the merge request.». Строка про черновики первой отправки и подсказка про **Submit review** остаются.
+5. Карточка опубликованного запроса получает метку **Published** вместо **Sent**.
+
+Перед публикацией комментария к строке AKit спрашивает git, какой сейчас head у MR (`git ls-remote origin refs/merge-requests/<iid>/head`). GitLab ставит такой комментарий на свой последний diff. Если автор с тех пор запушил, строки могли сдвинуться. Тогда AKit не публикует этот запрос и пишет: «The merge request changed since the review, so its lines may have moved. Review Again…, then publish.». Если git не смог ответить, ошибка начинается с «AKit couldn't check the merge request's head: …». Комментарии к MR и ответы в обсуждениях уходят всё равно.
+
+Если вызов публикации начался, но GitLab не ответил ясным отказом (например, оборвалась связь), комментарий мог уже появиться в MR. Карточка пишет оранжевым: «It may have been published: check the merge request in GitLab before you publish it again. AKit sends it again only after you approve it again.». Pi не повторяет такой вызов, и AKit сам его больше не отправит. Проверьте MR в GitLab. Если комментария там нет, нажмите **Undo Approve**, потом **Approve**, и отправьте снова.
+
+Пример: вы одобрили комментарий к строке 8 и итог. После **Publish** автор MR сразу видит оба комментария. **Submit review** в GitLab не нужен.
+
+AKit запоминает хост GitLab, у сервера которого нет черновиков. В следующий раз окно сразу пишет «Publish N comments to GitLab?», а главная кнопка — **Publish**. Это нажатие и есть подтверждение. Кнопка **Try Drafts Again** забывает хост и возвращает обычную отправку черновиков.
+
+Что AKit пропускает при публикации:
+
+- Только методы `create_note` (комментарий к MR), `create_diff_note` (к строке diff) и `reply_discussion` (ответ в обсуждении AKit).
+- Только одобренный текст слово в слово, с тем же проектом, MR, файлом, строкой и обсуждением.
+- Никогда: `approve`, `unapprove`, `resolve_discussion`, `submit_review`, `post_duo_review`, `save_note`. Изменить или удалить черновик так нельзя: черновиков нет.
+
+В терминале: `akit review post RUN --yes` пишет, какие запросы ждут публикации, а `akit review post RUN --yes --publish` публикует их. Без `--yes` флаг `--publish` не работает. `--json` выводит `sent`, `published`, `needsPublish` и `failed`.
 
 Проход отправки не останавливает предел кредитов ревью: отправить попросили вы. Политику отправки он проходит, как и остальные проходы.
 
 ### Средне: опубликовать в GitLab
 <!-- section: screen-submit -->
 
-После **Send Drafts…** черновики видите только вы.
+После **Send Drafts…** черновики видите только вы. Это не так для сервера без черновиков: после **Publish** комментарии видят все (см. [Publish Now…](#screen-send)).
 
 1. Откройте MR в GitLab (**Open in GitLab**).
 2. Черновики AKit лежат в вашем pending review рядом с вашими комментариями.

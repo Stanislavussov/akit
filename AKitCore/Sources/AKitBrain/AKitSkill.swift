@@ -254,6 +254,14 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
 
 ## Merge request review
 
+`akit review post RUN [--yes] [--publish] [--json]` prints a run's requests; with `--yes` it sends
+the approved ones as draft notes through Pi's GitLab MCP server, word for word (the user
+publishes them in GitLab with Submit review). A GitLab MCP server without draft notes (GitLab's
+own) can only publish at once: those requests come back as needing `--publish`, and
+`--yes --publish` publishes them right away, which everyone on the merge request sees. Ask the
+user before `--yes`, and again before `--publish`; `--json` gives {sent, published, needsPublish,
+failed}. The Review screen has Send Drafts… and Publish Now….
+
 `akit review map RUN [--json | --mermaid]` prints a review run's change map: the changed files
 by module with their lines and worst finding, the unchanged files that import them, the
 boundaries the change provides or uses (APIs, packages, events, infra, config) and the other

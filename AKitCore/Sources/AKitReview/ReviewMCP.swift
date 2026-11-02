@@ -186,8 +186,16 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
 /// reads; anything else is blocked unless the send pass may write with it.
 public enum ReviewMCPPolicy {
     public enum Kind: String, Sendable {
-        case read, write, blocked
+        /// `publish`: GitLab's own MCP server's `save_merge_request_review` (R66), which has no
+        /// drafts: only the send pass, only with the user's confirmation, only comment methods.
+        case read, write, publish, blocked
     }
+
+    /// GitLab's own MCP server's one tool that writes a review (R66): it publishes at once.
+    public static let publishTool = "save_merge_request_review"
+    /// The methods of `publishTool` the send pass may call: comments only; never approve,
+    /// resolve, submit a review or post a Duo review.
+    public static let publishMethods = ["create_note", "create_diff_note", "reply_discussion"]
 
     /// Never, in any pass (R5): anywhere in a tool's name.
     public static let forbiddenWords = ["publish", "submit", "approve", "unapprove", "vote", "resolve", "unresolve", "rebase"]
@@ -230,12 +238,15 @@ public enum ReviewMCPPolicy {
         Array(tool.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init).prefix(2))
     }
 
-    /// What a tool of a server is to a run: read, write (only in the send pass) or blocked.
+    /// What a tool of a server is to a run: read, write (only in the send pass), publish (only in
+    /// the send pass, after the user's confirmation) or blocked.
     public static func kind(server: String, tool: String, readOnlyHint: Bool = false, access: ReviewMCPAccess, inPasses: Bool = false) -> Kind {
         guard access.allows(server: server, inPasses: inPasses) else { return .blocked }
         if knownExactReads.contains(tool.lowercased()) { return .read }
         let words = tool.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
         if words.contains(where: forbiddenWords.contains) { return .blocked }
+        // Never a read, whatever a pattern or a hint says; a context or open server never writes.
+        if tool.lowercased() == publishTool { return access.isBase(server: server) ? .publish : .blocked }
         // An open server (reached only through `allServers`): AKit knows nothing of its tools, so
         // only a tool its server marks read-only, or one named like a plain read with no word that
         // acts anywhere in the name.

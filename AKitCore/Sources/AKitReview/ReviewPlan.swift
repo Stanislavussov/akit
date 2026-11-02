@@ -48,6 +48,13 @@ public struct ReviewRequest: Codable, Sendable, Hashable, Identifiable {
         public var draftID: Int?
         /// What GitLab answered when it refused; nil when it worked.
         public var error: String?
+        /// Published at once through `save_merge_request_review` (R66), not a draft; nil for a draft.
+        public var published: Bool? = nil
+        /// The published note's id, when GitLab's answer has one.
+        public var noteID: Int? = nil
+        /// A publish call started and didn't clearly fail (R66): the note may be in the merge
+        /// request. Send skips it until the user approves it again.
+        public var uncertain: Bool? = nil
     }
 
     public var id: String
@@ -78,6 +85,8 @@ public struct ReviewRequest: Codable, Sendable, Hashable, Identifiable {
 
     public var text: String { edited ?? proposed }
     public var isSent: Bool { sent != nil && sent?.error == nil }
+    /// A publish that may have gone through (R66): it waits for the user to approve it again.
+    public var isUncertain: Bool { sent?.uncertain == true }
 }
 
 /// Why a finding isn't an inline draft (`docs/design/review.md`, "Where each finding goes").

@@ -159,6 +159,8 @@ public enum ReviewPasses {
         var roots: String
         /// The run's extra Pi flags (brief, roles, steps, verifier).
         var flags: [String] = []
+        /// Extra variables for the extension (the send pass's `AKIT_REVIEW_PUBLISH`).
+        var environment: [String: String] = [:]
     }
 
     /// The Pi arguments of a pass. Pi's own MCP support (`builtin:mcp`, with `builtin:codemode`
@@ -222,6 +224,9 @@ public enum ReviewPasses {
         environment["AKIT_REVIEW_SCENARIO"] = spec.scenario.value
         environment["AKIT_REVIEW_HEAD"] = spec.headSHA ?? ""
         environment["AKIT_REVIEW_LINKS"] = String(decoding: (try? JSONEncoder().encode(spec.links ?? [])) ?? Data("[]".utf8), as: UTF8.self)
+        // Only a confirmed send publishes, never a variable the user's shell happens to have.
+        environment["AKIT_REVIEW_PUBLISH"] = nil
+        environment.merge(setup.environment) { $1 }
         var record = ReviewPassRecord(name: setup.name, role: setup.role?.id, model: setup.model.model, session: nil, started: .now, ended: nil,
                                       usage: SendUsage(), credits: 0, paths: [], error: nil)
         let output = await runPi(pi, arguments: arguments(setup, folder: folder, access: access), directory: setup.cwd,
@@ -308,21 +313,26 @@ public enum ReviewPasses {
     /// The send pass (Send Drafts…, R4–R5): Pi writes the approved requests of
     /// `<run>/send/approved.json` as draft notes through the user's GitLab MCP server. The
     /// extension lets through only calls that carry an approved request word for word and logs
-    /// each in `<run>/send/log.jsonl`.
-    static func send(folder: URL, spec: ReviewRunSpec, count: Int, mergeRequests: [MergeRequestRef]? = nil, env: HarnessEnvironment,
-                     options: Options) async throws {
+    /// each in `<run>/send/log.jsonl`. `publish` (R66): the user confirmed that comments may be
+    /// published at once through `save_merge_request_review`, for a GitLab MCP server without drafts.
+    /// Returns the model's last answer: what it says of the requests it didn't send.
+    @discardableResult
+    static func send(folder: URL, spec: ReviewRunSpec, count: Int, mergeRequests: [MergeRequestRef]? = nil, publish: Bool = false,
+                     env: HarnessEnvironment, options: Options) async throws -> String? {
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         let gate = try await gate(model: spec.passes.value.model, env: env)
         var log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
             ?? ReviewPassLog(mainSession: UUID().uuidString.lowercased())
         let cwd = folder.appending(path: "send", directoryHint: .isDirectory)
         let name = "send-\(log.passes.filter { $0.name.hasPrefix("send") }.count + 1)"
-        let setup = PassSetup(name: name, mode: "send", role: nil, prompt: ReviewPrompts.send(spec: spec, count: count, mergeRequests: mergeRequests),
+        let setup = PassSetup(name: name, mode: "send", role: nil,
+                              prompt: ReviewPrompts.send(spec: spec, count: count, mergeRequests: mergeRequests, publish: publish),
                               model: spec.passes.value,
                               gate: gate, session: ["--session-id", UUID().uuidString.lowercased()], skills: [],
-                              tools: "akit_approved_requests", mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
+                              tools: "akit_approved_requests", mcp: true, cwd: cwd, systemPrompt: nil, roots: "",
+                              environment: publish ? ["AKIT_REVIEW_PUBLISH": "1"] : [:])
         // Sending is never stopped by the run's credit cap: the user asked for it.
-        _ = try await runPass(setup, spec: spec, folder: folder, log: &log, env: env, options: options, pi: pi)
+        return try await runPass(setup, spec: spec, folder: folder, log: &log, env: env, options: options, pi: pi).answer
     }
 
     /// Runs every pass of a gathered run and writes `findings.json` and `gaps.json`.

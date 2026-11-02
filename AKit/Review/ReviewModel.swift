@@ -346,19 +346,28 @@ final class ReviewModel {
     func stopWhy() { whyTask?.cancel() }
 
     /// Sends the approved requests the sheet showed (not any approved since) through a Pi send
-    /// pass and the user's GitLab MCP server; the report says what GitLab answered.
-    func send(_ shown: [ReviewRequest]) async -> ReviewWorkflow.SendReport? {
+    /// pass and the user's GitLab MCP server; the report says what GitLab answered. `publish`
+    /// (R66): the user confirmed that a server without drafts publishes them at once.
+    func send(_ shown: [ReviewRequest], publish: Bool = false) async -> ReviewWorkflow.SendReport? {
         guard let run else { return nil }
         do {
             let ids = Dictionary(uniqueKeysWithValues: shown.map { ($0.id, ReviewNotes.textHash($0.text)) })
             let options = ReviewPasses.Options(progress: { [weak self] line in Task { @MainActor in self?.log(line) } })
-            let report = try await ReviewWorkflow.send(run.folder, env: env, shown: ids, options: options)
+            let report = try await ReviewWorkflow.send(run.folder, env: env, shown: ids, publish: publish, options: options)
             open(run.id)
             return report
         } catch {
             problem = error.localizedDescription
             return nil
         }
+    }
+
+    /// Whether AKit learned that this GitLab host's MCP server has no draft notes (R66).
+    func publishesDirectly(host: String) -> Bool { ReviewWorkflow.publishesDirectly(host: host, env: env) }
+
+    /// Try Drafts Again: forget that the host has no drafts, so Send Drafts… tries drafts first.
+    func tryDraftsAgain(host: String) {
+        attempt { try ReviewWorkflow.setPublishesDirectly(false, host: host, env: env) }
     }
 
     /// Moves a run to the Trash, after removing its worktrees and their `akit-review/…` branches

@@ -849,6 +849,11 @@ struct ReviewSettingsSheet: View {
             if base, !writes.isEmpty {
                 Text("Send Drafts may call: " + writes.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
             }
+            let publishes = kinds.filter { $0.kind == .publish }.map(\.name)
+            if base, !publishes.isEmpty {
+                Text("No draft notes: Send Drafts may publish comments with " + publishes.joined(separator: ", ") + ", after you confirm")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if context, let warning = ReviewMCPAccess.warning(forServer: server.name) {
                 Label(warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
             }
@@ -985,25 +990,39 @@ struct SendDraftsSheet: View {
     let approved: [ReviewRequest]
     @State private var sending = false
     @State private var report: ReviewWorkflow.SendReport?
+    /// The host's GitLab MCP server has no draft notes (R66): the sheet asks to publish at once.
+    @State private var direct = false
+    @State private var confirmPublish = false
+
+    private static let publishExplanation = "Everyone on the merge request sees them at once; there are no drafts to check first. "
+        + "AKit lets through only these texts, word for word."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(report == nil ? "Send \(approved.count) drafts to GitLab?" : "Sent").font(.title3.weight(.semibold))
+            Text(title).font(.title3.weight(.semibold))
             if sending {
-                ProgressView("Pi writes the drafts through your GitLab MCP server…").controlSize(.small)
+                ProgressView(direct ? "Pi publishes the comments through your GitLab MCP server…"
+                                    : "Pi writes the drafts through your GitLab MCP server…").controlSize(.small)
             }
             if let report {
-                if !report.sent.isEmpty {
-                    Label("\(report.sent.count) added to your pending review as drafts.", systemImage: "checkmark.circle").foregroundStyle(.green)
-                }
-                ForEach(report.failed, id: \.id) { failure in
-                    Label("\(failure.id): \(failure.message)", systemImage: "xmark.octagon").foregroundStyle(.red).textSelection(.enabled)
-                }
-                Text("Open the merge request in GitLab, check the drafts beside your own comments, and publish them with Submit review.")
-                    .foregroundStyle(.secondary)
+                reportView(report)
             } else {
-                Text("Pi adds them to your own pending review as draft notes, with your GitLab MCP server. AKit lets through only these texts, word for word. Nobody sees them until you press Submit review in GitLab; nothing is published.")
-                    .foregroundStyle(.secondary)
+                if direct {
+                    Text(Self.publishExplanation).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Your GitLab MCP server had no draft notes last time.").font(.caption).foregroundStyle(.secondary)
+                        Button("Try Drafts Again") {
+                            model.tryDraftsAgain(host: run.spec.mergeRequest.host)
+                            direct = false
+                        }
+                        .controlSize(.small)
+                        .disabled(sending)
+                        .help("Send them as drafts again, for a GitLab MCP server that has draft notes now.")
+                    }
+                } else {
+                    Text("Pi adds them to your own pending review as draft notes, with your GitLab MCP server. AKit lets through only these texts, word for word. Nobody sees them until you press Submit review in GitLab; nothing is published.")
+                        .foregroundStyle(.secondary)
+                }
                 List(approved) { request in
                     HStack {
                         Text(request.kind.rawValue).font(.caption.weight(.semibold)).frame(width: 60, alignment: .leading)
@@ -1021,16 +1040,15 @@ struct SendDraftsSheet: View {
                 Spacer()
                 if report == nil {
                     Button("Cancel") { dismiss() }
-                    Button("Send Drafts") {
-                        sending = true
-                        Task {
-                            report = await model.send(approved)
-                            sending = false
-                            if report == nil { dismiss() }
-                        }
+                    if direct {
+                        // This click is the confirmation: the sheet says what publishing means.
+                        Button("Publish", role: .destructive) { send(approved, publish: true) }
+                            .disabled(sending)
+                    } else {
+                        Button("Send Drafts") { send(approved, publish: false) }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(sending)
                     }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(sending)
                 } else {
                     Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
                 }
@@ -1038,6 +1056,61 @@ struct SendDraftsSheet: View {
         }
         .padding(20)
         .frame(width: 560)
+        .onAppear { direct = model.publishesDirectly(host: run.spec.mergeRequest.host) }
+        .confirmationDialog("Publish \(report?.needsPublish.count ?? 0) comments to GitLab now?", isPresented: $confirmPublish) {
+            Button("Publish", role: .destructive) {
+                let ids = Set(report?.needsPublish ?? [])
+                direct = true
+                send(approved.filter { ids.contains($0.id) }, publish: true)
+            }
+        } message: {
+            Text(Self.publishExplanation)
+        }
+    }
+
+    private var title: String {
+        guard let report else { return direct ? "Publish \(approved.count) comments to GitLab?" : "Send \(approved.count) drafts to GitLab?" }
+        return !report.published.isEmpty && report.published.count == report.sent.count ? "Published" : "Sent"
+    }
+
+    @ViewBuilder private func reportView(_ report: ReviewWorkflow.SendReport) -> some View {
+        let drafts = report.sent.filter { !report.published.contains($0) }
+        if !drafts.isEmpty {
+            Label("\(drafts.count) added to your pending review as drafts.", systemImage: "checkmark.circle").foregroundStyle(.green)
+        }
+        if !report.published.isEmpty {
+            Label("\(report.published.count) published in the merge request.", systemImage: "checkmark.circle").foregroundStyle(.green)
+        }
+        if !report.needsPublish.isEmpty {
+            HStack {
+                Label("\(report.needsPublish.count) can't be drafts: your GitLab MCP server has no draft notes.", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Spacer()
+                Button("Publish Now…") { confirmPublish = true }
+                    .disabled(sending)
+                    .help("Publish these comments in the merge request right away, after you confirm.")
+            }
+        }
+        ForEach(report.failed.filter { !report.needsPublish.contains($0.id) }, id: \.id) { failure in
+            Label("\(failure.id): \(failure.message)", systemImage: "xmark.octagon").foregroundStyle(.red).textSelection(.enabled)
+        }
+        if let note = report.note {
+            Text(note).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+        }
+        if !drafts.isEmpty {
+            Text("Open the merge request in GitLab, check the drafts beside your own comments, and publish them with Submit review.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func send(_ requests: [ReviewRequest], publish: Bool) {
+        sending = true
+        Task {
+            let result = await model.send(requests, publish: publish)
+            sending = false
+            // Publish Now… keeps what the first send did: its drafts and the Submit review hint.
+            if let result { report = report.map { $0.merged(with: result) } ?? result } else if report == nil { dismiss() }
+        }
     }
 }
 

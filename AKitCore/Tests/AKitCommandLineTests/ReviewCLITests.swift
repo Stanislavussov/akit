@@ -37,6 +37,13 @@ extension AKitCLITests {
         #expect(await review(["--help"]).out.contains("akit review ask RUN [--finding ID]"))
     }
 
+    /// `post RUN --publish` (R66): comments everyone sees at once need --yes.
+    @Test func reviewPostPublishNeedsYes() async throws {
+        let refused = await review(["post", "r9", "--publish"])
+        #expect(refused.code != 0 && refused.err.contains("--publish posts comments that everyone sees at once: it needs --yes."), "\(refused)")
+        #expect(await review(["--help"]).out.contains("akit review post RUN [--yes] [--publish] [--json]"))
+    }
+
     /// `log RUN --full` and `debug RUN`: `--full` is read with the run choices, before the subcommand.
     @Test func reviewLogFullAndDebugArguments() async throws {
         #expect(await review(["log", "r9", "--no-cut"]).err.contains("--no-cut goes with --full."))
