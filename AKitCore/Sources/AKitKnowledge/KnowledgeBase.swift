@@ -235,15 +235,28 @@ public struct KnowledgeBase: Sendable, Hashable {
         public let path: String
         public let kind: String?
         public let title: String
+        /// The note's badges: `tags:` in its frontmatter (`KnowledgeTag`).
+        public let tags: [String]
 
-        private enum CodingKeys: String, CodingKey { case id, area, path, kind, title }
+        private enum CodingKeys: String, CodingKey { case id, area, path, kind, title, tags }
 
-        public init(id: String, area: String, path: String, kind: String?, title: String) {
+        public init(id: String, area: String, path: String, kind: String?, title: String, tags: [String] = []) {
             self.id = id
             self.area = area
             self.path = path
             self.kind = kind
             self.title = title
+            self.tags = tags
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            area = try container.decode(String.self, forKey: .area)
+            path = try container.decode(String.self, forKey: .path)
+            kind = try container.decodeIfPresent(String.self, forKey: .kind)
+            title = try container.decode(String.self, forKey: .title)
+            tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         }
 
         // `kind` is null when the note has none, so every entry has the same keys.
@@ -254,6 +267,7 @@ public struct KnowledgeBase: Sendable, Hashable {
             try container.encode(path, forKey: .path)
             try container.encode(kind, forKey: .kind)
             try container.encode(title, forKey: .title)
+            try container.encode(tags, forKey: .tags)
         }
     }
 
@@ -285,7 +299,7 @@ public struct KnowledgeBase: Sendable, Hashable {
                 let id = Self.id(of: file, areas: areasFolder)
                 let note = KnowledgeNote.load(file)
                 return NoteEntry(id: id, area: Self.nfc(folder.lastPathComponent), path: "areas/" + id + ".md", kind: note?.kind,
-                                 title: note?.title ?? file.deletingPathExtension().lastPathComponent)
+                                 title: note?.title ?? file.deletingPathExtension().lastPathComponent, tags: note?.tags ?? [])
             }
         }.sorted { $0.id < $1.id }
     }

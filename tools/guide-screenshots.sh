@@ -276,6 +276,7 @@ shot worklog-edit        $MAIN --section worklog --tab worklog-edit
 shot worklog-summary     $MAIN --section worklog --tab worklog-open
 shot worklog-fill        $MAIN --section worklog --tab worklog-fill --query 2026-10-05
 shot knowledge-obsidian-setup 900x600 --section knowledge --select payments/orders-api --tab obsidian-setup
+shot knowledge-tags      $MAIN --section knowledge --select payments/orders-api --click 250,100
 shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties
 shot knowledge-kinds     $MAIN --section knowledge --select payments/orders-api --tab kinds
 # A map (read only) from the demo base's seed: payments/maps/overview.

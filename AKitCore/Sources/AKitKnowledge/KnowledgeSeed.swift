@@ -237,6 +237,7 @@ public enum KnowledgeSeed {
             repo: git@example.com:shop/orders-api.git
             path: ~/Projects/orders-api
             files: [src/events/order-created.ts]
+            tags: [critical, on-call]
             ---
             # orders-api
 
@@ -258,6 +259,7 @@ public enum KnowledgeSeed {
             kind: service
             repo: git@example.com:shop/billing.git
             owner: checkout-team
+            tags: [critical, money]
             ---
             # billing
 
@@ -273,6 +275,7 @@ public enum KnowledgeSeed {
             ---
             description: How an order becomes an invoice, from orders-api to billing.
             kind: flow
+            tags: [events]
             ---
             # order-to-billing
 

@@ -360,6 +360,12 @@ final class KnowledgeModel {
         if expandedAreas.contains(name) { expandedAreas.remove(name) } else { expandedAreas.insert(name) }
     }
 
+    /// Collapse All: every space of the list folded.
+    func collapseAllAreas() { expandedAreas = [] }
+
+    /// Expand All: every space of the list unfolded.
+    func expandAllAreas() { expandedAreas = Set(areas.map(\.name)) }
+
     /// `expandedAreas` of this base, once per base: as saved, else just the chosen space. Snapshots
     /// unfold every space.
     private func readExpandedAreas(of base: KnowledgeBase) {
@@ -925,12 +931,51 @@ final class KnowledgeModel {
         }
     }
 
+    /// The tags used in the base's notes, most used first: what Add Tag suggests.
+    var usedTags: [String] { KnowledgeTag.usage(of: allNotes.map(\.tags)).map(\.tag) }
+
+    /// Add Tag: one more badge on the note in view (`tags:` in its frontmatter), saved at once.
+    /// A tag the note already has (case aside) changes nothing.
+    func addTag(_ text: String) {
+        guard let tag = KnowledgeTag.normalize(text), let tags = noteEntry?.tags,
+              !tags.contains(where: { $0.lowercased() == tag.lowercased() }) else { return }
+        // A tag used elsewhere keeps its spelling there.
+        let spelled = usedTags.first { $0.lowercased() == tag.lowercased() } ?? tag
+        write(tags: tags + [spelled])
+    }
+
+    /// The badge's ×: the tag off the note in view; the `tags:` line goes with the last one.
+    func removeTag(_ tag: String) {
+        guard let tags = noteEntry?.tags else { return }
+        write(tags: tags.filter { $0 != tag })
+    }
+
+    /// Writes `tags:` of the note in view. Refused when its `tags:` holds something AKit would
+    /// change on the way (numbers, empty items, repeats, a map): fix those in Edit first.
+    private func write(tags: [String]) {
+        guard let base, let note else { return }
+        guard KnowledgeNote(text: text).tagsRewriteSafely else {
+            problem = "The note's tags: line holds values AKit can't keep as they are (numbers, empty items, repeats or a map), so it isn't changed. Fix it in Edit first."
+            return
+        }
+        do {
+            let result = tags.isEmpty ? try base.setProperties(note: note, set: [], unset: ["tags"])
+                : try base.setProperties(note: note, set: [("tags", .list(tags))])
+            guard result.changed else { return }
+            enqueue(result.path, in: base)
+            reload()
+        } catch {
+            problem = error.message
+        }
+    }
+
     /// The note in view's properties: the kind's fields first (in `kb.yaml`'s order, empty when
-    /// unset), then the other keys, sorted. `kind` itself is not in the list.
+    /// unset), then the other keys, sorted. `kind` and `tags` are not in the list.
     var noteProperties: [(key: String, value: String, isField: Bool)] {
         let values = KnowledgeNote(text: text).properties
         let fields = noteEntry?.kind.flatMap { kindsFile.kind($0) }?.fields ?? []
-        let others = values.keys.filter { $0 != "kind" && !fields.contains($0) }.sorted()
+        // Tags have their own row of badges.
+        let others = values.keys.filter { $0 != "kind" && $0 != "tags" && !fields.contains($0) }.sorted()
         return fields.map { ($0, values[$0]?.display ?? "", true) } + others.map { ($0, values[$0]?.display ?? "", false) }
     }
 

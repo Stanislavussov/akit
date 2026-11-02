@@ -65,7 +65,11 @@ struct KnowledgeView: View {
                 HSplitView {
                     if !listHidden {
                         Group {
-                            if model.searchText.trimmingCharacters(in: .whitespaces).isEmpty { noteList } else { SearchResultsList() }
+                            if model.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                                noteList.safeAreaInset(edge: .top, spacing: 0) { listHeader }
+                            } else {
+                                SearchResultsList()
+                            }
                         }
                         .safeAreaInset(edge: .bottom, spacing: 0) { IndexStatusLine() }
                         .frame(minWidth: 200, idealWidth: 260, maxWidth: 380)
@@ -290,6 +294,28 @@ struct KnowledgeView: View {
         }
     }
 
+    /// Over the list: Collapse All and Expand All for the spaces.
+    private var listHeader: some View {
+        HStack(spacing: 6) {
+            Text("Spaces").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Spacer()
+            Button("Expand All", systemImage: "chevron.down.2") { model.expandAllAreas() }
+                .disabled(model.areas.allSatisfy { model.expandedAreas.contains($0.name) })
+                .help("Unfold every space")
+            Button("Collapse All", systemImage: "chevron.up.2") { model.collapseAllAreas() }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                .disabled(model.expandedAreas.isEmpty)
+                .help("Fold every space, so only their names are left (⌥⌘←)")
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+        .disabled(model.areas.isEmpty)
+    }
+
     private func spaceRow(_ area: KnowledgeBase.Area) -> some View {
         HStack {
             Label(area.name, systemImage: "folder")
@@ -316,6 +342,10 @@ struct KnowledgeView: View {
             Button("Show in Finder") {
                 if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.areasFolder.appending(path: area.name)]) }
             }
+            Divider()
+            Button("Collapse All") { model.collapseAllAreas() }
+                .disabled(model.expandedAreas.isEmpty)
+            Button("Expand All") { model.expandAllAreas() }
             Divider()
             Button("Move Up") { Task { await model.move(space: area.name, by: -1) } }
                 .disabled(model.areas.first?.name == area.name)
@@ -349,8 +379,17 @@ struct KnowledgeView: View {
                 Text(note.title).fontWeight(.medium).lineLimit(1)
                 Text([note.kind, note.id.split(separator: "/").dropFirst().joined(separator: "/")].compactMap(\.self).joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if !note.tags.isEmpty {
+                    WrapLayout(spacing: 3) {
+                        ForEach(note.tags, id: \.self) { TagBadge(tag: $0) }
+                    }
+                    .padding(.top, 1)
+                }
             }
             .padding(.vertical, 2)
+            // Its whole height, never squeezed into a row height the list kept from before the
+            // space unfolded (lines cut at the top or bottom).
+            .fixedSize(horizontal: false, vertical: true)
             .tag(Optional(note.id))
             // Drag onto an open map: a block linked to the note (K6).
             .draggable(note.id)

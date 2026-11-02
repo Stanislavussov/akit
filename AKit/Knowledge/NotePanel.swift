@@ -20,6 +20,7 @@ struct NotePanel: View {
             }
             if let entry = model.noteEntry {
                 toolbar(entry)
+                NoteTagsRow(entry: entry).id(entry.id)
                 Divider()
                 if model.showingProperties {
                     PropertiesForm(entry: entry)

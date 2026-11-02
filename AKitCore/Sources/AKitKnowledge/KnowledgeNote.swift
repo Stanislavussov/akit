@@ -90,6 +90,29 @@ public struct KnowledgeNote: Sendable, Equatable {
         }
     }
 
+    /// The note's badges: `tags:` as a list, or one string split at commas and spaces (Obsidian
+    /// writes both), each normalized by `KnowledgeTag.normalize`, without repeats.
+    public var tags: [String] {
+        let raw: [String] = switch frontmatter["tags"] {
+        case let list as [Any]: list.compactMap { $0 as? String }
+        case let one as String: one.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+        default: []
+        }
+        return KnowledgeTag.unique(raw.compactMap(KnowledgeTag.normalize))
+    }
+
+    /// Whether writing `tags` back as a list keeps what the line says: no `tags:`, a string of
+    /// tags, or a list of strings that are already normalized and unique. Numbers, empty items,
+    /// repeats or a map would be lost or changed.
+    public var tagsRewriteSafely: Bool {
+        switch frontmatter["tags"] {
+        case nil, is NSNull: true
+        case is String: true
+        case let list as [Any]: list.allSatisfy { $0 is String } && list.map { "\($0)" } == tags
+        default: false
+        }
+    }
+
     // MARK: - Properties (frontmatter edits, P4)
 
     /// A property's value: one string, or a list written `[a, b]`. JSON: a string or an array.
