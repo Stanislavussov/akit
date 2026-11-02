@@ -209,6 +209,23 @@ public enum AKitCLI {
                                           times in a row and the agent answered almost the same, by
                                           model and thinking level, with when to raise thinking or
                                           switch the model. Default: last 30 days
+          akit corrections [--days N] [--project ID|PATH] [--json]
+                                          Sessions where you corrected the agent (interrupt, pushback,
+                                          refused tool call, bad rating), by project and harness.
+                                          Default: last 14 days. No model call
+          akit corrections find [--days N] [--project ID|PATH] [--model M] [--thinking T] [--show | --yes] [--json]
+                                          Find Pattern: what you correct again and again, as up to 3
+                                          rules. Prints how much would be sent (--show: the text); --yes makes the one model
+                                          call (Pi, GPT-6 Luna by default, ≈ 10–25k tokens)
+          akit corrections apply ID [--to global|PROJECT] [--yes]
+                                          Put a pattern's rule under "## Rules from corrections" in
+                                          Global Instructions or a project's instruction file (diff
+                                          first, backup) and mark it for the verdict
+          akit corrections dismiss ID     Don't show the pattern again
+          akit corrections rules [--json] Applied rules with their verdict: fewer, no change or more
+                                          corrections after the rule (after 10 sessions)
+          akit corrections remove ID [--yes]
+                                          Take a rule out again (diff first, backup)
           akit stats bindings [--days N] [--bindings LIST] [--json]
                                           How sessions are bound to projects: per method and
                                           confidence, the last N (30) days' share bound in LIST (default
@@ -520,6 +537,11 @@ public enum AKitCLI {
                                                         env: env, cwd: cwd, input: input, out: out)
                 }
                 return try instructions(&args, env: env, cwd: cwd, out: out)
+            }
+            if command == "corrections" {
+                try refuseProjectOptions(options, command: "corrections")
+                return try await corrections(&args, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot, hostName: hostName,
+                                             installedTargets: installedTargets, out: out)
             }
             if command == "worktrees" {
                 try refuseProjectOptions(options, command: "worktrees")
@@ -888,7 +910,7 @@ public enum AKitCLI {
     }
 
     /// The first of the given flags fails `akit <command>`.
-    private static func refuse(_ given: [(set: Bool, flag: String)], command: String) throws {
+    static func refuse(_ given: [(set: Bool, flag: String)], command: String) throws {
         if let flag = given.first(where: \.set)?.flag { throw Failure(message: "\(flag) doesn't go with akit \(command).") }
     }
 
@@ -1906,12 +1928,12 @@ public enum AKitCLI {
     }
 
     /// `--brain DIR`, else `~/.akit/registry`.
-    private static func brainRoot(_ options: Options, cwd: URL, env: HarnessEnvironment) -> URL {
+    static func brainRoot(_ options: Options, cwd: URL, env: HarnessEnvironment) -> URL {
         options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
     }
 
     /// `--project`: a folder gives its project id (as akit plan does); anything else is taken as an id.
-    private static func projectID(argument: String, cwd: URL, projectsRoot: URL, env: HarnessEnvironment) async -> String {
+    static func projectID(argument: String, cwd: URL, projectsRoot: URL, env: HarnessEnvironment) async -> String {
         let folder = resolve(argument, cwd: cwd, env: env)
         return FileWalk.isDirectory(folder) ? await ProjectRecords.projectID(for: folder, projectsRoot: projectsRoot, env: env) : argument
     }

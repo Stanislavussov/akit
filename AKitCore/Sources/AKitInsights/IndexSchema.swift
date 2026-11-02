@@ -142,6 +142,11 @@ public enum IndexSchema {
         CREATE TABLE repeat_loops(session_key TEXT NOT NULL, first_step INTEGER NOT NULL, last_step INTEGER NOT NULL,
           asks INTEGER NOT NULL, model TEXT, thinking TEXT, ts REAL, PRIMARY KEY(session_key, first_step));
         """,
+        // v12: the user's own refusals of tool calls, apart from a permission rule's, a hook's or the auto mode
+        // classifier's: corrections count only the user's (docs/design/corrections.md). Signals version 5 fills it.
+        """
+        ALTER TABLE signals ADD COLUMN user_refusals INTEGER NOT NULL DEFAULT 0;
+        """,
     ]
 
     /// Brings the database to the latest version. Refuses an index written by a newer akit.

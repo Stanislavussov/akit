@@ -72,6 +72,8 @@ targets:
         product: AKitReview
       - package: AKitCore
         product: AKitKnowledge
+      - package: AKitCore
+        product: AKitCorrections
     postBuildScripts:
       # Records where this build comes from; shown at the bottom of the sidebar.
       - name: Stamp build source

@@ -159,6 +159,12 @@ struct ChecksTests {
         #expect(signals.pushbacks == 2 && signals.interrupts == 1 && signals.toolErrors == 1 && signals.repeatedCalls == 0)
         #expect(signals.userTurns == 4 && signals.steps == 8 && signals.raised)
         #expect(!SignalScanner.isPushback("Now add the menu item"))
+        // Quiet corrections from a real index (corrections.md, step 0); "не только" is not "не то".
+        for text in ["avoid that, not overengineer!", "стоп нужно только число", "Мы забыли туда добавить график",
+                     "Я так и не понял, как открыть", "Переведи на русский то, что ты сделал.", "it still doesn't build"] {
+            #expect(SignalScanner.isPushback(text), "\(text)")
+        }
+        #expect(!SignalScanner.isPushback("Я бы хотел, чтобы оно было детальным, а не только список"))
     }
 
     // MARK: Over the index
