@@ -74,6 +74,15 @@ public enum ReviewWhyMissed {
         return a.hasSuffix("/" + b) || b.hasSuffix("/" + a)
     }
 
+    /// Whether a path a pass read is the file. Passes record a linked merge request's file by
+    /// its folder (`…/worktree/src/x`), not as `@key/src/x`: match it without the key too.
+    static func opened(_ read: String, _ file: String) -> Bool {
+        if same(read, file) { return true }
+        guard file.hasPrefix("@"), let slash = file.firstIndex(of: "/") else { return false }
+        let rest = String(file[file.index(after: slash)...])
+        return !rest.isEmpty && read.hasSuffix("/" + rest)
+    }
+
     /// Whether a unified diff has a `--- a/<file>` or `+++ b/<file>` header for the file.
     static func inPatch(_ patch: String, file: String) -> Bool {
         patch.split(separator: "\n").contains { header in
@@ -106,7 +115,7 @@ public enum ReviewWhyMissed {
         if let diff = exact ?? diffs.first(where: { same($0.newPath, file) || same($0.oldPath, file) }) {
             if let line {
                 // A removed or renamed-away file matches by its old path: its lines are old lines.
-                let side: ReviewFinding.Side = diff.newPath == file || (exact == nil && same(diff.newPath, file)) ? .new : .old
+                let side: ReviewFinding.Side = !diff.deletedFile && (diff.newPath == file || (exact == nil && same(diff.newPath, file))) ? .new : .old
                 let positions = DiffPositions(diff: diff.diff)
                 lines.append(positions.isInDiff(line, side: side)
                              ? "- \(place) is in the change: \(side == .new ? "an added line or one the diff shows" : "a line of the old file the diff shows")."
@@ -132,8 +141,8 @@ public enum ReviewWhyMissed {
         if readers.isEmpty {
             lines.append("- No role pass is recorded: the passes didn't run or failed (see Log…).")
         } else {
-            let read = readers.filter { $0.paths.contains { same($0, file) } }.map(\.name)
-            let notRead = readers.filter { pass in !pass.paths.contains { same($0, file) } }.map(\.name)
+            let read = readers.filter { $0.paths.contains { opened($0, file) } }.map(\.name)
+            let notRead = readers.filter { pass in !pass.paths.contains { opened($0, file) } }.map(\.name)
             lines.append("- Passes that opened \(file) with read: " + (read.isEmpty ? "none" : read.joined(separator: ", ")) + ".")
             if !notRead.isEmpty { lines.append("- Passes that didn't open it (they may still have seen it in the diff): " + notRead.joined(separator: ", ") + ".") }
             for pass in readers where pass.error != nil { lines.append("- \(pass.name) failed: " + SecretFilter.masked(pass.error ?? "")) }

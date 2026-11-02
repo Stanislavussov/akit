@@ -335,6 +335,7 @@ final class ReviewModel {
                 if !Task.isCancelled { self.problem = error.localizedDescription }
             }
             self.whyToken = nil
+            self.whyProgress = nil
             self.askingWhy = nil
             self.whyQuestion = nil
             self.whyTask = nil

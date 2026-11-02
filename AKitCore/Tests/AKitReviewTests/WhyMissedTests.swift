@@ -86,6 +86,7 @@ extension ReviewProcessTests {
             #expect(!ReviewWhyMissed.same("src/OAuth.swift", "Auth.swift") && !ReviewWhyMissed.same("@web/src/Auth.swift", "src/Auth.swift"))
             #expect(ReviewWhyMissed.inPatch("--- a/src/Auth.swift\n+++ b/src/Auth.swift\n@@ -1 +1 @@", file: "src/Auth.swift"))
             #expect(!ReviewWhyMissed.inPatch("+++ b/src/OAuth.swift\n", file: "Auth.swift"))
+            #expect(ReviewWhyMissed.opened("linked/web/worktree/src/api.ts", "@web/src/api.ts") && !ReviewWhyMissed.opened("src/other.ts", "@web/src/api.ts"))
         }
 
         /// The fates name AKit's own reasons: the role's floor, invalid fields.
