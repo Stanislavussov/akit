@@ -694,7 +694,7 @@ struct ReviewRunDetail: View {
                 Button("Send Drafts…") { showSend = true }
                     .keyboardShortcut(.defaultAction)
                     .disabled(approved.isEmpty)
-                    .help("Add the approved requests to your pending review in GitLab as drafts. You publish them there with Submit review.")
+                    .help("Add the approved requests to your pending review in GitLab as drafts. You publish them there with Submit review. If your GitLab MCP server has no draft notes, AKit asks before it publishes them right away.")
             }
         }
         .padding(10)
