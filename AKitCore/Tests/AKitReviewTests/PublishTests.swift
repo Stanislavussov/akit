@@ -44,8 +44,8 @@ extension ReviewProcessTests {
           const r = await handlers.tool_call({ toolName: call.tool, toolCallId: id, input: call.input }, { cwd: process.cwd() });
           out.push(r?.block ? "blocked: " + r.reason : "allowed");
           if (!r?.block) {
-            await handlers.tool_result({ toolName: call.tool, toolCallId: id, input: call.input, isError: false,
-              content: [{ type: "text", text: JSON.stringify({ id: 900 + i }) }] });
+            await handlers.tool_result({ toolName: call.tool, toolCallId: id, input: call.input, isError: call.error === true,
+              content: [{ type: "text", text: call.error === true ? "timed out" : JSON.stringify({ id: 900 + i }) }] });
           }
         }
         console.log(JSON.stringify(out));
@@ -114,9 +114,38 @@ extension ReviewProcessTests {
                                  publish: true)
             #expect(Array(said.prefix(3)) == ["allowed", "allowed", "allowed"], "\(said)")
             #expect(said[3].hasPrefix("blocked: "), "each request once")
+            // A started line before each answer: a pass that dies mid-call still tells AKit.
             let log = lines(home, "send/log.jsonl")
-            #expect(log.map { $0["request"] as? String } == ["r1", "r2", "r3"])
-            #expect(log.allSatisfy { $0["needsPublish"] == nil && $0["isError"] as? Bool == false })
+            #expect(log.map { $0["request"] as? String } == ["r1", "r1", "r2", "r2", "r3", "r3"])
+            #expect(log.enumerated().allSatisfy { index, line in
+                index % 2 == 0 ? line["started"] as? Bool == true && line["isError"] == nil
+                    : line["needsPublish"] == nil && line["isError"] as? Bool == false
+            })
+        }
+
+        /// A failed publish may have published: its request stays claimed, so it is never tried twice.
+        @Test func aFailedPublishIsNeverRetried() throws {
+            let home = TempHome()
+            let said = try calls(home, [["tool": Self.tool, "input": Self.note, "error": true], ["tool": Self.tool, "input": Self.note]],
+                                 publish: true)
+            #expect(said[0] == "allowed" && said[1].hasPrefix("blocked: "), "\(said)")
+            let log = lines(home, "send/log.jsonl")
+            #expect(log.count == 2 && log[0]["started"] as? Bool == true && log[1]["isError"] as? Bool == true)
+        }
+
+        /// The text is text, the project a path or a number, the merge request a whole number.
+        @Test func publishArgumentsHaveTheirTypes() throws {
+            let home = TempHome()
+            let wrong: [[String: Any]] = [
+                Self.note.merging(["body": ["Summary C"]]) { $1 },
+                Self.note.merging(["project_id": ["team/app"]]) { $1 },
+                Self.note.merging(["merge_request_iid": "7a"]) { $1 },
+                Self.note.merging(["merge_request_iid": 7.5]) { $1 },
+                Self.note.merging(["merge_request_iid": [7]]) { $1 },
+            ]
+            let said = try calls(home, wrong.map { ["tool": Self.tool, "input": $0] } + [["tool": Self.tool, "input": Self.note]], publish: true)
+            #expect(said.dropLast().allSatisfy { $0.hasPrefix("blocked: ") }, "\(said)")
+            #expect(said.last == "allowed")
         }
 
         @Test func withPublishEverythingElseStaysBlocked() throws {
@@ -148,7 +177,7 @@ extension ReviewProcessTests {
                 #expect(said[index].hasPrefix("blocked: ") && said[index].contains(why), "\(index): \(said[index])")
             }
             #expect(said.last == "allowed", "the right call still goes through after all of them")
-            #expect(lines(home, "send/log.jsonl").map { $0["request"] as? String } == ["r1"])
+            #expect(lines(home, "send/log.jsonl").map { $0["request"] as? String } == ["r1", "r1"], "started, then the answer")
         }
 
         /// An update or a delete touches a draft, which this server lacks; outside the send pass the
@@ -189,6 +218,7 @@ extension ReviewProcessTests {
             #expect(prompt.contains("`save_merge_request_review`") && prompt.contains("don't retry it"))
 
             let drafts = try ReviewWorkflow.load(run.folder).snapshot?.drafts ?? []
+            Self.fakeGit(run, head: run.head)
             run.home.write("fake/send-log.jsonl", """
             {"request":"r1","tool":"mcp__gitlab__save_merge_request_review","isError":false,"text":"{\\"note\\": {\\"id\\": 901}}"}
             {"request":"r2","tool":"mcp__gitlab__save_merge_request_review","isError":false,"text":"Done: {\\"id\\": 902}"}
@@ -211,6 +241,128 @@ extension ReviewProcessTests {
             #expect(!ReviewWorkflow.publishesDirectly(host: host, env: run.home.env))
         }
 
+        /// A fake git: `ls-remote` prints `~/fake/mr-head` (or fails with `~/fake/git-fail`), the rest is real git.
+        static func fakeGit(_ run: ReviewRunFixture, head: String) {
+            run.home.write("fake/mr-head", "\(head)\trefs/merge-requests/7/head\n")
+            run.home.write("bin/git", """
+            #!/bin/sh
+            case "$*" in *ls-remote*)
+              printf '%s\\n' "$*" >> "$HOME/fake/git-args.txt"
+              if [ -f "$HOME/fake/git-fail" ]; then echo "fatal: could not read from remote repository" >&2; exit 128; fi
+              cat "$HOME/fake/mr-head"; exit 0 ;;
+            esac
+            exec /usr/bin/git "$@"
+            """, executable: true)
+        }
+
+        static func approveAll(_ run: ReviewRunFixture) async throws {
+            run.playTypicalRun()
+            try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            for request in try #require(try ReviewWorkflow.load(run.folder).plan).requests {
+                try ReviewWorkflow.decide(run.folder, request: request.id, decision: .approved)
+            }
+        }
+
+        /// A published diff note lands on GitLab's latest diff: it goes only while the merge
+        /// request's head is the reviewed one; a comment on the merge request still goes.
+        @Test func aDiffNoteIsPublishedOnlyOnTheReviewedHead() async throws {
+            let run = try await ReviewRunFixture.make()
+            try await Self.approveAll(run)
+            Self.fakeGit(run, head: String(repeating: "f", count: 40))
+            run.home.write("fake/send-log.jsonl", #"{"request":"r2","tool":"mcp__gitlab__save_merge_request_review","isError":false,"text":"{\"id\": 7}"}"# + "\n")
+            var report = try await ReviewWorkflow.send(run.folder, env: run.home.env, publish: true)
+            #expect(report.failed.map(\.id) == ["r1"] && report.failed[0].message == ReviewWorkflow.headMovedMessage)
+            #expect(report.published == ["r2"])
+            let approved = try String(contentsOf: run.home.url.appending(path: "fake/approved-send-1.json"), encoding: .utf8)
+            #expect(!approved.contains(#""id" : "r1""#), "r1 never reached the pass")
+            let args = try String(contentsOf: run.home.url.appending(path: "fake/git-args.txt"), encoding: .utf8)
+            #expect(args.contains("core.hooksPath=/dev/null ls-remote origin refs/merge-requests/7/head"), "\(args)")
+
+            // git can't tell: the same, with git's reason.
+            run.home.write("fake/git-fail", "")
+            report = try await ReviewWorkflow.send(run.folder, env: run.home.env, publish: true)
+            #expect(report.failed.first?.message.hasPrefix("AKit couldn't check the merge request's head: git ls-remote failed: fatal: could not read") == true,
+                    "\(report.failed)")
+
+            // The reviewed head: it goes.
+            try FileManager.default.removeItem(at: run.home.url.appending(path: "fake/git-fail"))
+            Self.fakeGit(run, head: run.head)
+            run.home.write("fake/send-log.jsonl", #"{"request":"r1","tool":"mcp__gitlab__save_merge_request_review","isError":false,"text":"{\"id\": 8}"}"# + "\n")
+            report = try await ReviewWorkflow.send(run.folder, env: run.home.env, publish: true)
+            #expect(report.published == ["r1"] && report.failed.isEmpty, "\(report.failed)")
+        }
+
+        /// A publish that started and didn't clearly fail may be in the merge request: it is not
+        /// sent again until the user approves it again; a clear refusal (4xx) is a normal failure.
+        @Test func anUncertainPublishWaitsForTheUser() async throws {
+            let run = try await ReviewRunFixture.make()
+            try await Self.approveAll(run)
+            Self.fakeGit(run, head: run.head)
+            run.home.write("fake/send-log.jsonl", """
+            {"request":"r1","tool":"mcp__gitlab__save_merge_request_review","started":true}
+            {"request":"r2","tool":"mcp__gitlab__save_merge_request_review","started":true}
+            {"request":"r2","tool":"mcp__gitlab__save_merge_request_review","isError":true,"text":"500 Internal Server Error"}
+
+            """)
+            var report = try await ReviewWorkflow.send(run.folder, env: run.home.env, publish: true)
+            #expect(report.failed.map(\.message) == [ReviewWorkflow.uncertainMessage, ReviewWorkflow.uncertainMessage])
+            #expect(report.needsPublish.isEmpty && report.sent.isEmpty)
+            var plan = try #require(try ReviewWorkflow.load(run.folder).plan)
+            #expect(plan.requests.allSatisfy { $0.isUncertain && !$0.isSent })
+
+            // Nothing goes again by itself.
+            report = try await ReviewWorkflow.send(run.folder, env: run.home.env, publish: true)
+            #expect(report.sent.isEmpty && report.failed.isEmpty && run.args("send-2").isEmpty)
+
+            // Approved again: it goes; a 400 is GitLab's clear no.
+            try ReviewWorkflow.decide(run.folder, request: "r2", decision: .approved)
+            run.home.write("fake/send-log.jsonl", """
+            {"request":"r2","tool":"mcp__gitlab__save_merge_request_review","started":true}
+            {"request":"r2","tool":"mcp__gitlab__save_merge_request_review","isError":true,"text":"400 Bad Request: body is too long"}
+
+            """)
+            report = try await ReviewWorkflow.send(run.folder, env: run.home.env, publish: true)
+            #expect(report.failed.map(\.id) == ["r2"] && report.failed[0].message.hasPrefix("GitLab: 400 Bad Request"))
+            plan = try #require(try ReviewWorkflow.load(run.folder).plan)
+            #expect(plan.requests[0].isUncertain && !plan.requests[1].isUncertain)
+        }
+
+        /// The login shell may export anything: only a confirmed send publishes.
+        @Test func theLoginShellCantTurnPublishingOn() async throws {
+            let run = try await ReviewRunFixture.make()
+            try await Self.approveAll(run)
+            let shell = run.home.write("bin/fake-shell", "#!/bin/sh\nexport AKIT_REVIEW_PUBLISH=1 FAKE_SHELL_SEEN=1\neval \"$4\"\n", executable: true)
+            var env = run.home.env
+            env.variables["SHELL"] = shell.path
+            _ = try await ReviewWorkflow.send(run.folder, env: env)
+            let seen = try String(contentsOf: run.home.url.appending(path: "fake/env-send-1.txt"), encoding: .utf8)
+            #expect(seen.contains("FAKE_SHELL_SEEN=1"), "the pass took the login shell's variables")
+            #expect(!seen.contains("AKIT_REVIEW_PUBLISH"))
+        }
+
+        /// Pi's answer names none of several skipped requests: the generic text each, the answer once.
+        @Test func anAnswerWithoutTheIdsIsSaidOnce() async throws {
+            let run = try await ReviewRunFixture.make()
+            try await Self.approveAll(run)
+            try run.answer("send-1", "I found no tool to write with.")
+            let report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
+            #expect(report.failed.map(\.message) == ["The send pass didn't send it.", "The send pass didn't send it."])
+            #expect(report.note == "Pi's answer: I found no tool to write with.")
+        }
+
+        @Test func publishNowKeepsWhatTheFirstSendDid() {
+            var first = ReviewWorkflow.SendReport()
+            first.sent = ["r1"]
+            first.failed = [("r2", ReviewWorkflow.needsPublishMessage), ("r3", "GitLab: 400")]
+            first.needsPublish = ["r2"]
+            var later = ReviewWorkflow.SendReport()
+            later.sent = ["r2"]
+            later.published = ["r2"]
+            let merged = first.merged(with: later)
+            #expect(merged.sent == ["r1", "r2"] && merged.published == ["r2"] && merged.needsPublish.isEmpty)
+            #expect(merged.failed.map(\.id) == ["r3"])
+        }
+
         @Test func piSaysWhyItSkippedARequest() {
             let answer = "r1 — created draft 502\nr10 — something else\nr2 — Not sent: no draft tool here; token glpat-abcdefghijklmnopqrstu"
             let said = ReviewWorkflow.piSaid(answer, about: "r2")
@@ -218,6 +370,7 @@ extension ReviewProcessTests {
             #expect(said?.contains("glpat-abcdefghijklmnopqrstu") == false, "masked")
             #expect(ReviewWorkflow.piSaid(answer, about: "r1") == "Pi: r1 — created draft 502", "not r10's line")
             #expect(ReviewWorkflow.piSaid("All done.", about: "r3") == "Pi: All done.", "no line names it: the answer's start")
+            #expect(ReviewWorkflow.piSaid("All done.", about: "r3", only: false) == nil, "not for one of several requests")
             #expect(ReviewWorkflow.piSaid("  \n", about: "r3") == nil && ReviewWorkflow.piSaid(nil, about: "r3") == nil)
         }
     }

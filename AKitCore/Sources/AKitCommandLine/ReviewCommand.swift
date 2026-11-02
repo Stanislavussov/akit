@@ -357,7 +357,7 @@ extension AKitCLI {
             func report(_ report: ReviewWorkflow.SendReport, note: String? = nil) throws {
                 var object: [String: Any] = ["sent": report.sent, "published": report.published, "needsPublish": report.needsPublish,
                                              "failed": report.failed.map { ["id": $0.id, "message": $0.message] }]
-                if let note { object["note"] = note }
+                if let note = note ?? report.note { object["note"] = note }
                 out(String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
             }
             func early(_ note: String) throws -> Int32 {
@@ -370,7 +370,8 @@ extension AKitCLI {
             guard yes else {
                 return try early("Nothing was sent. Approve requests (akit review approve \(id) r1 …), then: akit review post \(id) --yes")
             }
-            let approved = run.plan?.requests.filter { $0.decision == .approved && !$0.isSent } ?? []
+            // A publish that may have gone through waits until it is approved again (R66).
+            let approved = run.plan?.requests.filter { $0.decision == .approved && !$0.isSent && !$0.isUncertain } ?? []
             guard !approved.isEmpty else { return try early("No approved request is waiting to be sent.") }
             // Exactly what was printed above.
             let shown = Dictionary(uniqueKeysWithValues: approved.map { ($0.id, ReviewNotes.textHash($0.text)) })
@@ -386,6 +387,7 @@ extension AKitCLI {
             out("Sent as drafts: \(drafts.isEmpty ? "none" : drafts.joined(separator: ", ")).")
             if !sent.published.isEmpty { out("Published in the merge request: \(sent.published.joined(separator: ", ")).") }
             for failure in sent.failed { err("akit: \(failure.id): \(failure.message)") }
+            if let note = sent.note { err("akit: \(note)") }
             if !sent.needsPublish.isEmpty {
                 out("Your GitLab MCP server has no draft notes: \(sent.needsPublish.joined(separator: ", ")) can only be published right away, "
                     + "and everyone on the merge request sees them at once. To publish them: akit review post \(id) --yes --publish")

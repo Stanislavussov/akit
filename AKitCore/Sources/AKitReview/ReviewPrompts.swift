@@ -614,7 +614,8 @@ public enum ReviewPrompts {
         way; one call per request, with `project_id` (one of `mr.projects`), `merge_request_iid` (`mr.iid`), `body` unchanged \
         and `method`: `reply_discussion` with `discussion_id` when the request has one; `create_diff_note` with `old_path`, \
         `new_path`, `old_line` and `new_line` from its `position` (only the lines the position has) when it has a position; \
-        else `create_note`. No other argument and no other method. Draft-note tools, when there are any, come first.
+        else `create_note`. No other argument and no other method. Draft-note tools, when there are any, come first. \
+        Never retry a `save_merge_request_review` call, not even one that failed: it may have published the comment anyway.
         """ : """
         If your GitLab MCP tools have no draft-note tool but have `save_merge_request_review`, call it for each create request \
         anyway, with `project_id` (one of `mr.projects`), `merge_request_iid` (`mr.iid`), `body` unchanged and `method`: \
@@ -642,7 +643,7 @@ public enum ReviewPrompts {
            request number (`mr.iid`), `body` unchanged, and `draft_id`, `discussion_id` and `position` when the request has \
            them. AKit lets a call through only when its arguments are exactly one approved request; a blocked call says what \
            didn't match: fix the arguments, never the text.
-        4. Make one call per request. If a call fails, try once more; then go on with the next request.
+        4. Make one call per request. If a \(publish ? "draft-note " : "")call fails, try once more; then go on with the next request.
 
         \(fallback)
 

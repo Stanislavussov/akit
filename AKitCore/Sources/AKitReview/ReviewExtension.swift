@@ -211,6 +211,8 @@ public enum ReviewExtension {
     const approved: any[] = mode === "send" ? (parse(readText(path.join(run, "send/approved.json"))) ?? []) : [];
     const claimed = new Set<string>();
     const pending = new Map<string, string>();
+    // Publish calls let through: an error result keeps their request claimed (it may be published).
+    const publishing = new Set<string>();
     let saved = 0;
 
     function parse(text: string): any {
@@ -348,6 +350,10 @@ public enum ReviewExtension {
       for (const [key, value] of Object.entries(input)) {
         if (!absent(value) && !publishArguments.includes(key)) return `the argument ${key}`;
       }
+      if (typeof input.body !== "string") return "another text";
+      if (typeof input.project_id !== "string" && typeof input.project_id !== "number") return "another project";
+      if (!/^[0-9]+$/.test(String(input.merge_request_iid ?? ""))) return "another merge request";
+      if (typeof input.merge_request_iid !== "string" && typeof input.merge_request_iid !== "number") return "another merge request";
       const want = publishMethod(request);
       if (input.method !== want) return `the method ${input.method ?? "(none)"}: this request needs ${want}`;
       if (absent(input.project_id) || !(request.mr?.projects ?? []).some((q: any) => same(input.project_id, q))) return "another project";
@@ -923,6 +929,9 @@ public enum ReviewExtension {
             }
             claimed.add(request.id);
             pending.set(String(event.toolCallId), request.id);
+            publishing.add(String(event.toolCallId));
+            // Logged before the call: a pass that dies now still tells AKit it may have published.
+            append("send/log.jsonl", JSON.stringify({ request: request.id, tool: name, started: true }));
             return undefined;
           }
           if (kind === "write") {
@@ -967,7 +976,9 @@ public enum ReviewExtension {
         const request = pending.get(id);
         if (request !== undefined) {
           pending.delete(id);
-          if (event.isError) claimed.delete(request);
+          // A failed publish may still have published: it is never tried again in this pass.
+          if (event.isError && !publishing.has(id)) claimed.delete(request);
+          publishing.delete(id);
           append("send/log.jsonl", JSON.stringify({ request, tool: name, isError: Boolean(event.isError), text: text.join("\n").slice(0, 4000) }));
         }
         return undefined;

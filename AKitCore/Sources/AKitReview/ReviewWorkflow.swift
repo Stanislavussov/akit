@@ -159,6 +159,8 @@ public enum ReviewWorkflow {
                                                                                             placements: [])) { plan in
             guard let index = plan.requests.firstIndex(where: { $0.id == id }) else { throw Failure(message: "There is no request \(id).") }
             guard !plan.requests[index].isSent else { throw Failure(message: "\(id) was sent already.") }
+            // Choosing a request again after a publish that may have gone through (R66): it can be sent once more.
+            if plan.requests[index].isUncertain { plan.requests[index].sent = nil }
             if decision == .rejected, plan.requests[index].findingID != nil, reason == nil {
                 throw Failure(message: "A rejected finding needs a reason: \(ReviewRequest.Reason.allCases.map(\.rawValue).joined(separator: ", ")).")
             }
@@ -202,12 +204,59 @@ public enum ReviewWorkflow {
         public var needsPublish: [String] = []
         /// The sent requests that were published at once, not added as drafts.
         public var published: [String] = []
+        /// Said once for the whole send: Pi's answer, when it named none of the requests it skipped.
+        public var note: String?
 
         public init() {}
+
+        /// Publish Now… after a send: the later report over this one, so what the first sent stays.
+        public func merged(with later: SendReport) -> SendReport {
+            var merged = self
+            let redone = Set(later.sent + later.failed.map(\.id))
+            merged.sent += later.sent.filter { !merged.sent.contains($0) }
+            merged.published += later.published.filter { !merged.published.contains($0) }
+            merged.failed = merged.failed.filter { !redone.contains($0.id) } + later.failed
+            merged.needsPublish = merged.needsPublish.filter { !redone.contains($0) } + later.needsPublish.filter { !merged.needsPublish.contains($0) }
+            merged.note = later.note ?? merged.note
+            return merged
+        }
     }
 
     /// The message of a request that can only be published at once (R66).
     public static let needsPublishMessage = "Your GitLab MCP server has no draft notes: this comment can only be published right away."
+    /// A publish call that started and didn't clearly fail (R66): it may be in the merge request.
+    public static let uncertainMessage = "It may have been published: check the merge request in GitLab before you publish it again. "
+        + "AKit sends it again only after you approve it again."
+    /// The merge request's head moved since the review: a diff note would land on other lines (R66).
+    public static let headMovedMessage = "The merge request changed since the review, so its lines may have moved. Review Again…, then publish."
+
+    /// The merge request's head as GitLab has it now, read with git from the run's worktree (or
+    /// its linked worktree, or AKit's clone): `git ls-remote origin refs/merge-requests/<iid>/head`.
+    /// A published diff note lands on GitLab's latest diff, not on the reviewed commit (R66).
+    static func remoteHead(_ run: Run, key: String?, iid: Int, env: HarnessEnvironment) async -> Result<String, Failure> {
+        let tree: URL? = if let key {
+            ReviewLinked.worktree(run.folder, key: key)
+        } else {
+            run.worktree ?? run.spec.repository.map { URL(filePath: $0.clone, directoryHint: .isDirectory) }
+        }
+        guard let tree, FileManager.default.fileExists(atPath: tree.appending(path: ".git").path) else {
+            return .failure(Failure(message: "the run has no worktree or clone to ask git from"))
+        }
+        guard let git = env.findExecutable("git") else { return .failure(Failure(message: "git is not installed")) }
+        var variables = env.gitVariables
+        if variables["GIT_SSH_COMMAND"] == nil { variables["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes" }
+        let result = await ProcessRunner.run(git, arguments: ["-C", tree.path, "-c", "core.hooksPath=/dev/null", "ls-remote", "origin",
+                                                              "refs/merge-requests/\(iid)/head"], environment: variables, timeout: 30)
+        guard let result, result.succeeded else {
+            let said = result.map { String($0.output.split(whereSeparator: \.isNewline).first ?? "") } ?? ""
+            return .failure(Failure(message: "git ls-remote failed" + (said.isEmpty ? "" : ": " + SecretFilter.masked(String(said.prefix(200))))))
+        }
+        let sha = result.output.split(whereSeparator: \.isNewline).first?.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+        guard sha.count == 40, sha.allSatisfy(\.isHexDigit) else {
+            return .failure(Failure(message: "GitLab named no head for merge request !\(iid)"))
+        }
+        return .success(sha.lowercased())
+    }
 
     static func publishHostsFile(_ env: HarnessEnvironment) -> URL {
         ReviewPaths(home: env.homeDirectory).folder.appending(path: "publish-hosts.json")
@@ -228,11 +277,12 @@ public enum ReviewWorkflow {
     }
 
     /// The model's line about one request in its last answer (`r1 — Not sent: …`), or the
-    /// answer's start; masked. nil without an answer.
-    static func piSaid(_ answer: String?, about id: String) -> String? {
+    /// answer's start when the send carried only this request (`only`); masked. nil without either.
+    static func piSaid(_ answer: String?, about id: String, only: Bool = true) -> String? {
         guard let answer = answer?.trimmingCharacters(in: .whitespacesAndNewlines), !answer.isEmpty else { return nil }
         let word = "(?<![A-Za-z0-9_])" + NSRegularExpression.escapedPattern(for: id) + "(?![A-Za-z0-9_])"
         let line = answer.split(whereSeparator: \.isNewline).first { $0.range(of: word, options: .regularExpression) != nil }
+        guard line != nil || only else { return nil }
         let text = (line.map(String.init) ?? answer).trimmingCharacters(in: .whitespacesAndNewlines)
         return "Pi: " + SecretFilter.masked(String(text.prefix(300)))
     }
@@ -270,7 +320,10 @@ public enum ReviewWorkflow {
                 }
             }
         }
-        for request in plan.requests where request.decision == .approved && !request.isSent {
+        // The merge requests' heads as GitLab has them now, read once each before a publish (R66).
+        var heads: [MergeRequestRef: Result<String, Failure>] = [:]
+        // A publish that may have gone through waits until the user approves it again.
+        for request in plan.requests where request.decision == .approved && !request.isSent && !request.isUncertain {
             if let shown, shown[request.id] != ReviewNotes.textHash(request.text) { continue }
             // Only Czech goes to GitLab, whatever the run's language or an edit (Translate never changes the text).
             if request.kind != .delete, !ReviewLanguage.isCzech(request.text, marker: run.spec.posting.marker.value) {
@@ -332,6 +385,16 @@ public enum ReviewWorkflow {
                 entry["position"] = position.json
                 entry["path"] = position.newLine != nil || position.oldLine == nil ? position.newPath : position.oldPath
                 entry["line"] = position.newLine ?? position.oldLine
+                // A published diff note goes on GitLab's latest diff: only while that is still the reviewed head.
+                if publish, entry["action"] as? String == "create", entry["discussion_id"] == nil {
+                    if heads[goal.ref] == nil { heads[goal.ref] = await remoteHead(run, key: goal.key, iid: goal.ref.iid, env: env) }
+                    switch heads[goal.ref] {
+                    case .success(let head) where head == position.headSHA.lowercased(): break
+                    case .success: try fail(request.id, headMovedMessage); continue
+                    case .failure(let failure): try fail(request.id, "AKit couldn't check the merge request's head: \(failure.message). Review Again…, then publish."); continue
+                    case nil: continue
+                    }
+                }
             }
             entry["mr"] = mr
             if !used.contains(goal.ref) { used.append(goal.ref) }
@@ -356,20 +419,33 @@ public enum ReviewWorkflow {
         // What the extension saw GitLab answer, for each request this send carried.
         var outcome: [String: (draftID: Int?, error: String?, published: Bool)] = [:]
         var needsPublish = Set<String>()
+        // Publish calls the extension let through, and those whose error may hide a published note.
+        var started = Set<String>(), uncertain = Set<String>()
         let data = (try? Data(contentsOf: logFile)) ?? Data()
         for line in data.split(separator: 0x0A).dropFirst(before) {
             guard let object = (try? JSONSerialization.jsonObject(with: Data(line))) as? JSONObject, let id = object.string("request"),
                   bodies[id] != nil else { continue }
             let text = object.string("text") ?? ""
             let viaPublish = (object.string("tool") ?? "").lowercased().hasSuffix("__" + ReviewMCPPolicy.publishTool)
-            if object.bool("needsPublish") {
+            if object.bool("started") {
+                if viaPublish { started.insert(id) }
+            } else if object.bool("needsPublish") {
                 // The extension blocked it: the server can only publish, and the user hasn't said yes.
                 needsPublish.insert(id)
             } else if !object.bool("isError") {
                 let answer = ReviewMCPCall.json(text) as? JSONObject
                     ?? text.firstIndex(of: "{").flatMap { ReviewMCPCall.json(String(text[$0...])) as? JSONObject }
-                let returned = answer?.int("id") ?? answer?.object("note")?.int("id") ?? answer?.objects("notes").first?.int("id")
+                // A draft tool answers with the draft; GitLab's own server may wrap the note.
+                let returned = viaPublish
+                    ? answer?.object("note")?.int("id") ?? answer?.objects("notes").first?.int("id") ?? answer?.int("id")
+                    : answer?.int("id")
                 outcome[id] = (returned, nil, viaPublish)
+                uncertain.remove(id)
+            } else if viaPublish, text.range(of: #"(?<![0-9])4[0-9][0-9](?![0-9])"#, options: .regularExpression) == nil {
+                // Not a clear refusal (a timeout, a dropped connection): the note may be there.
+                if outcome[id]?.error == nil, outcome[id] != nil { continue }
+                uncertain.insert(id)
+                outcome[id] = (nil, uncertainMessage, true)
             } else if outcome[id] == nil || outcome[id]?.error != nil {
                 // A retry that worked wins over the failure before it.
                 outcome[id] = (nil, "GitLab: " + SecretFilter.masked(String(text.prefix(300))), viaPublish)
@@ -407,13 +483,21 @@ public enum ReviewWorkflow {
                                                                     discussionID: request.discussionID))
                     }
                 }
+            } else if uncertain.contains(id) || (started.contains(id) && outcome[id] == nil) {
+                sent.error = uncertainMessage
+                sent.uncertain = true
+                report.failed.append((id, uncertainMessage))
             } else if needsPublish.contains(id), outcome[id] == nil || outcome[id]?.error != nil {
                 sent.error = needsPublishMessage
                 report.failed.append((id, needsPublishMessage))
                 report.needsPublish.append(id)
                 if let host = target(request)?.ref.host { publishedHosts.insert(host) }
             } else {
-                sent.error = outcome[id]?.error ?? passError ?? piSaid(answer, about: id) ?? "The send pass didn't send it."
+                sent.error = outcome[id]?.error ?? passError ?? piSaid(answer, about: id, only: approved.count == 1) ?? "The send pass didn't send it."
+                if sent.error == "The send pass didn't send it.", report.note == nil,
+                   let said = answer?.trimmingCharacters(in: .whitespacesAndNewlines), !said.isEmpty {
+                    report.note = "Pi's answer: " + SecretFilter.masked(String(said.prefix(300)))
+                }
                 report.failed.append((id, sent.error ?? ""))
             }
             try ReviewJSON.update(folder.appending(path: "requests.json"), empty: plan) { file in
