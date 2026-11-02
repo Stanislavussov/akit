@@ -74,7 +74,8 @@ files:
     when: stack == node         # field == v, field != v, or a bare field (set/true); list = all
 ```
 
-Templates use `{{field}}`, `{{project_name}}`, `{{target}}`. Claude gets `CLAUDE.md`
+Templates and skills use `\{{field}}`, `\{{project_name}}`, `\{{target}}` (`\\{{…}}` keeps the braces
+as they are). Claude gets `CLAUDE.md`
 (`@AGENTS.md`) and `.claude/skills -> ../.agents/skills` automatically. The same skill or
 non-Markdown file from two layers needs `override: true` on the one that wins.
 
@@ -336,7 +337,8 @@ these commands; never edit the files by hand. Each prints the diff and writes no
 diff to the user and run it again with `--yes` after a yes. Delete a role or a scenario only when
 the user asks for that one by name, and show the list `delete` prints (it may take roles with it)
 before `--yes`. To build a scenario for a problem the user describes, `scenario write` with their
-words; link the skills that hold the rules with `link`.
+words; link the skills that hold the rules with `link`. A new role runs in no scenario until
+`scenario add-role` puts it there.
 
 ```
 akit review roles [--project P] [--json]          # roles with their source (built-in, brain, project)
@@ -356,6 +358,10 @@ akit review role delete ID [--project P] [--yes]  # to the Trash with the projec
 akit review scenario show|new|save|duplicate|reset|write|skills|link|unlink ID …   # the same for scenarios
 akit review scenario delete ID [--keep-roles] [--project P] [--yes]
                                                   # also the roles only it uses, unless --keep-roles
+akit review scenario add-role ID ROLE [--optional] [--project P] [--yes]
+                                                  # a role into a scenario (required unless --optional)
+akit review scenario remove-role ID ROLE [--project P] [--yes]
+akit review scenario move-role ID ROLE --up|--down [--project P] [--yes]   # roles run in the listed order
 akit review defaults show | save --file PATH|- [--yes]    # the brain's review.yaml
 akit review profile show SLUG | new SLUG [--yes] | save SLUG --file PATH|- [--yes]
 ```

@@ -2138,11 +2138,24 @@ akit remove skill ИМЯ --everywhere
 System prompt — это текст, который агент отправляет модели перед вашим первым сообщением: правила, описания инструментов, ваши инструкции. Пример: вы хотите проверить, попал ли ваш `CLAUDE.md` в контекст.
 
 1. Откройте сессию и нажмите вкладку **System Prompt**.
-2. Сверху стоит сводка: примерное число токенов, число блоков, инструментов и частей контекста.
-3. Ниже разделы: **System prompt** (сам текст), **Tools (N)** (инструменты с описанием и схемой ввода), **Loaded context (N)** (загруженные файлы с путями).
+2. Сверху стоит сводка: примерное число токенов, число блоков, файлов инструкций, инструментов и частей контекста.
+3. Ниже разделы: **Instruction files (N)** (из каких файлов склеены инструкции), **System prompt** (сам текст), **Tools (N)** (инструменты с описанием и схемой ввода), **Loaded context (N)** (остальной контекст: список скиллов, окружение).
 4. Кнопка **Copy Prompt** копирует текст промпта.
 
-![Вкладка System Prompt сессии Add a tags filter to the notes list: пояснение As saved by Claude in this session, сводка ≈ 7 727 tokens · 5 blocks · 21 tools · 4 context parts, кнопка Copy Prompt и раздел System prompt с текстом промпта](images/sessions-prompt.png)
+![Вкладка System Prompt сессии Add a tags filter to the notes list: пояснение As saved by Claude in this session, сводка ≈ 7 749 tokens · 5 blocks · 2 instruction files · 21 tools · 3 context parts, кнопка Copy Prompt, раздел Instruction files (2) с файлами 1. Global ~/.claude/CLAUDE.md и 2. Project ~/Projects/notes-mac/AGENTS.md, ниже раздел System prompt с текстом промпта](images/sessions-prompt.png)
+
+Раздел **Instruction files (N)** отвечает на вопрос «из каких файлов собран мой CLAUDE.md или AGENTS.md». Агент склеивает общий файл и файлы проекта в один текст. Раздел показывает каждый файл отдельно, в том порядке, в котором его получила модель:
+
+| Метка | Откуда файл |
+|---|---|
+| **Global** | общий файл агента: `~/.claude/CLAUDE.md` у Claude Code, папка агента у Pi (`~/.pi/agent`) |
+| **Managed** | файл организации для Claude Code |
+| **Folder above** | папка выше проекта: файл получают все сессии ниже неё |
+| **Project** | папка проекта или её правила (`.claude/rules`) |
+| **Local** | `CLAUDE.local.md` проекта, не в git |
+| **Auto memory** | автопамять Claude Code (`MEMORY.md`) |
+
+В строке файла стоят номер, метка, путь и примерный размер в токенах. Кнопка с папкой показывает файл в Finder. **Text** раскрывает текст файла, как его получила модель.
 
 - У Claude Code промпт сохранён в самой сессии: показана последняя версия. Если сессию записала старая версия агента, вкладка пишет «No saved system prompt».
 - У Pi вкладка предлагает кнопку **Capture System Prompt**. AKit запускает Pi в папке проекта и читает промпт, который тот отправил бы. Сообщение модели не уходит, и сессия не сохраняется.

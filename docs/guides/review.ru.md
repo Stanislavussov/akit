@@ -1814,7 +1814,7 @@ AKit проверяет папку ревью каждые несколько с
 2. **Level** = **Brain**.
 3. Выберите роль в списке. Справа откроется её `SKILL.md`.
 
-![Страница Roles: Level = Brain; список ролей contracts, architecture, domain, requirements, tests, bug-hunter, upgrade-risk, security, performance, concurrency, data-migrations, observability, history, у каждой метка built-in и описание; выбрана security, справа её SKILL.md: name review-security, блок akit-review с min_severity low, max_findings 6, needs и do_not_comment, ниже список проверок; кнопки New Role…, Write with AI…, Add to Brain, Revert и Save…; подпись Built into AKit. Edit it to save it into the brain, or Add to Brain first.](images/review-roles.png)
+![Страница Roles: Level = Brain; список ролей contracts, architecture, domain, requirements, tests, bug-hunter, upgrade-risk, security, performance, concurrency, data-migrations, observability, history, у каждой метка built-in и описание; выбрана security; строка Skills с кнопкой Link Skill; строка Scenarios со сценариями feature?, bugfix?, security, dependency-upgrade?, api-change? (знак ? — роль по желанию), у каждого ×, и кнопка Add to Scenario; ниже её SKILL.md: name review-security, блок akit-review с min_severity low, max_findings 6, needs и do_not_comment, список проверок; кнопки New Role…, Write with AI…, Add to Brain, Delete…, Revert и Save…](images/review-roles.png)
 
 Как читать роль:
 
@@ -1829,13 +1829,42 @@ AKit проверяет папку ревью каждые несколько с
 
 Эти скиллы не ставятся в папки скиллов агентов. AKit передаёт их только проходам ревью.
 
+### Просто: добавить роль в сценарий
+<!-- section: config-role-scenarios -->
+
+Новая роль сама не попадает ни в один сценарий. Строка **Scenarios** над текстом роли показывает, в каких сценариях она есть. Если ни в каком, там написано «none: no review runs it».
+
+1. Откройте **Review** → **Roles** и выберите роль. Пример: `test`.
+2. Нажмите **Add to Scenario**, выберите сценарий и **Required** или **Optional**.
+   - **Required** — роль идёт в каждом ревью с этим сценарием.
+   - **Optional** — роль выключена, её включают переключателем в **New Review…**.
+3. Окно покажет diff сценария. Нажмите **Save**.
+
+**×** у сценария убирает роль из него, тоже через diff.
+
+То же из терминала: `akit review scenario add-role feature test [--optional] --yes`.
+
+> **Почему так:** роль — это что проверять, сценарий — какие роли идут. Одна роль может быть в нескольких сценариях.
+
 ### Просто: сценарии и значения по умолчанию
 <!-- section: config-scenarios -->
 
 1. Откройте **Review** → **Scenarios**.
 2. Выберите сценарий. Справа его YAML.
 
-![Страница Scenarios: Level = Brain; список Feature, Bugfix, Security, Dependency upgrade с меткой built-in и строка Defaults (review.yaml); выбран bugfix, справа его YAML: roles с required bug-hunter, contracts, requirements, tests и optional architecture, security, concurrency, performance, observability, history, список checks и блок detect](images/review-scenarios.png)
+![Страница Scenarios: Level = Brain; список Feature, Bugfix, Security, Dependency upgrade с меткой built-in, API change с меткой brain и строка Defaults (review.yaml); выбран Bugfix; справа строка Skills, блок Roles, in run order с кнопкой Add Role: роли bug-hunter, contracts, requirements, tests, architecture, у каждой переключатель Required / Optional, стрелки вверх и вниз и ×; ниже его YAML: roles с required и optional, список checks и блок detect](images/review-scenarios.png)
+
+Блок **Roles, in run order** — роли сценария в порядке запуска. Править их можно без YAML:
+
+- **Add Role** — добавить роль этого уровня: **Required** или **Optional**.
+- **Required** / **Optional** — обязательная роль или по желанию.
+- **↑** и **↓** — роль идёт раньше или позже. Обязательные роли идут первыми, потом включённые по желанию.
+- **×** — убрать роль. Последнюю обязательную роль убрать нельзя.
+- Жёлтый треугольник — такой роли на этом уровне нет. Ревью с ней остановится.
+
+Кнопки меняют только текст. **Save…** покажет diff.
+
+В YAML роль можно назвать по id (`test`) или по имени скилла (`review-test`): это одна роль.
 
 Поля сценария:
 

@@ -209,7 +209,7 @@ public struct ProjectBundle: Sendable {
                     }
                     // Fields only in Markdown: a skill's scripts may use {{…}} for other tools.
                     if relative.lowercased().hasSuffix(".md"), let text = String(data: data, encoding: .utf8) {
-                        data = Data(substitute(text, values).text.utf8)
+                        data = Data(substitute(text, values, markdown: true).text.utf8)
                     }
                     files[relative] = data
                 }
@@ -276,7 +276,7 @@ public struct ProjectBundle: Sendable {
                     continue
                 }
                 if let text = String(data: data, encoding: .utf8) {
-                    let result = substitute(text, values)
+                    let result = substitute(text, values, markdown: file.to.lowercased().hasSuffix(".md"))
                     for name in result.unknown {
                         warnings.append("\(layer.name)/\(file.template) uses {{\(name)}}, which is not a field; it is left as is.")
                     }
@@ -381,12 +381,20 @@ public struct ProjectBundle: Sendable {
     }
 
     /// Replaces `{{field}}` (spaces inside allowed) for known fields. Unknown names are
-    /// left untouched, so `{{…}}` meant for other tools survives.
-    static func substitute(_ text: String, _ values: [String: FieldValue]) -> (text: String, unknown: [String]) {
+    /// left untouched, so `{{…}}` meant for other tools survives. `markdown`: `\{{field}}` is
+    /// written as `{{field}}` without replacing it, for a skill or template that explains the
+    /// syntax; other files keep `\{{` as is (Handlebars and Mustache use it themselves).
+    static func substitute(_ text: String, _ values: [String: FieldValue], markdown: Bool = false) -> (text: String, unknown: [String]) {
         var result = ""
         var unknown: [String] = []
         var rest = Substring(text)
         while let open = rest.range(of: "{{") {
+            if markdown, open.lowerBound > rest.startIndex, rest[rest.index(before: open.lowerBound)] == "\\" {
+                result += rest[..<rest.index(before: open.lowerBound)]
+                result += "{{"
+                rest = rest[open.upperBound...]
+                continue
+            }
             result += rest[..<open.lowerBound]
             guard let close = rest[open.upperBound...].range(of: "}}") else {
                 rest = rest[open.lowerBound...]

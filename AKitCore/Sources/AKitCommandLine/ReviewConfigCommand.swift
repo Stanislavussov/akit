@@ -43,12 +43,19 @@ extension AKitCLI {
                                         project's own role (one the brain lacks) goes
       akit review scenario show|new|save|duplicate|reset|write|skills|link|unlink ID …
       akit review scenario delete ID [--keep-roles] [--project P] [--yes]
+      akit review scenario add-role ID ROLE [--optional] [--project P] [--yes]
+      akit review scenario remove-role ID ROLE [--project P] [--yes]
+      akit review scenario move-role ID ROLE --up|--down [--project P] [--yes]
                                         The same for a scenario (scenarios/ID.yaml). write: Pi
                                         drafts it from the problem you describe (default skill
                                         review-scenario-writer), with only existing roles and
                                         linkable skills. delete also moves the roles only this
                                         scenario uses to the Trash (--keep-roles keeps them) and
-                                        takes default_scenario: ID out of the profiles
+                                        takes default_scenario: ID out of the profiles.
+                                        add-role: the role joins the scenario as required (at
+                                        the end; --optional: as optional), or moves there;
+                                        remove-role takes it out; move-role runs it one place
+                                        earlier or later. Roles run in the listed order
       akit review defaults show | save --file PATH|- [--yes]
                                         The brain's review.yaml: models, thresholds, caps
       akit review profile show SLUG | new SLUG [--file PATH|-] [--yes] | save SLUG --file PATH|- [--yes]
@@ -145,6 +152,19 @@ extension AKitCLI {
             guard let given = args.positional() else { throw Failure(message: "Which \(name)? akit review \(name) \(action) ID.") }
             id = given.hasPrefix("review-") && kind == .role ? String(given.dropFirst("review-".count)) : given
         }
+        // add-role / remove-role / move-role: the role and where it goes.
+        let roleActions = ["add-role", "remove-role", "move-role"]
+        var roleName: String?
+        let optionalRole = args.flag("--optional")
+        let (up, down) = (args.flag("--up"), args.flag("--down"))
+        if roleActions.contains(action) {
+            guard kind == .scenario else { throw Failure(message: "\(action) goes with akit review scenario.") }
+            guard let given = args.positional() else { throw Failure(message: "Which role? akit review scenario \(action) ID ROLE.") }
+            roleName = ReviewScenarioRoles.roleID(given)
+            if action == "move-role", up == down { throw Failure(message: "move-role takes --up or --down.") }
+        }
+        if optionalRole, action != "add-role" { throw Failure(message: "--optional goes with akit review scenario add-role.") }
+        if up || down, action != "move-role" { throw Failure(message: "--up and --down go with akit review scenario move-role.") }
         var skillNames: [String] = []
         if action == "link" || action == "unlink" {
             while let name = args.positional() { skillNames.append(name) }
@@ -350,6 +370,25 @@ extension AKitCLI {
                     throw Failure(message: failure.message)
                 }
                 return try await finishSave(try ReviewConfigEditor.plan(kind, id: id, text: edited, level: level, home: home, brain: brain))
+            case "add-role", "remove-role", "move-role":
+                guard let role = roleName else { throw Failure(message: "Which role?") }
+                if file != nil { throw Failure(message: "\(action) changes the text itself; use save --file for your own.") }
+                let profile = try reviewProfile(project, catalog: catalog)
+                guard let scenario = catalog.scenarios(for: profile).first(where: { $0.id == id }) else { throw Failure(message: "There is no scenario \(id).") }
+                if action == "add-role", !catalog.roles(for: profile).contains(where: { $0.id == role }) {
+                    throw Failure(message: "There is no role \(role) at this level (akit review roles\(project.map { " --project \($0)" } ?? "") lists them).")
+                }
+                let edited: String
+                do {
+                    switch action {
+                    case "add-role": edited = try ReviewScenarioRoles.adding(role, required: !optionalRole, to: scenario)
+                    case "remove-role": edited = try ReviewScenarioRoles.removing(role, from: scenario)
+                    default: edited = try ReviewScenarioRoles.moving(role, by: up ? -1 : 1, in: scenario)
+                    }
+                } catch let failure as ReviewScenarioRoles.Failure {
+                    throw Failure(message: failure.message)
+                }
+                return try await finishSave(try ReviewConfigEditor.plan(.scenario, id: id, text: edited, level: level, home: home, brain: brain))
             case "delete":
                 guard kind == .role || kind == .scenario else { throw Failure(message: "Only a role or a scenario can be deleted.") }
                 if file != nil { throw Failure(message: "delete takes no --file.") }
@@ -369,7 +408,7 @@ extension AKitCLI {
                 out("Deleted" + (level == .brain ? " and committed in the brain." : "."))
                 return 0
             default:
-                throw Failure(message: "akit review \(name) takes show, new, save, duplicate, reset, write, link, unlink or delete, not \(action).")
+                throw Failure(message: "akit review \(name) takes show, new, save, duplicate, reset, write, link, unlink, delete (a scenario also add-role, remove-role, move-role), not \(action).")
             }
         } catch let failure as ReviewConfigEditor.Failure {
             throw Failure(message: failure.message)

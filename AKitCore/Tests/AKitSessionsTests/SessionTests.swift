@@ -322,8 +322,13 @@ struct SessionTests {
         var lines = claudeSession()
         let prompt = try #require(lines.firstIndex { ClaudeLogFormat.promptText($0) != nil })
         lines.insert(contentsOf: [
-            ["type": "attachment", "attachment": ["type": "instructions", "files": [
+            ["type": "attachment", "cwd": "/work/app/api", "attachment": ["type": "instructions", "files": [
                 ["path": "/home/.claude/CLAUDE.md", "type": "User", "content": "Be brief."],
+                ["path": "/work/app/CLAUDE.md", "type": "Project", "content": "Monorepo rules."],
+                ["path": "/work/app/.claude/rules/style.md", "type": "Project", "content": "Monorepo style."],
+                ["path": "/work/app/api/.claude/rules/db.md", "type": "Project", "content": "Use migrations."],
+                ["path": "/work/app/api/CLAUDE.local.md", "type": "Local", "content": "token sk-ant-api03-\(String(repeating: "a", count: 40))"],
+                ["path": "/home/.claude/projects/x/memory/MEMORY.md", "type": "AutoMem", "content": "- note"],
             ]]],
             ["type": "attachment", "attachment": ["type": "credential_org", "org": "secret-org"]],
             ["type": "attachment", "attachment": ["type": "future_type", "text": "unknown, not shown"]],
@@ -339,8 +344,14 @@ struct SessionTests {
         #expect(recorded.sections == ["You are Claude Code.", "# Harness"])
         #expect(recorded.tools.map(\.name) == ["Bash"])
         #expect(recorded.tools.first?.schema.contains("\"type\" : \"object\"") == true)
-        #expect(recorded.context.map(\.title) == ["Date", "CLAUDE.md · User", "Skills (1)"])
-        #expect(recorded.context[1].source == "/home/.claude/CLAUDE.md")
+        #expect(recorded.context.map(\.title) == ["Date", "Skills (1)"], "instruction files have their own list")
+        #expect(recorded.instructionFiles.map(\.path) == ["/home/.claude/CLAUDE.md", "/work/app/CLAUDE.md", "/work/app/.claude/rules/style.md",
+                                                          "/work/app/api/.claude/rules/db.md", "/work/app/api/CLAUDE.local.md",
+                                                          "/home/.claude/projects/x/memory/MEMORY.md"])
+        #expect(recorded.instructionFiles.map(\.scope) == [.global, .above, .above, .project, .local, .memory])
+        #expect(recorded.instructionFiles.map(\.id) == [0, 1, 2, 3, 4, 5])
+        #expect(recorded.instructionFiles[0].text == "Be brief.")
+        #expect(!recorded.instructionFiles[4].text.contains("aaaaaaaaaa"), "secrets are masked")
         #expect(!recorded.context.contains {
             $0.text.contains("secret-org") || $0.text.contains("later") || $0.text.contains("unknown")
         })
@@ -353,24 +364,34 @@ struct SessionTests {
     }
 
     /// A stand-in `pi` that behaves like the probe extension: writes the prompt file.
-    func fakePi(_ body: String) throws -> HarnessEnvironment {
+    func fakePi(_ body: String, variables: [String: String] = [:]) throws -> HarnessEnvironment {
         let url = home.appending(path: "bin/pi")
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         try fm.createDirectory(at: home.appending(path: "work/app"), withIntermediateDirectories: true)
-        return HarnessEnvironment(homeDirectory: home, executableSearchPaths: [home.appending(path: "bin")])
+        return HarnessEnvironment(homeDirectory: home, variables: variables, executableSearchPaths: [home.appending(path: "bin")])
     }
 
     @Test func piCaptureRunsWithoutSessionInTheProject() async throws {
         let env = try fakePi("""
         case "$*" in *--no-session*--offline*-p*-e*) ;; *) echo "unexpected: $*"; exit 2;; esac
-        printf '{"systemPrompt":"You are pi in %s","tools":[{"name":"read","description":"Read files","parameters":{"type":"object"}}],"contextFiles":["/p/AGENTS.md"],"skills":["tdd"]}' "$(basename "$(pwd)")" > "$AKIT_PROMPT_OUT"
-        """)
+        printf '{"systemPrompt":"You are pi in %s","tools":[{"name":"read","description":"Read files","parameters":{"type":"object"}}],"contextFiles":[{"path":"%s/.pi/agent/AGENTS.md","content":"Global rules."},{"path":"%s/work/AGENTS.md","content":"Work rules."},{"path":"%s/work/app/AGENTS.md","content":"App rules."}],"skills":["tdd"]}' "$(basename "$(pwd)")" "$HOME_DIR" "$HOME_DIR" "$HOME_DIR" > "$AKIT_PROMPT_OUT"
+        """, variables: ["HOME_DIR": home.path])
         let prompt = try #require(try await PromptReader.capture(harness: .pi, in: home.appending(path: "work/app"), env: env))
         #expect(prompt.systemPrompt == "You are pi in app")
         #expect(prompt.tools.map(\.name) == ["read"])
-        #expect(prompt.context.map(\.title) == ["Context files (1)", "Skills (1)"])
+        #expect(prompt.context.map(\.title) == ["Skills (1)"])
+        #expect(prompt.instructionFiles.map { URL(filePath: $0.path).deletingLastPathComponent().lastPathComponent } == ["agent", "work", "app"])
+        #expect(prompt.instructionFiles.map(\.scope) == [.global, .above, .project])
+        #expect(prompt.instructionFiles.map(\.text) == ["Global rules.", "Work rules.", "App rules."])
+    }
+
+    @Test func piProbeOfOlderAKitKeepsBarePaths() throws {
+        let data = Data(#"{"systemPrompt":"p","contextFiles":["/p/AGENTS.md"]}"#.utf8)
+        let prompt = try #require(PiPromptProbe.snapshot(from: data, project: URL(filePath: "/p/app")))
+        #expect(prompt.instructionFiles.map(\.path) == ["/p/AGENTS.md"])
+        #expect(prompt.instructionFiles.map(\.scope) == [.above])
     }
 
     @Test func piCaptureFailureShowsPiOutput() async throws {

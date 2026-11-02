@@ -477,10 +477,11 @@ Friction («трение») — места, где агент спотыкалс
 ### Вкладка System Prompt
 <!-- section: terms-sessions-prompt -->
 
-- **≈ N tokens · N blocks · N tools · N context parts**: сводка над промптом. Токены оценены грубо: примерно 4 символа на токен. **blocks** — сколько отдельных частей у system prompt. **tools** — сколько инструментов описано. **context parts** — сколько загруженных файлов (например, CLAUDE.md). Подробнее: [Посмотреть system prompt](screens#sessions-prompt)
+- **≈ N tokens · N blocks · N instruction files · N tools · N context parts**: сводка над промптом. Токены оценены грубо: примерно 4 символа на токен. **blocks** — сколько отдельных частей у system prompt. **instruction files** — из скольких файлов склеены инструкции. **tools** — сколько инструментов описано. **context parts** — сколько частей остального контекста. Подробнее: [Посмотреть system prompt](screens#sessions-prompt)
+- **Instruction files (N)**: файлы `CLAUDE.md` и `AGENTS.md`, из которых агент склеил инструкции, по порядку, с путями. Метка у файла говорит, откуда он: **Global** (общий файл агента), **Managed** (файл организации), **Folder above** (папка выше проекта), **Project** (папка проекта), **Local** (`CLAUDE.local.md`), **Auto memory** (автопамять Claude Code). **Text** раскрывает текст файла.
 - **System prompt**: сам текст, который агент отправляет модели перед вашим первым сообщением.
 - **Tools (N)**: инструменты, которые видит модель. Внутри каждого описание и схема ввода («Input schema»).
-- **Loaded context (N)**: файлы, которые агент загрузил в контекст, с путями. Здесь видно, попал ли ваш `CLAUDE.md` или `AGENTS.md`.
+- **Loaded context (N)**: остальной контекст, который агент загрузил сам: список скиллов, окружение, дата.
 - **Copy Prompt**: копирует текст system prompt в буфер обмена.
 - **As saved by Claude Code in this session…**: промпт взят из файла сессии. Показана последняя версия; агент переиспользует её до сжатия разговора.
 - **No saved system prompt**: сессию записала версия Claude Code, которая промпт не сохраняет. Claude Code сохраняет его с версии 2.1.265.

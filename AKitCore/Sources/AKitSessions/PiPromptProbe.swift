@@ -49,7 +49,7 @@ enum PiPromptProbe {
           writeFileSync(process.env.AKIT_PROMPT_OUT!, JSON.stringify({
             systemPrompt: ctx.getSystemPrompt(),
             tools,
-            contextFiles: (options.contextFiles ?? []).map((file: any) => file.path),
+            contextFiles: (options.contextFiles ?? []).map((file: any) => ({ path: file.path, content: file.content ?? "" })),
             skills: (options.skills ?? []).map((skill: any) => skill.name),
           }));
           code = 0;
@@ -93,16 +93,23 @@ enum PiPromptProbe {
     static func snapshot(from data: Data, project: URL, at date: Date = .now) -> PromptSnapshot? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? JSONLines.Object,
               let prompt = json["systemPrompt"] as? String else { return nil }
-        var context: [PromptContextPart] = []
-        if let files = json["contextFiles"] as? [String], !files.isEmpty {
-            context.append(PromptContextPart(id: 0, title: "Context files (\(files.count))",
-                                             text: files.joined(separator: "\n") + "\n\nTheir text is part of the system prompt."))
+        // Pi reads its global file first, then one file per folder from `/` down to the project.
+        let entries = (json["contextFiles"] as? [Any] ?? []).compactMap { item -> (path: String, text: String)? in
+            if let path = item as? String { return (path, "") }
+            guard let file = item as? JSONLines.Object, let path = file["path"] as? String else { return nil }
+            return (path, file["content"] as? String ?? "")
         }
+        let files = entries.enumerated().map { index, file in
+            PromptInstructionFile(id: index, path: file.path,
+                                  scope: PromptInstructionFile.folderScope(of: file.path, cwd: project) ?? .global,
+                                  text: SecretFilter.masked(file.text))
+        }
+        var context: [PromptContextPart] = []
         if let skills = json["skills"] as? [String], !skills.isEmpty {
-            context.append(PromptContextPart(id: 1, title: "Skills (\(skills.count))", text: skills.joined(separator: "\n")))
+            context.append(PromptContextPart(id: 0, title: "Skills (\(skills.count))", text: skills.joined(separator: "\n")))
         }
         return PromptSnapshot(harness: .pi, source: .captured(project: project, at: date), sections: [SecretFilter.masked(prompt)],
-                              tools: PromptTool.list(json["tools"]), context: context)
+                              tools: PromptTool.list(json["tools"]), instructionFiles: files, context: context)
     }
 
     private static func lastLines(_ text: String, count: Int = 15) -> String {

@@ -89,8 +89,10 @@ public struct ReviewScenario: Sendable, Hashable, Identifiable {
             throw ReviewRole.Failure(message: "\(where_): id is missing or uses other characters than a-z, 0-9 and -.")
         }
         let roles = map["roles"] as? [String: Any] ?? [:]
-        var scenario = ReviewScenario(id: id, title: map["title"] as? String ?? id.capitalized, required: ReviewYAML.strings(roles["required"]),
-                                      optional: ReviewYAML.strings(roles["optional"]), checks: ReviewYAML.strings(map["checks"]),
+        // A role is named by its id; its skill name (review-<id>, the folder) means the same role.
+        func ids(_ value: Any?) -> [String] { ReviewYAML.strings(value).map(ReviewScenarioRoles.roleID) }
+        var scenario = ReviewScenario(id: id, title: map["title"] as? String ?? id.capitalized, required: ids(roles["required"]),
+                                      optional: ids(roles["optional"]), checks: ReviewYAML.strings(map["checks"]),
                                       contextRequired: ReviewYAML.strings(map["context_required"]), text: text, source: source, file: file)
         scenario.skills = try ReviewYAML.skillNames(map["skills"], where: where_)
         return scenario
