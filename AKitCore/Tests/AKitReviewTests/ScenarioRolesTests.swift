@@ -35,6 +35,22 @@ struct ScenarioRolesTests {
         #expect(throws: ReviewScenarioRoles.Failure.self) { try ReviewScenarioRoles.setting(required: ["../x"], optional: [], in: one.text) }
     }
 
+    @Test func aBlockWithBlankLinesIsReplacedWholeAndTheNextKeyStays() throws {
+        let text = "id: x\nroles:\n  required:\n    - a\n\n  optional:\n    - b\n\n# checks next\nchecks:\n  - \"q\"\n"
+        let scenario = try ReviewScenario.parse(text, source: .brain)
+        let edited = try ReviewScenarioRoles.adding("c", required: true, to: scenario)
+        let parsed = try ReviewScenario.parse(edited, source: .brain)
+        #expect(parsed.required == ["a", "c"])
+        #expect(parsed.optional == ["b"])
+        #expect(parsed.checks == ["q"])
+        #expect(edited.contains("# checks next"), "a comment before the next key stays")
+    }
+
+    @Test func noScenarioIsLeftWithoutARequiredRole() throws {
+        let one = try ReviewScenario.parse(ReviewTemplates.scenario("hotfix"), source: .brain)
+        #expect(throws: ReviewScenarioRoles.Failure.self) { try ReviewScenarioRoles.adding("bug-hunter", required: false, to: one) }
+    }
+
     @Test func usesListTheScenariosOfARole() {
         let catalog = ReviewCatalog.load(home: TempHome().url, brain: nil)
         let uses = ReviewScenarioRoles.uses(of: "security", in: catalog.scenarios)

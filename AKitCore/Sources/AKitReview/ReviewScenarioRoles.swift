@@ -14,6 +14,7 @@ public enum ReviewScenarioRoles {
         let required = required.map(roleID)
         let optional = optional.map(roleID).filter { !required.contains($0) }
         for id in required + optional where !ReviewYAML.isID(id) { throw Failure(message: "\(id) is not a role id.") }
+        guard !required.isEmpty else { throw Failure(message: "A scenario needs one required role.") }
         let value = "{ required: [" + required.joined(separator: ", ") + "], optional: [" + optional.joined(separator: ", ") + "] }"
         let result = ReviewConfigEditor.settingTopLevelBlock("roles", value, in: text)
         guard let parsed = try? ReviewScenario.parse(result, source: .brain), parsed.required == required, parsed.optional == optional else {

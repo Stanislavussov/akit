@@ -303,15 +303,18 @@ public enum ReviewResolver {
         // A role the user deleted that a scenario or the profile still names is skipped.
         func deleted(_ id: String) -> Bool { catalog.removedRoles.contains(id) && !available.contains { $0.id == id } }
         var picked: [(id: String, reason: String)] = definition.required.filter { !deleted($0) }.map { ($0, "required by \(definition.id)") }
-        for id in profile?.rolesAdd ?? [] where !picked.contains(where: { $0.id == id }) && !deleted(id) { picked.append((id, "added by the project")) }
+        for id in (profile?.rolesAdd ?? []).map(ReviewScenarioRoles.roleID) where !picked.contains(where: { $0.id == id }) && !deleted(id) { picked.append((id, "added by the project")) }
         // Turned-on roles run in the scenario's order, then the others in the catalog's.
         let order = definition.optional + available.map(\.id)
-        let turnedOn = choices.rolesOn.sorted { (order.firstIndex(of: $0) ?? .max) < (order.firstIndex(of: $1) ?? .max) }
+        let turnedOn = choices.rolesOn.map(ReviewScenarioRoles.roleID).sorted { a, b in
+            let (x, y) = (order.firstIndex(of: a) ?? .max, order.firstIndex(of: b) ?? .max)
+            return x != y ? x < y : a < b
+        }
         for id in turnedOn where !picked.contains(where: { $0.id == id }) {
             picked.append((id, definition.optional.contains(id) ? "optional, turned on" : "added for this run"))
         }
-        let off = Set((profile?.rolesOff ?? []) + choices.rolesOff)
-        picked.removeAll { off.contains($0.id) && !choices.rolesOn.contains($0.id) }
+        let off = Set(((profile?.rolesOff ?? []) + choices.rolesOff).map(ReviewScenarioRoles.roleID))
+        picked.removeAll { off.contains($0.id) && !turnedOn.contains($0.id) }
         let roles = try picked.map { pick -> ReviewRole in
             guard let role = available.first(where: { $0.id == pick.id }) else {
                 let elsewhere = catalog.projectRoles.filter { $0.value.contains { $0.id == pick.id } }.keys.sorted()
@@ -398,7 +401,7 @@ public enum ReviewResolver {
         spec.impact = pick(\.impact, fallback: .auto)
         spec.summaryLanguage = pick(\.summaryLanguage, fallback: preferredLanguage(preferredLanguages))
         // A deleted contracts role is never added back for other repositories' uses (R44).
-        let turnedOff = Set(off.filter { !choices.rolesOn.contains($0) } + (deleted("contracts") ? ["contracts"] : [])).sorted()
+        let turnedOff = Set(off.filter { !turnedOn.contains($0) } + (deleted("contracts") ? ["contracts"] : [])).sorted()
         spec.rolesOff = turnedOff.isEmpty ? nil : turnedOff
         if let base = choices.knowledgeBase {
             spec.knowledgeBase = Sourced(base, .run)

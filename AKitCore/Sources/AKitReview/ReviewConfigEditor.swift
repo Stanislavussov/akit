@@ -310,7 +310,20 @@ public enum ReviewConfigEditor {
         var lines = (crlf ? original.replacingOccurrences(of: "\r\n", with: "\n") : original).components(separatedBy: "\n")
         if let at = lines.firstIndex(where: { $0.hasPrefix(key + ":") }) {
             var end = at + 1
-            while end < lines.count, lines[end].hasPrefix(" ") || lines[end].hasPrefix("\t") || lines[end].hasPrefix("- ") { end += 1 }
+            func inBlock(_ line: String) -> Bool { line.hasPrefix(" ") || line.hasPrefix("\t") || line.hasPrefix("- ") }
+            var scan = at + 1
+            while scan < lines.count {
+                let line = lines[scan]
+                if inBlock(line) {
+                    scan += 1
+                    end = scan
+                } else if line.trimmingCharacters(in: .whitespaces).isEmpty || line.hasPrefix("#") {
+                    // A blank or comment line stays out unless the block goes on after it.
+                    scan += 1
+                } else {
+                    break
+                }
+            }
             lines.removeSubrange((at + 1)..<end)
         }
         let result = settingTopLevel(key, value, in: lines.joined(separator: "\n"))

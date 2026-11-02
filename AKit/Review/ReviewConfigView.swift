@@ -270,7 +270,9 @@ struct ReviewConfigView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .help("Required: runs every time. Optional: off by default, a switch in New Review…")
+            .disabled(required && scenario.required.count == 1)
+            .help(required && scenario.required.count == 1 ? "A scenario needs one required role"
+                  : "Required: runs every time. Optional: off by default, a switch in New Review…")
             Button { editRoles { try ReviewScenarioRoles.moving(id, by: -1, in: scenario) } } label: { Image(systemName: "arrow.up") }
                 .disabled(list.first == id)
                 .help("Run it one place earlier")
@@ -301,6 +303,8 @@ struct ReviewConfigView: View {
         let scenarios = catalog?.scenarios(for: profile) ?? []
         let uses = ReviewScenarioRoles.uses(of: item.id, in: scenarios)
         let free = scenarios.filter { scenario in !uses.contains { $0.scenario.id == scenario.id } }
+        // A scenario save reloads the role's text: unsaved edits would go.
+        let edited = text != item.text
         HStack(spacing: 6) {
             Text("Scenarios:").font(.callout).foregroundStyle(.secondary)
             if uses.isEmpty {
@@ -318,7 +322,8 @@ struct ReviewConfigView: View {
                         Image(systemName: "xmark").font(.caption2)
                     }
                     .buttonStyle(.borderless)
-                    .help("Take \(item.id) out of \(use.scenario.id); you see the diff first")
+                    .disabled(edited)
+                    .help(edited ? "Save or revert the role first" : "Take \(item.id) out of \(use.scenario.id); you see the diff first")
                 }
                 .padding(.horizontal, 6).padding(.vertical, 2)
                 .background(.quaternary.opacity(0.5), in: Capsule())
@@ -337,7 +342,9 @@ struct ReviewConfigView: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .help("Run this role in a scenario: required every time, or optional as a switch in New Review…. You see the diff first")
+            .disabled(edited)
+            .help(edited ? "Save or revert the role first"
+                  : "Run this role in a scenario: required every time, or optional as a switch in New Review…. You see the diff first")
             Spacer()
         }
     }
