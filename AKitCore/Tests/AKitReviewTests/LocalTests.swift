@@ -110,8 +110,8 @@ extension ReviewProcessTests {
             home.git(repo, "tag", "tree-tag", home.git(repo, "write-tree"))
             #expect(try await ReviewLocal.points(path: repo, query: "tree-tag", env: home.env).isEmpty, "a tag on a tree is no point")
 
-            let byBranch = try await ReviewLocal.points(path: repo, query: "41 TOTAL", env: home.env)
-            #expect(byBranch.map(\.name) == ["feature/AB#41-total"], "every word, any case")
+            let byBranch = try await ReviewLocal.points(path: repo, query: "ab#41 TOTAL", env: home.env)
+            #expect(byBranch.map(\.name) == ["feature/AB#41-total"], "every word, any case (a commit id has no #)")
             let byMessage = try await ReviewLocal.points(path: repo, query: "vat", env: home.env)
             #expect(byMessage.count == 2 && byMessage.contains { $0.kind == .branch } && byMessage.contains { $0.kind == .commit && $0.subject == "Add VAT" })
             let tag = try await ReviewLocal.points(path: repo, query: "v1", env: home.env).first { $0.kind == .tag }

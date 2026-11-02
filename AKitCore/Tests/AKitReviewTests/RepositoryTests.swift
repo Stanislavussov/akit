@@ -86,7 +86,8 @@ struct RepositoryUnitTests {
         spec.repository = ReviewRepository.Use(clone: "/x", owned: true, branch: nil,
                                                plan: .init(head: "a1b2c3d4", base: "b1b2c3d4", files: ["a.ts"], earlier: ["a.ts": [12, 8]]))
         let planned = ReviewPrompts.fetch(spec: spec)
-        #expect(!planned.contains("diffs_first") && planned.contains("Don't read the changed files' diffs"))
+        #expect(!planned.contains("diffs_first") && planned.contains("Don't read the diff versions or the changed files' diffs"))
+        #expect(!planned.contains("Its diff versions") && plain.contains("skip the versions when no tool reads them"))
         #expect(planned.contains("!12, !8") && !planned.contains("Spend at most 25 calls"))
     }
 }
@@ -140,7 +141,7 @@ extension ReviewProcessTests {
             let history = try String(contentsOf: folder.appending(path: "context/history.md"), encoding: .utf8)
             #expect(history.contains("`src/Auth.swift`: !3"))
             let args = try String(contentsOf: home.url.appending(path: "fake/args-fetch.txt"), encoding: .utf8)
-            #expect(args.contains("Don't read the changed files' diffs") && args.contains("!3"))
+            #expect(args.contains("or the changed files' diffs") && args.contains("!3"))
 
             await ReviewGather.removeWorktree(run: folder, env: home.env)
             #expect(!FileManager.default.fileExists(atPath: worktree.path))
