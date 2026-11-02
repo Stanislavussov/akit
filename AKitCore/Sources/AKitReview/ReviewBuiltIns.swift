@@ -143,6 +143,8 @@ public enum ReviewBuiltIns {
                              max: 6, needs: ["diff", "wi"], doNotComment: ["code style", "anything not tied to a criterion or a repro step"], body: """
                              You don't write inline comments. You fill the acceptance-criteria matrix of the summary.
 
+                             The criteria are often not in the criteria field. Then take them from the work item's description and comments, and from its parent items (User Story, Feature, Epic): what the change must do, written as a rule, a scenario, an example or a "should". Name where each one comes from in `why` (for example "from the description of #123"). Use the merge request's description only as a hint, never as the source.
+
                              For each acceptance criterion (and each repro step of a bug) say one of:
                              - `code`: the change implements it; name the file and line.
                              - `test`: a test checks it; name the test.
@@ -150,7 +152,7 @@ public enum ReviewBuiltIns {
                              - `can't check`: you need something the context pack doesn't have; say what.
 
                              Submit the matrix as findings with `kind: "ac"`, one per criterion, `title` = the criterion, `why` = the status and the place. A criterion that is `not found` is also a finding with severity medium or higher, if the change claims to deliver it.
-                             If the work item has no acceptance criteria, report a context gap.
+                             Report a context gap only when neither the work item nor its comments or parents say what the change must do.
                              """),
         "tests": role("tests", "Review whether the change is tested: missing tests for new behaviour, regression tests for bugs, weak assertions.",
                       max: 6, needs: ["diff", "full_files", "tests"],

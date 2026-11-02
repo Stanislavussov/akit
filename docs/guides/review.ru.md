@@ -1540,7 +1540,7 @@ Verifier подтверждает находку только с уверенн�
 
 **Когда пригодится:**
 
-- «Почему у роли `requirements` пусто?» → в **Context gaps** будет «Acceptance criteria of #4512: The work item has none.».
+- «Почему у роли `requirements` пусто?» → в **Context gaps** будет «Acceptance criteria of #4512: Neither the work item nor its parents or comments say what the change must do.». Пустое поле критериев — ещё не пробел: роль берёт критерии из описания задачи, комментариев и родителей (User Story, Feature, Epic) и пишет, откуда взят каждый.
 - «Почему находки такие неуверенные?» → посмотрите, не было ли «Full files at …»: агент видел только diff.
 - «Как сделать следующее ревью лучше?» → закройте пробел: добавьте `checkout`, трекер, MCP-сервер трекера в Pi или папку знаний в профиль.
 

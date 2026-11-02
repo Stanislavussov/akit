@@ -15,6 +15,32 @@ struct OverviewTests {
 
     // MARK: - The work item chain
 
+    @Test func criteriaComeFromTheItemsTextNotOnlyItsField() {
+        func bare(_ id: Int, _ type: String, parent: Int? = nil) -> WorkItem {
+            var empty = item(id, type, parent: parent)
+            empty.description = ""
+            empty.acceptanceCriteria = ""
+            return empty
+        }
+        // The task's field is empty, but its story says what the change must do: no gap.
+        var story = bare(3, "User Story")
+        story.description = "A user can export the report as CSV."
+        #expect(ReviewGather.withoutCriteria([bare(4, "Task", parent: 3), story], named: [4]).isEmpty)
+        // A comment is enough too.
+        var commented = bare(4, "Task")
+        commented.comments = [WorkItem.Comment(author: "Ann", date: "2026-10-01T00:00:00Z", text: "Must keep the old URL working.")]
+        #expect(ReviewGather.withoutCriteria([commented], named: [4]).isEmpty)
+        // No text anywhere in the chain: a gap for the named item only, never for a bug.
+        #expect(ReviewGather.withoutCriteria([bare(4, "Task", parent: 3), bare(3, "User Story")], named: [4]) == [4])
+        #expect(ReviewGather.withoutCriteria([bare(5, "Bug")], named: [5]).isEmpty)
+    }
+
+    @Test func anEmptyCriteriaFieldPointsToTheOtherTexts() {
+        var task = item(4, "Task")
+        task.acceptanceCriteria = ""
+        #expect(ReviewGather.workItemText(task).contains("take the criteria from the description, the comments and the parent items"))
+    }
+
     @Test func keepsTheChainToTheTopAndTheRelatedItems() {
         let all = [item(50, "Bug"), item(1, "Epic"), item(2, "Feature", parent: 1), item(3, "User Story", parent: 2),
                    item(4, "Task", parent: 3, related: [9]), item(9, "Bug", related: [50])]

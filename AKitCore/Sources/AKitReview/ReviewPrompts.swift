@@ -204,7 +204,7 @@ public enum ReviewPrompts {
         - Contracts touched: every public API, DTO, event, schema or migration, config key or error code the diff adds, \
         changes or removes, with the file. Write "none" if there are none.
         - Already raised: what people said in the threads.
-        - Acceptance criteria: \(spec.workItems.isEmpty ? "none: there is no work item; write \"none\"" : "the criteria or repro steps the change must meet").
+        - Acceptance criteria: \(spec.workItems.isEmpty ? "none: there is no work item; write \"none\"" : "the criteria or repro steps the change must meet. When the criteria field is empty, take them from the work items' descriptions, comments and parents, and say where each comes from").
         - First gaps: what is missing to review it well. Report each with akit_report_context_gap too.
         - Risk map, for the developer only (never posted): the risky areas the change touches (authentication, payments, \
         migrations and stored data, public APIs, concurrency, deletion); whether the merge request shows proof it was tested \
@@ -519,8 +519,9 @@ public enum ReviewPrompts {
         // Only a plan with a base: git can make the diff and read the history from it.
         let plan = spec.repository?.plan.flatMap { $0.base == nil ? nil : $0 }
         let diffStep = plan == nil
-            ? "2. Its diff versions, and the changed files with their diffs (every page)."
-            : "2. Its diff versions only. Don't read the changed files' diffs: AKit has the repository and makes them with git."
+            ? "2. The changed files with their diffs (every page), and its diff versions (skip the versions when no tool reads them: it is not a gap)."
+            : "2. Nothing about the diff: AKit has the repository and makes the diff and its refs with git. Don't read the diff versions "
+                + "or the changed files' diffs, and don't report them as a gap."
         let diffsCall = plan == nil
             ? "with `include: [\"diffs\"]` and `detail: \"full_patch\"` (`diffs_first: 100`, then `diffs_after` for every further page), "
             : ""
