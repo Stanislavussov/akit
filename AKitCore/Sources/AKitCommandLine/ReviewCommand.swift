@@ -134,6 +134,11 @@ extension AKitCLI {
                                         Ask Pi about a finding (or the whole review), or add what you
                                         know: Pi answers with the review in mind; a note may change
                                         the findings (a new version, requests planned again)
+      akit review why-missed RUN MISSED [--question TEXT] [--json]
+                                        Why the review missed an item of akit review missed: AKit
+                                        traces it through the run, then Pi (the run's verifier
+                                        model, reading only) names the cause and what to change.
+                                        Again with --question: a follow-up in the same thread
       akit review kb-gaps RUN [--json]  What the review missed in the knowledge base: searches with
                                         no answer, gaps reported with system knowledge, notes it used
                                         without a description; each with the akit kb propose command
@@ -334,8 +339,8 @@ extension AKitCLI {
             guard let id = args.positional(), let text = args.positional() else { throw Failure(message: "akit review missed RUN TEXT.") }
             try args.finish()
             let line = try positiveNumber(lineText, "--line")
-            try ReviewWorkflow.addMissed(try runFolder(id, env: env), file: fileText, line: line, text: text)
-            out("Recorded what was missed.")
+            let item = try ReviewWorkflow.addMissed(try runFolder(id, env: env), file: fileText, line: line, text: text)
+            out("Recorded \(item.id). To ask Pi why the review missed it: akit review why-missed \(id) \(item.id)")
             return 0
         case "post":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review post RUN.") }
@@ -486,6 +491,29 @@ extension AKitCLI {
                 if let version = entry.version {
                     out("Version \(version) of the findings: " + (entry.changes ?? []).joined(separator: "; ") + ". The requests were planned again: akit review show \(id)")
                 }
+            }
+            return entry.error == nil ? 0 : 1
+        case "why-missed":
+            let json = args.flag("--json")
+            let question = args.value("--question") ?? ""
+            guard let id = args.positional(), let missed = args.positional() else {
+                throw Failure(message: "akit review why-missed RUN MISSED [--question TEXT] (MISSED: m1, … from akit review show RUN).")
+            }
+            try args.finish()
+            let folder = try runFolder(id, env: env)
+            let lines = LineBox()
+            let entry: ReviewWhyMissed.Entry
+            do {
+                entry = try await ReviewWhyMissed.ask(folder, missed: missed, question: question, env: env,
+                                                      progress: { line in if !json { lines.add(line) } })
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            if json {
+                out(String(decoding: try ReviewJSON.encoder.encode(entry), as: UTF8.self))
+            } else {
+                lines.drain(out)
+                out(entry.answer ?? "Pi gave no answer: \(entry.error ?? "unknown")")
             }
             return entry.error == nil ? 0 : 1
         case "kb-gaps":
@@ -814,8 +842,17 @@ extension AKitCLI {
     }
 
     static func requestsText(_ run: ReviewWorkflow.Run) -> String {
-        guard let plan = run.plan else { return "No requests yet." }
-        guard !plan.requests.isEmpty else { return "No requests: GitLab already has everything AKit would write." }
+        var missed = ""
+        if !run.missed.isEmpty {
+            let items = run.missed.map { item -> String in
+                let line = item.line.map { ":\($0)" } ?? ""
+                let place = item.file.map { " \($0)\(line)" } ?? ""
+                return "  \(item.id)\(place): \(item.text)"
+            }
+            missed = "\nMissed (added by you; akit review why-missed RUN ID asks why):\n" + items.joined(separator: "\n")
+        }
+        guard let plan = run.plan else { return "No requests yet." + missed }
+        guard !plan.requests.isEmpty else { return "No requests: GitLab already has everything AKit would write." + missed }
         var lines = ["Requests:"]
         for request in plan.requests {
             let place = request.file.map { " \($0)" + (request.line.map { ":\($0)" } ?? "") } ?? ""
@@ -825,7 +862,7 @@ extension AKitCLI {
                          + (request.role.map { " · \($0)" } ?? "") + (request.severity.map { " · \($0.rawValue)" } ?? ""))
             lines += request.text.split(separator: "\n", omittingEmptySubsequences: false).prefix(6).map { "      " + $0 }
         }
-        return lines.joined(separator: "\n")
+        return lines.joined(separator: "\n") + missed
     }
 
     static func qualityText(_ entries: [ReviewQuality.Entry]) -> String {

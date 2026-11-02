@@ -1123,6 +1123,15 @@ EOF
 file "$REVIEWRUN/conversation.jsonl" <<'EOF'
 {"answer":"Ne. /health a /metrics middleware nepouští dál bez hlavičky; dostanou 401 jako ostatní cesty. Pokud mají zůstat anonymní, je to otázka f5.","asked":"2026-10-15T09:40:00Z","id":"a1","kind":"question","text":"Zůstane /health dostupný bez přihlášení?"}
 EOF
+# Add Missed... and Why Missed? (the run's "Missed by the reviewer"): a made-up missed item, Pi's
+# answer and a follow-up question.
+file "$REVIEWRUN/missed.json" <<'EOF'
+[{"id":"m1","date":"2026-10-15T09:50:00Z","file":"src/Auth/AuthMiddleware.cs","line":16,"text":"Не проверяется срок действия токена (exp): просроченный токен проходит."}]
+EOF
+file "$REVIEWRUN/why-missed/chat.jsonl" <<'EOF'
+{"answer":"## Why it was missed\n\nРоль **security** не открыла ни одного файла (`role-security` · read: none) и работала только по брифу. Роль **bug-hunter** прочитала `AuthMiddleware.cs`, но её правила не говорят о проверке токенов: она нашла разбор заголовка (строка 14), а срок действия не смотрела.\n\n## How to catch it next time\n\n1. В `roles/security/SKILL.md` добавьте: «For every token the change reads or stores, check that its expiry (`exp`) and signature are verified before use.»\n2. Дайте роли security правило «open every file the diff touches under src/Auth/ before you submit».","asked":"2026-10-15T09:52:00Z","credits":6.4,"id":"w1","missed":"m1","model":"github-copilot/claude-opus-5-5","question":"","session":"why-1"}
+{"answer":"Да, правила в `security` достаточно. bug-hunter ищет ошибки поведения, а проверка токенов — зона security; одно правило в двух ролях даст две одинаковые находки.","asked":"2026-10-15T09:55:00Z","credits":1.1,"id":"w2","missed":"m1","model":"github-copilot/claude-opus-5-5","question":"Хватит ли правила только в роли security?","session":"why-2"}
+EOF
 # The knowledge base in the review passes: a search with no answer and an opened note without a
 # description ("Missing in the knowledge base" of the run).
 file "$REVIEWRUN/mcp/calls/role-security-1760520101000-0002.json" <<'EOF'

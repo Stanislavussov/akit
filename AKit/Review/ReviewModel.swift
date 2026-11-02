@@ -72,6 +72,7 @@ final class ReviewModel {
         do {
             run = try ReviewWorkflow.load(ReviewPaths(home: home).run(id))
             conversation = ReviewAsk.entries(ReviewPaths(home: home).run(id))
+            whyMissed = ReviewWhyMissed.entries(ReviewPaths(home: home).run(id))
         } catch {
             problem = error.localizedDescription
         }
@@ -286,10 +287,63 @@ final class ReviewModel {
         }
     }
 
-    func addMissed(file: String, line: Int?, text: String) {
+    /// Add Missed…; `askWhy`: Pi looks for the cause right away (Add and Ask Why).
+    func addMissed(file: String, line: Int?, text: String, askWhy: Bool = false) {
         guard let folder else { return }
-        attempt { try ReviewWorkflow.addMissed(folder, file: file, line: line, text: text) }
+        var added: ReviewMissed?
+        attempt { added = try ReviewWorkflow.addMissed(folder, file: file, line: line, text: text) }
+        if askWhy, let added { self.askWhy(missed: added.id) }
     }
+
+    // MARK: - Why Missed?
+
+    /// The run's Why Missed? chat, oldest first.
+    private(set) var whyMissed: [ReviewWhyMissed.Entry] = []
+    /// What Pi is answering now: the run and the missed item; and its last progress line.
+    private(set) var askingWhy: (run: String, missed: String)?
+    private(set) var whyProgress: String?
+    /// The question being answered, shown in the chat until the answer comes.
+    private(set) var whyQuestion: String?
+    private var whyTask: Task<Void, Never>?
+    /// The ask whose progress lines show; a finished one's late lines are dropped.
+    private var whyToken: UUID?
+
+    func whyThread(_ missed: String) -> [ReviewWhyMissed.Entry] { whyMissed.filter { $0.missed == missed } }
+
+    func isAskingWhy(_ missed: String) -> Bool { askingWhy.map { $0.run == run?.id && $0.missed == missed } ?? false }
+
+    /// Why the review missed the item, or a follow-up question about it. It only reads the run:
+    /// a pass or Ask… may run meanwhile; one Why Missed? at a time.
+    func askWhy(missed: String, question: String = "") {
+        guard let folder, let id = run?.id, askingWhy == nil else { return }
+        askingWhy = (id, missed)
+        whyQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        whyProgress = nil
+        let env = env
+        let token = UUID()
+        whyToken = token
+        whyTask = Task {
+            do {
+                // Pi follows a cancellation scope, not the task: Stop ends it through this one.
+                _ = try await Cancellation.followingTask {
+                    try await ReviewWhyMissed.ask(folder, missed: missed, question: question, env: env) { line in
+                        Task { @MainActor [weak self] in if self?.whyToken == token { self?.whyProgress = line } }
+                    }
+                }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { self.problem = error.localizedDescription }
+            }
+            self.whyToken = nil
+            self.whyProgress = nil
+            self.askingWhy = nil
+            self.whyQuestion = nil
+            self.whyTask = nil
+            if self.folder == folder { self.whyMissed = ReviewWhyMissed.entries(folder) }
+        }
+    }
+
+    func stopWhy() { whyTask?.cancel() }
 
     /// Sends the approved requests the sheet showed (not any approved since) through a Pi send
     /// pass and the user's GitLab MCP server; the report says what GitLab answered.

@@ -923,7 +923,8 @@ public enum ReviewPasses {
 
     static func write(_ text: String, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(text.utf8).write(to: url)
+        // Atomic: a pass, Debug… or Why Missed? may read the file while another writes it.
+        try Data(text.utf8).write(to: url, options: .atomic)
     }
 
     static func directorySize(_ folder: URL) -> Int {

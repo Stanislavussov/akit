@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitLab
 import AKitReview
 import AppKit
 import SwiftUI
@@ -156,11 +157,15 @@ struct ReviewDebugSheet: View {
         runToken = token
         running = Task {
             do {
-                _ = try await ReviewDebug.run(folder, env: HarnessEnvironment.current) { line in
-                    Task { @MainActor in if runToken == token { lines.append(line) } }
+                // Pi follows a cancellation scope, not the task: Stop ends it through this one.
+                _ = try await Cancellation.followingTask {
+                    try await ReviewDebug.run(folder, env: HarnessEnvironment.current) { line in
+                        Task { @MainActor in if runToken == token { lines.append(line) } }
+                    }
                 }
+            } catch is CancellationError {
             } catch {
-                problem = error.localizedDescription
+                if !Task.isCancelled { problem = error.localizedDescription }
             }
             reports = ReviewDebug.reports(folder)
             running = nil

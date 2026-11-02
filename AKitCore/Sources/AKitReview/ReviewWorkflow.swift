@@ -181,12 +181,15 @@ public enum ReviewWorkflow {
     }
 
     /// Add Missed…: what the reviewer should have found (label `missed`); stays in AKit.
-    public static func addMissed(_ folder: URL, file: String?, line: Int?, text: String) throws {
+    @discardableResult
+    public static func addMissed(_ folder: URL, file: String?, line: Int?, text: String) throws -> ReviewMissed {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw Failure(message: "Say what was missed.") }
-        try ReviewJSON.update(folder.appending(path: "missed.json"), empty: [ReviewMissed]()) { list in
-            list.append(ReviewMissed(id: "m\(list.count + 1)", date: .now, file: file.flatMap { $0.isEmpty ? nil : $0 }, line: line,
-                                     text: SecretFilter.masked(trimmed)))
+        return try ReviewJSON.update(folder.appending(path: "missed.json"), empty: [ReviewMissed]()) { list in
+            let item = ReviewMissed(id: "m\(list.count + 1)", date: .now, file: file.flatMap { $0.isEmpty ? nil : $0 }, line: line,
+                                    text: SecretFilter.masked(trimmed))
+            list.append(item)
+            return item
         }
     }
 

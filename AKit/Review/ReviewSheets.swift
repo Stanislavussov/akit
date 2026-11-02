@@ -1051,6 +1051,8 @@ struct AddMissedSheet: View {
     @State private var otherFile = false
     @State private var line = ""
     @State private var text = ""
+    /// The run has passes for Pi to look into.
+    var canAsk = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1077,12 +1079,21 @@ struct AddMissedSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
+                let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let askable = model.askingWhy == nil && canAsk
+                // Return only adds: asking sends the run to a model, so it takes a click.
                 Button("Add") {
                     model.addMissed(file: file, line: Int(line), text: text)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(empty)
+                Button("Add and Ask Why") {
+                    model.addMissed(file: file, line: Int(line), text: text, askWhy: true)
+                    dismiss()
+                }
+                .disabled(empty || !askable)
+                .help("Add it, then Pi traces it through the run and says why the review missed it and what to change. The answer and a chat for follow-up questions appear under Missed by the reviewer.")
             }
         }
         .padding(20)

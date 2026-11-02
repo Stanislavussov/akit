@@ -140,6 +140,13 @@ public enum ReviewDebug {
             out.append("## \(title)\n")
             out.append(fenced(clip(json), "json"))
         }
+        if !run.missed.isEmpty {
+            out.append("## Missed by the review, added by the developer (\(run.missed.count))\n")
+            for item in run.missed {
+                out.append("- \(item.id)" + (item.file.map { " \($0)" + (item.line.map { ":\($0)" } ?? "") } ?? "") + ": " + clip(item.text))
+            }
+            out.append("")
+        }
         let conversation = ReviewAsk.entries(folder)
         if !conversation.isEmpty {
             out.append("## Questions and notes (\(conversation.count))\n")
@@ -406,39 +413,16 @@ public enum ReviewDebug {
         let debug = folder.appending(path: folderName)
         try FileManager.default.createDirectory(at: debug, withIntermediateDirectories: true)
         progress("Writing the full log…")
-        let found = try checks(folder)
-        // Pi's read tool pages through a long file: a generous cut keeps one item from filling the
-        // context. What goes to the model is scrubbed like the context pack (the user's own
-        // patterns, hosts, e-mails), not only masked: it holds the raw MCP answers.
-        let log = try fullLog(folder, cut: 40_000, checks: found)
-        try ReviewPasses.write(Scrubber.scrub(log, own: LabSettings.load(env: env).scrub).text, to: debug.appending(path: "full-log.md"))
+        let found = try writeFullLog(folder, env: env)
         try ReviewPasses.write(systemPrompt, to: debug.appending(path: "prompt.md"))
-        try ReviewPasses.write(ReviewExtension.source, to: folder.appending(path: "akit-review.ts"))
         let number = nextNumber(debug)
-
-        var arguments = ["-p", "--mode", "json", "--offline", "--session-dir", debug.appending(path: "sessions").path]
-        if !model.model.isEmpty { arguments += ["--model", model.model] }
-        if !model.thinking.isEmpty { arguments += ["--thinking", model.thinking] }
-        arguments += ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-extensions", "--no-mcp",
-                      "--append-system-prompt", debug.appending(path: "prompt.md").path,
-                      "-e", folder.appending(path: "akit-review.ts").path, "--tools", "read,grep,find,ls",
-                      "--", "Debug this review run: read debug/full-log.md and answer as the system prompt says."]
-        var environment = await ReviewPasses.passEnvironment(env)
-        var access = run.spec.access
-        access.inPasses = false
-        environment["AKIT_REVIEW_RUN"] = folder.path
-        environment["AKIT_REVIEW_RUN_ID"] = run.id
-        environment["AKIT_REVIEW_MODE"] = "review"
-        environment["AKIT_REVIEW_PASS"] = "debug-\(number)"
-        environment["AKIT_REVIEW_ROLE"] = "debug"
-        environment["AKIT_REVIEW_MAX"] = "0"
-        // The masked parts only: never gitlab/ or tracker/ (raw copies) or the worktree.
-        environment["AKIT_REVIEW_ROOTS"] = (["debug", "context", "roles", "skills", "prompts"].map { folder.appending(path: $0).path }).joined(separator: ":")
-        environment["AKIT_REVIEW_MCP"] = String(decoding: (try? JSONEncoder().encode(access)) ?? Data("{}".utf8), as: UTF8.self)
         progress("Pi reads the log (\(model.model.isEmpty ? "Pi's default model" : model.model))…")
-        let output = await ReviewPasses.runPi(pi, arguments: arguments, directory: folder, environment: environment, timeout: timeout,
-                                              stream: debug.appending(path: "debug-\(number).jsonl"),
-                                              progress: { line in progress("  debug · \(line)") })
+        let output = try await readPass(folder, run: run, pi: pi, pass: "debug-\(number)", prompt: debug.appending(path: "prompt.md"),
+                                        sessions: debug.appending(path: "sessions"), fork: nil,
+                                        roots: ["debug", "context", "roles", "skills", "prompts"].map { folder.appending(path: $0) },
+                                        message: "Debug this review run: read debug/full-log.md and answer as the system prompt says.",
+                                        stream: debug.appending(path: "debug-\(number).jsonl"), env: env, timeout: timeout,
+                                        progress: { line in progress("  debug · \(line)") })
         // A stopped or failed pass may end on an interim message ("I'll read the log first"): never show it as the analysis.
         let failed = output.error ?? (output.answer == nil ? "Pi gave no answer." : nil)
         let report = Report(id: "d\(number)", created: .now, model: model.model, thinking: model.thinking, checks: found,
@@ -451,5 +435,49 @@ public enum ReviewDebug {
         try ReviewJSON.write(report, to: debug.appending(path: "report-\(number).json"))
         try ReviewPasses.write(report.markdown, to: debug.appending(path: "report-\(number).md"))
         return report
+    }
+
+    /// Writes `debug/full-log.md` for a model and returns AKit's checks. Pi's read tool pages
+    /// through a long file: a generous cut keeps one item from filling the context. What goes to
+    /// the model is scrubbed like the context pack (the user's own patterns, hosts, e-mails), not
+    /// only masked: it holds the raw MCP answers.
+    @discardableResult
+    static func writeFullLog(_ folder: URL, env: HarnessEnvironment) throws -> [Check] {
+        let found = try checks(folder)
+        let log = try fullLog(folder, cut: 40_000, checks: found)
+        try ReviewPasses.write(Scrubber.scrub(log, own: LabSettings.load(env: env).scrub).text,
+                               to: folder.appending(path: "\(folderName)/full-log.md"))
+        return found
+    }
+
+    /// One Pi that only reads (the extension refuses any other tool for a pass named `debug-…`),
+    /// with the run's verifier model, no MCP, no skills, no extensions but AKit's: the debug
+    /// pass and Why Missed?. `roots`: what it may read. `fork`: a session file to go on from.
+    static func readPass(_ folder: URL, run: ReviewWorkflow.Run, pi: URL, pass: String, prompt: URL, sessions: URL, fork: String?,
+                         session: String? = nil, roots: [URL], message: String, stream: URL, env: HarnessEnvironment, timeout: TimeInterval,
+                         progress: @escaping @Sendable (String) -> Void) async throws -> ReviewPasses.PassOutput {
+        let model = run.spec.verifier.value
+        try ReviewPasses.write(ReviewExtension.source, to: folder.appending(path: "akit-review.ts"))
+        var arguments = ["-p", "--mode", "json", "--offline", "--session-dir", sessions.path]
+        if let fork { arguments += ["--fork", fork] } else if let session { arguments += ["--session-id", session] }
+        if !model.model.isEmpty { arguments += ["--model", model.model] }
+        if !model.thinking.isEmpty { arguments += ["--thinking", model.thinking] }
+        arguments += ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-extensions", "--no-mcp",
+                      "--append-system-prompt", prompt.path,
+                      "-e", folder.appending(path: "akit-review.ts").path, "--tools", "read,grep,find,ls",
+                      "--", message]
+        var environment = await ReviewPasses.passEnvironment(env)
+        var access = run.spec.access
+        access.inPasses = false
+        environment["AKIT_REVIEW_RUN"] = folder.path
+        environment["AKIT_REVIEW_RUN_ID"] = run.id
+        environment["AKIT_REVIEW_MODE"] = "review"
+        environment["AKIT_REVIEW_PASS"] = pass
+        environment["AKIT_REVIEW_ROLE"] = "debug"
+        environment["AKIT_REVIEW_MAX"] = "0"
+        environment["AKIT_REVIEW_ROOTS"] = roots.map(\.path).joined(separator: ":")
+        environment["AKIT_REVIEW_MCP"] = String(decoding: (try? JSONEncoder().encode(access)) ?? Data("{}".utf8), as: UTF8.self)
+        return await ReviewPasses.runPi(pi, arguments: arguments, directory: folder, environment: environment, timeout: timeout,
+                                        stream: stream, progress: progress)
     }
 }
