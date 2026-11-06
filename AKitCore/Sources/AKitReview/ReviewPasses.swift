@@ -482,7 +482,7 @@ public enum ReviewPasses {
                 if let id = output.session { side = ["--session-id", id] }
             }
             // Other repositories (R42–R44): the impact pass, before the roles.
-            let consumers = try await impact(folder: folder, spec: spec, boundaries: boundaries, options: options) { name, prompt, tools in
+            let consumers = try await impact(folder: folder, spec: spec, boundaries: boundaries, options: options, home: env.homeDirectory) { name, prompt, tools in
                 try await sidePass(name, prompt: prompt, tools: tools)
             }
             // The overview (R45–R47), after the impact pass so the flow shows the other repositories.
@@ -612,7 +612,7 @@ public enum ReviewPasses {
     /// one, the run gets a gap instead. Writes `consumers.json` and `context/consumers.md` and
     /// returns the kept uses. A failed pass is a gap too: the review goes on with the uses it
     /// submitted before it failed.
-    static func impact(folder: URL, spec: ReviewRunSpec, boundaries: [ReviewBoundary], options: Options,
+    static func impact(folder: URL, spec: ReviewRunSpec, boundaries: [ReviewBoundary], options: Options, home: URL? = nil,
                        run: (_ name: String, _ prompt: String, _ tools: String) async throws -> Void) async throws -> [ReviewConsumer] {
         // Nothing of an earlier run of the passes counts.
         for path in ["passes/consumers.json", "consumers.json", "context/consumers.md", "passes/gaps-impact.jsonl"] {
@@ -647,14 +647,23 @@ public enum ReviewPasses {
             return []
         }
         let tools = "read,grep,find,ls,akit_submit_consumers,akit_report_context_gap" + (boundaries.isEmpty ? ",akit_submit_boundaries" : "")
-        do {
-            try await run("impact", ReviewPrompts.impact(spec: spec, boundaries: boundaries, servers: servers), tools)
-        } catch {
-            if error is CancellationError || Task.isCancelled { throw error }
-            try gap(what, "The impact pass failed: \(SecretFilter.masked(error.localizedDescription))",
-                    how: "Run the passes again (akit review passes RUN), or check the GitLab server in Pi.")
-            // The uses it submitted before it failed are checked like any others.
-            options.progress("Other repositories: the impact pass failed; the review goes on.")
+        var reusedImpact = false
+        // An earlier run of this merge request searched for every one of these boundaries: its uses
+        // and GitLab's answers are checked again here, with no new search (`ReviewReuse`).
+        if let home, let earlier = ReviewReuse.earlierImpact(folder: folder, spec: spec, boundaries: boundaries, home: home) {
+            try ReviewReuse.copyImpact(from: earlier.folder, earlierBoundaries: earlier.boundaries, boundaries: boundaries, to: folder)
+            reusedImpact = true
+            options.progress("Other repositories: run \(earlier.id) searched for these boundaries; its uses are checked again, no GitLab search.")
+        } else {
+            do {
+                try await run("impact", ReviewPrompts.impact(spec: spec, boundaries: boundaries, servers: servers), tools)
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw error }
+                try gap(what, "The impact pass failed: \(SecretFilter.masked(error.localizedDescription))",
+                        how: "Run the passes again (akit review passes RUN), or check the GitLab server in Pi.")
+                // The uses it submitted before it failed are checked like any others.
+                options.progress("Other repositories: the impact pass failed; the review goes on.")
+            }
         }
         // `always` with no boundary from the brief: the pass named them, checked like the brief's.
         var kept = boundaries
@@ -663,7 +672,8 @@ public enum ReviewPasses {
             kept = ReviewBoundaries.check(folder: folder, worktree: FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path) ? worktree : nil)
             try ReviewJSON.write(kept, to: folder.appending(path: "boundaries.json"))
         }
-        let usage = ReviewConsumers.usage(folder: folder)
+        // The budget is the pass's own: copied answers are no new search.
+        let usage = reusedImpact ? (searches: 0, files: 0) : ReviewConsumers.usage(folder: folder)
         if usage.searches > ReviewConsumers.maxSearches {
             options.over("The impact pass made \(usage.searches) searches in GitLab, over its budget of \(ReviewConsumers.maxSearches). The review goes on.")
         }

@@ -277,6 +277,8 @@ extension ReviewGather {
         fetchSpec.links = []
         fetchSpec.workItems = []
         fetchSpec.linked = nil
+        // What Gather took from an earlier run is the first merge request's, never this one's.
+        fetchSpec.gatherReused = nil
         // The main clone's plan is not this merge request's: its fetch reads the diff itself.
         fetchSpec.repository = nil
         fetchSpec.tracker = profile?.tracker

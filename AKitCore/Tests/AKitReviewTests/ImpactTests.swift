@@ -60,6 +60,31 @@ extension ReviewProcessTests {
             ReviewJSON.read([ContextGap].self, from: run.folder.appending(path: "gaps.json")) ?? []
         }
 
+        /// An earlier run of the merge request searched for the same boundaries: no new search in
+        /// GitLab; its answers and uses are copied and checked again.
+        @Test func aNewRunTakesTheEarlierSearch() async throws {
+            let run = try await ReviewRunFixture.make()
+            Self.playImpact(run)
+            _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            #expect(passes(run).contains("impact"))
+            // Nothing for a new search: what the second run keeps comes from the first.
+            try FileManager.default.removeItem(at: run.home.url.appending(path: "fake/consumers-impact.json"))
+            try FileManager.default.removeItem(at: run.home.url.appending(path: "fake/calls-impact"))
+            try await Task.sleep(for: .seconds(1.1))   // a new run id (seconds)
+            let second = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: run.home.env, brain: nil)
+            let folder = ReviewPaths(home: run.home.url).run(second.spec.id)
+            let lines = LockedBox<[String]>([])
+            _ = try await ReviewPasses.run(folder: folder, env: run.home.env,
+                                           options: .init(confirmConcerns: { _ in true }, progress: { line in lines.update { $0.append(line) } }))
+
+            let names = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))?.passes.map(\.name) ?? []
+            #expect(!names.contains("impact") && names.contains("overview"), "\(names)")
+            #expect(lines.value.contains { $0.contains("run \(run.folder.lastPathComponent) searched for these boundaries") })
+            let kept = ReviewJSON.read([ReviewConsumer].self, from: folder.appending(path: "consumers.json")) ?? []
+            #expect(Set(kept.map(\.project)) == ["team/web", "team/shop"] && kept.allSatisfy { $0.boundary == "b1" })
+            #expect(FileManager.default.fileExists(atPath: folder.appending(path: "context/consumers.md").path))
+        }
+
         @Test func runsAfterTheBriefAndKeepsOnlyCheckedUses() async throws {
             let run = try await ReviewRunFixture.make()
             Self.playImpact(run)

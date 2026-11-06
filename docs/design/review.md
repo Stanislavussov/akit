@@ -20,6 +20,17 @@ Added 2026-11-02 (branch `review-send-publish`): R66, publishing at once, after 
 confirmation, when the GitLab MCP server has no draft notes (GitLab's own MCP server); the send
 pass's reason for a request it skipped is shown.
 
+Added 2026-11-06 (branch `review-tokens`, the user's request: "if a review already happened, don't call
+GitLab's MCP"): `ReviewReuse`. Gather fetches the merge request's head with git first. The same head as
+the newest earlier run of the merge request (same tracker, its work items), without Full review, when no
+run of the merge request sent anything after those answers and they are under 24 hours old: no fetch
+pass, its fetch answers are copied (the snapshot keeps their time). Otherwise the fetch pass reads only
+the merge request, its versions, threads and drafts; the work items (when all were read), the user,
+earlier merge requests and read links are copied from that run (answers holding this merge request's
+data, failed calls and the model's prose never are). Linked merge requests read as before. The impact pass: when the earlier run's impact pass
+searched for every boundary of this one, its uses and GitLab's answers are copied and checked again.
+`run.json` `gatherReused` records it.
+
 Revised 2026-11-06 (branch `review-tokens`): fewer tokens per run. The impact pass and a new
 `overview` pass (the overview moved out of the brief) run in a side session forked from the brief,
 so the roles' history holds neither GitLab's answers from other repositories nor the overview's

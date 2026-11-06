@@ -514,6 +514,8 @@ public enum ReviewPrompts {
             """
         }
         let mr = spec.mergeRequest
+        // Reviewed before (`ReviewReuse`): AKit has from that run what a push or a comment doesn't change.
+        let reused = spec.gatherReused
         let pattern = spec.tracker?.wiRefRegex ?? ReviewProfile.Tracker.defaultRegex
         var items = "Work items: take the number from the merge request's source branch only (pattern `\(pattern)`: "
             + "`feature/COL-317494-login` names item 317494"
@@ -539,7 +541,12 @@ public enum ReviewPrompts {
             : ""
         let earlier = plan?.earlierNumbers ?? []
         let historyStep: String
-        if plan == nil {
+        if let reused {
+            historyStep = "7. Nothing more: AKit has the earlier merge requests of these files from run \(reused.run)."
+            if reused.hasWorkItems == true {
+                items = "Nothing from the tracker: AKit has the work items from run \(reused.run), an earlier review of this merge request."
+            }
+        } else if plan == nil {
             historyStep = "7. The history of the changed files, after everything above: for up to 10 changed files, the merge requests merged "
                 + "before this one that changed them (for example the file's recent commits, then each commit's merge requests), at most "
                 + "3 per file and 10 in all, each with its discussion threads. Pass each merge request's own number in every call about "
@@ -551,6 +558,7 @@ public enum ReviewPrompts {
                 + earlier.map { "!\($0)" }.joined(separator: ", ") + ". For each, the merge request itself and its discussion threads, "
                 + "passing its own number in every call; at most 2 calls each."
         }
+        let unread = links.filter { !(reused?.linksRead ?? []).contains($0) }
         return """
         AKit review, step Gather. Read GitLab merge request \(mr.url) (project `\(mr.projectPath)`, merge request number \(mr.iid)) \
         and its work items with your MCP tools, through `codemode`. Don't review anything yet.
@@ -566,13 +574,13 @@ public enum ReviewPrompts {
         \(diffStep)
         3. Every discussion thread with all its notes and positions, resolved ones too (every page).
         4. Your own pending draft notes on it (skip this when no tool reads draft notes: it is not a gap).
-        5. The signed-in user (who you are on GitLab).
+        5. \(reused?.hasUser == true ? "Nothing: AKit knows the signed-in user from an earlier review." : "The signed-in user (who you are on GitLab).")
         6. \(items)
 
         GitLab's own MCP server (`get_merge_request` with an `include` list) gives one part per call: call it once with no \
         `include`, then \(diffsCall)`include: ["commits"]`, `include: ["discussions"]` and `include: ["pipelines"]`; the user is \
         `get_user` with `me: true`.
-        \(historyStep)\(links.isEmpty ? "" : "\n8. The developer's links, after the merge request:\n\n" + linksStep(links))
+        \(historyStep)\(unread.isEmpty ? "" : "\n8. The developer's links, after the merge request:\n\n" + linksStep(unread))
 
         Pass the merge request number (\(mr.iid)) as its own argument in every call about it, as the tools name it.
         When a tool answers in prose instead of JSON, hand what it said to `akit_submit_context` with GitLab's and Azure \
