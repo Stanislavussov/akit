@@ -41,6 +41,25 @@ public final class MeetingsModel {
     /// M23: the list's search field (`#tag` words filter by tag) and each meeting's searchable text.
     public var searchText = ""
     public private(set) var documents: [String: MeetingSearch.Document] = [:]
+    /// M24: the questions' costs, and the Ask chat.
+    public private(set) var askEntries: [AskLog.Entry] = []
+    public var showAsk = false
+    public var askScope: MeetingAsk.Scope = .days(30)
+    public var askTag: String?
+    public private(set) var askTurns: [AskTurn] = []
+    public private(set) var asking = false
+
+    public struct AskTurn: Identifiable, Equatable {
+        public let id = UUID()
+        public var question: String
+        public var scope: String
+        public var answer: String?
+        /// `[n]` → meeting id of the marks the answer uses.
+        public var sources: [Int: String] = [:]
+        public var problem: String?
+        public var cost: Double = 0
+        public var meetings = 0
+    }
     @ObservationIgnored private var indexGeneration = 0
     /// Sheets and dialogs the view shows.
     public var showSettings = false
@@ -78,7 +97,11 @@ public final class MeetingsModel {
     /// The live waves while it records (read by the screen several times a second).
     public var levels: (mic: [Float], system: [Float]) { recorder?.levels ?? ([], []) }
     public var selected: Meeting? { meetings.first { $0.id == selectedID } }
-    public var monthCost: Double { meetings.filter { Calendar.current.isDate($0.started, equalTo: Date(), toGranularity: .month) }.reduce(0) { $0 + $1.costUSD } }
+    public var monthCost: Double {
+        let calendar = Calendar.current
+        return meetings.filter { calendar.isDate($0.started, equalTo: Date(), toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+            + askEntries.filter { calendar.isDate($0.date, equalTo: Date(), toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+    }
 
     /// The meetings by day, newest day first; while the search field has text, only the ones
     /// that match (a meeting not indexed yet shows until its text is read).
@@ -151,6 +174,7 @@ public final class MeetingsModel {
 
     public func refresh() {
         meetings = store.list()
+        askEntries = AskLog(root: settings.root).entries()
         if let id = selectedID, !meetings.contains(where: { $0.id == id }) {
             selectedID = nil
             page = nil
@@ -320,6 +344,93 @@ public final class MeetingsModel {
         } catch {
             problem = error.localizedDescription
         }
+    }
+
+    // MARK: Ask (M24)
+
+    /// Ask… from the toolbar (`meetingID` nil) or About This Meeting….
+    public func openAsk(meetingID: String? = nil) {
+        if let meetingID {
+            if askScope != .meeting(meetingID) { askTurns = [] }
+            askScope = .meeting(meetingID)
+        } else if case .meeting = askScope {
+            askScope = .days(30)
+            askTurns = []
+        }
+        showAsk = true
+    }
+
+    public func newChat() { askTurns = [] }
+
+    /// One question over the meetings of the scope; earlier answers of the chat go with it.
+    public func ask(_ question: String) async {
+        let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, !asking else { return }
+        let chosen = MeetingAsk.meetings(meetings, scope: askScope, tag: askTag)
+        var turn = AskTurn(question: question, scope: askScopeTitle)
+        turn.meetings = chosen.count
+        let history = askTurns.compactMap { turn in turn.answer.map { MeetingAsk.Turn(question: turn.question, answer: $0) } }
+        guard let key = keyStore.read() else {
+            turn.problem = MeetingsError.noKey.errorDescription
+            askTurns.append(turn)
+            return
+        }
+        guard !chosen.isEmpty else {
+            turn.problem = "No transcribed meeting in this scope. Choose a longer time or another tag."
+            askTurns.append(turn)
+            return
+        }
+        guard monthCost < settings.monthlyLimitUSD else {
+            turn.problem = MeetingsError.monthlyLimit(settings.monthlyLimitUSD).errorDescription
+            askTurns.append(turn)
+            return
+        }
+        askTurns.append(turn)
+        asking = true
+        defer { asking = false }
+        let turnID = turn.id
+        let store = self.store
+        let known = documents
+        let context = await Task.detached {
+            var documents = known
+            for meeting in chosen where documents[meeting.id] == nil { documents[meeting.id] = MeetingSearch.document(meeting, store: store) }
+            return MeetingAsk.context(chosen, documents: documents, question: question)
+        }.value
+        let asker = MeetingAsk(client: OpenRouterClient(key: key, transport: transport), settings: settings)
+        MeetingsLog.info(.ask, "ask: \(chosen.count) meetings in scope, \(context.ids.count) sent, \(context.text.count) chars, \(history.count) earlier turns")
+        do {
+            let answer = try await asker.ask(question, context: context, history: history)
+            let entry = AskLog.Entry(date: Date(), model: settings.summaryModel ?? settings.model, promptTokens: answer.completion.promptTokens,
+                                     completionTokens: answer.completion.completionTokens, costUSD: answer.completion.cost)
+            do { try AskLog(root: settings.root).append(entry) } catch { MeetingsLog.error(.ask, "ask: cost not logged: \(error.localizedDescription)") }
+            askEntries.append(entry)
+            MeetingsLog.info(.ask, "ask: answered, \(answer.sources.count) meetings cited, $\(answer.completion.cost)")
+            // New Chat while it waited: the cost is kept, the answer has no turn to go to.
+            guard let index = askTurns.firstIndex(where: { $0.id == turnID }) else { return }
+            askTurns[index].answer = answer.text
+            askTurns[index].sources = Dictionary(answer.sources.map { ($0.number, $0.id) }) { a, _ in a }
+            askTurns[index].cost = answer.completion.cost
+        } catch {
+            let text = if case MeetingsError.http(401, _) = error {
+                (MeetingsError.http(401, "").errorDescription ?? "") + " " + KeyStore.shape(key)
+            } else {
+                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+            MeetingsLog.error(.ask, "ask: \(text)")
+            if let index = askTurns.firstIndex(where: { $0.id == turnID }) { askTurns[index].problem = text }
+        }
+    }
+
+    public var askScopeTitle: String {
+        var title = askScope.title
+        if case .meeting(let id) = askScope, let meeting = meetings.first(where: { $0.id == id }) { title = meeting.displayTitle }
+        if let askTag { title += " · #" + askTag }
+        return title
+    }
+
+    /// M24: the meetings most like this one (local, no model).
+    public func similar(to id: String) -> [Meeting] {
+        MeetingSearch.similar(to: id, in: Array(documents.values)).compactMap { hit in meetings.first { $0.id == hit.id } }
     }
 
     private func updated(_ meeting: Meeting) {

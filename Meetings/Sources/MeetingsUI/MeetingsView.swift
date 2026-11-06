@@ -59,6 +59,10 @@ public struct MeetingsView: View {
         .toolbar {
             ToolbarItem { RecordButton(model: model) }
             ToolbarItem {
+                Button("Ask…", systemImage: "bubble.left.and.text.bubble.right") { model.openAsk() }
+                    .help("Ask a question about your meetings: what was decided, who does what")
+            }
+            ToolbarItem {
                 Button("Costs…", systemImage: "chart.bar") { model.showCosts = true }
                     .help("What OpenRouter charged by day, week or month, with filters and Copy CSV")
             }
@@ -70,6 +74,7 @@ public struct MeetingsView: View {
         }
         .sheet(isPresented: $model.showSettings) { MeetingsSettingsView(model: model) }
         .sheet(isPresented: $model.showCosts) { CostsView(model: model) }
+        .sheet(isPresented: $model.showAsk) { AskView(model: model) }
         .sheet(item: $model.tabNameRequest) { request in TabNameSheet(model: model, old: request.old) }
         .sheet(isPresented: $model.renameSpeakersRequest) { RenameSpeakersSheet(model: model) }
         .confirmationDialog("Move this meeting to the Trash?", isPresented: Binding(get: { model.trashRequest != nil }, set: { if !$0 { model.trashRequest = nil } })) {
@@ -318,12 +323,15 @@ struct MeetingDetail: View {
                 TagLine(model: model, meeting: meeting)
             }
             Spacer()
+            SimilarMenu(model: model, meeting: meeting)
             TemplateMenu(model: model, meeting: meeting)
             if meeting.state == .failed, !model.processing.contains(meeting.id) {
                 Button("Try Again") { model.process(meeting.id, byUser: true) }
                     .disabled(!model.hasKey || meeting.audioTrashed)
             }
             Menu {
+                Button("Ask About This Meeting…") { model.openAsk(meetingID: meeting.id) }
+                    .disabled(meeting.segments.isEmpty)
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
                     .disabled(meeting.speakerKeys.isEmpty)
                 Button("Summarize Again") { model.summarizeAgain(meeting.id) }
@@ -440,6 +448,27 @@ struct TagEditor: View {
     private func save() {
         model.setTags(text.split(separator: ",").map(String.init))
         dismiss()
+    }
+}
+
+/// M24: the meetings most like this one, by the words of title, tags and summary (local).
+struct SimilarMenu: View {
+    let model: MeetingsModel
+    let meeting: Meeting
+
+    var body: some View {
+        let similar = model.similar(to: meeting.id)
+        Menu {
+            ForEach(similar) { other in
+                Button("\(other.displayTitle) — \(other.started.formatted(date: .abbreviated, time: .omitted))") { model.select(other.id) }
+            }
+        } label: {
+            Label("Similar", systemImage: "square.on.square")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(similar.isEmpty)
+        .help(similar.isEmpty ? "No meeting with a similar title, tags or summary" : "Meetings with a similar title, tags or summary")
     }
 }
 

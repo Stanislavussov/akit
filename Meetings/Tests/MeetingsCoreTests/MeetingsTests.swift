@@ -202,7 +202,7 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         let rows = CostReport.rows(meetings, grouping: .week, from: from, to: to, calendar: calendar)
         #expect(rows.map(\.cost) == [1, 6, 0])
         let csv = CostReport.csv(rows, calendar: calendar)
-        #expect(csv.hasPrefix("period,meetings,hours,usd,usd_per_hour\n2026-10-26,1,0.50,1.0000,2.0000\n"))
+        #expect(csv.hasPrefix("period,meetings,hours,usd,usd_per_hour,questions\n2026-10-26,1,0.50,1.0000,2.0000,0\n"))
     }
 }
 
@@ -833,5 +833,78 @@ final class Closed: @unchecked Sendable {
         let similar = MeetingSearch.similar(to: a.id, in: docs)
         #expect(similar.map(\.id) == [b.id])
         #expect(MeetingSearch.similar(to: "missing", in: docs).isEmpty)
+    }
+}
+
+@Suite struct AskTests {
+    func meetings(_ store: MeetingStore) throws -> [Meeting] {
+        let now = Date()
+        let s = SearchTests()
+        var a = try s.meeting(store, title: "Platby", tags: ["platby"], summary: "## Summary\n\nSelhaly platby kartou.\n", said: ["Banka vrací chybu 51", "Pošlu ID transakcí"])
+        var b = try s.meeting(store, title: "Vydání", tags: ["release"], summary: "## Summary\n\nVydání v pátek.\n", said: ["Vydáme v pátek", "Testy jsou hotové"])
+        var old = try s.meeting(store, title: "Starý plán", tags: ["release"], summary: "## Summary\n\nDávno.\n", said: ["Kdysi"])
+        a.started = now.addingTimeInterval(-3_600)
+        b.started = now.addingTimeInterval(-86_400)
+        old.started = now.addingTimeInterval(-40 * 86_400)
+        for m in [a, b, old] { try store.save(m) }
+        return [a, b, old]
+    }
+
+    @Test func scopeTagAndContext() throws {
+        let store = TempRoot().store
+        let all = try meetings(store)
+        #expect(MeetingAsk.meetings(all, scope: .days(7), tag: nil).map(\.title) == ["Platby", "Vydání"])
+        #expect(MeetingAsk.meetings(all, scope: .all, tag: "release").map(\.title) == ["Vydání", "Starý plán"])
+        #expect(MeetingAsk.meetings(all, scope: .meeting(all[2].id), tag: nil).map(\.title) == ["Starý plán"])
+        let docs = Dictionary(uniqueKeysWithValues: all.map { ($0.id, MeetingSearch.document($0, store: store)) })
+        let chosen = MeetingAsk.meetings(all, scope: .days(7), tag: nil)
+        // Summaries of all; the transcript only of the meeting whose words match the question.
+        let context = MeetingAsk.context(chosen, documents: docs, question: "Jakou chybu vrací banka?")
+        #expect(context.ids == [all[0].id, all[1].id])
+        #expect(context.text.contains("[1] ") && context.text.contains("Selhaly platby kartou.") && context.text.contains("Vydání v pátek."))
+        #expect(context.text.contains("Transcript of [1]:") && context.text.contains("chybu 51"))
+        #expect(!context.text.contains("Transcript of [2]:"))
+        // One meeting always carries its transcript; a small budget cuts the list.
+        #expect(MeetingAsk.context([all[2]], documents: docs, question: "nic").text.contains("Transcript of [1]:"))
+        #expect(MeetingAsk.context(chosen, documents: docs, question: "x", budget: 120).ids.count == 1)
+    }
+
+    @Test func askSendsContextAndHistoryAndReadsSources() async throws {
+        let store = TempRoot().store
+        let all = try meetings(store)
+        let docs = Dictionary(uniqueKeysWithValues: all.map { ($0.id, MeetingSearch.document($0, store: store)) })
+        let context = MeetingAsk.context(Array(all.prefix(2)), documents: docs, question: "banka")
+        let server = FakeServer([(200, chat(#"{"answer":"Banka vrací chybu 51 [1]; vydání je v pátek [2, 9]."}"#, cost: 0.003))])
+        var settings = MeetingsSettings()
+        settings.summaryModel = "text/model"
+        let answer = try await MeetingAsk(client: server.client, settings: settings)
+            .ask("Co banka?", context: context, history: [.init(question: "Kdy vydání?", answer: "V pátek [2].")])
+        #expect(answer.sources.map(\.number) == [1, 2])
+        #expect(answer.sources.map(\.id) == [all[0].id, all[1].id])
+        #expect(server.body(0)["model"] as? String == "text/model")
+        let prompt = ((server.body(0)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        #expect(prompt.contains("Q: Kdy vydání?") && prompt.contains("Question: Co banka?") && prompt.contains("Selhaly platby"))
+        await #expect(throws: MeetingsError.self) {
+            try await MeetingAsk(client: FakeServer([(200, chat(#"{"text":"x"}"#))]).client, settings: settings).ask("?", context: context)
+        }
+    }
+
+    @Test func askCostsCountInMonthAndReport() throws {
+        let root = TempRoot()
+        let store = root.store
+        let log = AskLog(root: root.url)
+        #expect(log.entries().isEmpty)
+        try log.append(.init(date: Date(), model: "m", promptTokens: 10, completionTokens: 2, costUSD: 0.5))
+        try log.append(.init(date: Date(), model: "m", promptTokens: 10, completionTokens: 2, costUSD: 0.25))
+        try Data("not json\n".utf8).write(to: root.url.appending(path: "other.txt"))
+        #expect(log.entries().count == 2)
+        #expect(abs(store.monthCost() - 0.75) < 1e-9)
+        // The limit stops transcription when questions used it up.
+        let rows = CostReport.rows([], asks: log.entries(), grouping: .day, from: Date(), to: Date())
+        #expect(rows.count == 1 && rows[0].questions == 2 && abs(rows[0].cost - 0.75) < 1e-9 && rows[0].meetings == 0)
+        let totals = CostReport.totals([], asks: log.entries(), from: Date(), to: Date(), model: "other")
+        #expect(totals.questions == 0 && totals.cost == 0)
+        #expect(CostReport.models([], asks: log.entries()) == ["m"])
+        #expect(store.list().isEmpty)
     }
 }

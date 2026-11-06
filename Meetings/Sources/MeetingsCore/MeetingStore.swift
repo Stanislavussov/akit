@@ -235,10 +235,13 @@ public struct MeetingStore: Sendable {
         return count
     }
 
-    /// What OpenRouter cost in the calendar month of `date`.
+    /// What OpenRouter cost in the calendar month of `date`: the meetings' calls and the
+    /// questions (M24).
     public func monthCost(of date: Date = Date()) -> Double {
         let calendar = Calendar.current
-        return list().filter { calendar.isDate($0.started, equalTo: date, toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+        let meetings = list().filter { calendar.isDate($0.started, equalTo: date, toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+        let asks = AskLog(root: root).entries().filter { calendar.isDate($0.date, equalTo: date, toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+        return meetings + asks
     }
 
     // MARK: Formats
@@ -260,6 +263,14 @@ public struct MeetingStore: Sendable {
     static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }()
+
+    /// One JSON line (`.asks.jsonl`).
+    static let encoderLine: JSONEncoder = {
+        let e = JSONEncoder()
+        e.outputFormatting = [.sortedKeys]
         e.dateEncodingStrategy = .iso8601
         return e
     }()
