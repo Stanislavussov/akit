@@ -1,0 +1,95 @@
+# Meetings: record a call or a talk, get the text, a summary and the tasks
+
+Status: designed 2026-11-06 (grilled with the user), nothing built yet. Asked by the user: record
+the meetings of a day by a click, 2–3 hours a day, transcribe them through a cheap model and
+structure them (summary, decisions, tasks). It is built inside the AKit repo but as its own
+package, so it can later leave AKit and become its own app.
+
+## Goal
+
+One click starts a recording, one click stops it. Everything the Mac hears is recorded: the
+user's microphone (also a talk in the room) and the sound of the system (the other people in
+Teams, Zoom or Meet, also when the user wears headphones). After Stop the recording becomes one
+Markdown file: summary, decisions, tasks and the transcript with times and speakers.
+
+Cost (OpenRouter prices of 2026-11-06, 60 hours a month = 3 h × 20 days):
+
+| Model | per hour | 40 h | 60 h |
+|---|---|---|---|
+| `google/gemini-2.5-flash-lite` | ~$0.04 | ~$1.6 | ~$2.4 |
+| `google/gemini-3.5-flash-lite` | ~$0.065 | ~$2.6 | ~$3.9 |
+| `google/gemini-3.1-flash-lite` | ~$0.076 | ~$3.0 | ~$4.5 |
+| `google/gemini-2.5-flash` | ~$0.145 | ~$5.8 | ~$8.7 |
+
+One hour of audio is counted as ~115,200 input tokens (32 per second, Gemini) and ~12,000
+output tokens of text. The real cost comes from the API's answer (M11), so step 0 checks the
+estimate.
+
+Not a meeting bot that joins the call, not live captions, not recording all day.
+
+## Decisions
+
+| # | Topic | Decision |
+|---|---|---|
+| M1 | Isolation | Its own Swift package `Meetings/` at the repo root (`Package.swift`, `Sources/MeetingsCore`, `Sources/MeetingsUI`, `Tests/`), with no dependency on `AKitCore`. AKit imports only `MeetingsUI` (one arrow). A second app target `Meetings` in `project.yml` runs the same UI on its own, so moving the folder into a new repo is the whole extraction. `make test` runs its tests too |
+| M2 | Sound | Always two sources together: the microphone (`AVAudioEngine`, voice processing on, so the sound from the speakers is not recorded twice) and the system output (a Core Audio process tap of all output, macOS 14.2+; the app's target is 15.0). The tap takes the sound before it goes to the headphones, so headphones work |
+| M3 | Start | Only by the user: Record and Stop on the Meetings screen (and a keyboard shortcut in the app). No auto start, no recording all day |
+| M4 | No visible sign | Asked by the user (they share their screen): no menu bar item, no red or glowing button, no window that comes forward. While it records, only the Meetings screen shows a plain elapsed time. The orange microphone dot of macOS cannot be hidden by any app; in a call it is on anyway. Step 0 checks whether macOS shows a sign for the system tap too |
+| M5 | Files | Its own folder, by default `~/Meetings` (a setting), not in `~/.akit`: `~/Meetings/YYYY-MM-DD/HHMM-<slug>/` with `meeting.md` and `audio/`. The package knows nothing about AKit; AKit can read the folder later (Open) |
+| M6 | Safe recording | The audio is written in 5-minute pieces while it records, so a crash or a sleep loses at most the open piece. A recording that was not stopped is found at the next start and offered for transcription |
+| M7 | Audio kept | The audio pieces (mixed mono AAC, ~30 MB per hour) are moved to the Trash 14 days after the recording; the text stays. A recording can be transcribed again while its audio is there |
+| M8 | Provider | OpenRouter only (the user's choice), plain HTTPS to `https://openrouter.ai/api/v1/chat/completions` with an `input_audio` part (base64; the format the model takes). No SDK: OpenRouter has no Swift one, and the API is OpenAI-compatible |
+| M9 | Key | The user pastes the OpenRouter key once; it is kept in the Keychain (the package's own item), never shown, logged or written to a file |
+| M10 | Models | Settings → Model is a Picker filled from `GET /api/v1/models`: models whose `input_modalities` has `audio` and whose output is text, sorted by the estimated price of one hour (from `pricing.audio` and `pricing.completion`), each row with that price. Recommended rows are marked: the Gemini Flash-Lite family (cheap, good at Czech). Default `google/gemini-2.5-flash-lite`. The summary uses the same model unless a second Picker (text models) says otherwise |
+| M11 | Cost | Each call stores the tokens and the cost from the answer's `usage`. `meeting.md` keeps the sum; the screen shows the month's total. A monthly limit (setting, default $10) stops new calls, not recordings |
+| M12 | Two tracks, one upload | The two sources are mixed into one track, so each minute is paid once. While it records, the package marks when the microphone carries speech (a level gate on the mic before mixing). Those spans go into the prompt as hints: "in these spans the speaker is Me". The other voices are Speaker 1, 2, …; the model splits them. A talk in the room goes through the mic only; the model splits those voices too |
+| M13 | Chunks | The audio is sent in pieces of up to 30 minutes, one call each, in order; each answer is JSON segments `{start, speaker, text}` with times from the start of the recording. A failed piece is retried alone |
+| M14 | Language | The transcript stays in the language spoken; the prompt says "most likely Czech, may also be Russian or English". Summary, decisions and tasks are written in the chosen language, Czech by default (Settings → Language, a Picker) |
+| M15 | Result | After the last piece one text call over the transcript writes: a title, a summary of 3–5 sentences, decisions, tasks (`- [ ] Me: …`, `- [ ] Speaker 2: …`). Speakers can be renamed after the recording; the file is rewritten with the names |
+| M16 | Screen | In AKit: Work → Meetings. In `Meetings.app`: the same view in its window. A list of days and recordings (title, length, cost, state: recording, waiting, transcribing, done, failed), the open recording with tabs Summary and Transcript, Rename Speakers…, Transcribe Again, Show in Finder, Move to Trash… |
+
+## `meeting.md`
+
+```markdown
+---
+started: 2026-11-06T10:00:12+01:00
+duration: 42m
+model: google/gemini-2.5-flash-lite
+cost_usd: 0.028
+speakers: {Me: Me, S1: Speaker 1, S2: Speaker 2}
+audio_until: 2026-11-20
+---
+# Sync with the team
+
+## Summary
+…
+
+## Decisions
+- …
+
+## Tasks
+- [ ] Me: …
+- [ ] Speaker 2: …
+
+## Transcript
+[00:00] Me: …
+[00:12] Speaker 1: …
+```
+
+## Steps
+
+| Step | What | Check |
+|---|---|---|
+| 0 | Spike on this Mac: mic + system tap with headphones and with speakers (voice processing), the permission prompts, which signs macOS shows while it records; one 5-minute Czech sample through OpenRouter: tokens per second, cost, quality of the Me hints | notes in this doc, no code kept |
+| 1 | Package skeleton, `make test` runs it; MeetingsCore: folder layout, `meeting.md` write and read, the 14-day Trash rule | tests with a fake home |
+| 2 | Recorder: both sources, 5-minute pieces, mixing, mic speech spans, recovery of an unstopped recording | tests on recorded sample buffers; manual run |
+| 3 | OpenRouter: Keychain key, the models list and its sorting, chunked transcription, the summary call, cost and the monthly limit | tests against a fake server |
+| 4 | MeetingsUI: list, open recording, settings, Rename Speakers | `make snapshot` with a made-up `~/Meetings` |
+| 5 | Into AKit (Work → Meetings) and the `Meetings` app target; guide `docs/guides/meetings.ru.md` | snapshot, guide screenshots from a made-up home |
+
+## Open
+
+- AKit reads `~/Meetings`: tasks into the Notebook, a line per meeting into the Work Log.
+- A global hotkey for Record/Stop without bringing AKit forward.
+- The `:batch` models OpenRouter lists (cheaper, slower), if they take audio this way.
+- The user chose a cloud model also for work meetings; the work Mac's policy is the user's call.
