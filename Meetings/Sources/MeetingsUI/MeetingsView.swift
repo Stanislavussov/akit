@@ -161,11 +161,13 @@ struct MeetingList: View {
     @Bindable var model: MeetingsModel
 
     var body: some View {
+        let days = model.days
         List(selection: Binding(get: { model.selectedID }, set: { model.select($0) })) {
-            ForEach(model.days, id: \.day) { day in
+            ForEach(days, id: \.day) { day in
                 Section(day.day.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
                     ForEach(day.meetings) { meeting in
-                        MeetingRow(meeting: meeting, recording: meeting.id == model.recordingID, busy: model.processing.contains(meeting.id))
+                        MeetingRow(meeting: meeting, recording: meeting.id == model.recordingID, busy: model.processing.contains(meeting.id),
+                                   hit: model.hit(meeting.id))
                             .tag(meeting.id)
                             .contextMenu {
                                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.folder(meeting.id)]) }
@@ -180,8 +182,11 @@ struct MeetingList: View {
             if model.meetings.isEmpty {
                 ContentUnavailableView("No meetings yet", systemImage: "waveform",
                                        description: Text("Record starts a recording of the microphone and the sound of the Mac."))
+            } else if days.isEmpty {
+                ContentUnavailableView.search(text: model.searchText)
             }
         }
+        .safeAreaInset(edge: .top) { SearchBar(model: model) }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Text("This month: " + String(format: "$%.2f", model.monthCost) + " of " + String(format: "$%.0f", model.settings.monthlyLimitUSD))
@@ -194,10 +199,49 @@ struct MeetingList: View {
     }
 }
 
+/// M23: the search field over all meetings and the tag menu.
+struct SearchBar: View {
+    @Bindable var model: MeetingsModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search meetings", text: $model.searchText)
+                    .textFieldStyle(.plain)
+                if !model.searchText.isEmpty {
+                    Button("Clear", systemImage: "xmark.circle.fill") { model.searchText = "" }
+                        .labelStyle(.iconOnly).buttonStyle(.borderless).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+            .help("Looks in titles, tags, summaries, transcripts and your tabs; #tag shows the meetings with that tag")
+            let tags = model.allTags
+            Menu {
+                if tags.isEmpty { Text("No tags yet") }
+                ForEach(tags, id: \.tag) { item in
+                    Button("#\(item.tag) (\(item.count))") { model.filter(tag: item.tag) }
+                }
+            } label: {
+                Label("Tags", systemImage: "tag")
+            }
+            .menuStyle(.borderlessButton)
+            .labelStyle(.iconOnly)
+            .fixedSize()
+            .help("Show the meetings with a tag")
+        }
+        .padding(8)
+        .background(.bar)
+    }
+}
+
 struct MeetingRow: View {
     let meeting: Meeting
     let recording: Bool
     let busy: Bool
+    var hit: MeetingSearch.Hit?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -210,6 +254,17 @@ struct MeetingRow: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+            if let snippet = hit?.snippet {
+                (Text((hit?.place ?? "") + ": ").bold() + Text(snippet))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else if !meeting.tagList.isEmpty {
+                Text(meeting.tagList.map { "#" + $0 }.joined(separator: " "))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
         }
         .padding(.vertical, 2)
     }
@@ -260,6 +315,7 @@ struct MeetingDetail: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                TagLine(model: model, meeting: meeting)
             }
             Spacer()
             TemplateMenu(model: model, meeting: meeting)
@@ -330,6 +386,61 @@ struct MeetingDetail: View {
         }
     }
 
+}
+
+/// M23: the meeting's tags (a click shows the meetings with it) and Edit Tags….
+struct TagLine: View {
+    let model: MeetingsModel
+    let meeting: Meeting
+    @State private var editing = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(meeting.tagList, id: \.self) { tag in
+                Button("#" + tag) { model.filter(tag: tag) }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(.quaternary.opacity(0.6), in: Capsule())
+                    .help("Show the meetings tagged \(tag)")
+            }
+            Button(meeting.tagList.isEmpty ? "Add Tags…" : "Edit…") { editing = true }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .help("Tags of this meeting, for search; the summary proposes some when it has none")
+                .popover(isPresented: $editing) { TagEditor(model: model, tags: meeting.tagList) }
+        }
+    }
+}
+
+struct TagEditor: View {
+    let model: MeetingsModel
+    let tags: [String]
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tags").font(.headline)
+            TextField("release, payments", text: $text)
+                .frame(width: 280)
+                .onSubmit(save)
+            Text("Separated by commas. An empty field removes them.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Save", action: save).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(14)
+        .onAppear { text = tags.joined(separator: ", ") }
+    }
+
+    private func save() {
+        model.setTags(text.split(separator: ",").map(String.init))
+        dismiss()
+    }
 }
 
 /// M22: the meeting's template; on a done meeting a change writes the summary again.

@@ -38,6 +38,10 @@ public final class MeetingsModel {
     public private(set) var loadingModels = false
     public var problem: String?
     public var notice: String?
+    /// M23: the list's search field (`#tag` words filter by tag) and each meeting's searchable text.
+    public var searchText = ""
+    public private(set) var documents: [String: MeetingSearch.Document] = [:]
+    @ObservationIgnored private var indexGeneration = 0
     /// Sheets and dialogs the view shows.
     public var showSettings = false
     public var showCosts = false
@@ -76,11 +80,36 @@ public final class MeetingsModel {
     public var selected: Meeting? { meetings.first { $0.id == selectedID } }
     public var monthCost: Double { meetings.filter { Calendar.current.isDate($0.started, equalTo: Date(), toGranularity: .month) }.reduce(0) { $0 + $1.costUSD } }
 
-    /// The meetings by day, newest day first.
+    /// The meetings by day, newest day first; while the search field has text, only the ones
+    /// that match (a meeting not indexed yet shows until its text is read).
     public var days: [(day: Date, meetings: [Meeting])] {
         let calendar = Calendar.current
-        let groups = Dictionary(grouping: meetings) { calendar.startOfDay(for: $0.started) }
+        let query = MeetingSearch.Query(searchText)
+        let shown = query.isEmpty ? meetings : meetings.filter { meeting in
+            documents[meeting.id].map { MeetingSearch.match($0, query) != nil } ?? true
+        }
+        let groups = Dictionary(grouping: shown) { calendar.startOfDay(for: $0.started) }
         return groups.keys.sorted(by: >).map { ($0, groups[$0]!.sorted { $0.started > $1.started }) }
+    }
+
+    /// Where a meeting matched the search field, for its row.
+    public func hit(_ id: String) -> MeetingSearch.Hit? {
+        let query = MeetingSearch.Query(searchText)
+        guard !query.isEmpty, let document = documents[id] else { return nil }
+        return MeetingSearch.match(document, query)
+    }
+
+    /// Every tag with how many meetings have it, most used first.
+    public var allTags: [(tag: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for meeting in meetings { for tag in meeting.tagList { counts[tag, default: 0] += 1 } }
+        return counts.map { ($0.key, $0.value) }.sorted { $0.count != $1.count ? $0.count > $1.count : $0.tag < $1.tag }
+    }
+
+    /// The search field with only this tag (a click on a tag), or without it again.
+    public func filter(tag: String) {
+        let word = "#" + tag.replacingOccurrences(of: " ", with: "")
+        searchText = searchText == word ? "" : word
     }
 
     // MARK: Loading
@@ -125,6 +154,25 @@ public final class MeetingsModel {
         if let id = selectedID, !meetings.contains(where: { $0.id == id }) {
             selectedID = nil
             page = nil
+        }
+        reindex()
+    }
+
+    /// Reads every meeting's text for search off the main thread; a newer call wins.
+    func reindex(only id: String? = nil) {
+        if id == nil { indexGeneration += 1 }
+        let generation = indexGeneration
+        let store = self.store
+        let chosen = id.map { id in meetings.filter { $0.id == id } } ?? meetings
+        Task {
+            let found = await Task.detached { chosen.map { MeetingSearch.document($0, store: store) } }.value
+            // A newer full read replaces an older one; one meeting's read always lands.
+            guard id != nil || generation == indexGeneration else { return }
+            if id == nil {
+                documents = Dictionary(found.map { ($0.id, $0) }) { a, _ in a }
+            } else {
+                for document in found { documents[document.id] = document }
+            }
         }
     }
 
@@ -268,6 +316,7 @@ public final class MeetingsModel {
         do {
             try store.setTags(&meeting, tags)
             updated(meeting)
+            reindex(only: meeting.id)
         } catch {
             problem = error.localizedDescription
         }
@@ -333,6 +382,7 @@ public final class MeetingsModel {
             } else if meeting.tabs.contains(tab) {
                 try store.writeTab(id, tab, text)
             }
+            reindex(only: id)
         } catch {
             problem = "Could not save \(tab): \(error.localizedDescription)"
         }

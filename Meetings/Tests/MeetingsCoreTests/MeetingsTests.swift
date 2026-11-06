@@ -772,3 +772,66 @@ final class Closed: @unchecked Sendable {
         #expect(store.load(meeting.id)?.state == .done)
     }
 }
+
+@Suite struct SearchTests {
+    func meeting(_ store: MeetingStore, title: String, tags: [String]?, summary: String, said: [String], tab: (String, String)? = nil) throws -> Meeting {
+        var meeting = try store.create(started: Date(timeIntervalSince1970: 1_800_000_000 + Double(Int.random(in: 0...100_000))))
+        meeting.title = title
+        meeting.tags = tags
+        meeting.state = .done
+        meeting.segments = said.enumerated().map { Segment(start: Double($0.offset * 10), speaker: $0.offset == 0 ? "Me" : "S1", text: $0.element) }
+        try store.save(meeting)
+        try store.writeSummary(meeting.id, summary)
+        if let tab { try store.addTab(&meeting, name: tab.0); try store.writeTab(meeting.id, tab.0, tab.1) }
+        return meeting
+    }
+
+    @Test func wordsAnywhereAccentsAndTags() throws {
+        let store = TempRoot().store
+        let a = try meeting(store, title: "Plán vydání", tags: ["release plán", "api"], summary: "## Summary\n\nVydání až po opravě.\n\n## Tasks\n\n- [ ] Me: přidat kontrolu idempotence\n",
+                            said: ["Dobré ráno", "Událost order-created přijde dvakrát"], tab: ("Odkazy", "- [MR](https://example.com/42)"))
+        let doc = MeetingSearch.document(a, store: store)
+        // Words on different lines, case and accents ignored.
+        #expect(MeetingSearch.match(doc, .init("PLAN dvakrat")) != nil)
+        #expect(MeetingSearch.match(doc, .init("idempotence"))?.place == "Summary")
+        #expect(MeetingSearch.match(doc, .init("idempotence"))?.snippet == "Me: přidat kontrolu idempotence")
+        #expect(MeetingSearch.match(doc, .init("order-created"))?.place == "Transcript")
+        #expect(MeetingSearch.match(doc, .init("example.com"))?.place == "Odkazy")
+        #expect(MeetingSearch.match(doc, .init("platby")) == nil)
+        // #tag from its start, spaces and accents left out; a tag-only search has no snippet.
+        #expect(MeetingSearch.match(doc, .init("#releaseplan")) != nil)
+        #expect(MeetingSearch.match(doc, .init("#rel")) != nil)
+        #expect(MeetingSearch.match(doc, .init("#pay")) == nil)
+        #expect(MeetingSearch.match(doc, .init("#api"))?.snippet == nil)
+        #expect(MeetingSearch.match(doc, .init("#api dvakrát")) != nil)
+        // A plain word may also be a tag.
+        #expect(MeetingSearch.match(doc, .init("api"))?.place == "Tags")
+    }
+
+    @Test func snippetCutsAroundTheWord() {
+        let text = String(repeating: "slovo ", count: 40) + "idempotence" + String(repeating: " další", count: 40)
+        let snippet = MeetingSearch.snippet(text, around: "idempotence")
+        #expect(snippet.hasPrefix("…") && snippet.hasSuffix("…") && snippet.contains("idempotence"))
+        #expect(snippet.count <= 113)
+    }
+
+    @Test func tagsAreCleanedAndProposedOnlyOnce() throws {
+        let store = TempRoot().store
+        var m = try meeting(store, title: "A", tags: nil, summary: "", said: ["x"])
+        try store.setTags(&m, [" #Release ", "release", "", "Platby  karty"])
+        #expect(store.load(m.id)?.tags == ["release", "platby karty"])
+        try store.setTags(&m, [])
+        #expect(store.load(m.id)?.tags == [])
+    }
+
+    @Test func similarByTitleTagsAndSummary() throws {
+        let store = TempRoot().store
+        let a = try meeting(store, title: "Platby kartou selhaly", tags: ["platby"], summary: "Selhalo dvanáct plateb kartou u banky.", said: ["x"])
+        let b = try meeting(store, title: "Platby: oprava", tags: ["platby"], summary: "Oprava plateb kartou u banky je hotová.", said: ["x"])
+        let c = try meeting(store, title: "Plán vydání", tags: ["release"], summary: "Vydání objednávek příští týden.", said: ["x"])
+        let docs = [a, b, c].map { MeetingSearch.document($0, store: store) }
+        let similar = MeetingSearch.similar(to: a.id, in: docs)
+        #expect(similar.map(\.id) == [b.id])
+        #expect(MeetingSearch.similar(to: "missing", in: docs).isEmpty)
+    }
+}

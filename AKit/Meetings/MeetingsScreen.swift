@@ -6,7 +6,7 @@ import SwiftUI
 
 /// Work → Meetings in AKit: the package's screen with the Crepe editor and the Guide button, and
 /// the snapshot states the guide's screenshots need (`--select <HHmm>`, `--tab meetings-transcript`,
-/// `meetings-settings`, `meetings-new-tab`).
+/// `meetings-settings`, `meetings-new-tab`; `--query` fills the search field).
 struct MeetingsScreen: View {
     let model: MeetingsModel
 
@@ -18,6 +18,7 @@ struct MeetingsScreen: View {
                 if let select = options.select, let meeting = model.meetings.first(where: { $0.id.hasSuffix(select) }) {
                     model.select(meeting.id)
                 }
+                if let query = options.query { model.searchText = query }
                 switch options.tab {
                 case "meetings-transcript": model.show(tab: MeetingsModel.transcriptTab)
                 case "meetings-tab": if let tab = model.selected?.tabs.first { model.show(tab: tab) }
