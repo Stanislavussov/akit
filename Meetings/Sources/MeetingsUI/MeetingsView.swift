@@ -256,6 +256,10 @@ struct MeetingRow: View {
             HStack(spacing: 6) {
                 Text(meeting.started.formatted(date: .omitted, time: .shortened))
                 if meeting.duration > 0 { Text(lengthText(meeting.duration)) }
+                if busy || meeting.state == .transcribing {
+                    // M29: a small spinner, so a running transcription is seen from the list.
+                    ProgressView().controlSize(.mini)
+                }
                 Text(stateText)
                 if meeting.costUSD > 0 { Text(String(format: "$%.3f", meeting.costUSD)) }
             }
@@ -298,6 +302,11 @@ struct MeetingDetail: View {
             VStack(spacing: 0) {
                 header(meeting)
                 Divider()
+                if let progress = progress(meeting) {
+                    // M29: on every tab, right under the header.
+                    ProgressStrip(model: model, meetingID: meeting.id, progress: progress)
+                    Divider()
+                }
                 TabBar(model: model, meeting: meeting)
                 Divider()
                 content(meeting)
@@ -312,31 +321,22 @@ struct MeetingDetail: View {
     private func header(_ meeting: Meeting) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(meeting.displayTitle).font(.title3.bold()).textSelection(.enabled)
+                Text(meeting.displayTitle).font(.title3.bold()).textSelection(.enabled).lineLimit(2)
                 HStack(spacing: 8) {
-                    Text(meeting.started.formatted(date: .abbreviated, time: .shortened))
-                    if meeting.duration > 0 { Text(lengthText(meeting.duration)) }
-                    if let model = meeting.model { Text(model) }
+                    Text(meeting.started.formatted(date: .abbreviated, time: .shortened)).fixedSize()
+                    if meeting.duration > 0 { Text(lengthText(meeting.duration)).fixedSize() }
+                    if let model = meeting.model { Text(model).truncationMode(.middle) }
                     if meeting.costUSD > 0 { Text(String(format: "$%.3f", meeting.costUSD)) }
                     if meeting.audioTrashed { Text("audio in the Trash") }
                 }
+                .lineLimit(1)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 TagLine(model: model, meeting: meeting)
             }
-            Spacer()
-            if model.runsLocally(meeting.id) {
-                // M27: the local run's own buttons, always in sight while it works.
-                if model.isPaused(meeting.id) {
-                    Button("Resume", systemImage: "play.fill") { model.resume(meeting.id) }
-                        .help("Go on with the transcription on this Mac")
-                } else if model.canPause(meeting.id) {
-                    Button("Pause", systemImage: "pause.fill") { model.pause(meeting.id) }
-                        .help("Pause the transcription on this Mac; nothing is lost")
-                }
-                Button("Stop", systemImage: "stop.fill", role: .destructive) { model.stopLocal(meeting.id) }
-                    .help("Kill whisper or Pi now. The pieces done so far stay; Try Again goes on from the next one.")
-            }
+            // The title and its line keep their width; the menus give way first.
+            .layoutPriority(1)
+            Spacer(minLength: 8)
             SimilarMenu(model: model, meeting: meeting)
             TemplateMenu(model: model, meeting: meeting)
             if meeting.state == .failed, !model.processing.contains(meeting.id) {
@@ -397,7 +397,14 @@ struct MeetingDetail: View {
             } else if model.selectedTab == MeetingsModel.summaryTab, model.summaryLocked {
                 // H5: the model writes this page after Stop; notes typed now would be replaced.
                 ContentUnavailableView {
-                    Label(status(meeting) ?? "Waiting", systemImage: "text.badge.checkmark")
+                    if model.processing.contains(meeting.id), progress(meeting)?.paused == false {
+                        VStack(spacing: 12) {
+                            ProgressView().controlSize(.large)
+                            Text(status(meeting) ?? "Working…")
+                        }
+                    } else {
+                        Label(status(meeting) ?? "Waiting", systemImage: "text.badge.checkmark")
+                    }
                 } description: {
                     Text("The summary, decisions and tasks appear here after the transcription. For your own notes now, add a tab with +.")
                 } actions: {
@@ -410,10 +417,54 @@ struct MeetingDetail: View {
         }
     }
 
+    /// M29: the progress strip's content while this meeting is processed, nil otherwise.
+    private func progress(_ meeting: Meeting) -> MeetingProgress? {
+        guard model.processing.contains(meeting.id) else { return nil }
+        let text = shortStatus(meeting)
+        let total = model.localStatus[meeting.id]?.pieces ?? model.pieceTotals[meeting.id] ?? 0
+        var done = meeting.transcribedPieces ?? 0
+        var paused = false
+        if let local = model.localStatus[meeting.id] {
+            switch local.phase {
+            case .transcribing: done = max(done, local.piece - 1)
+            case .resting: done = max(done, local.piece)
+            case .summarizing: done = total
+            case .paused:
+                paused = true
+                done = max(done, local.piece - 1)
+            case .queued: break
+            }
+        }
+        done = min(done, total)
+        var finish: Date?
+        if !paused, let perPiece = model.secondsPerPiece(meeting.id), let base = model.estimateBase(meeting.id) {
+            let summarizing = model.summarizingAgain.contains(meeting.id) || model.localStatus[meeting.id]?.phase == .summarizing
+            finish = base.addingTimeInterval(summarizing ? ProcessingEstimate.summarySeconds
+                                             : ProcessingEstimate.remaining(done: done, total: total, perPiece: perPiece))
+        }
+        return MeetingProgress(text: text, done: done, total: total, paused: paused, since: model.processingSince[meeting.id], finish: finish)
+    }
+
+    /// M29: the progress strip's few words.
+    private func shortStatus(_ meeting: Meeting) -> String {
+        if model.summarizingAgain.contains(meeting.id) { return "Writing the summary again" }
+        guard let local = model.localStatus[meeting.id] else { return "Transcribing with OpenRouter" }
+        switch local.phase {
+        case .queued: return "Waiting for another meeting"
+        case .transcribing: return "Transcribing on this Mac"
+        case .resting: return "Short rest"
+        case .summarizing: return "Pi writes the summary"
+        case .paused(.user): return "Paused by you"
+        case .paused(.recording): return "Paused while recording"
+        case .paused(.hot): return "Paused: the Mac is hot"
+        }
+    }
+
     /// What the meeting waits for, when it is not done.
     private func status(_ meeting: Meeting) -> String? {
         if meeting.id == model.recordingID { return "Recording. The summary and the transcript come after Stop." }
         if model.processing.contains(meeting.id), let local = model.localStatus[meeting.id] { return Self.localText(local) }
+        if model.summarizingAgain.contains(meeting.id) { return "Writing the summary again…" }
         if model.processing.contains(meeting.id) || meeting.state == .transcribing {
             return meeting.transcribedChunks > 0 ? "Transcribing: \(meeting.transcribedChunks) part(s) of 30 min done…" : "Transcribing…"
         }
@@ -720,5 +771,57 @@ struct PlainMarkdownEditor: View {
                 pending?.cancel()
                 if text != saved { save(page.key, text) }
             }
+    }
+}
+
+/// M29: a strip over the meeting's tabs while it is processed: a spinner (a pause sign while it
+/// waits), what happens now, the pieces done of all and the time it runs.
+struct ProgressStrip: View {
+    @Bindable var model: MeetingsModel
+    let meetingID: String
+    let progress: MeetingProgress
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if progress.paused {
+                Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Text(progress.text).font(.callout).lineLimit(1).truncationMode(.tail).layoutPriority(1)
+            Spacer(minLength: 8)
+            if progress.total > 0 {
+                ProgressView(value: Double(progress.done), total: Double(progress.total))
+                    .frame(minWidth: 60, maxWidth: 140)
+                Text("\(progress.done)/\(progress.total)").font(.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+                    .help("Pieces of 5 minutes done")
+            }
+            if let finish = progress.finish {
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    Text("\(ProcessingEstimate.text(finish.timeIntervalSince(context.date))) left, ~\(finish.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+                }
+                .help("A rough guess: the pieces left times the time one piece takes (in this run, or in earlier runs on this Mac), plus the summary")
+            }
+            if model.runsLocally(meetingID) {
+                // M27: the local run's own buttons, always in sight while it works.
+                if model.isPaused(meetingID) {
+                    Button("Resume", systemImage: "play.fill") { model.resume(meetingID) }
+                        .fixedSize()
+                        .help("Go on with the transcription on this Mac")
+                } else if model.canPause(meetingID) {
+                    Button("Pause", systemImage: "pause.fill") { model.pause(meetingID) }
+                        .fixedSize()
+                        .help("Pause the transcription on this Mac; nothing is lost")
+                }
+                Button("Stop", systemImage: "stop.fill", role: .destructive) { model.stopLocal(meetingID) }
+                    .fixedSize()
+                    .help("Kill whisper or Pi now. The pieces done so far stay; Try Again goes on from the next one.")
+            }
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.accentColor.opacity(0.08))
     }
 }

@@ -289,6 +289,8 @@ shot meetings-tasks      $MAIN --section meetings --select 0930 --tab meetings-t
 # Local mode: Settings with Local + Pi (written into the demo home's settings), and a made-up local run paused on heat.
 shot meetings-local-settings $MAIN --section meetings --tab meetings-local-settings
 shot meetings-local-run  $MAIN --section meetings --select 0930 --tab meetings-local-run
+# The progress strip of a made-up local run at work (piece 3 of 12).
+shot meetings-progress   $MAIN --section meetings --select 0930 --tab meetings-progress
 shot knowledge-obsidian-setup 900x600 --section knowledge --select payments/orders-api --tab obsidian-setup
 shot knowledge-tags      $MAIN --section knowledge --select payments/orders-api --click 250,100
 shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties

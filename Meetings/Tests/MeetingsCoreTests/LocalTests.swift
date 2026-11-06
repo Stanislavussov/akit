@@ -461,3 +461,41 @@ struct LocalFixture {
         }
     }
 }
+
+@Suite struct ProcessingEstimateTests {
+    @Test func timeLeftIsPiecesLeftPlusSummary() {
+        #expect(ProcessingEstimate.remaining(done: 3, total: 12, perPiece: 70) == 9 * 70 + ProcessingEstimate.summarySeconds)
+        #expect(ProcessingEstimate.remaining(done: 12, total: 12, perPiece: 70, summaryLeft: false) == 0)
+    }
+
+    @Test func measuredSpeedNeedsAPiece() {
+        let start = Date(timeIntervalSince1970: 0)
+        #expect(ProcessingEstimate.measured(piecesDone: 0, since: start, now: start.addingTimeInterval(100)) == nil)
+        #expect(ProcessingEstimate.measured(piecesDone: 2, since: start, now: start.addingTimeInterval(100)) == 50)
+    }
+
+    @Test func remembersAndMixesTheSpeed() throws {
+        let defaults = try #require(UserDefaults(suiteName: "meetings-test-\(UUID().uuidString)"))
+        #expect(ProcessingEstimate.perPiece(.localGPU, defaults: defaults) == 70)
+        ProcessingEstimate.remember(40, for: .localGPU, defaults: defaults)
+        #expect(ProcessingEstimate.perPiece(.localGPU, defaults: defaults) == 40)
+        ProcessingEstimate.remember(60, for: .localGPU, defaults: defaults)
+        #expect(ProcessingEstimate.perPiece(.localGPU, defaults: defaults) == 50)
+        #expect(ProcessingEstimate.perPiece(.cloud, defaults: defaults) == 12)
+    }
+
+    @Test func wayFollowsTheSettings() {
+        var settings = MeetingsSettings()
+        #expect(ProcessingEstimate.Way(settings) == .cloud)
+        settings.transcription = .local
+        #expect(ProcessingEstimate.Way(settings) == .localGPU)
+        settings.localGPU = false
+        #expect(ProcessingEstimate.Way(settings) == .localCPU)
+    }
+
+    @Test func text() {
+        #expect(ProcessingEstimate.text(20) == "≈ 1 min")
+        #expect(ProcessingEstimate.text(390) == "≈ 7 min")
+        #expect(ProcessingEstimate.text(4200) == "≈ 1 h 10 min")
+    }
+}

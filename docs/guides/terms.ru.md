@@ -1410,5 +1410,6 @@ Friction («трение») — места, где агент спотыкалс
 - **Engine** (Meetings Settings): **Transcribe with** — **Cloud: OpenRouter** или **Local: whisper on this Mac (free)**; **Summary by** — **OpenRouter** или **Pi (your coding agent)**. Подробнее: [На этом Mac](meetings#local)
 - **On this Mac** (Meetings Settings): **Install whisper.cpp**, **Download Model (570 MB)**, **Spoken language** (**Detect** или язык), **Use the GPU at background priority**. Подробнее: [На этом Mac](meetings#local)
 - **Pi** → **Model** (Meetings Settings): модель Pi для Summary; **Pi's default** — модель Pi по умолчанию. Подробнее: [На этом Mac](meetings#local)
-- **Pause** / **Resume** / **Stop** (встреча, вверху справа, во время локальной расшифровки): пауза, продолжить, сразу убить whisper или Pi; готовые куски остаются. Подробнее: [На этом Mac](meetings#local)
+- Полоска прогресса (встреча, под названием, пока идёт обработка): что идёт сейчас, куски «2/12», «≈ … min left, ~время». Подробнее: [На этом Mac](meetings#local)
+- **Pause** / **Resume** / **Stop** (полоска прогресса, во время локальной расшифровки): пауза, продолжить, сразу убить whisper или Pi; готовые куски остаются. Подробнее: [На этом Mac](meetings#local)
 - **Me** / **Others** (Transcript в режиме Local): ваш микрофон и звук звонка; whisper не различает голоса. Подробнее: [На этом Mac](meetings#local)

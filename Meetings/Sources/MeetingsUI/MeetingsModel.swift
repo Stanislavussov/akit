@@ -47,6 +47,17 @@ public final class MeetingsModel {
     /// M28: Pi's models (`provider/id`), from `pi --list-models`.
     public private(set) var piModels: [String] = []
     public private(set) var loadingPiModels = false
+    /// The pieces of each meeting being processed, for its progress bar.
+    public private(set) var pieceTotals: [String: Int] = [:]
+    /// When each meeting's run started, for the elapsed time beside the progress bar.
+    public private(set) var processingSince: [String: Date] = [:]
+    /// M29: where each run started counting pieces (pieces done then, the time), and its way,
+    /// for the time left.
+    /// When the last piece of each running meeting was done.
+    @ObservationIgnored private var lastPieceAt: [String: Date] = [:]
+    @ObservationIgnored private var runStart: [String: (pieces: Int, at: Date, way: ProcessingEstimate.Way)] = [:]
+    /// The meetings whose summary is written again now (Summarize Again, a new template).
+    public private(set) var summarizingAgain: Set<String> = []
     /// The meetings whose local run the user paused.
     public private(set) var pausedByUser: Set<String> = []
     public var problem: String?
@@ -321,6 +332,9 @@ public final class MeetingsModel {
             return
         }
         processing.insert(id)
+        pieceTotals[id] = store.pieces(id).count
+        processingSince[id] = Date()
+        runStart[id] = (restart ? 0 : store.load(id)?.transcribedPieces ?? 0, Date(), ProcessingEstimate.Way(settings))
         let client = key.map { OpenRouterClient(key: $0, transport: transport) }
         let control = LocalControl(recording: isRecording)
         controls[id] = control
@@ -351,6 +365,9 @@ public final class MeetingsModel {
                 problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
             processing.remove(id)
+            rememberSpeed(id)
+            pieceTotals[id] = nil
+            processingSince[id] = nil
             controls[id] = nil
             runTokens[id] = nil
             localStatus[id] = nil
@@ -369,6 +386,8 @@ public final class MeetingsModel {
             return
         }
         processing.insert(id)
+        summarizingAgain.insert(id)
+        processingSince[id] = Date()
         // M28: Pi writes it when chosen; Stop kills it like a local run.
         let control = LocalControl()
         controls[id] = control
@@ -392,7 +411,10 @@ public final class MeetingsModel {
             } catch {
                 problem = "The summary was not written again: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
             }
+            summarizingAgain.remove(id)
             processing.remove(id)
+            pieceTotals[id] = nil
+            processingSince[id] = nil
             controls[id] = nil
             runTokens[id] = nil
             localStatus[id] = nil
@@ -627,6 +649,29 @@ public final class MeetingsModel {
         MeetingSearch.similar(to: id, in: Array(documents.values)).compactMap { hit in meetings.first { $0.id == hit.id } }
     }
 
+    // MARK: Time left (M29)
+
+    /// The seconds one piece takes in this meeting's run: measured once a piece is done, else
+    /// what earlier runs on this Mac took.
+    public func secondsPerPiece(_ id: String) -> TimeInterval? {
+        guard let start = runStart[id] else { return nil }
+        let done = (meetings.first { $0.id == id }?.transcribedPieces ?? start.pieces) - start.pieces
+        return ProcessingEstimate.measured(piecesDone: done, since: start.at) ?? ProcessingEstimate.perPiece(start.way)
+    }
+
+    /// From when the time left counts: the last piece done, else the run's start.
+    public func estimateBase(_ id: String) -> Date? { lastPieceAt[id] ?? runStart[id]?.at }
+
+    /// The run's measured speed for the next estimate (only when it did pieces).
+    private func rememberSpeed(_ id: String) {
+        lastPieceAt[id] = nil
+        guard let start = runStart.removeValue(forKey: id), let meeting = store.load(id) else { return }
+        let done = (meeting.transcribedPieces ?? 0) - start.pieces
+        // The summary's time is not a piece's: leave it out.
+        let seconds = Date().timeIntervalSince(start.at) - (meeting.state == .done ? ProcessingEstimate.summarySeconds : 0)
+        if done > 0 { ProcessingEstimate.remember(seconds / Double(done), for: start.way) }
+    }
+
     // MARK: Local runs (M27)
 
     /// Whether the user paused this meeting's local run.
@@ -677,6 +722,9 @@ public final class MeetingsModel {
     /// For the guide's screenshots: shows a local run's status and buttons without running one.
     public func showMadeUpLocalRun(_ id: String, _ status: LocalStatus) {
         processing.insert(id)
+        pieceTotals[id] = status.pieces
+        processingSince[id] = Date().addingTimeInterval(-150)
+        runStart[id] = (0, Date().addingTimeInterval(-150), .localGPU)
         controls[id] = LocalControl()
         localStatus[id] = status
     }
@@ -762,6 +810,10 @@ public final class MeetingsModel {
     }
 
     private func updated(_ meeting: Meeting) {
+        // M29: the time of the last piece done, the base of the finish time.
+        if let old = meetings.first(where: { $0.id == meeting.id }), (meeting.transcribedPieces ?? 0) > (old.transcribedPieces ?? 0) {
+            lastPieceAt[meeting.id] = Date()
+        }
         if let index = meetings.firstIndex(where: { $0.id == meeting.id }) { meetings[index] = meeting }
     }
 
@@ -976,4 +1028,16 @@ public final class MeetingsModel {
             modelsProblem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
+}
+
+/// M29: how far a meeting's processing is, for the progress strip.
+public struct MeetingProgress: Equatable, Sendable {
+    public var text: String
+    /// Pieces done and in all; 0 in all when unknown.
+    public var done: Int
+    public var total: Int
+    public var paused: Bool
+    public var since: Date?
+    /// When it is likely done, a rough guess; nil when unknown or paused.
+    public var finish: Date?
 }
