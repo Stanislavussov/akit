@@ -1,6 +1,8 @@
 # Meetings: record a call or a talk, get the text, a summary and the tasks
 
-Status: designed 2026-11-06 (grilled with the user); steps 0–5 built and checked on a real
+Status: local mode (M22–M24, step 6) built 2026-11-06 on branch `meetings-local`: whisper checked on
+real Czech speech; Pi checked with a fake `pi` only (the Mac's Pi keys had expired).
+Designed 2026-11-06 (grilled with the user); steps 0–5 built and checked on a real
 recording the same day (mic + system sound in headphones and through the speakers, OpenRouter with
 Gemini 2.5 Flash-Lite, the user: "works great"). Branch `meetings-recorder`, released v2026.11.06-2.
 
@@ -56,6 +58,9 @@ Not a meeting bot that joins the call, not live captions, not recording all day.
 | M21 | Costs | Asked by the user the same day: Costs… shows what OpenRouter charged (each meeting's stored cost, in the period of its start) grouped by day, week (from the locale's first weekday) or month, in a range (this week, this month, last 30 / 90 days, this year, all, custom), for every model or one; totals with cost per recorded hour and per day, a bar chart, a table with empty periods as zero, Copy CSV. Logic in `CostReport` (MeetingsCore) |
 | M17 | Tabs | Asked by the user the same day: a meeting is not "a recording" but its tabs. Summary first (summary, decisions, tasks), then Transcript, then the user's own tabs: plain Markdown pages (notes, links), added, renamed and removed like the Notebook's tabs. Own tabs are files `tabs/<name>.md` in the meeting's folder, never sent to a model. Summary is editable too (its section of `meeting.md`); Transcript is read only. The editor comes from the host app: AKit passes its Crepe editor (the Notebook's), `Meetings.app` a plain Markdown text editor, so the package needs no web bundle |
 
+| M22 | Local transcription | Asked by the user 2026-11-06 ("a local model, switch between local and cloud"): Settings → Engine → Transcribe with: Cloud (OpenRouter) or Local. Local is whisper.cpp (`brew install whisper-cpp`, `whisper-cli`) with `ggml-large-v3-turbo-q5_0.bin` (574 MB, in `~/Library/Application Support/Meetings/models`); both have buttons in Settings. Each 5-minute piece goes alone: `afconvert` to 16 kHz mono WAV, then whisper, the mic track as "Me" and the system track as "Others" (whisper does not tell voices apart; Rename Speakers names them). A source with no speech spans in a piece is not run; lines outside the spans are dropped (whisper makes up words in silence) and start no earlier than their first span. An older piece without tracks goes as the mix, "Me" where the mic spans cover most of a line. Spoken language: Detect (per piece) or a fixed one. Cost 0. Checked on Czech speech: word for word |
+| M23 | Not in the way | The user's main rule: the Mac must not lag. Every child process runs through `taskpolicy -b` (background: efficiency cores, low I/O and GPU priority). Measured on the M4, 11 s of Czech: GPU at background priority 6 s and 0.8 s of CPU; CPU only on the efficiency cores 115 s and 266 s of CPU; so the GPU is on by default (a toggle turns it off). One piece at a time, a rest after each piece as long as it took (≤ 60 s), one local run on the Mac at a time (`<root>/.local-run.lock`, both apps). The run pauses (SIGSTOP, then SIGCONT) while a recording runs and while the thermal state is serious, and kills itself at critical. Pause / Resume and Stop sit at the meeting's top right while it runs; Stop kills the process at once, the done pieces stay, Try Again goes on from the next one |
+| M24 | Summary by Pi | Settings → Engine → Summary by: OpenRouter or Pi. Pi gets the same prompt as the OpenRouter call in a file (`pi -p --mode text --no-session --offline --no-tools --no-skills --no-context-files --no-prompt-templates --system-prompt … @file`), the login shell's environment, the model from a Picker filled by `pi --list-models` or Pi's default; its answer is the same JSON. Pi is not paused (it waits on the network), only stopped. With Local + Pi the OpenRouter key is not needed and nothing goes to OpenRouter |
 ## Pages
 
 `summary.md` (editable, the Summary tab):
@@ -92,6 +97,7 @@ Not a meeting bot that joins the call, not live captions, not recording all day.
 | 3 | OpenRouter: Keychain key, the models list and its sorting, chunked transcription, the summary call, cost and the monthly limit | tests against a fake server |
 | 4 | MeetingsUI: list, open recording, settings, Rename Speakers | `make snapshot` with a made-up `~/Meetings` |
 | 5 | Into AKit (Work → Meetings) and the `Meetings` app target; guide `docs/guides/meetings.ru.md` | snapshot, guide screenshots from a made-up home |
+| 6 | Local mode (M22–M24): whisper.cpp per piece at background priority, pause / stop / heat, Pi summary, Settings → Engine, guide section | tests with fake `afconvert` / `whisper-cli` / `pi`; a real whisper run on Czech speech; snapshots `meetings-local-settings`, `meetings-local-run` |
 
 ## Open
 

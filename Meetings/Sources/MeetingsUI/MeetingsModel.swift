@@ -36,6 +36,19 @@ public final class MeetingsModel {
     public private(set) var textModels: [ModelCatalog.Row] = []
     public private(set) var modelsProblem: String?
     public private(set) var loadingModels = false
+    /// M23: what each meeting's local run does now (queued, a piece, paused …).
+    public private(set) var localStatus: [String: LocalStatus] = [:]
+    /// M22: whisper.cpp and its model on this Mac.
+    public private(set) var whisperCLI: URL?
+    public private(set) var hasWhisperModel = false
+    /// The model download's progress (0…1) while it runs.
+    public private(set) var modelDownload: Double?
+    public private(set) var installingWhisper = false
+    /// M24: Pi's models (`provider/id`), from `pi --list-models`.
+    public private(set) var piModels: [String] = []
+    public private(set) var loadingPiModels = false
+    /// The meetings whose local run the user paused.
+    public private(set) var pausedByUser: Set<String> = []
     public var problem: String?
     public var notice: String?
     /// Sheets and dialogs the view shows.
@@ -56,6 +69,9 @@ public final class MeetingsModel {
     let keyStore: KeyStore
     let transport: OpenRouterClient.Transport
     private var recorder: Recorder?
+    /// The control of each running local run.
+    @ObservationIgnored private var controls: [String: LocalControl] = [:]
+    @ObservationIgnored private var download: URLSessionDownloadTask?
     private var generation = 0
     @ObservationIgnored private var savedText: (key: String, text: String)?
     private var loaded = false
@@ -74,6 +90,8 @@ public final class MeetingsModel {
     /// The live waves while it records (read by the screen several times a second).
     public var levels: (mic: [Float], system: [Float]) { recorder?.levels ?? ([], []) }
     public var selected: Meeting? { meetings.first { $0.id == selectedID } }
+    /// Whether a meeting can be transcribed now: the key is there, or no step needs it.
+    public var canProcess: Bool { hasKey || !settings.needsKey }
     public var monthCost: Double { meetings.filter { Calendar.current.isDate($0.started, equalTo: Date(), toGranularity: .month) }.reduce(0) { $0 + $1.costUSD } }
 
     /// The meetings by day, newest day first.
@@ -91,6 +109,7 @@ public final class MeetingsModel {
     /// is left alone (H2).
     public func load() async {
         hasKey = keyStore.hasKey
+        refreshLocalTools()
         refresh()
         guard !loaded else { return }
         loaded = true
@@ -115,7 +134,7 @@ public final class MeetingsModel {
         }
         refresh()
         if selectedID == nil, let first = meetings.first { select(first.id) }
-        if hasKey {
+        if canProcess {
             for meeting in meetings where meeting.state == .waiting { process(meeting.id) }
         }
     }
@@ -149,6 +168,7 @@ public final class MeetingsModel {
             }
             self.recorder = recorder
             recordingID = meeting.id
+            for control in controls.values { control.recording = true }
             recordingStarted = Date()
             refresh()
             select(meeting.id)
@@ -163,6 +183,7 @@ public final class MeetingsModel {
         self.recorder = nil
         recordingID = nil
         recordingStarted = nil
+        for control in controls.values { control.recording = false }
         if var meeting = store.load(id) {
             meeting.duration = result.seconds
             meeting.state = .waiting
@@ -171,10 +192,10 @@ public final class MeetingsModel {
         }
         refresh()
         if !result.problems.isEmpty { problem = result.problems.joined(separator: " ") }
-        if hasKey {
+        if canProcess {
             process(id)
         } else {
-            notice = "Recorded \(lengthText(result.seconds)). Add your OpenRouter key in Settings to transcribe it."
+            notice = "Recorded \(lengthText(result.seconds)). Add your OpenRouter key in Settings, or choose Local in Settings, to transcribe it."
         }
         if selectedID == id { reloadPage() }
     }
@@ -196,13 +217,19 @@ public final class MeetingsModel {
     /// Meetings app is already on it.
     public func process(_ id: String, restart: Bool = false, byUser: Bool = false) {
         guard !processing.contains(id) else { return }
-        guard let key = keyStore.read() else {
+        let key = keyStore.read()
+        if key == nil && settings.needsKey {
             problem = MeetingsError.noKey.errorDescription
             return
         }
         processing.insert(id)
-        let client = OpenRouterClient(key: key, transport: transport)
-        let processor = MeetingProcessor(store: store, settings: settings, client: client) { [weak self] meeting in
+        let client = key.map { OpenRouterClient(key: $0, transport: transport) }
+        let control = LocalControl(recording: isRecording)
+        controls[id] = control
+        let local = LocalEnvironment(control: control, status: { [weak self] status in
+            Task { @MainActor in self?.localStatus[id] = status }
+        })
+        let processor = MeetingProcessor(store: store, settings: settings, client: client, local: local) { [weak self] meeting in
             Task { @MainActor in self?.updated(meeting) }
         }
         Task {
@@ -212,14 +239,136 @@ public final class MeetingsModel {
                 // The other Meetings app transcribes it; its saves show up on the next refresh.
                 if byUser { notice = MeetingsError.busy.errorDescription }
             } catch MeetingsError.http(401, _) {
-                problem = (MeetingsError.http(401, "").errorDescription ?? "") + " " + KeyStore.shape(key)
+                problem = (MeetingsError.http(401, "").errorDescription ?? "") + " " + KeyStore.shape(key ?? "")
+            } catch MeetingsError.stopped {
+                notice = MeetingsError.stopped.errorDescription
             } catch {
                 problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
             processing.remove(id)
+            controls[id] = nil
+            localStatus[id] = nil
+            pausedByUser.remove(id)
             refresh()
             if selectedID == id { reloadPage() }
         }
+    }
+
+    // MARK: Local runs (M23)
+
+    /// Whether the user paused this meeting's local run.
+    public func isPaused(_ id: String) -> Bool { pausedByUser.contains(id) }
+
+    public func pause(_ id: String) {
+        controls[id]?.userPaused = true
+        pausedByUser.insert(id)
+        localStatus[id].map { localStatus[id] = LocalStatus(phase: .paused(.user), piece: $0.piece, pieces: $0.pieces) }
+    }
+
+    public func resume(_ id: String) {
+        controls[id]?.userPaused = false
+        pausedByUser.remove(id)
+    }
+
+    /// Kills the running whisper or Pi; the pieces done so far stay.
+    public func stopLocal(_ id: String) {
+        MeetingsLog.info(.ui, "\(id): Stop local run")
+        controls[id]?.stopped = true
+    }
+
+    /// Whether this meeting runs on this Mac (whisper or Pi), so Pause and Stop apply.
+    public func runsLocally(_ id: String) -> Bool { processing.contains(id) && localStatus[id] != nil }
+
+    /// For the guide's screenshots: settings shown but not saved, and no meeting starts.
+    public func showMadeUpSettings(_ change: (inout MeetingsSettings) -> Void) {
+        change(&settings)
+    }
+
+    /// For the guide's screenshots: shows a local run's status and buttons without running one.
+    public func showMadeUpLocalRun(_ id: String, _ status: LocalStatus) {
+        processing.insert(id)
+        controls[id] = LocalControl()
+        localStatus[id] = status
+    }
+
+    // MARK: Local tools (M22, M24)
+
+    public func refreshLocalTools() {
+        whisperCLI = LocalWhisper.findCLI()
+        hasWhisperModel = LocalWhisper.hasModel()
+    }
+
+    /// `brew install whisper-cpp` in the login shell.
+    public func installWhisper() async {
+        guard !installingWhisper else { return }
+        installingWhisper = true
+        defer { installingWhisper = false }
+        let variables = await LoginEnvironment.variables()
+        guard let brew = LoginEnvironment.find("brew", in: variables) ?? ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+            .map({ URL(filePath: $0) }).first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
+            problem = "Homebrew is not installed. Install it from brew.sh, then click Install whisper.cpp again."
+            return
+        }
+        MeetingsLog.info(.local, "brew install whisper-cpp")
+        let result = try? await ChildRun.run(brew, ["install", "whisper-cpp"], environment: variables, background: false, pausable: false,
+                                             timeout: 1800, local: LocalEnvironment(), resume: LocalStatus(phase: .queued))
+        refreshLocalTools()
+        if whisperCLI == nil {
+            let detail = result.map { String(decoding: $0.errors + $0.output, as: UTF8.self).suffix(300) } ?? "brew did not finish"
+            problem = "Could not install whisper.cpp: \(detail)"
+        } else {
+            notice = "whisper.cpp is installed."
+        }
+    }
+
+    /// Downloads the whisper model (~570 MB) to `~/Library/Application Support/Meetings/models`.
+    public func downloadModel() {
+        guard download == nil else { return }
+        let target = LocalWhisper.modelFile
+        modelDownload = 0
+        MeetingsLog.info(.local, "download \(LocalWhisper.modelName)")
+        let task = URLSession.shared.downloadTask(with: LocalWhisper.modelURL) { [weak self] file, response, error in
+            var failure = error?.localizedDescription
+            if failure == nil, let file {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                do {
+                    guard code == 200 else { throw MeetingsError.local("the download answered \(code)") }
+                    try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try? FileManager.default.removeItem(at: target)
+                    try FileManager.default.moveItem(at: file, to: target)
+                    if !LocalWhisper.hasModel(target) { throw MeetingsError.local("the file is too small") }
+                } catch {
+                    try? FileManager.default.removeItem(at: target)
+                    failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                }
+            }
+            Task { @MainActor in
+                guard let self else { return }
+                self.download = nil
+                self.modelDownload = nil
+                self.refreshLocalTools()
+                if let failure { self.problem = "Could not download the whisper model: \(failure)" } else { self.notice = "The whisper model is downloaded." }
+            }
+        }
+        download = task
+        task.resume()
+        Task { [weak self] in
+            while let self, self.download === task {
+                self.modelDownload = task.progress.fractionCompleted
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+        }
+    }
+
+    public func cancelDownload() {
+        download?.cancel()
+    }
+
+    public func loadPiModels() async {
+        guard !loadingPiModels else { return }
+        loadingPiModels = true
+        defer { loadingPiModels = false }
+        piModels = await PiSummarizer.models()
     }
 
     private func updated(_ meeting: Meeting) {
@@ -373,11 +522,16 @@ public final class MeetingsModel {
         change(&next)
         guard next != settings else { return }
         let rootChanged = next.root != settings.root
+        let couldProcess = canProcess
         settings = next
         do { try settings.save(to: settingsFile) } catch { problem = "Could not save the settings: \(error.localizedDescription)" }
         if rootChanged {
             select(nil)
             refresh()
+        }
+        // Local needs no key: the meetings that waited for one go now.
+        if !couldProcess && canProcess {
+            for meeting in meetings where meeting.state == .waiting { process(meeting.id) }
         }
     }
 

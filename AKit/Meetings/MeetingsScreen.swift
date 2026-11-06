@@ -6,7 +6,7 @@ import SwiftUI
 
 /// Work → Meetings in AKit: the package's screen with the Crepe editor and the Guide button, and
 /// the snapshot states the guide's screenshots need (`--select <HHmm>`, `--tab meetings-transcript`,
-/// `meetings-settings`, `meetings-new-tab`).
+/// `meetings-settings`, `meetings-local-settings`, `meetings-local-run`, `meetings-new-tab`).
 struct MeetingsScreen: View {
     let model: MeetingsModel
 
@@ -22,6 +22,13 @@ struct MeetingsScreen: View {
                 case "meetings-transcript": model.show(tab: MeetingsModel.transcriptTab)
                 case "meetings-tab": if let tab = model.selected?.tabs.first { model.show(tab: tab) }
                 case "meetings-settings": model.showSettings = true
+                case "meetings-local-settings":
+                    // M22, M24: Local + Pi in memory only, after load(), so nothing starts.
+                    model.showMadeUpSettings { $0.transcription = .local; $0.summarizer = .pi }
+                    model.showSettings = true
+                case "meetings-local-run":
+                    // M23: a made-up local run on the chosen meeting, paused while the Mac is hot; nothing runs.
+                    if let id = model.selectedID { model.showMadeUpLocalRun(id, LocalStatus(phase: .paused(.hot), piece: 3, pieces: 12)) }
                 case "meetings-costs": model.showCosts = true
                 case "meetings-new-tab": model.tabNameRequest = .init(old: nil)
                 default: break

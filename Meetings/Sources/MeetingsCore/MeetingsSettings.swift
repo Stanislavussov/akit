@@ -23,6 +23,42 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     public var echoCancellation: Bool = true
     /// M20: how the microphone and the system sound go to the model.
     public var tracks: TrackMode = .auto
+    /// M22: who turns the audio into text: OpenRouter or whisper on this Mac.
+    public var transcription: Engine = .cloud
+    /// M24: who writes the summary: OpenRouter or Pi.
+    public var summarizer: Summarizer = .openRouter
+    /// Pi's model (`provider/id`); nil is Pi's own default.
+    public var piModel: String?
+    /// whisper's language code, `auto` to detect per piece.
+    public var localLanguage: String = "auto"
+    /// M23: whisper on the GPU at background priority (fast, little CPU); off is the efficiency
+    /// cores only (about 4× slower than the meeting).
+    public var localGPU: Bool = true
+
+    public enum Engine: String, Codable, Sendable, CaseIterable {
+        case cloud, local
+
+        public var title: String {
+            switch self {
+            case .cloud: "Cloud: OpenRouter"
+            case .local: "Local: whisper on this Mac (free)"
+            }
+        }
+    }
+
+    public enum Summarizer: String, Codable, Sendable, CaseIterable {
+        case openRouter, pi
+
+        public var title: String {
+            switch self {
+            case .openRouter: "OpenRouter"
+            case .pi: "Pi (your coding agent)"
+            }
+        }
+    }
+
+    /// Whether any step calls OpenRouter, so the key is needed.
+    public var needsKey: Bool { transcription == .cloud || summarizer == .openRouter }
 
     public enum TrackMode: String, Codable, Sendable, CaseIterable {
         /// One mixed track (1×).
@@ -74,5 +110,10 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
         rootPath = try c.decodeIfPresent(String.self, forKey: .rootPath)
         echoCancellation = try c.decodeIfPresent(Bool.self, forKey: .echoCancellation) ?? d.echoCancellation
         tracks = (try? c.decodeIfPresent(TrackMode.self, forKey: .tracks)) ?? d.tracks
+        transcription = (try? c.decodeIfPresent(Engine.self, forKey: .transcription)) ?? d.transcription
+        summarizer = (try? c.decodeIfPresent(Summarizer.self, forKey: .summarizer)) ?? d.summarizer
+        piModel = try c.decodeIfPresent(String.self, forKey: .piModel)
+        localLanguage = try c.decodeIfPresent(String.self, forKey: .localLanguage) ?? d.localLanguage
+        localGPU = try c.decodeIfPresent(Bool.self, forKey: .localGPU) ?? d.localGPU
     }
 }

@@ -15,6 +15,9 @@ struct MeetingsSettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Meetings Settings").font(.title3.bold())
             Form {
+                engineSection
+                if model.settings.transcription == .local { localSection }
+                if model.settings.summarizer == .pi { piSection }
                 Section("OpenRouter") {
                     if model.hasKey {
                         LabeledContent("Key") {
@@ -45,7 +48,7 @@ struct MeetingsSettingsView: View {
                     Text("Kept in the login Keychain, never shown or written to a file. Create one at openrouter.ai/keys (it starts with sk-or-v1-).")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("Models") {
+                Section("OpenRouter models") {
                     Picker("Transcription", selection: Binding(get: { model.settings.model }, set: { value in model.update { $0.model = value } })) {
                         ForEach(rows(model.audioModels, keeping: model.settings.model)) { row in
                             Text(label(row)).tag(row.id)
@@ -136,9 +139,88 @@ struct MeetingsSettingsView: View {
         .frame(width: 620, height: 720)
         .onAppear { limit = model.settings.monthlyLimitUSD }
         .task {
+            model.refreshLocalTools()
             if model.hasKey { await model.checkKey() }
             if model.audioModels.isEmpty { await model.loadModels() }
         }
+        .task(id: model.settings.summarizer) {
+            if model.settings.summarizer == .pi, model.piModels.isEmpty { await model.loadPiModels() }
+        }
+    }
+
+    /// M22, M24: who does each step.
+    private var engineSection: some View {
+        Section("Engine") {
+            Picker("Transcribe with", selection: Binding(get: { model.settings.transcription }, set: { value in model.update { $0.transcription = value } })) {
+                ForEach(MeetingsSettings.Engine.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            Picker("Summary by", selection: Binding(get: { model.settings.summarizer }, set: { value in model.update { $0.summarizer = value } })) {
+                ForEach(MeetingsSettings.Summarizer.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            Text(model.settings.needsKey
+                 ? "OpenRouter needs the key below; each meeting shows what it charged."
+                 : "Nothing goes to OpenRouter: the audio stays on this Mac, Pi gets only the transcript's text. The key is not needed.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// M22, M23: whisper.cpp, its model, the language and how hard it may work.
+    private var localSection: some View {
+        Section("On this Mac") {
+            LabeledContent("whisper.cpp") {
+                if let cli = model.whisperCLI {
+                    Text(cli.path).foregroundStyle(.secondary).textSelection(.enabled)
+                } else if model.installingWhisper {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("brew install whisper-cpp…").foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button("Install whisper.cpp") { Task { await model.installWhisper() } }
+                }
+            }
+            LabeledContent("Model") {
+                if model.hasWhisperModel {
+                    Text("\(LocalWhisper.modelTitle), downloaded").foregroundStyle(.secondary)
+                } else if let progress = model.modelDownload {
+                    HStack {
+                        ProgressView(value: progress).frame(width: 160)
+                        Text("\(Int(progress * 100)) %").monospacedDigit().foregroundStyle(.secondary)
+                        Button("Cancel") { model.cancelDownload() }
+                    }
+                } else {
+                    Button("Download Model (570 MB)") { model.downloadModel() }
+                }
+            }
+            Picker("Spoken language", selection: Binding(get: { model.settings.localLanguage }, set: { value in model.update { $0.localLanguage = value } })) {
+                ForEach(LocalWhisper.languages, id: \.code) { Text($0.name).tag($0.code) }
+            }
+            Toggle("Use the GPU at background priority", isOn: Binding(get: { model.settings.localGPU }, set: { value in model.update { $0.localGPU = value } }))
+            Text("whisper runs one 5-minute piece at a time at background priority and rests after each piece. It pauses while you record and while the Mac is hot, and stops itself if the Mac gets critically hot. With the GPU an hour takes a few minutes and almost no CPU; without it, only the efficiency cores work and an hour takes about 4 hours. Speakers are Me (your microphone) and Others (the call); rename them after.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// M24: Pi's model for the summary.
+    private var piSection: some View {
+        Section("Pi") {
+            HStack {
+                Picker("Model", selection: Binding(get: { model.settings.piModel ?? "" }, set: { value in model.update { $0.piModel = value.isEmpty ? nil : value } })) {
+                    Text("Pi's default").tag("")
+                    ForEach(piRows, id: \.self) { Text($0).tag($0) }
+                }
+                if model.loadingPiModels { ProgressView().controlSize(.small) }
+                Button("Reload") { Task { await model.loadPiModels() } }.disabled(model.loadingPiModels)
+            }
+            Text("Pi gets the transcript's text and writes the summary, decisions and tasks in the language above, with no tools, skills or saved session.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Pi's models, with the chosen one kept when the list lacks it.
+    private var piRows: [String] {
+        guard let chosen = model.settings.piModel, !chosen.isEmpty, !model.piModels.contains(chosen) else { return model.piModels }
+        return [chosen] + model.piModels
     }
 
     private var languages: [String] {
