@@ -59,6 +59,8 @@ final class RecorderDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // A local whisper or Pi run ends and its meeting waits for the next start.
+        model.prepareToQuit()
         guard model.isRecording else { return .terminateNow }
         Task { @MainActor in
             await model.stop()
