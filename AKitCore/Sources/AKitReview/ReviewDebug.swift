@@ -337,8 +337,11 @@ public enum ReviewDebug {
                     "The model saw \(shown) of \(full) characters (Pi cuts answers over 20 KB). AKit read the whole answer, the pass did not.")
             }
         }
-        for pass in log.passes where pass.name.hasPrefix("role-") && pass.error == nil && pass.seconds != nil && pass.filesRead == 0 {
-            add(.medium, "Pass \(pass.name) read no file", "The role reviewed from the brief alone: no read, grep, find or ls call.")
+        // A role uses the files the brief read in the same session (2026-11-06): only a role with
+        // nothing read in the session at all reviewed from the brief's text alone.
+        let briefRead = log.passes.first { $0.name == "brief" }?.filesRead ?? 0
+        for pass in log.passes where pass.name.hasPrefix("role-") && pass.error == nil && pass.seconds != nil && pass.filesRead == 0 && briefRead == 0 {
+            add(.medium, "Pass \(pass.name) read no file", "The role and the brief reviewed from the context pack's text alone: no read, grep, find or ls call.")
         }
         for role in log.roles where role.found >= 3 && role.rejected * 2 > role.found {
             add(.low, "The verifier rejected most findings of \(role.role)",

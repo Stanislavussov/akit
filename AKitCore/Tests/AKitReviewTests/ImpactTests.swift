@@ -60,16 +60,42 @@ extension ReviewProcessTests {
             ReviewJSON.read([ContextGap].self, from: run.folder.appending(path: "gaps.json")) ?? []
         }
 
+        /// An earlier run of the merge request searched for the same boundaries: no new search in
+        /// GitLab; its answers and uses are copied and checked again.
+        @Test func aNewRunTakesTheEarlierSearch() async throws {
+            let run = try await ReviewRunFixture.make()
+            Self.playImpact(run)
+            _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            #expect(passes(run).contains("impact"))
+            // Nothing for a new search: what the second run keeps comes from the first.
+            try FileManager.default.removeItem(at: run.home.url.appending(path: "fake/consumers-impact.json"))
+            try FileManager.default.removeItem(at: run.home.url.appending(path: "fake/calls-impact"))
+            try await Task.sleep(for: .seconds(1.1))   // a new run id (seconds)
+            let second = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: run.home.env, brain: nil)
+            let folder = ReviewPaths(home: run.home.url).run(second.spec.id)
+            let lines = LockedBox<[String]>([])
+            _ = try await ReviewPasses.run(folder: folder, env: run.home.env,
+                                           options: .init(confirmConcerns: { _ in true }, progress: { line in lines.update { $0.append(line) } }))
+
+            let names = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))?.passes.map(\.name) ?? []
+            #expect(!names.contains("impact") && names.contains("overview"), "\(names)")
+            #expect(lines.value.contains { $0.contains("run \(run.folder.lastPathComponent) searched for these boundaries") })
+            let kept = ReviewJSON.read([ReviewConsumer].self, from: folder.appending(path: "consumers.json")) ?? []
+            #expect(Set(kept.map(\.project)) == ["team/web", "team/shop"] && kept.allSatisfy { $0.boundary == "b1" })
+            #expect(FileManager.default.fileExists(atPath: folder.appending(path: "context/consumers.md").path))
+        }
+
         @Test func runsAfterTheBriefAndKeepsOnlyCheckedUses() async throws {
             let run = try await ReviewRunFixture.make()
             Self.playImpact(run)
             let lines = LockedBox<[String]>([])
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env, options: .init(progress: { line in lines.update { $0.append(line) } }))
 
-            #expect(passes(run) == ["fetch", "brief", "impact", "role-bug-hunter", "role-contracts", "role-requirements", "role-tests", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-bug-hunter", "role-contracts", "role-requirements", "role-tests", "verifier"])
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
             let args = run.args("impact")
-            #expect(args.contains(log.mainSession), "the main session")
+            #expect(args.contains("--fork") && args.contains(log.mainSession), "a fork of the brief's session")
+            #expect(!run.args("role-tests").contains("--fork"), "the roles don't carry GitLab's answers")
             #expect(args.contains { $0.hasPrefix("read,grep,find,ls,akit_submit_consumers,akit_report_context_gap,codemode,tool_search") })
             #expect(!args.contains { $0.contains("akit_submit_boundaries") }, "the brief kept a boundary")
             #expect(log.passes.first { $0.name == "impact" }?.credits ?? 0 > 0)
@@ -167,18 +193,17 @@ extension ReviewProcessTests {
             Self.playImpact(run)
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
 
-            #expect(passes(run) == ["fetch", "brief", "impact", "role-security", "role-bug-hunter", "role-contracts", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-security", "role-bug-hunter", "role-contracts", "verifier"])
             let spec = try #require(ReviewJSON.read(ReviewRunSpec.self, from: run.folder.appending(path: "run.json")))
             #expect(spec.roles.last?.id == "contracts" && spec.roles.last?.reason == "added: other repositories use the change")
             let roleFolder = run.folder.appending(path: "roles/review-contracts")
             #expect(FileManager.default.fileExists(atPath: roleFolder.appending(path: "SKILL.md").path))
-            #expect(run.args("role-contracts").contains(roleFolder.path))
             #expect(try String(contentsOf: run.folder.appending(path: "prompts/role-contracts.md"), encoding: .utf8).contains("THIS merge request"))
 
             // The passes again, and this time no use is kept: the added role doesn't stick.
             try FileManager.default.removeItem(at: run.home.url.appending(path: "fake/consumers-impact.json"))
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
-            #expect(passes(run) == ["fetch", "brief", "impact", "role-security", "role-bug-hunter", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-security", "role-bug-hunter", "verifier"])
             #expect(ReviewJSON.read(ReviewRunSpec.self, from: run.folder.appending(path: "run.json"))?.roles.contains { $0.id == "contracts" } == false)
             #expect(!FileManager.default.fileExists(atPath: roleFolder.path))
         }
@@ -194,7 +219,7 @@ extension ReviewProcessTests {
             let lines = LockedBox<[String]>([])
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env, options: .init(progress: { line in lines.update { $0.append(line) } }))
 
-            #expect(passes(run) == ["fetch", "brief", "impact", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
             #expect(lines.value.contains("Other repositories use the change, but the contracts role is off by the user's choice."))
             #expect(ReviewJSON.read([ReviewConsumer].self, from: run.folder.appending(path: "consumers.json"))?.count == 2)
             #expect(ReviewJSON.read(ReviewRunSpec.self, from: run.folder.appending(path: "run.json"))?.roles.contains { $0.id == "contracts" } == false)

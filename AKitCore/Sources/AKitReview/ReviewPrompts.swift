@@ -5,7 +5,8 @@ import Foundation
 public enum ReviewPrompts {
     /// 5 (2026-10-30): recall first, every potential problem with its severity; names,
     /// placement and separation of concerns of each entity the change adds or touches.
-    public static let version = 5
+    /// 6 (2026-11-06): the overview is a pass of its own; a role doesn't re-open files the session read.
+    public static let version = 6
 
     /// One confidence scale for the roles and the verifier: the same number means the same.
     static let confidenceScale = """
@@ -190,8 +191,7 @@ public enum ReviewPrompts {
     }
 
     static func brief(spec: ReviewRunSpec) -> String {
-        let language = spec.overviewLanguage()
-        return """
+        """
         Pass 1 of the review: the brief. Don't submit findings in this pass.
 
         Read the context pack: README.md, \(spec.notes == nil ? "" : "notes.md (the developer's own notes: start there), ")\
@@ -220,11 +220,21 @@ public enum ReviewPrompts {
         most often. For each: the name other repositories would search for, the changed file, the line and the exact code \
         line as the quote, with `side: "old"` and the line of the old file when the line is removed (in a deleted file too). \
         An empty list is a valid answer.
+        """
+    }
 
-        Then call akit_submit_overview once: an overview for the developer in AKit, never posted. Write its texts (the points, \
+    /// The overview (R45–R47), for the developer only. It runs in a side session forked from the
+    /// brief, with the impact pass, so its text never rides along in the role passes.
+    /// `afterImpact`: the side session holds the impact pass (it ran); else it is a fresh fork of the brief.
+    static func overview(spec: ReviewRunSpec, afterImpact: Bool = false) -> String {
+        let language = spec.overviewLanguage()
+        return """
+        Next pass: the overview. Don't submit findings in this pass. Use what the brief\
+        \(afterImpact ? " and the impact pass" : "") already read; open a file only when you need more.
+
+        Call akit_submit_overview once: an overview for the developer in AKit, never posted. Write its texts (the points, \
         the modules' names and why, the flow's labels) in \(language.name) (`\(language.rawValue)`). Only the overview uses \
-        this language: your brief answer stays in English, and findings, notes and gaps keep the language the rules above \
-        give them. \
+        this language. \
         `points`: 3–5 short points on what happens. `modules`: the parts that change, each with its changed files (paths as in \
         changes.md) and why it changes. Take the why from the work items in work-items.md, from the top of the chain down (the \
         epic's or feature's goal, then the user story, then the task), from the merge request's description and from the \
@@ -235,6 +245,7 @@ public enum ReviewPrompts {
         `class A,B changed`. Quote labels with `"…"`; no `click`, links or URLs, `@{…}` shapes or images, HTML (only `<br/>`), \
         `%%{`, scripts, CSS beyond fill, stroke, stroke-width, color, stroke-dasharray and font-weight, or ids that start with \
         `akit_`: AKit drops such a flow.
+        Then answer "done".
         """
     }
 
@@ -315,7 +326,7 @@ public enum ReviewPrompts {
 
     static func role(_ role: ReviewRunSpec.Role, body: String, spec: ReviewRunSpec, consumers: Bool = false) -> String {
         var text = """
-        Next pass: you are the `\(role.id)` reviewer (skill review-\(role.id)). Its checklist:
+        Next pass: you are the `\(role.id)` reviewer. Its checklist:
 
         \(body)
 
@@ -359,8 +370,9 @@ public enum ReviewPrompts {
 
 
         Look at the change again with this checklist and the review's four points (contracts, the entity, separation of \
-        concerns, behaviour); the brief and earlier passes are context, not your findings. Open each changed file whole, \
-        not only its diff. Then call akit_submit_findings once with your findings, the worst first, and answer "done". An empty list is right \
+        concerns, behaviour); the brief and earlier passes are context, not your findings. Files read earlier in this \
+        session are already in it: use them, don't read them again unless they are no longer in your context. Open a changed file whole, not only its diff, when this \
+        session hasn't read it yet. Then call akit_submit_findings once with your findings, the worst first, and answer "done". An empty list is right \
         only when you checked every changed entity and found nothing.
         """
         return text
@@ -502,6 +514,8 @@ public enum ReviewPrompts {
             """
         }
         let mr = spec.mergeRequest
+        // Reviewed before (`ReviewReuse`): AKit has from that run what a push or a comment doesn't change.
+        let reused = spec.gatherReused
         let pattern = spec.tracker?.wiRefRegex ?? ReviewProfile.Tracker.defaultRegex
         var items = "Work items: take the number from the merge request's source branch only (pattern `\(pattern)`: "
             + "`feature/COL-317494-login` names item 317494"
@@ -527,7 +541,12 @@ public enum ReviewPrompts {
             : ""
         let earlier = plan?.earlierNumbers ?? []
         let historyStep: String
-        if plan == nil {
+        if let reused {
+            historyStep = "7. Nothing more: AKit has the earlier merge requests of these files from run \(reused.run)."
+            if reused.hasWorkItems == true {
+                items = "Nothing from the tracker: AKit has the work items from run \(reused.run), an earlier review of this merge request."
+            }
+        } else if plan == nil {
             historyStep = "7. The history of the changed files, after everything above: for up to 10 changed files, the merge requests merged "
                 + "before this one that changed them (for example the file's recent commits, then each commit's merge requests), at most "
                 + "3 per file and 10 in all, each with its discussion threads. Pass each merge request's own number in every call about "
@@ -539,6 +558,7 @@ public enum ReviewPrompts {
                 + earlier.map { "!\($0)" }.joined(separator: ", ") + ". For each, the merge request itself and its discussion threads, "
                 + "passing its own number in every call; at most 2 calls each."
         }
+        let unread = links.filter { !(reused?.linksRead ?? []).contains($0) }
         return """
         AKit review, step Gather. Read GitLab merge request \(mr.url) (project `\(mr.projectPath)`, merge request number \(mr.iid)) \
         and its work items with your MCP tools, through `codemode`. Don't review anything yet.
@@ -554,13 +574,13 @@ public enum ReviewPrompts {
         \(diffStep)
         3. Every discussion thread with all its notes and positions, resolved ones too (every page).
         4. Your own pending draft notes on it (skip this when no tool reads draft notes: it is not a gap).
-        5. The signed-in user (who you are on GitLab).
+        5. \(reused?.hasUser == true ? "Nothing: AKit knows the signed-in user from an earlier review." : "The signed-in user (who you are on GitLab).")
         6. \(items)
 
         GitLab's own MCP server (`get_merge_request` with an `include` list) gives one part per call: call it once with no \
         `include`, then \(diffsCall)`include: ["commits"]`, `include: ["discussions"]` and `include: ["pipelines"]`; the user is \
         `get_user` with `me: true`.
-        \(historyStep)\(links.isEmpty ? "" : "\n8. The developer's links, after the merge request:\n\n" + linksStep(links))
+        \(historyStep)\(unread.isEmpty ? "" : "\n8. The developer's links, after the merge request:\n\n" + linksStep(unread))
 
         Pass the merge request number (\(mr.iid)) as its own argument in every call about it, as the tools name it.
         When a tool answers in prose instead of JSON, hand what it said to `akit_submit_context` with GitLab's and Azure \

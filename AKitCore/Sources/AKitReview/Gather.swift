@@ -101,8 +101,19 @@ public enum ReviewGather {
                 spec.repository = ReviewRepository.Use(clone: source.checkout.path, owned: source.owned,
                                                        branch: source.owned ? ReviewRepository.branch(for: spec.id) : nil, plan: plan)
             }
-            progress("Reading \(ref.label) through Pi's MCP servers…")
-            try await ReviewPasses.fetch(folder: folder, spec: spec, env: env, options: options)
+            // A merge request reviewed before: what can't change comes from the earlier run, not GitLab.
+            spec.gatherReused = ReviewReuse.plan(folder: folder, spec: spec, home: env.homeDirectory)
+            if let reused = spec.gatherReused, reused.whole {
+                progress("Same head as run \(reused.run), which sent nothing: GitLab's answers come from it, no fetch pass.")
+                try ReviewReuse.copy(reused, to: folder, spec: spec, home: env.homeDirectory)
+            } else {
+                if let reused = spec.gatherReused {
+                    progress("Reviewed before in run \(reused.run): work items, the user, earlier merge requests and links come from it.")
+                }
+                progress("Reading \(ref.label) through Pi's MCP servers…")
+                try await ReviewPasses.fetch(folder: folder, spec: spec, env: env, options: options)
+                if let reused = spec.gatherReused { try ReviewReuse.copy(reused, to: folder, spec: spec, home: env.homeDirectory) }
+            }
             // Only the run's own servers (GitLab, the tracker) make the merge request's data, also
             // when the pass read them after naming a link; a context server's answer never does.
             data = ReviewMCPData.read(ReviewMCPData.calls(in: folder, pass: "fetch").filter(spec.access.answeredByBase), iid: ref.iid,
@@ -125,7 +136,7 @@ public enum ReviewGather {
             mr = read
         }
         var snapshot = ReviewSnapshot(mergeRequest: mr, versions: data.versions, diffs: data.diffs, discussions: data.discussions,
-                                      drafts: data.drafts, user: data.user ?? "", gathered: .now)
+                                      drafts: data.drafts, user: data.user ?? "", gathered: spec.gatherReused?.answered ?? .now)
         // GitLab's MCP server may give no diff refs: git knows the merge request's head and its
         // merge base with the target branch.
         if local == nil, let source, let plan = spec.repository?.plan,
