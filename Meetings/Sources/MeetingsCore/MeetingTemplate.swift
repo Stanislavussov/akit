@@ -50,10 +50,6 @@ public struct MeetingTemplate: Codable, Equatable, Hashable, Sendable, Identifia
         sections.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
-    /// A new own template's id: `own-<n>`, not taken.
-    public static func newID(taken: [MeetingTemplate]) -> String {
-        var n = 1
-        while taken.contains(where: { $0.id == "own-\(n)" }) { n += 1 }
-        return "own-\(n)"
-    }
+    /// A new own template's id, never one used before (a meeting may still name a removed one).
+    public static func newID() -> String { "own-" + UUID().uuidString.prefix(8).lowercased() }
 }

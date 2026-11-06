@@ -345,6 +345,22 @@ public struct TimeSpan: Codable, Equatable, Sendable {
     }
 }
 
+/// A call OpenRouter answered (and charged) whose answer could not be read: the cost still
+/// counts (review 2026-11-06).
+public struct PaidFailure: Error, LocalizedError {
+    public let cost: Double
+    public let underlying: Error
+    public var errorDescription: String? { (underlying as? LocalizedError)?.errorDescription ?? underlying.localizedDescription }
+
+    /// Runs `parse`; a failure carries the completion's cost.
+    public static func parse<T>(_ completion: Completion, _ parse: () throws -> T) throws -> T {
+        do { return try parse() } catch { throw PaidFailure(cost: completion.cost, underlying: error) }
+    }
+
+    /// The cost a thrown error carries; 0 for others.
+    public static func cost(of error: Error) -> Double { (error as? PaidFailure)?.cost ?? 0 }
+}
+
 public enum MeetingsError: Error, LocalizedError, Equatable {
     case badTabName(String)
     case noKey
@@ -353,6 +369,7 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
     case badAnswer(String)
     case noAudio
     case noTranscript
+    case notTranscribed
     case busy
 
     public var errorDescription: String? {
@@ -365,6 +382,7 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
         case .badAnswer(let detail): "The model's answer could not be read: \(detail)"
         case .noAudio: "This meeting has no audio left to transcribe."
         case .noTranscript: "This meeting has no transcript to summarize yet."
+        case .notTranscribed: "Part of this meeting is not transcribed yet. Try Again first, then the summary is written from the whole transcript."
         case .busy: "This meeting is being transcribed already (here or in the other Meetings app)."
         }
     }

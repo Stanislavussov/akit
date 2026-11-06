@@ -111,8 +111,10 @@ public struct MeetingProcessor: Sendable {
         defer { lock.release() }
         guard var meeting = store.load(id) else { throw MeetingsError.noAudio }
         guard !meeting.segments.isEmpty else { throw MeetingsError.noTranscript }
+        // A meeting with audio not yet transcribed must stay failed/waiting, or Try Again goes away.
+        guard meeting.state == .done || (meeting.transcribedPieces ?? 0) >= store.pieces(id).count else { throw MeetingsError.notTranscribed }
         MeetingsLog.info(.processor, "\(id): summarize again, template \(settings.template(meeting.template).id)")
-        let before = meeting.state
+        let before = (state: meeting.state, failure: meeting.failure)
         meeting.state = .transcribing
         meeting.failure = nil
         try save(&meeting)
@@ -120,8 +122,10 @@ public struct MeetingProcessor: Sendable {
             try await summarize(&meeting)
             return meeting
         } catch {
-            // The transcript is whole: a failed summary leaves the meeting as it was, with the reason.
-            meeting.state = before == .failed ? .failed : .done
+            // The transcript is whole: a failed summary leaves the meeting as it was.
+            meeting.costUSD += PaidFailure.cost(of: error)
+            meeting.state = before.state == .failed ? .failed : .done
+            meeting.failure = before.failure
             MeetingsLog.error(.processor, "\(id): summary failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)")
             try save(&meeting)
             throw error
@@ -235,6 +239,7 @@ public struct MeetingProcessor: Sendable {
     }
 
     func fail(_ meeting: inout Meeting, _ error: Error) throws -> Meeting {
+        meeting.costUSD += PaidFailure.cost(of: error)
         MeetingsLog.error(.processor, "\(meeting.id): failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)")
         meeting.state = .failed
         meeting.failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

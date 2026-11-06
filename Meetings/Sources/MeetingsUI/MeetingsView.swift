@@ -337,7 +337,7 @@ struct MeetingDetail: View {
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
                     .disabled(meeting.speakerKeys.isEmpty)
                 Button("Summarize Again") { model.summarizeAgain(meeting.id) }
-                    .disabled(!model.hasKey || meeting.segments.isEmpty || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
+                    .disabled(!model.hasKey || meeting.segments.isEmpty || meeting.state != .done || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
                     .help("Write the summary again from the transcript (one text call, no audio)")
                 Button("Transcribe Again") { model.process(meeting.id, restart: true, byUser: true) }
                     .disabled(!model.hasKey || meeting.audioTrashed || model.processing.contains(meeting.id) || meeting.id == model.recordingID)

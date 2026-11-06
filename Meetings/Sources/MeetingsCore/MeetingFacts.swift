@@ -75,7 +75,7 @@ public struct FactFinder: Sendable {
     public func find(_ meeting: Meeting, summary: String, notes: [Note]) async throws -> (facts: [MeetingFact], completion: Completion) {
         let completion = try await client.complete(model: model, system: Self.system,
                                                    text: Self.prompt(summary: summary, transcript: Transcriber.plainTranscript(meeting), notes: notes))
-        return (try Self.parse(completion.text), completion)
+        return (try PaidFailure.parse(completion) { try Self.parse(completion.text) }, completion)
     }
 
     static func parse(_ text: String) throws -> [MeetingFact] {

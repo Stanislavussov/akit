@@ -69,6 +69,9 @@ public final class MeetingsModel {
         public var meetings = 0
     }
     @ObservationIgnored private var indexGeneration = 0
+    /// Meetings read on their own since the last full read began: a full read that lands later
+    /// keeps their newer documents.
+    @ObservationIgnored private var readAlone: Set<String> = []
     /// Sheets and dialogs the view shows.
     public var showSettings = false
     public var showCosts = false
@@ -192,7 +195,10 @@ public final class MeetingsModel {
 
     /// Reads every meeting's text for search off the main thread; a newer call wins.
     func reindex(only id: String? = nil) {
-        if id == nil { indexGeneration += 1 }
+        if let id { readAlone.insert(id) } else {
+            indexGeneration += 1
+            readAlone = []
+        }
         let generation = indexGeneration
         let store = self.store
         let chosen = id.map { id in meetings.filter { $0.id == id } } ?? meetings
@@ -201,7 +207,9 @@ public final class MeetingsModel {
             // A newer full read replaces an older one; one meeting's read always lands.
             guard id != nil || generation == indexGeneration else { return }
             if id == nil {
-                documents = Dictionary(found.map { ($0.id, $0) }) { a, _ in a }
+                var fresh = Dictionary(found.map { ($0.id, $0) }) { a, _ in a }
+                for kept in readAlone { fresh[kept] = documents[kept] ?? fresh[kept] }
+                documents = fresh
             } else {
                 for document in found { documents[document.id] = document }
             }
@@ -375,6 +383,7 @@ public final class MeetingsModel {
         let lines = tasks.map { task in (isMine(task) || task.owner.isEmpty ? "" : task.owner + ": ") + task.text + " — " + source }
         do {
             try await addTasks(lines, tab)
+            meeting = store.load(meeting.id) ?? meeting
             try? store.markExport(&meeting, "notebook")
             updated(meeting)
             notice = "Added \(lines.count) task\(lines.count == 1 ? "" : "s") to the Notebook tab \(tab)."
@@ -392,6 +401,7 @@ public final class MeetingsModel {
         let line = MeetingsLinks.WorkLogLine(started: meeting.started, title: meeting.displayTitle, summary: summaryParagraph(store.summary(meeting.id)))
         do {
             try await addToWorkLog(line)
+            meeting = store.load(meeting.id) ?? meeting
             try? store.markExport(&meeting, "worklog")
             updated(meeting)
             notice = "Added to the Work Log at \(meeting.started.formatted(date: .omitted, time: .shortened))."
@@ -429,6 +439,10 @@ public final class MeetingsModel {
             if facts.isEmpty { factsProblem = "The model found no facts about systems in this meeting." }
             MeetingsLog.info(.ui, "\(meeting.id): \(facts.count) facts for the knowledge base (\(notes.count) notes known), $\(answer.completion.cost)")
         } catch {
+            if PaidFailure.cost(of: error) > 0, var current = store.load(meeting.id) {
+                try? store.addCost(&current, PaidFailure.cost(of: error))
+                updated(current)
+            }
             factsProblem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -439,6 +453,7 @@ public final class MeetingsModel {
         let source = "From the meeting “\(meeting.displayTitle)” of \(meeting.started.formatted(date: .abbreviated, time: .shortened))"
         do {
             let result = try await propose(chosen, source)
+            meeting = store.load(meeting.id) ?? meeting
             if result.written > 0 { try? store.markExport(&meeting, "knowledge") }
             updated(meeting)
             if result.refused.isEmpty {
@@ -518,6 +533,12 @@ public final class MeetingsModel {
             askTurns[index].sources = Dictionary(answer.sources.map { ($0.number, $0.id) }) { a, _ in a }
             askTurns[index].cost = answer.completion.cost
         } catch {
+            if PaidFailure.cost(of: error) > 0 {
+                let entry = AskLog.Entry(date: Date(), model: settings.summaryModel ?? settings.model, promptTokens: 0, completionTokens: 0,
+                                         costUSD: PaidFailure.cost(of: error))
+                try? AskLog(root: settings.root).append(entry)
+                askEntries.append(entry)
+            }
             let text = if case MeetingsError.http(401, _) = error {
                 (MeetingsError.http(401, "").errorDescription ?? "") + " " + KeyStore.shape(key)
             } else {

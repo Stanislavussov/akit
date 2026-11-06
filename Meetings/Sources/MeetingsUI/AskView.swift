@@ -68,9 +68,13 @@ struct AskView: View {
         }
         .padding(20)
         .frame(width: 680, height: 620)
+        // Another scope numbers the meetings anew: earlier [n] would point at other meetings.
+        .onChange(of: model.askScope) { model.newChat() }
+        .onChange(of: model.askTag) { model.newChat() }
     }
 
     private func send() {
+        guard !model.asking, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let question = draft
         draft = ""
         Task { await model.ask(question) }

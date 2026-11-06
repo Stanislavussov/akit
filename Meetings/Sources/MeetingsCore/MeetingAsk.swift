@@ -66,7 +66,7 @@ public struct MeetingAsk: Sendable {
         var used = 0
         for meeting in meetings {
             let summary = documents[meeting.id]?.text("Summary") ?? ""
-            var block = "[\(ids.count + 1)] \(meeting.started.formatted(.iso8601.year().month().day())) \(meeting.started.formatted(date: .omitted, time: .shortened)) — \(meeting.displayTitle)"
+            var block = "[\(ids.count + 1)] \(day(meeting.started)) \(meeting.started.formatted(date: .omitted, time: .shortened)) — \(meeting.displayTitle)"
             if !meeting.tagList.isEmpty { block += "\nTags: " + meeting.tagList.joined(separator: ", ") }
             block += "\nSummary:\n" + (summary.isEmpty ? "—" : summary)
             guard used + block.count <= budget else { break }
@@ -81,22 +81,35 @@ public struct MeetingAsk: Sendable {
             let hits = lines.reduce(0) { sum, line in sum + words.filter { line.folded.contains($0) }.count }
             return (index, hits)
         }
-        .filter { ids.count == 1 || $0.1 > 0 }
-        .sorted { $0.1 > $1.1 }
+        // Best match first; transcripts without a hit too (a question in another language), while
+        // the budget lasts; newer meetings first among equals.
+        .sorted { (a: (Int, Int), b: (Int, Int)) -> Bool in a.1 != b.1 ? a.1 > b.1 : a.0 < b.0 }
         for (index, _) in ranked {
             let transcript = documents[ids[index]]?.text("Transcript") ?? ""
             guard !transcript.isEmpty else { continue }
             let block = "\nTranscript of [\(index + 1)]:\n" + transcript
             if used + block.count > budget {
-                // The start of a long transcript still helps when it is the only one.
+                // The start of a long transcript still helps; a smaller one later may still fit.
                 let room = budget - used - 40
-                if room > 2_000 { blocks[index] += String(block.prefix(room)) + "\n(transcript cut)" ; used = budget }
-                break
+                if room > 2_000 {
+                    blocks[index] += String(block.prefix(room)) + "\n(transcript cut)"
+                    used = budget
+                    break
+                }
+                continue
             }
             used += block.count
             blocks[index] += block
         }
         return (blocks.joined(separator: "\n\n"), ids)
+    }
+
+    /// `2026-11-06` in the local time zone.
+    static func day(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 
     static let system = """
@@ -105,8 +118,8 @@ public struct MeetingAsk: Sendable {
     Answer with one JSON object and nothing else.
     """
 
-    static func prompt(question: String, context: String, history: [Turn]) -> String {
-        var lines = ["Meetings:", context, ""]
+    static func prompt(question: String, context: String, history: [Turn], today: Date = Date()) -> String {
+        var lines = ["Today is \(Self.day(today)), \(today.formatted(.dateTime.weekday(.wide).locale(Locale(identifier: "en_US"))))).", "", "Meetings:", context, ""]
         if !history.isEmpty {
             lines.append("Earlier in this chat:")
             for turn in history.suffix(6) { lines += ["Q: \(turn.question)", "A: \(turn.answer)"] }
@@ -129,9 +142,12 @@ public struct MeetingAsk: Sendable {
     }
 
     public func ask(_ question: String, context: (text: String, ids: [String]), history: [Turn] = []) async throws -> Answer {
-        let completion = try await client.complete(model: model, system: Self.system, text: Self.prompt(question: question, context: context.text, history: history))
-        guard let object = Transcriber.jsonObject(completion.text), let text = (object["answer"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty else { throw MeetingsError.badAnswer("no \"answer\" in the reply") }
+        let completion = try await client.complete(model: model, system: Self.system, text: Self.prompt(question: question, context: context.text, history: history, today: Date()))
+        let text = try PaidFailure.parse(completion) { () throws -> String in
+            guard let object = Transcriber.jsonObject(completion.text), let text = (object["answer"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { throw MeetingsError.badAnswer("no \"answer\" in the reply") }
+            return text
+        }
         return Answer(text: text, sources: Self.sources(text, ids: context.ids), completion: completion)
     }
 

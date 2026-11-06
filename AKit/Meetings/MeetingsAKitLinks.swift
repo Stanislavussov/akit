@@ -29,7 +29,9 @@ import MeetingsUI
             // Each line goes first under today's heading, so the last one is added first.
             var text = old
             for line in lines.reversed() { text = KnowledgeNotebook.adding("- [ ] " + line, to: text, under: day) }
-            let (path, outcome) = try notebook.save(tab, bytes: Data(text.utf8), expectedHash: KnowledgeWrite.hash(of: notebook.file(tab)))
+            // The hash of the bytes read, so a change made meanwhile is a conflict, not lost.
+            let expected = FileWalk.isRegularFile(notebook.file(tab)) ? KnowledgeWrite.hash(Data(old.utf8)) : nil
+            let (path, outcome) = try notebook.save(tab, bytes: Data(text.utf8), expectedHash: expected)
             guard case .saved = outcome else {
                 throw KnowledgeBase.Failure(message: "The Notebook tab \(tab) changed while AKit wrote it. Try again.")
             }

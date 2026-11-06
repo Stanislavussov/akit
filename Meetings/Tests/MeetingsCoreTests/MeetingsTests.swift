@@ -723,10 +723,11 @@ final class Closed: @unchecked Sendable {
     @Test func unknownTemplateFallsBackAndOldSettingsLoad() throws {
         var settings = MeetingsSettings()
         #expect(settings.template("gone").id == MeetingTemplate.generalID)
-        settings.customTemplates = [MeetingTemplate(id: MeetingTemplate.newID(taken: []), name: "Sales", sections: "Deal")]
-        settings.defaultTemplate = "own-1"
+        let id = MeetingTemplate.newID()
+        settings.customTemplates = [MeetingTemplate(id: id, name: "Sales", sections: "Deal")]
+        settings.defaultTemplate = id
         #expect(settings.template(nil).name == "Sales")
-        #expect(MeetingTemplate.newID(taken: settings.customTemplates) == "own-2")
+        #expect(MeetingTemplate.newID() != id && id.hasPrefix("own-"))
         let old = try JSONDecoder().decode(MeetingsSettings.self, from: Data(#"{"model":"m"}"#.utf8))
         #expect(old.cleanTranscript && old.defaultTemplate == MeetingTemplate.generalID && old.customTemplates.isEmpty)
     }
@@ -858,12 +859,15 @@ final class Closed: @unchecked Sendable {
         #expect(MeetingAsk.meetings(all, scope: .meeting(all[2].id), tag: nil).map(\.title) == ["Starý plán"])
         let docs = Dictionary(uniqueKeysWithValues: all.map { ($0.id, MeetingSearch.document($0, store: store)) })
         let chosen = MeetingAsk.meetings(all, scope: .days(7), tag: nil)
-        // Summaries of all; the transcript only of the meeting whose words match the question.
+        // Summaries of all; transcripts best match first, those without a match after them.
         let context = MeetingAsk.context(chosen, documents: docs, question: "Jakou chybu vrací banka?")
         #expect(context.ids == [all[0].id, all[1].id])
         #expect(context.text.contains("[1] ") && context.text.contains("Selhaly platby kartou.") && context.text.contains("Vydání v pátek."))
         #expect(context.text.contains("Transcript of [1]:") && context.text.contains("chybu 51"))
-        #expect(!context.text.contains("Transcript of [2]:"))
+        #expect(context.text.contains("Transcript of [2]:"))
+        // The date is the local day.
+        #expect(context.text.contains("[1] " + MeetingAsk.day(all[0].started)))
+        #expect(MeetingAsk.prompt(question: "q", context: "", history: [], today: all[0].started).hasPrefix("Today is " + MeetingAsk.day(all[0].started)))
         // One meeting always carries its transcript; a small budget cuts the list.
         #expect(MeetingAsk.context([all[2]], documents: docs, question: "nic").text.contains("Transcript of [1]:"))
         #expect(MeetingAsk.context(chosen, documents: docs, question: "x", budget: 120).ids.count == 1)
@@ -884,7 +888,7 @@ final class Closed: @unchecked Sendable {
         #expect(server.body(0)["model"] as? String == "text/model")
         let prompt = ((server.body(0)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
         #expect(prompt.contains("Q: Kdy vydání?") && prompt.contains("Question: Co banka?") && prompt.contains("Selhaly platby"))
-        await #expect(throws: MeetingsError.self) {
+        await #expect(throws: PaidFailure.self) {
             try await MeetingAsk(client: FakeServer([(200, chat(#"{"text":"x"}"#))]).client, settings: settings).ask("?", context: context)
         }
     }
@@ -957,5 +961,43 @@ final class Closed: @unchecked Sendable {
         let back = store.load(meeting.id)
         #expect(back?.exports?["worklog"] == Date(timeIntervalSince1970: 0))
         #expect(back?.costUSD == 0.25)
+    }
+}
+
+
+@Suite struct ReviewFixTests {
+    @Test func summarizeAgainRefusesAPartTranscribedMeeting() async throws {
+        let store = TempRoot().store
+        var meeting = try ProcessorTests().meetingWithPieces(store, count: 7)
+        meeting.segments = [Segment(start: 1, speaker: "Me", text: "ahoj")]
+        meeting.transcribedPieces = 6
+        meeting.state = .failed
+        meeting.failure = "limit"
+        try store.save(meeting)
+        let server = FakeServer([])
+        await #expect(throws: MeetingsError.notTranscribed) {
+            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).summarizeAgain(meeting.id)
+        }
+        #expect(server.requests.isEmpty)
+        #expect(store.load(meeting.id)?.state == .failed && store.load(meeting.id)?.failure == "limit")
+    }
+
+    @Test func unreadablePaidAnswerStillCosts() async throws {
+        let store = TempRoot().store
+        let meeting = try ProcessorTests().meetingWithPieces(store, count: 1)
+        let server = FakeServer([(200, chat("not json at all", cost: 0.04))])
+        await #expect(throws: PaidFailure.self) {
+            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
+        }
+        let back = store.load(meeting.id)
+        #expect(back?.state == .failed && abs((back?.costUSD ?? 0) - 0.04) < 1e-9)
+        #expect(back?.failure?.contains("JSON") == true)
+        let asked = FakeServer([(200, chat(#"{"x":1}"#, cost: 0.01))])
+        do {
+            _ = try await MeetingAsk(client: asked.client, settings: MeetingsSettings()).ask("?", context: ("", []))
+            Issue.record("no error")
+        } catch {
+            #expect(PaidFailure.cost(of: error) == 0.01)
+        }
     }
 }

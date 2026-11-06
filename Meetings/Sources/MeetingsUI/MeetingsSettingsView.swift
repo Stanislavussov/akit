@@ -91,7 +91,7 @@ struct MeetingsSettingsView: View {
                     }
                     Button("Add Template") {
                         model.update { settings in
-                            settings.customTemplates.append(MeetingTemplate(id: MeetingTemplate.newID(taken: settings.customTemplates), name: "My template",
+                            settings.customTemplates.append(MeetingTemplate(id: MeetingTemplate.newID(), name: "My template",
                                                                             sections: "Heading: what goes in it"))
                         }
                     }

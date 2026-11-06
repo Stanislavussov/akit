@@ -71,7 +71,7 @@ public struct Transcriber: Sendable {
                            track: Track = .mixed) async throws -> (segments: [Segment], completion: Completion) {
         let prompt = Self.transcriptPrompt(spokenHint: settings.spokenHint, length: length, me: me, previous: previous, track: track)
         let completion = try await client.complete(model: settings.model, system: Self.system(clean: settings.cleanTranscript), text: prompt, audio: (audio, format))
-        let segments = try Self.parseSegments(completion.text, offset: offset, length: length)
+        let segments = try PaidFailure.parse(completion) { try Self.parseSegments(completion.text, offset: offset, length: length) }
         return (segments, completion)
     }
 
@@ -197,7 +197,7 @@ public struct Transcriber: Sendable {
         let completion = try await client.complete(model: settings.summaryModel ?? settings.model,
                                                    system: "You write short, faithful meeting notes. Answer with one JSON object and nothing else.",
                                                    text: Self.summaryPrompt(language: settings.language, transcript: Self.plainTranscript(meeting), template: template))
-        return (try Self.parseSummary(completion.text), completion)
+        return (try PaidFailure.parse(completion) { try Self.parseSummary(completion.text) }, completion)
     }
 
     static func parseSummary(_ text: String) throws -> Summary {
