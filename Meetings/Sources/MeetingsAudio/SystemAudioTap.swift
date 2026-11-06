@@ -1,5 +1,5 @@
 import AudioToolbox
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreAudio
 import Foundation
 
@@ -7,39 +7,69 @@ import Foundation
 /// (macOS 14.2+), read through a private aggregate device. The tap takes the sound before the
 /// output device, so it works with headphones. The first start asks for "System Audio Recording"
 /// (Info.plist `NSAudioCaptureUsageDescription`); without it the buffers are silent.
+///
+/// Two queues: the IOProc runs alone on `ioQueue`; opening, closing and the device listener run on
+/// `controlQueue`, so stopping the device never waits for the queue its own IO needs.
 final class SystemAudioTap: @unchecked Sendable {
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
     private var listener: AudioObjectPropertyListenerBlock?
-    private let queue = DispatchQueue(label: "meetings.system-tap", qos: .userInitiated)
-    private var handler: (@Sendable (AVAudioPCMBuffer) -> Void)?
+    private let ioQueue = DispatchQueue(label: "meetings.system-tap.io", qos: .userInitiated)
+    private let controlQueue = DispatchQueue(label: "meetings.system-tap.control", qos: .userInitiated)
+    private var handler: (@Sendable (AVAudioPCMBuffer, UInt64) -> Void)?
+    private var problem: (@Sendable (String) -> Void)?
 
-    func start(handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void) throws {
+    /// `handler` gets each buffer and the host time of its first frame.
+    func start(handler: @escaping @Sendable (AVAudioPCMBuffer, UInt64) -> Void, problem: @escaping @Sendable (String) -> Void) throws {
         self.handler = handler
-        try open()
+        self.problem = problem
+        try controlQueue.sync { try open() }
         // A new default output (headphones plugged in, AirPods) restarts the tap on it.
         var address = Self.address(kAudioHardwarePropertyDefaultSystemOutputDevice)
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            guard let self else { return }
-            self.close()
-            try? self.open()
-        }
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.restart() }
         listener = block
-        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, block)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, controlQueue, block)
     }
 
-    func stop() {
+    func stop() async {
         if let listener {
             var address = Self.address(kAudioHardwarePropertyDefaultSystemOutputDevice)
-            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, listener)
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, controlQueue, listener)
         }
         listener = nil
-        queue.sync { close() }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            controlQueue.async {
+                self.close()
+                done.resume()
+            }
+        }
         handler = nil
     }
 
+    deinit { close() }
+
+    /// On `controlQueue`. A new device can take a moment to settle: a few tries, then a sentence
+    /// for the screen. The writer fills the gap with silence.
+    private func restart() {
+        close()
+        for delay in [0.0, 0.3, 0.7, 1.5] {
+            if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+            if (try? open()) != nil { return }
+        }
+        problem?("The system sound stopped after the output device changed. Stop and Record again to record the other people.")
+    }
+
     private func open() throws {
+        do {
+            try openParts()
+        } catch {
+            close()
+            throw error
+        }
+    }
+
+    private func openParts() throws {
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
         description.uuid = UUID()
         description.name = "Meetings"
@@ -72,9 +102,9 @@ final class SystemAudioTap: @unchecked Sendable {
 
         let handler = self.handler
         var proc: AudioDeviceIOProcID?
-        try check(AudioDeviceCreateIOProcIDWithBlock(&proc, device, queue) { _, input, _, _, _ in
+        try check(AudioDeviceCreateIOProcIDWithBlock(&proc, device, ioQueue) { _, input, inputTime, _, _ in
             guard let buffer = AVAudioPCMBuffer(pcmFormat: avFormat, bufferListNoCopy: input, deallocator: nil) else { return }
-            handler?(buffer)
+            handler?(buffer, inputTime.pointee.mHostTime)
         }, "attach to the aggregate device")
         procID = proc
         try check(AudioDeviceStart(device, proc), "start the aggregate device")

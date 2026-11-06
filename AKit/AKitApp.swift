@@ -48,7 +48,10 @@ struct AKitApp: App {
                     if SelfRebuild.requestedAtLaunch {
                         await rebuild.rebuildAndRelaunch()
                     }
+                    FocusReturn.shared.start()
                     await model.refresh()
+                    // Meetings: recordings cut by a quit are mixed and transcribed at launch.
+                    if DebugSnapshot.options == nil { await MeetingsScreen.shared.load() }
                     if let snapshot = DebugSnapshot.options {
                         await DebugSnapshot.captureAndQuit(snapshot)
                     }
@@ -148,6 +151,10 @@ struct AKitApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task { @MainActor in
+            // M7: a running recording is stopped and its last piece mixed before AKit goes.
+            if MeetingsScreen.shared.isRecording {
+                await KnowledgeModel.within(seconds: 5) { await MeetingsScreen.shared.stop() }
+            }
             await KnowledgeModel.within(seconds: 5) {
                 // The open map's change still waiting for its post is saved first (N5), then committed.
                 await KnowledgeModel.flushBeforeQuit()

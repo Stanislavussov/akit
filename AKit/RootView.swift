@@ -147,8 +147,8 @@ struct RootView: View {
     @State private var notebook: NotebookModel
     /// The work log's days and entry field; its base is the Knowledge screen's.
     @State private var worklog: WorkLogModel
-    /// Meetings live as long as the window: a recording goes on on other screens.
-    @State private var meetings = MeetingsScreen.makeModel()
+    /// Meetings belong to the app (H1): a recording goes on on other screens and after the window closes.
+    private var meetings: MeetingsModel { MeetingsScreen.shared }
 
     init() {
         let knowledge = KnowledgeModel()
@@ -232,6 +232,10 @@ struct RootView: View {
         // `akit://notebook/Inbox` from Raycast or a browser: this window shows the screen and tab.
         .onOpenURL { url in
             guard let link = AppLink(url) else { return }
+            if let action = link.meetingAction {
+                Task { await MeetingsScreen.perform(action) }
+                return
+            }
             model.section = link.section
             if let tab = link.tab { notebook.request(tab) }
             if link.section == .worklog { worklog.open(kind: link.kind, add: link.add) }

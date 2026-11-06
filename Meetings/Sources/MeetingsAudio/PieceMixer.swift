@@ -39,29 +39,44 @@ public enum PieceMixer {
 
     static func partNumber(_ url: URL) -> Int { Int(url.deletingPathExtension().lastPathComponent.split(separator: "-").last ?? "") ?? 0 }
 
+    /// What `mixPending` did: the pieces it mixed, and a sentence per part it could not read.
+    public struct Result: Sendable {
+        public var done: [Int]
+        public var problems: [String]
+    }
+
     /// Mixes every piece that has raw files (all of them, or only `indices`). Used after a piece
     /// closes, at Stop, and for a recording that was not stopped (a crash).
     @discardableResult
-    public static func mixPending(in folder: URL, only indices: Set<Int>? = nil) -> [Int] {
-        var done: [Int] = []
+    public static func mixPending(in folder: URL, only indices: Set<Int>? = nil) -> Result {
+        var result = Result(done: [], problems: [])
         for (index, sources) in rawFiles(in: folder).sorted(by: { $0.key < $1.key }) where indices?.contains(index) ?? true {
             do {
-                try mix(mic: sources[.mic] ?? [], system: sources[.sys] ?? [], into: folder, index: index)
-                done.append(index)
+                let problems = try mix(mic: sources[.mic] ?? [], system: sources[.sys] ?? [], into: folder, index: index).problems
+                result.done.append(index)
+                result.problems += problems
             } catch {
-                // An unreadable raw file (empty, cut by a crash) is left for a look; the next
-                // pieces still mix.
-                continue
+                result.problems.append("Piece \(index) (minutes \((index - 1) * 5)–\(index * 5)) could not be mixed: \(error.localizedDescription). Its raw files stay in the audio folder.")
             }
         }
-        return done
+        return result
     }
 
-    /// One piece. A missing source counts as silence.
+    /// One piece. A missing source counts as silence; an unreadable part is left out and named.
     @discardableResult
-    public static func mix(mic: [URL], system: [URL], into folder: URL, index: Int) throws -> PieceInfo {
-        let micSamples = try mic.flatMap { try load($0) }
-        let sysSamples = try system.flatMap { try load($0) }
+    public static func mix(mic: [URL], system: [URL], into folder: URL, index: Int) throws -> (info: PieceInfo, problems: [String]) {
+        var problems: [String] = []
+        func read(_ urls: [URL]) -> [Float] {
+            var samples: [Float] = []
+            for url in urls {
+                do { samples += try load(url) } catch {
+                    problems.append("A part of piece \(index) (\(url.lastPathComponent)) could not be read and is left out.")
+                }
+            }
+            return samples
+        }
+        let micSamples = read(mic)
+        let sysSamples = read(system)
         let count = max(micSamples.count, sysSamples.count)
         var mixed = [Float](repeating: 0, count: count)
         for i in 0..<count {
@@ -73,8 +88,11 @@ public enum PieceMixer {
         let out = folder.appending(path: pieceName(index))
         try write(mixed, to: out)
         try JSONEncoder().encode(info).write(to: out.deletingPathExtension().appendingPathExtension("json"), options: .atomic)
-        for url in mic + system { try? FileManager.default.removeItem(at: url) }
-        return info
+        // An unreadable part stays for a look; the parts that mixed are removed.
+        for url in mic + system where !problems.contains(where: { $0.contains(url.lastPathComponent) }) {
+            try? FileManager.default.removeItem(at: url)
+        }
+        return (info, problems)
     }
 
     /// RMS of each `levelWindow`.

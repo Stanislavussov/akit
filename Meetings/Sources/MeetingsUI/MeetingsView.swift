@@ -246,14 +246,25 @@ struct MeetingDetail: View {
 
     @ViewBuilder
     private func content(_ meeting: Meeting) -> some View {
-        if model.selectedTab == MeetingsModel.transcriptTab {
-            TranscriptView(meeting: meeting, status: status(meeting))
-        } else if let page = model.page {
-            VStack(spacing: 0) {
-                if model.selectedTab == MeetingsModel.summaryTab, let status = status(meeting), page.text.isEmpty {
-                    statusLine(status)
-                    Divider()
+        VStack(spacing: 0) {
+            if let warnings = meeting.warnings, !warnings.isEmpty {
+                Label(warnings.joined(separator: " "), systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                Divider()
+            }
+            if model.selectedTab == MeetingsModel.transcriptTab {
+                TranscriptView(meeting: meeting, status: status(meeting))
+            } else if model.selectedTab == MeetingsModel.summaryTab, model.summaryLocked {
+                // H5: the model writes this page after Stop; notes typed now would be replaced.
+                ContentUnavailableView {
+                    Label(status(meeting) ?? "Waiting", systemImage: "text.badge.checkmark")
+                } description: {
+                    Text("The summary, decisions and tasks appear here after the transcription. For your own notes now, add a tab with +.")
+                } actions: {
+                    Button("New Tab…") { model.tabNameRequest = .init(old: nil) }
                 }
+            } else if let page = model.page {
                 editor.make(page) { key, text in model.save(key: key, text: text) }
                     .id("\(page.key)#\(page.generation)")
             }
@@ -274,14 +285,6 @@ struct MeetingDetail: View {
         }
     }
 
-    private func statusLine(_ text: String) -> some View {
-        HStack(spacing: 8) {
-            if model.processing.contains(model.selectedID ?? "") { ProgressView().controlSize(.small) }
-            Text(text).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-            Spacer()
-        }
-        .padding(10)
-    }
 }
 
 /// Summary, Transcript, then the own tabs; right-click renames or removes an own tab, + adds one.

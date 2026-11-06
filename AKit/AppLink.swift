@@ -6,6 +6,9 @@ import Foundation
 /// The work log (2026-10-28): `akit://worklog` puts the cursor in its entry field,
 /// `akit://worklog?kind=bug` chooses a kind too, and `akit://worklog/add?text=…[&kind=bug]` adds an
 /// entry stamped now (Raycast: a quicklink with an argument).
+/// Meetings (2026-11-06, the user's request: a shortcut as for the notebook): `akit://meetings`
+/// opens the screen; `akit://meetings/record`, `/stop` and `/toggle` start or stop a recording
+/// without showing it.
 struct AppLink: Equatable {
     static let scheme = "akit"
 
@@ -14,6 +17,8 @@ struct AppLink: Equatable {
     /// Work log: the kind to choose, and the text of an entry to add (`/add`).
     var kind: String?
     var add: String?
+    /// Meetings: `record`, `stop` or `toggle`.
+    var meetingAction: String?
 
     init?(_ url: URL) {
         guard url.scheme?.lowercased() == Self.scheme, let host = url.host(percentEncoded: false)?.lowercased(),
@@ -21,6 +26,9 @@ struct AppLink: Equatable {
         self.section = section
         let tab = url.path(percentEncoded: false).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.tab = section == .notebook && !tab.isEmpty ? tab : nil
+        if section == .meetings, ["record", "start", "stop", "toggle"].contains(tab.lowercased()) {
+            meetingAction = tab.lowercased()
+        }
         if section == .worklog {
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             func value(_ name: String) -> String? { items.first { $0.name == name }?.value.flatMap { $0.isEmpty ? nil : $0 } }

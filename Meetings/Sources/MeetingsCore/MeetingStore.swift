@@ -277,6 +277,7 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
     case http(Int, String)
     case badAnswer(String)
     case noAudio
+    case busy
 
     public var errorDescription: String? {
         switch self {
@@ -286,6 +287,7 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
         case .http(let code, let message): "OpenRouter answered \(code): \(message)"
         case .badAnswer(let detail): "The model's answer could not be read: \(detail)"
         case .noAudio: "This meeting has no audio left to transcribe."
+        case .busy: "This meeting is being transcribed already (here or in the other Meetings app)."
         }
     }
 }

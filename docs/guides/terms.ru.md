@@ -1398,6 +1398,8 @@ Friction («трение») — места, где агент спотыкалс
 - **Me**, **Speaker 1**, **Speaker 2** (Transcript): вы и другие люди по порядку. Подробнее: [Summary и Transcript](meetings#tabs)
 - **+**, **Rename…**, **Delete…** (вкладки встречи): своя вкладка Markdown; в модель не уходит. Подробнее: [Свои вкладки](meetings#own-tabs)
 - **Actions** (Meetings): **Rename Speakers…**, **Transcribe Again**, **Show in Finder**, **Move to Trash…**. Подробнее: [Меню Actions](meetings#actions)
+- `akit://meetings/record`, `/stop`, `/toggle` (ссылки): начать, остановить или переключить запись из Raycast, не показывая AKit. Подробнее: [Ссылки и Raycast](meetings#links)
+- **Notes** (своя вкладка встречи): ваш прежний текст Summary, когда модель написала новый. Подробнее: [Записать встречу](meetings#record)
 - **Try Again** (встреча `failed`): продолжить расшифровку с той части, где она остановилась. Подробнее: [Меню Actions](meetings#actions)
 - `recording`, `waiting`, `transcribing`, `failed` (строка встречи): идёт запись; ждёт расшифровки; расшифровывается; расшифровка не удалась. Подробнее: [Что на экране](meetings#overview)
 - **This month: $… of $…** (Meetings, под списком): цена встреч месяца и месячный лимит. Подробнее: [Настройки](meetings#settings)

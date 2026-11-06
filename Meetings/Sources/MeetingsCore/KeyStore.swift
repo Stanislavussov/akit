@@ -25,16 +25,28 @@ public struct KeyStore: Sendable {
         return key.isEmpty ? nil : key
     }
 
-    public var hasKey: Bool { read() != nil }
+    /// Whether a key is there, without reading the secret: the item's attributes only, so macOS
+    /// does not ask for Keychain access just to show the screen.
+    public var hasKey: Bool {
+        var q = query
+        q[kSecReturnAttributes as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        return SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess
+    }
 
+    /// Replaces the key in place; an empty key removes it. The old key stays when the change fails.
     public func save(_ key: String) throws {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        SecItemDelete(query as CFDictionary)
-        guard !trimmed.isEmpty else { return }
-        var q = query
-        q[kSecValueData as String] = Data(trimmed.utf8)
-        q[kSecAttrLabel as String] = "Meetings: OpenRouter API key"
-        let status = SecItemAdd(q as CFDictionary, nil)
+        guard !trimmed.isEmpty else { return delete() }
+        let data = Data(trimmed.utf8)
+        var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var q = query
+            q[kSecValueData as String] = data
+            q[kSecAttrLabel as String] = "Meetings: OpenRouter API key"
+            status = SecItemAdd(q as CFDictionary, nil)
+        }
         guard status == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
     }
 

@@ -79,8 +79,10 @@ public final class MeetingsModel {
 
     // MARK: Loading
 
-    /// First show: the key, the list, audio past its 14 days to the Trash, recordings left by a
-    /// quit or a crash mixed and queued, waiting meetings transcribed.
+    /// First show (also at app start): the key, the list, audio past its 14 days to the Trash,
+    /// recordings left by a quit or a crash mixed and queued, waiting meetings transcribed. A
+    /// meeting whose lock another host holds (the other Meetings app records or transcribes it)
+    /// is left alone (H2).
     public func load() async {
         hasKey = keyStore.hasKey
         refresh()
@@ -91,13 +93,15 @@ public final class MeetingsModel {
         for meeting in meetings where meeting.id != recordingID {
             switch meeting.state {
             case .recording:
-                var copy = meeting
                 let folder = store.audioFolder(meeting.id)
-                copy.duration = await Task.detached { Recorder.recover(folder: folder) }.value
+                let recovered = await Task.detached { Recorder.recover(folder: folder) }.value
+                guard let recovered, var copy = store.load(meeting.id) else { continue }
+                copy.duration = recovered.seconds
                 copy.state = .waiting
+                if !recovered.problems.isEmpty { copy.warnings = (copy.warnings ?? []) + recovered.problems }
                 try? store.save(copy)
             case .transcribing:
-                var copy = meeting
+                guard MeetingLock.isFree(MeetingLock.processing(store, meeting.id)), var copy = store.load(meeting.id) else { continue }
                 copy.state = .waiting
                 try? store.save(copy)
             default: break
@@ -126,7 +130,9 @@ public final class MeetingsModel {
         defer { starting = false }
         do {
             let meeting = try store.create()
-            let recorder = Recorder(folder: store.audioFolder(meeting.id), echoCancellation: settings.echoCancellation)
+            let recorder = Recorder(folder: store.audioFolder(meeting.id), echoCancellation: settings.echoCancellation) { [weak self] text in
+                Task { @MainActor in self?.problem = text }
+            }
             do {
                 try await recorder.start()
             } catch {
@@ -145,20 +151,33 @@ public final class MeetingsModel {
 
     public func stop() async {
         guard let id = recordingID, let recorder else { return }
-        let seconds = await recorder.stop()
+        let result = await recorder.stop()
         self.recorder = nil
         recordingID = nil
         recordingStarted = nil
         if var meeting = store.load(id) {
-            meeting.duration = seconds
+            meeting.duration = result.seconds
             meeting.state = .waiting
+            if !result.problems.isEmpty { meeting.warnings = (meeting.warnings ?? []) + result.problems }
             try? store.save(meeting)
         }
         refresh()
+        if !result.problems.isEmpty { problem = result.problems.joined(separator: " ") }
         if hasKey {
             process(id)
         } else {
-            notice = "Recorded \(lengthText(seconds)). Add your OpenRouter key in Settings to transcribe it."
+            notice = "Recorded \(lengthText(result.seconds)). Add your OpenRouter key in Settings to transcribe it."
+        }
+        if selectedID == id { reloadPage() }
+    }
+
+    /// `akit://meetings/record`, `/stop`, `/toggle` (a Raycast quicklink or a hotkey).
+    public func perform(_ action: String) async {
+        switch action.lowercased() {
+        case "record", "start": await record()
+        case "stop": await stop()
+        case "toggle": if isRecording { await stop() } else { await record() }
+        default: break
         }
     }
 
@@ -179,6 +198,8 @@ public final class MeetingsModel {
         Task {
             do {
                 _ = try await processor.run(id, restart: restart)
+            } catch MeetingsError.busy {
+                // The other Meetings app transcribes it; its saves show up on the next refresh.
             } catch {
                 problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
@@ -205,19 +226,30 @@ public final class MeetingsModel {
         reloadPage()
     }
 
+    /// H5: the Summary is the model's page; while the meeting records or waits for its summary
+    /// it shows the status, and notes go into an own tab.
+    public var summaryLocked: Bool {
+        guard let meeting = selected else { return true }
+        return meeting.id == recordingID || processing.contains(meeting.id) || meeting.state == .recording
+            || meeting.state == .waiting || meeting.state == .transcribing
+    }
+
     public func reloadPage() {
         guard let meeting = selected, selectedTab != Self.transcriptTab else {
             page = nil
             return
         }
-        generation += 1
         let isSummary = selectedTab == Self.summaryTab
         if !isSummary, !meeting.tabs.contains(selectedTab) {
             selectedTab = Self.summaryTab
             return reloadPage()
         }
+        let key = "\(meeting.id)#\(selectedTab)"
         let text = isSummary ? store.summary(meeting.id) : store.tab(meeting.id, selectedTab)
-        page = MeetingsPage(key: "\(meeting.id)#\(selectedTab)", text: text, generation: generation,
+        // M6: the same page with the same text keeps its editor (and the typing not yet saved).
+        if let page, page.key == key, page.text == text { return }
+        generation += 1
+        page = MeetingsPage(key: key, text: text, generation: generation,
                             folder: store.folder(meeting.id).appending(path: "tabs", directoryHint: .isDirectory), meetingID: meeting.id)
     }
 
@@ -244,8 +276,11 @@ public final class MeetingsModel {
         try store.saveTabImage(meetingID, data: data, ext: ext)
     }
 
+    /// The selected meeting as it is on disk: the processor may have saved since the list loaded.
+    private var fresh: Meeting? { selectedID.flatMap { store.load($0) } }
+
     public func addTab(_ name: String) -> Bool {
-        guard var meeting = selected else { return false }
+        guard var meeting = fresh else { return false }
         do {
             try store.addTab(&meeting, name: name)
             updated(meeting)
@@ -258,7 +293,7 @@ public final class MeetingsModel {
     }
 
     public func renameTab(_ old: String, to name: String) -> Bool {
-        guard var meeting = selected else { return false }
+        guard var meeting = fresh else { return false }
         do {
             try store.renameTab(&meeting, from: old, to: name)
             updated(meeting)
@@ -271,7 +306,7 @@ public final class MeetingsModel {
     }
 
     public func removeTab(_ name: String) {
-        guard var meeting = selected else { return }
+        guard var meeting = fresh else { return }
         do {
             try store.removeTab(&meeting, name: name)
             updated(meeting)
@@ -289,7 +324,7 @@ public final class MeetingsModel {
     }
 
     public func renameSpeaker(_ key: String, to name: String) {
-        guard var meeting = selected else { return }
+        guard var meeting = fresh else { return }
         do {
             try store.renameSpeaker(&meeting, key: key, to: name)
             updated(meeting)

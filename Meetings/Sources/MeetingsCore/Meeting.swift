@@ -26,8 +26,16 @@ public struct Meeting: Codable, Equatable, Sendable, Identifiable {
     /// (`S1` → "Speaker 1").
     public var speakers: [String: String]
     public var segments: [Segment]
-    /// How many audio chunks (M13) are already in `segments`, so a retry goes on from there.
+    /// How many audio chunks (M13) are already in `segments` (shown while it transcribes).
     public var transcribedChunks: Int
+    /// How many pieces are already in `segments`, so a retry goes on from the next piece (nil in
+    /// files written before 2026-11-06's review: then all pieces of the done chunks).
+    public var transcribedPieces: Int?
+    /// The hash of the summary the model last wrote: a different `summary.md` holds the user's
+    /// own edits, which a new summary keeps in an own tab.
+    public var summaryHash: String?
+    /// Audio the recorder or mixer could not keep (a piece that did not mix, a source that stopped).
+    public var warnings: [String]?
     /// The user's own tabs (M17), in their order; each is `tabs/<name>.md`.
     public var tabs: [String]
     /// After this day the audio goes to the Trash (M7).

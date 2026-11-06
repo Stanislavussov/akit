@@ -288,6 +288,91 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         #expect(server.requests.isEmpty)
     }
 
+    /// M2: pieces added after a partial run are all sent; none is skipped.
+    @Test func resumeSendsEveryPieceNotYetDone() async throws {
+        let store = TempRoot().store
+        let meeting = try meetingWithPieces(store, count: 3)
+        let first = FakeServer([
+            (200, chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"a"}]}"#)),
+            (500, #"{"error":{"message":"down"}}"#),
+        ])
+        await #expect(throws: MeetingsError.self) {
+            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: first.client).run(meeting.id)
+        }
+        #expect(store.load(meeting.id)?.transcribedPieces == 3)
+        for i in 4...8 {
+            let piece = store.audioFolder(meeting.id).appending(path: String(format: "piece-%03d.aac", i))
+            try Data("piece\(i)".utf8).write(to: piece)
+            try JSONEncoder().encode(PieceInfo(duration: 300, me: [])).write(to: piece.deletingPathExtension().appendingPathExtension("json"))
+        }
+        let second = FakeServer([
+            (200, chat(#"{"segments":[{"start":"00:01","speaker":"S1","text":"b"}]}"#)),
+            (200, chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)),
+        ])
+        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: second.client).run(meeting.id)
+        let parts = (second.body(0)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]]
+        let audio = (parts?.last?["input_audio"] as? [String: String])?["data"] ?? ""
+        #expect(Data(base64Encoded: audio) == Data("piece4piece5piece6piece7piece8".utf8))
+        #expect(done.segments.map(\.start) == [1, 901])
+        #expect(done.transcribedPieces == 8)
+    }
+
+    /// H2: a second run while one holds the lock leaves the meeting alone.
+    @Test func secondRunIsBusy() async throws {
+        let store = TempRoot().store
+        let meeting = try meetingWithPieces(store, count: 1)
+        let held = try #require(MeetingLock.take(MeetingLock.processing(store, meeting.id)))
+        let server = FakeServer([])
+        await #expect(throws: MeetingsError.busy) {
+            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
+        }
+        #expect(server.requests.isEmpty)
+        #expect(store.load(meeting.id)?.state == .waiting)
+        held.release()
+        #expect(MeetingLock.isFree(MeetingLock.processing(store, meeting.id)))
+    }
+
+    /// M3 and H5: a tab added while it transcribes stays; the user's own summary text moves to
+    /// an own tab instead of being replaced.
+    @Test func userChangesSurviveTheRun() async throws {
+        let root = TempRoot()
+        let store = root.store
+        let meeting = try meetingWithPieces(store, count: 1)
+        try store.writeSummary(meeting.id, "my notes during the call")
+        let added = AddTabOnFirstRequest(store: store, id: meeting.id)
+        let server = FakeServer([
+            (200, chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"a"}]}"#)),
+            (200, chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)),
+        ])
+        let client = OpenRouterClient(key: "k", base: URL(string: "https://fake.invalid/")!) { request in
+            added.run()
+            return try await server.client.transport(request)
+        }
+        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: client).run(meeting.id)
+        #expect(done.tabs == ["Links", "Notes"])
+        #expect(store.tab(meeting.id, "Notes") == "my notes during the call")
+        #expect(store.summary(meeting.id).contains("S"))
+        // A second run over the model's own summary keeps no copy.
+        let again = FakeServer([
+            (200, chat(#"{"segments":[]}"#)),
+        ])
+        _ = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: again.client).run(meeting.id, restart: true)
+        #expect(store.load(meeting.id)?.tabs == ["Links", "Notes"])
+    }
+
+    /// L1: Transcribe Again without audio keeps the transcript.
+    @Test func restartWithoutAudioKeepsTranscript() async throws {
+        let store = TempRoot().store
+        var meeting = try store.create()
+        meeting.segments = [Segment(start: 0, speaker: "Me", text: "keep")]
+        meeting.state = .done
+        try store.save(meeting)
+        await #expect(throws: MeetingsError.noAudio) {
+            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: FakeServer([]).client).run(meeting.id, restart: true)
+        }
+        #expect(store.load(meeting.id)?.segments.map(\.text) == ["keep"])
+    }
+
     @Test func errorAnswerWith200IsAnError() {
         #expect(throws: MeetingsError.self) { try Completion.parse(Data(#"{"error":{"code":429,"message":"rate"}}"#.utf8)) }
     }
@@ -321,7 +406,7 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         // Mic: 2 s of tone then nothing; system: 3 s stereo at 48 kHz, quiet.
         try writeTone(folder.appending(path: PieceMixer.rawName(.mic, index: 1, part: 1)), seconds: 2, rate: 44_100, channels: 1, amplitude: 0.3)
         try writeTone(folder.appending(path: PieceMixer.rawName(.sys, index: 1, part: 1)), seconds: 3, rate: 48_000, channels: 2, amplitude: 0.1)
-        #expect(PieceMixer.mixPending(in: folder) == [1])
+        #expect(PieceMixer.mixPending(in: folder).done == [1])
         let piece = folder.appending(path: "piece-001.aac")
         let data = try Data(contentsOf: piece)
         // ADTS frames start with the sync word 0xFFF.
@@ -354,6 +439,45 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         let files = PieceMixer.rawFiles(in: root.url)
         #expect(files[3]?[.mic]?.count == 2)
         #expect(files[1]?[.mic]?.count == 1)
+    }
+
+    /// M1: time before the first buffer and a gap between buffers become silence, so the source
+    /// stays on the recording's clock.
+    @Test func gapsBecomeSilence() throws {
+        let root = TempRoot()
+        let start = mach_absolute_time()
+        let writer = PieceWriter(folder: root.url, source: .sys, pieceSeconds: 60, startHost: start) { _, _ in }
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000)!
+        buffer.frameLength = 16_000 // 1 s
+        writer.append(buffer, hostTime: start + AVAudioTime.hostTime(forSeconds: 0.5))  // 0.5 s late
+        writer.append(buffer, hostTime: start + AVAudioTime.hostTime(forSeconds: 3.5))  // 2 s gap
+        writer.stop()
+        let file = try #require(PieceMixer.rawFiles(in: root.url)[1]?[.sys]?.first)
+        let samples = try PieceMixer.load(file)
+        #expect(abs(Double(samples.count) / 16_000 - 4.5) < 0.02)
+    }
+}
+
+/// Adds a tab to the meeting the first time a request goes out (the user acting mid-run).
+final class AddTabOnFirstRequest: @unchecked Sendable {
+    let store: MeetingStore
+    let id: String
+    private let lock = NSLock()
+    private var done = false
+
+    init(store: MeetingStore, id: String) {
+        self.store = store
+        self.id = id
+    }
+
+    func run() {
+        let first = lock.withLock { () -> Bool in
+            defer { done = true }
+            return !done
+        }
+        guard first, var meeting = store.load(id) else { return }
+        try? store.addTab(&meeting, name: "Links")
     }
 }
 

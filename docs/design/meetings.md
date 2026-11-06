@@ -54,6 +54,8 @@ Not a meeting bot that joins the call, not live captions, not recording all day.
 | M14 | Language | The transcript stays in the language spoken; the prompt says "most likely Czech, may also be Russian or English". Summary, decisions and tasks are written in the chosen language, Czech by default (Settings → Language, a Picker) |
 | M15 | Result | After the last piece one text call over the transcript writes: a title, a summary of 3–5 sentences, decisions, tasks (`- [ ] Me: …`, `- [ ] Speaker 2: …`). Speakers can be renamed after the recording; the file is rewritten with the names |
 | M16 | Screen | In AKit: Work → Meetings. In `Meetings.app`: the same view in its window. A list of days and meetings (title, length, cost, state: recording, waiting, transcribing, done, failed). A meeting opens on its tabs (M17), with Rename Speakers…, Transcribe Again, Show in Finder, Move to Trash… |
+| M18 | Links | Asked by the user the same day ("a shortcut as for the notebook"): `akit://meetings` opens the screen; `akit://meetings/record`, `/stop` and `/toggle` act without switching AKit's screen, then give the focus back to the app that was in front (M4). A Raycast quicklink with a hotkey on `/toggle` is the one-key Record/Stop. With the window closed, macOS opens it first |
+| M19 | Review round | 2026-11-06 code review: one model per app (closing the window keeps the recording; a released recorder stops its devices); `flock` locks `audio/.recording.lock` and `.processing.lock`, so AKit and `Meetings.app` never take each other's live recording or send its audio twice; the microphone restarts on `AVAudioEngineConfigurationChange`, the tap on a new output with retries, a failure shows on screen; every source counts from the recording's common host time and gaps become silence, so pieces stay in step; the processor resumes from the next untranscribed piece and saves only its own fields; Summary is locked while it records or transcribes, and a user-edited summary moves to an own tab `Notes` before a new one replaces it; an unreadable raw part is left out and named in the meeting's warnings; Quit stops a running recording first |
 | M17 | Tabs | Asked by the user the same day: a meeting is not "a recording" but its tabs. Summary first (summary, decisions, tasks), then Transcript, then the user's own tabs: plain Markdown pages (notes, links), added, renamed and removed like the Notebook's tabs. Own tabs are files `tabs/<name>.md` in the meeting's folder, never sent to a model. Summary is editable too (its section of `meeting.md`); Transcript is read only. The editor comes from the host app: AKit passes its Crepe editor (the Notebook's), `Meetings.app` a plain Markdown text editor, so the package needs no web bundle |
 
 ## Pages
@@ -94,6 +96,10 @@ Not a meeting bot that joins the call, not live captions, not recording all day.
 | 5 | Into AKit (Work → Meetings) and the `Meetings` app target; guide `docs/guides/meetings.ru.md` | snapshot, guide screenshots from a made-up home |
 
 ## Open
+
+- Open from the review, for step 0's device run: whether the IOProc's input holds only the tap's
+  stream when the output device also has inputs (a USB headset, AirPods), and whether a call's
+  Bluetooth profile changes the aggregate's rate while the tap's format stays.
 
 - AKit reads `~/Meetings`: tasks into the Notebook, a line per meeting into the Work Log.
 - A global hotkey for Record/Stop without bringing AKit forward.

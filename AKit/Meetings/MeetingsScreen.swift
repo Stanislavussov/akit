@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MeetingsCore
 import MeetingsUI
@@ -27,10 +28,37 @@ struct MeetingsScreen: View {
             }
     }
 
-    /// The model AKit keeps for the window. A demo (screenshots) has its own Keychain item; the
-    /// model list still comes from OpenRouter's API, like everywhere else.
-    @MainActor static func makeModel() -> MeetingsModel {
+    /// H1: one model for the app, not per window, so closing the window neither drops a running
+    /// recording nor lets a new window take it for a crashed one. AKit loads it at launch.
+    @MainActor static let shared: MeetingsModel = {
         guard DebugSnapshot.options?.demo == true else { return MeetingsModel() }
+        // A demo (screenshots) has its own Keychain item; the model list still comes from
+        // OpenRouter's API, like everywhere else.
         return MeetingsModel(keyStore: KeyStore(service: "Meetings OpenRouter (AKit demo)"))
+    }()
+
+    /// `akit://meetings/record` · `/stop` · `/toggle` from Raycast or a hotkey app: done without
+    /// switching AKit's screen, then the app that was in front gets the focus back, so nothing
+    /// of AKit stays on a shared screen.
+    @MainActor static func perform(_ action: String) async {
+        let previous = FocusReturn.shared.previous
+        await shared.perform(action)
+        if let previous, previous != NSRunningApplication.current { previous.activate() }
+    }
+}
+
+/// The last app in front before AKit, for `MeetingsScreen.perform`.
+@MainActor final class FocusReturn {
+    static let shared = FocusReturn()
+    private(set) var previous: NSRunningApplication?
+    private var observer: NSObjectProtocol?
+
+    func start() {
+        guard observer == nil else { return }
+        previous = NSWorkspace.shared.frontmostApplication.flatMap { $0 == .current ? nil : $0 }
+        observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didDeactivateApplicationNotification, object: nil, queue: .main) { note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication, app != .current else { return }
+            MainActor.assumeIsolated { FocusReturn.shared.previous = app }
+        }
     }
 }

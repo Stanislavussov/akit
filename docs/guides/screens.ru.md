@@ -4299,6 +4299,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Кто что обещал на встрече?» → вкладка **Summary**, раздел Tasks.
 - «Что точно сказали?» → вкладка **Transcript**.
 - «Куда положить ссылки к встрече?» → своя вкладка, **+**.
+- «Запись одной клавишей» → Raycast со ссылкой `akit://meetings/toggle`.
 
 ![Экран Meetings: встречи за сегодня слева, справа Summary встречи с решениями и задачами](images/meetings.png)
 
@@ -4309,7 +4310,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Слева: встречи по дням, у каждой время, длина, цена; внизу — сумма за месяц и лимит.
 - Справа: вкладки **Summary**, **Transcript**, свои вкладки и **+**; меню **Actions**: **Rename Speakers…**, **Transcribe Again**, **Show in Finder**, **Move to Trash…**.
 
-Подробно: [записать](meetings#record), [Summary и Transcript](meetings#tabs), [свои вкладки](meetings#own-tabs), [Actions](meetings#actions), [настройки](meetings#settings), [файлы](meetings#files). Надписи: [словарь](terms#terms-meetings).
+Подробно: [записать](meetings#record), [ссылки и Raycast](meetings#links), [Summary и Transcript](meetings#tabs), [свои вкладки](meetings#own-tabs), [Actions](meetings#actions), [настройки](meetings#settings), [файлы](meetings#files). Надписи: [словарь](terms#terms-meetings).
 
 ## Settings
 <!-- section: settings -->
