@@ -1,5 +1,4 @@
 import AKitErrorAnalysis
-import MeetingsCore
 import MeetingsUI
 import SwiftUI
 
@@ -149,7 +148,7 @@ struct RootView: View {
     /// The work log's days and entry field; its base is the Knowledge screen's.
     @State private var worklog: WorkLogModel
     /// Meetings live as long as the window: a recording goes on on other screens.
-    @State private var meetings = MeetingsModel(keyStore: DebugSnapshot.options?.demo == true ? KeyStore(service: "Meetings OpenRouter (AKit demo)") : KeyStore())
+    @State private var meetings = MeetingsScreen.makeModel()
 
     init() {
         let knowledge = KnowledgeModel()
@@ -211,7 +210,7 @@ struct RootView: View {
             case .knowledge: KnowledgeView()
             case .notebook: NotebookView()
             case .worklog: WorkLogView()
-            case .meetings: MeetingsView(model: meetings, editor: .crepe, extraToolbar: AnyView(GuideButton(guide: .meetings)))
+            case .meetings: MeetingsScreen(model: meetings)
             }
         }
         .environment(review)

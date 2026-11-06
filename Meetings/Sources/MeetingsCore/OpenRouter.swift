@@ -16,10 +16,10 @@ public struct OpenRouterClient: Sendable {
         self.transport = transport
     }
 
-    /// `GET /models` (public; the key is sent anyway).
+    /// `GET /models`: OpenRouter's live list. It is public, so it loads before a key is saved.
     public func models() async throws -> [OpenRouterModel] {
         var request = URLRequest(url: base.appending(path: "models"))
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         let data = try await send(request)
         struct List: Decodable { var data: [OpenRouterModel] }
         do { return try JSONDecoder().decode(List.self, from: data).data } catch { throw MeetingsError.badAnswer("model list: \(error)") }

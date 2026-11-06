@@ -46,6 +46,7 @@ public final class MeetingsModel {
     public struct TabNameRequest: Identifiable, Equatable {
         public var id: String { old ?? "+" }
         public var old: String?
+        public init(old: String?) { self.old = old }
     }
 
     let settingsFile: URL
