@@ -35,8 +35,19 @@ public struct Transcriber: Sendable {
     /// The prompt of one chunk: the language hint, who can speak in this track, the spans in which
     /// the user's own microphone carried speech, and the last lines before this chunk, so the
     /// speakers keep their keys.
-    static func transcriptPrompt(spokenHint: String, length: TimeInterval, me: [TimeSpan], previous: [Segment], track: Track = .mixed) -> String {
+    /// M27: the project's words for a prompt; nil without any.
+    static func vocabularyLine(_ vocabulary: [String], for use: String) -> String? {
+        let terms = vocabulary.prefix(MeetingsSettings.vocabularyLimit)
+        guard !terms.isEmpty else { return nil }
+        return "Words of the user's project (names, services, products, terms; a dash or colon gives a hint). \(use) Never put one in where it was not said:\n" + terms.map { "- \($0)" }.joined(separator: "\n")
+    }
+
+    static func transcriptPrompt(spokenHint: String, length: TimeInterval, me: [TimeSpan], previous: [Segment], track: Track = .mixed,
+                                 vocabulary: [String] = []) -> String {
         var lines = ["Transcribe this audio (\(timestamp(length)) long). The language is most likely \(spokenHint); write each line in the language that is spoken."]
+        if let words = vocabularyLine(vocabulary, for: "When you hear one of them, or a word that sounds close and fits the meaning better than a common word, write it exactly as listed.") {
+            lines.append(words)
+        }
         switch track {
         case .mixed:
             lines.append("Speakers: \"Me\" is the user. Other people are \"S1\", \"S2\", … in the order they first speak; keep the same key for the same voice. Where two people talk at the same time, write both lines, each with its own start.")
@@ -69,7 +80,8 @@ public struct Transcriber: Sendable {
     /// whole recording).
     public func transcribe(audio: Data, format: String, length: TimeInterval, offset: TimeInterval, me: [TimeSpan], previous: [Segment],
                            track: Track = .mixed) async throws -> (segments: [Segment], completion: Completion) {
-        let prompt = Self.transcriptPrompt(spokenHint: settings.spokenHint, length: length, me: me, previous: previous, track: track)
+        let prompt = Self.transcriptPrompt(spokenHint: settings.spokenHint, length: length, me: me, previous: previous, track: track,
+                                           vocabulary: settings.vocabulary)
         let completion = try await client.complete(model: settings.model, system: Self.system(clean: settings.cleanTranscript), text: prompt, audio: (audio, format))
         let segments = try PaidFailure.parse(completion) { try Self.parseSegments(completion.text, offset: offset, length: length) }
         return (segments, completion)
@@ -158,7 +170,7 @@ public struct Transcriber: Sendable {
         }
     }
 
-    static func summaryPrompt(language: String, transcript: String, template: MeetingTemplate = MeetingTemplate.builtIn[0]) -> String {
+    static func summaryPrompt(language: String, transcript: String, template: MeetingTemplate = MeetingTemplate.builtIn[0], vocabulary: [String] = []) -> String {
         var asks = [
             "- title: a short title of the meeting (at most 8 words);",
             "- summary: 3–5 sentences: what it was about and what came out of it;",
@@ -179,7 +191,7 @@ public struct Transcriber: Sendable {
         return """
         Below is the transcript of a meeting. "Me" is the user. Write in \(language):
         \(asks.joined(separator: "\n"))
-        Use only what the transcript says.
+        Use only what the transcript says.\(vocabularyLine(vocabulary, for: "Where the transcript has a word that sounds like one of them, it is that word: write it exactly as listed.").map { "\n" + $0 } ?? "")
         Answer: \(shape)
 
         Transcript:
@@ -196,7 +208,8 @@ public struct Transcriber: Sendable {
         let template = settings.template(meeting.template)
         let completion = try await client.complete(model: settings.summaryModel ?? settings.model,
                                                    system: "You write short, faithful meeting notes. Answer with one JSON object and nothing else.",
-                                                   text: Self.summaryPrompt(language: settings.language, transcript: Self.plainTranscript(meeting), template: template))
+                                                   text: Self.summaryPrompt(language: settings.language, transcript: Self.plainTranscript(meeting), template: template,
+                                                                            vocabulary: settings.vocabulary))
         return (try PaidFailure.parse(completion) { try Self.parseSummary(completion.text) }, completion)
     }
 

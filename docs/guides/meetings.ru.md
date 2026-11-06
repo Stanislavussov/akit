@@ -181,6 +181,7 @@
 - **Key** — ключ OpenRouter. Создайте его на openrouter.ai/keys, вставьте и нажмите **Save Key**. Ключ хранится в Keychain, на экране его не видно.
 - **Transcription** — модель для звука. Список приходит из API OpenRouter: только модели, которые принимают аудио, самые дешёвые сверху. У каждой — примерная цена часа. ★ — рекомендуемые: дешёвые и хорошо понимают чешский. **Reload** запрашивает список заново.
 - **Summary** — модель для краткого содержания. По умолчанию та же.
+- **Vocabulary** — словарь проекта: имена, сервисы, продукты, термины, по одному на строку. Модель пишет эти слова точно так, а не похожее по звучанию. Строка `Kafka — message broker` даёт подсказку. **Import…** добавляет слова из файла `.txt`, `.md` или `.csv` (по строкам или через запятую). Словарь уходит с каждой расшифровкой и Summary; для старой встречи — **Transcribe Again**.
 - **Summary and tasks** — язык Summary и задач, по умолчанию Czech.
 - **Spoken language** — подсказка модели, на каком языке говорят.
 - **Template of a new meeting**, **Add Template** — шаблон новой встречи и свои шаблоны (см. «Шаблоны»).
@@ -190,7 +191,7 @@
 - **Folder** — папка встреч, по умолчанию `~/Meetings`.
 - **Monthly limit, $** — лимит в месяц, по умолчанию $10. Когда он достигнут, новые расшифровки ждут, а запись работает.
 
-![Окно Meetings Settings: ключ OpenRouter, модели Transcription и Summary с ценой часа, язык, Echo cancellation, папка, месячный лимит](images/meetings-settings.png)
+![Окно Meetings Settings: ключ OpenRouter, модели Transcription и Summary с ценой часа, словарь Vocabulary из шести слов, язык, Echo cancellation, папка, месячный лимит](images/meetings-settings.png)
 
 ## Расходы
 <!-- section: costs -->

@@ -1075,3 +1075,41 @@ final class Closed: @unchecked Sendable {
         #expect(store.pieces(again.id).count == 1)
     }
 }
+
+@Suite struct VocabularyTests {
+    @Test func parsesLinesCommasHintsAndRepeats() {
+        let text = """
+        # services
+        orders-api, Billing; kafka
+        - Kafka
+        Rohlik — the client
+        idempotence: making a call twice safe
+
+        "Jana Nováková"
+        """
+        #expect(MeetingsSettings.vocabulary(from: text) == ["orders-api", "Billing", "kafka", "Rohlik — the client", "idempotence: making a call twice safe", "Jana Nováková"])
+        #expect(MeetingsSettings.vocabulary(from: "").isEmpty)
+    }
+
+    @Test func termsGoIntoTranscriptAndSummaryPrompts() async throws {
+        let store = TempRoot().store
+        let meeting = try ProcessorTests().meetingWithPieces(store, count: 1)
+        var settings = MeetingsSettings()
+        settings.vocabulary = ["orders-api", "Rohlík"]
+        let server = FakeServer([
+            (200, chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"orders-api"}]}"#)),
+            (200, chat(#"{"title":"T","summary":"S.","decisions":[],"tasks":[]}"#)),
+        ])
+        _ = try await MeetingProcessor(store: store, settings: settings, client: server.client).run(meeting.id)
+        for i in 0..<2 {
+            let text = ((server.body(i)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+            #expect(text.contains("Words of the user's project") && text.contains("- orders-api\n- Rohlík"))
+        }
+        #expect(!Transcriber.transcriptPrompt(spokenHint: "Czech", length: 10, me: [], previous: []).contains("Words of the user's project"))
+        let many = (1...2_000).map { "term\($0)" }
+        #expect(Transcriber.vocabularyLine(many, for: "")?.contains("term1500\n") == false)
+        #expect(Transcriber.vocabularyLine(many, for: "")?.hasSuffix("- term1500") == true)
+        let old = try JSONDecoder().decode(MeetingsSettings.self, from: Data(#"{"model":"m"}"#.utf8))
+        #expect(old.vocabulary.isEmpty)
+    }
+}

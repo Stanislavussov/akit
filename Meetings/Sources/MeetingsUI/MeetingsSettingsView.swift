@@ -72,6 +72,9 @@ struct MeetingsSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
+                Section("Vocabulary") {
+                    VocabularyEditor(model: model)
+                }
                 Section("Language") {
                     Picker("Summary and tasks", selection: Binding(get: { model.settings.language }, set: { value in model.update { $0.language = value } })) {
                         ForEach(languages, id: \.self) { Text($0).tag($0) }
@@ -222,5 +225,54 @@ struct OwnTemplateRow: View {
                         if let i = settings.customTemplates.firstIndex(where: { $0.id == template.id }) { settings.customTemplates[i][keyPath: field] = value }
                     }
                 })
+    }
+}
+
+/// M27: the project's words, one per line; Import… reads a text, Markdown or CSV file.
+struct VocabularyEditor: View {
+    let model: MeetingsModel
+    @State private var text = ""
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextEditor(text: $text)
+                .font(.callout.monospaced())
+                .frame(height: 110)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(.quaternary))
+                .onChange(of: text) { _, new in
+                    let terms = MeetingsSettings.vocabulary(from: new)
+                    if terms != model.settings.vocabulary { model.update { $0.vocabulary = terms } }
+                }
+            HStack {
+                let count = model.settings.vocabulary.count
+                Text("\(count) term\(count == 1 ? "" : "s")" + (count > MeetingsSettings.vocabularyLimit ? ", the first \(MeetingsSettings.vocabularyLimit) are sent" : ""))
+                Spacer()
+                Button("Import…", action: importFile)
+                    .help("Add the words of a .txt, .md or .csv file: one per line or separated by commas")
+                Button("Clear") { text = "" }.disabled(text.isEmpty)
+            }
+            .font(.caption)
+            if let problem { Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption) }
+            Text("Names, services, products and terms of your project, one per line; \"Kafka — message broker\" adds a hint. They go with every transcription and summary, so the model writes them right instead of a word that sounds close. Takes effect at the next transcription; Transcribe Again uses them for an older meeting.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear { text = model.settings.vocabulary.joined(separator: "\n") }
+    }
+
+    private func importFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.plainText, .commaSeparatedText, .init(filenameExtension: "md") ?? .plainText, .init(filenameExtension: "tsv") ?? .plainText]
+        panel.prompt = "Import"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let added = MeetingsSettings.vocabulary(from: try String(contentsOf: url, encoding: .utf8))
+            let merged = MeetingsSettings.vocabulary(from: (model.settings.vocabulary + added).joined(separator: "\n"))
+            text = merged.joined(separator: "\n")
+            problem = nil
+        } catch {
+            problem = "Could not read \(url.lastPathComponent): \(error.localizedDescription)"
+        }
     }
 }
