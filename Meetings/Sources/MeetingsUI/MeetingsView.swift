@@ -267,7 +267,7 @@ struct MeetingDetail: View {
                 if model.isPaused(meeting.id) {
                     Button("Resume", systemImage: "play.fill") { model.resume(meeting.id) }
                         .help("Go on with the transcription on this Mac")
-                } else {
+                } else if model.canPause(meeting.id) {
                     Button("Pause", systemImage: "pause.fill") { model.pause(meeting.id) }
                         .help("Pause the transcription on this Mac; nothing is lost")
                 }

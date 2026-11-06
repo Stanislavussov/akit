@@ -11,6 +11,22 @@ final class StatusLog: @unchecked Sendable {
     func saw(_ phase: LocalStatus.Phase) -> Bool { all.contains { $0.phase == phase } }
 }
 
+/// Points the live-children file at a temporary folder before any test spawns a child, so the
+/// tests never write the user's `~/Library/Application Support/Meetings/children.txt`.
+enum TestChildren {
+    static let ready: Void = {
+        ChildRun.liveFile = FileManager.default.temporaryDirectory.appending(path: "meetings-children-\(UUID().uuidString).txt")
+    }()
+}
+
+/// The pid a run reports at its start.
+final class PidBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pid: pid_t?
+    func set(_ value: pid_t) { lock.withLock { pid = value } }
+    var value: pid_t? { lock.withLock { pid } }
+}
+
 /// A heat that a test can change while a run works.
 final class Heat: @unchecked Sendable {
     private let lock = NSLock()
@@ -28,12 +44,17 @@ struct LocalFixture {
     let bin: URL
     let meeting: Meeting
 
-    init(whisperSleeps: Int = 0) throws {
+    /// `slowCall`: the whisper call (1, 2 …, counted in a file) that sleeps 20 s.
+    init(whisperSleeps: Int = 0, slowCall: Int? = nil) throws {
+        TestChildren.ready
         bin = root.url.appending(path: "bin", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         try Self.script(bin.appending(path: "afconvert"), "cp \"$7\" \"$8\"")
+        let counter = root.url.appending(path: "whisper-calls").path
         try Self.script(bin.appending(path: "whisper-cli"), """
         sleep \(whisperSleeps)
+        n=$(( $(cat "\(counter)" 2>/dev/null || echo 0) + 1 )); echo $n > "\(counter)"
+        [ "$n" = "\(slowCall ?? -1)" ] && sleep 20
         while [ $# -gt 0 ]; do case "$1" in -f) f="$2"; shift;; -of) o="$2"; shift;; esac; shift; done
         if [ "$(cat "$f")" = mic ]; then
           printf '{"transcription":[{"offsets":{"from":1000,"to":4000},"text":" Ahoj"},{"offsets":{"from":30000,"to":32000},"text":" Titulky vytvořil"}]}' > "$o.json"
@@ -170,6 +191,8 @@ struct LocalFixture {
 }
 
 @Suite struct ChildRunTests {
+    init() { TestChildren.ready }
+
     @Test func stopKillsTheProcess() async throws {
         let control = LocalControl()
         let local = LocalEnvironment(control: control, tick: .milliseconds(20))
@@ -212,6 +235,72 @@ struct LocalFixture {
         #expect(Date().timeIntervalSince(started) >= 0.9)
         #expect(log.saw(.paused(.user)))
         #expect(log.saw(.transcribing))
+    }
+
+    /// Stop ends the whole group: the shell and the sleep it started.
+    @Test func stopKillsTheGroup() async throws {
+        let control = LocalControl()
+        let local = LocalEnvironment(control: control, tick: .milliseconds(20))
+        let leader = PidBox()
+        Task {
+            try await Task.sleep(for: .milliseconds(300))
+            control.stopped = true
+        }
+        await #expect(throws: MeetingsError.stopped) {
+            _ = try await ChildRun.run(URL(filePath: "/bin/sh"), ["-c", "sleep 30 & sleep 30; wait"], local: local,
+                                       resume: LocalStatus(phase: .transcribing)) { leader.set($0) }
+        }
+        let pid = try #require(leader.value)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(kill(-pid, 0) != 0)
+    }
+
+    /// The time limit counts work, not pauses.
+    @Test func pauseDoesNotCountAgainstTheLimit() async throws {
+        let control = LocalControl()
+        control.userPaused = true
+        let local = LocalEnvironment(control: control, tick: .milliseconds(20))
+        Task {
+            try await Task.sleep(for: .seconds(1))
+            control.userPaused = false
+        }
+        let result = try await ChildRun.run(URL(filePath: "/bin/sleep"), ["0.2"], timeout: 0.6, local: local,
+                                            resume: LocalStatus(phase: .transcribing))
+        #expect(result.status == 0)
+    }
+
+    @Test func readsLargeOutput() async throws {
+        let result = try await ChildRun.run(URL(filePath: "/bin/sh"), ["-c", "head -c 300000 /dev/zero | tr '\\0' a; echo oops >&2"],
+                                            local: LocalEnvironment(tick: .milliseconds(10)), resume: LocalStatus(phase: .transcribing))
+        #expect(result.output.count == 300_000)
+        #expect(String(decoding: result.errors, as: UTF8.self) == "oops\n")
+    }
+
+    @Test func recordingInTheOtherAppPauses() async throws {
+        let elsewhere = Heat()
+        elsewhere.value = .fair  // .fair stands for "recording elsewhere"
+        let log = StatusLog()
+        let local = LocalEnvironment(status: { log.add($0) }, tick: .milliseconds(20), recordingElsewhere: { elsewhere.value == .fair })
+        Task {
+            try await Task.sleep(for: .milliseconds(500))
+            elsewhere.value = .nominal
+        }
+        _ = try await ChildRun.run(URL(filePath: "/bin/sleep"), ["0.1"], local: local, resume: LocalStatus(phase: .transcribing))
+        #expect(log.saw(.paused(.recording)))
+    }
+
+    /// A crash left a whisper running: the next launch ends it, and leaves a reused pid alone.
+    @Test func launchEndsLeftovers() throws {
+        let process = Process()
+        process.executableURL = URL(filePath: "/bin/sleep")
+        process.arguments = ["30"]
+        try process.run()
+        let file = FileManager.default.temporaryDirectory.appending(path: "children-\(UUID().uuidString).txt")
+        try Data("\(process.processIdentifier)\t/bin/sleep\n\(process.processIdentifier)\t/opt/other\n".utf8).write(to: file)
+        #expect(ChildRun.endLeftovers(file: file) == 1)
+        process.waitUntilExit()
+        #expect(process.terminationReason == .uncaughtSignal)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 
     @Test func readsTheOutput() async throws {
@@ -261,6 +350,26 @@ struct LocalFixture {
         #expect(saved.state == .failed)
         #expect(saved.failure == MeetingsError.stopped.errorDescription)
         #expect(saved.transcribedPieces == 0)
+    }
+
+    /// Stop during piece 2 keeps piece 1; Try Again goes on with piece 2 only, no line twice.
+    @Test func tryAgainGoesOnAfterStop() async throws {
+        // Calls 1–2 are piece 1 (mic, sys); call 3 is piece 2's mic: it hangs until Stop.
+        let fixture = try LocalFixture(slowCall: 3)
+        let control = LocalControl()
+        let log = StatusLog()
+        let first = fixture.processor(LocalEnvironment(control: control, status: { log.add($0) }, tick: .milliseconds(20)))
+        let run = Task { try await first.run(fixture.meeting.id) }
+        while !log.all.contains(where: { $0.phase == .transcribing && $0.piece == 2 }) { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        control.stopped = true
+        await #expect(throws: MeetingsError.stopped) { try await run.value }
+        let stopped = try #require(fixture.root.store.load(fixture.meeting.id))
+        #expect(stopped.transcribedPieces == 1)
+        #expect(stopped.segments.count == 2)
+        let done = try await fixture.processor(LocalEnvironment(tick: .milliseconds(10))).run(fixture.meeting.id)
+        #expect(done.state == .done)
+        #expect(done.segments.map(\.start) == [1, 11, 61, 71])
     }
 
     @Test func waitsWhileARecordingRuns() async throws {
