@@ -31,6 +31,10 @@
 	<string>1</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Meetings records the sound of calls (Teams, Zoom, Meet) while you press Record.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>AKit reads your meetings to put them in the Work Log calendar. It never changes your calendars.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>AKit reads your meetings to put them in the Work Log calendar. It never changes your calendars.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Meetings records your voice while you press Record.</string>
 </dict>

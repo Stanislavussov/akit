@@ -34,8 +34,8 @@ final class WorkLogModel {
     var scrollTarget: String?
     /// File texts as last read, by path, with the file's change date and size: a reload reads
     /// only files that changed, so many days stay cheap.
-    private var fileCache: [String: (modified: Date?, size: Int?, text: String)] = [:]
-    private var dayCache: [String: KnowledgeWorkLog.Day] = [:]
+    @ObservationIgnored private var fileCache: [String: (modified: Date?, size: Int?, text: String)] = [:]
+    @ObservationIgnored private var dayCache: [String: KnowledgeWorkLog.Day] = [:]
     /// The entry field and the chosen kind (nil: none, or a `#tag` typed in the text).
     var text = ""
     var kind: String?
@@ -84,7 +84,14 @@ final class WorkLogModel {
         }
         // Snapshots: `--query` fills the entry field, or with `--tab worklog-fill` names the Auto-Fill day.
         if let query = DebugSnapshot.options?.query, DebugSnapshot.options?.section == .worklog {
-            if tab == .autoFill, let day = KnowledgeWorkLog.date(query) { fillDay = day } else { text = query }
+            if tab == .autoFill, let day = KnowledgeWorkLog.date(query) { fillDay = day }
+            else if tab == .calendar, let day = KnowledgeWorkLog.date(query) {
+                calendarAnchor = day
+                if DebugSnapshot.options?.tab == "worklog-calendar-day" { calendarDay = query }
+            } else if tab == .report, let day = KnowledgeWorkLog.date(query) {
+                reportAnchor = day
+                if DebugSnapshot.options?.tab == "worklog-report-month" { reportPeriod = .month }
+            } else { text = query }
         }
         if let tab = DebugSnapshot.options?.tab, tab.hasPrefix("worklog-kind-") { kind = String(tab.dropFirst("worklog-kind-".count)) }
         // Snapshots: `--tab worklog-edit` opens Edit… for the last entry of the newest day with entries.
@@ -110,6 +117,7 @@ final class WorkLogModel {
             do { read.append((date, try cachedText(date, in: worklog))) } catch { problem = error.message }
         }
         days = read
+        revision += 1
         // Only the days on screen stay in the parse cache.
         var kept: [String: KnowledgeWorkLog.Day] = [:]
         pastDays = read.dropFirst().map { date, text in
@@ -122,7 +130,7 @@ final class WorkLogModel {
     }
 
     /// A day's text, read again only when its file's change date or size moved.
-    private func cachedText(_ date: String, in worklog: KnowledgeWorkLog) throws(KnowledgeBase.Failure) -> String {
+    func cachedText(_ date: String, in worklog: KnowledgeWorkLog) throws(KnowledgeBase.Failure) -> String {
         let file = worklog.file(date)
         let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
         if let cached = fileCache[file.path], values != nil, cached.modified == values?.contentModificationDate, cached.size == values?.fileSize {
@@ -262,8 +270,155 @@ final class WorkLogModel {
 
     // MARK: - Auto-Fill (W8)
 
-    enum Tab: String, CaseIterable { case log = "Log", autoFill = "Auto-Fill" }
-    var tab: Tab = DebugSnapshot.options?.tab?.hasPrefix("worklog-fill") == true ? .autoFill : .log
+    enum Tab: String, CaseIterable { case log = "Log", calendar = "Calendar", report = "Report", autoFill = "Auto-Fill" }
+    var tab: Tab = {
+        let tab = DebugSnapshot.options?.tab ?? ""
+        if tab.hasPrefix("worklog-fill") { return .autoFill }
+        if tab.hasPrefix("worklog-calendar") { return .calendar }
+        if tab.hasPrefix("worklog-report") { return .report }
+        return .log
+    }()
+
+    // MARK: - Calendar and report (W11–W13)
+
+    /// A day of the week on screen; the calendar shows its week (Monday first).
+    var calendarAnchor = Date.now
+    /// The day the calendar shows alone; nil shows the week.
+    var calendarDay: String?
+    var showWeekend = UserDefaults.standard.bool(forKey: "worklogShowWeekend") {
+        didSet { UserDefaults.standard.set(showWeekend, forKey: "worklogShowWeekend") }
+    }
+    /// Bumped by every write and reload: the calendar and report read their days again.
+    private(set) var revision = 0
+    /// A new block waiting for its kind and text (a drag in the calendar, New Block…).
+    struct BlockRequest: Identifiable, Equatable {
+        var date: String
+        var start: Int
+        var end: Int
+        var id: String { "\(date) \(start) \(end)" }
+    }
+    var blockRequest: BlockRequest?
+    var importRequest: [String]?
+    var reportPeriod: KnowledgeWorkLog.Period = .week
+    var reportAnchor = Date.now
+    /// A work day's norm, from the base's settings.
+    var hours: Double { _ = revision; return worklog?.hours() ?? KnowledgeWorkLog.defaultHours }
+
+    /// The days of the calendar's week (Monday to Friday, or to Sunday), or the one chosen day.
+    var calendarDates: [String] {
+        if let calendarDay { return [calendarDay] }
+        let week = KnowledgeWorkLog.range(.week, containing: calendarAnchor)
+        guard let start = KnowledgeWorkLog.date(week.from) else { return [] }
+        return (0..<(showWeekend ? 7 : 5)).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: start) }
+            .map { KnowledgeWorkLog.stamp($0).day }
+    }
+
+    /// A day as the calendar draws it; today follows the clock.
+    func dayOnCalendar(_ date: String) -> KnowledgeWorkLog.Day {
+        _ = revision
+        let text = worklog.flatMap { try? cachedText(date, in: $0) } ?? ""
+        return KnowledgeWorkLog.day(date, text: text, now: now)
+    }
+
+    /// ‹ and ›: a week (or a day) back or on.
+    func moveCalendar(_ step: Int) {
+        if let day = calendarDay, let date = KnowledgeWorkLog.date(day),
+           let moved = Calendar.current.date(byAdding: .day, value: step, to: date) {
+            calendarDay = KnowledgeWorkLog.stamp(moved).day
+            calendarAnchor = moved
+        } else if let moved = Calendar.current.date(byAdding: .day, value: 7 * step, to: calendarAnchor) {
+            calendarAnchor = moved
+        }
+    }
+
+    func calendarToday() {
+        calendarAnchor = .now
+        if calendarDay != nil { calendarDay = KnowledgeWorkLog.stamp(.now).day }
+    }
+
+    /// New Block → Add: a block with its own start and end.
+    @discardableResult
+    func addBlock(_ request: BlockRequest, kind: String?, text: String) -> Bool {
+        guard let worklog else { return false }
+        do {
+            let added = try worklog.add(text, kind: kind, day: request.date, time: KnowledgeWorkLog.time(request.start),
+                                        end: Self.endText(request.end))
+            saved(added.path, added.hash, in: worklog)
+            notice = "Added \(added.entry.time)-\(added.entry.end ?? "") on \(request.date)."
+            return true
+        } catch {
+            problem = error.message
+            return false
+        }
+    }
+
+    /// A drag moved or stretched a block: same kind and text, new times.
+    func moveBlock(_ entry: KnowledgeWorkLog.Entry, on date: String, start: Int, end: Int) {
+        var moved = entry
+        moved.time = KnowledgeWorkLog.time(start)
+        moved.end = Self.endText(end)
+        guard moved != entry else { return }
+        replace(EditRequest(date: date, entry: entry), with: moved)
+    }
+
+    static func endText(_ minute: Int) -> String { minute >= 24 * 60 ? "24:00" : KnowledgeWorkLog.time(minute) }
+
+    /// Work day: the base's norm (worklog/settings.yaml).
+    func setHours(_ hours: Double) {
+        guard let worklog, hours != worklog.hours() else { return }
+        do {
+            let path = try worklog.setHours(hours)
+            knowledge.enqueueEdit(path, in: worklog.base)
+            notice = "A work day has \(KnowledgeWorkLog.hoursText(hours)) h now."
+            reload()
+        } catch { problem = error.message }
+    }
+
+    /// One day's own norm; nil goes back to the default.
+    func setNorm(_ hours: Double?, on date: String) {
+        guard let worklog else { return }
+        do {
+            let (path, hash) = try worklog.setNorm(hours, on: date)
+            saved(path, hash, in: worklog)
+            notice = hours.map { "\(date) has a norm of \(KnowledgeWorkLog.hoursText($0)) h." } ?? "\(date) has the default norm again."
+        } catch { problem = error.message }
+    }
+
+    var reportRange: (from: String, to: String) { KnowledgeWorkLog.range(reportPeriod, containing: reportAnchor) }
+
+    var report: KnowledgeWorkLog.Report? {
+        _ = revision
+        let range = reportRange
+        return try? worklog?.report(from: range.from, to: range.to, now: now)
+    }
+
+    func moveReport(_ step: Int) {
+        let component: Calendar.Component = reportPeriod == .week ? .weekOfYear : .month
+        reportAnchor = Calendar.current.date(byAdding: component, value: step, to: reportAnchor) ?? reportAnchor
+    }
+
+    /// Import from Calendar → Add Selected: the ticked events become blocks.
+    func addEvents(_ events: [CalendarEvents.Event], kind: String) {
+        guard let worklog else { return }
+        var added = 0, skipped = 0
+        for event in events {
+            let present = (try? worklog.day(event.date).entries) ?? []
+            if present.contains(where: { $0.minute == event.start && $0.endMinute == event.end && $0.text == event.title }) {
+                skipped += 1
+                continue
+            }
+            do {
+                let result = try worklog.add(event.title, kind: kind, day: event.date, time: KnowledgeWorkLog.time(event.start),
+                                             end: Self.endText(event.end))
+                saved(result.path, result.hash, in: worklog)
+                added += 1
+            } catch {
+                problem = error.message
+                break
+            }
+        }
+        notice = "Added \(added) meetings from Calendar" + (skipped > 0 ? "; \(skipped) were there already." : ".")
+    }
 
     enum FillSource: String, CaseIterable {
         case all = "All Harnesses", claude = "Claude Code", pi = "Pi"
@@ -329,9 +484,11 @@ final class WorkLogModel {
     func readDay(_ all: [SessionSummary]) async {
         fillReading = true
         let day = fillDayString, harnesses = fillSource.harnesses, minutes = fillSlot
+        // A calendar block holds its time: its prompts aren't shown or sent (W11).
+        let blocks = ((try? worklog?.day(day).entries) ?? []).filter(\.isBlock)
         let (sessions, slots) = await Task.detached {
             let sessions = WorkLogFill.sessions(all, day: day, harnesses: harnesses)
-            return (sessions, WorkLogFill.slots(WorkLogFill.moments(sessions, day: day), minutes: minutes))
+            return (sessions, WorkLogFill.slots(WorkLogFill.uncovered(WorkLogFill.moments(sessions, day: day), blocks: blocks), minutes: minutes))
         }.value
         guard day == fillDayString, harnesses == fillSource.harnesses, minutes == fillSlot else { return }
         (fillSessions, fillSlots, fillReading) = (sessions, slots, false)

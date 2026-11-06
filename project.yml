@@ -114,6 +114,9 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: dev.ussov.akit
             CFBundleURLSchemes: [akit]
+        # Work Log → Calendar → Import from Calendar reads meetings (read only).
+        NSCalendarsFullAccessUsageDescription: AKit reads your meetings to put them in the Work Log calendar. It never changes your calendars.
+        NSCalendarsUsageDescription: AKit reads your meetings to put them in the Work Log calendar. It never changes your calendars.
         # Work → Meetings records the microphone and the sound of the Mac.
         NSMicrophoneUsageDescription: Meetings records your voice while you press Record.
         NSAudioCaptureUsageDescription: Meetings records the sound of calls (Teams, Zoom, Meet) while you press Record.
