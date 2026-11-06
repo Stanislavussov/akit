@@ -32,6 +32,7 @@ final class MeetingsAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task { @MainActor in
+            Self.model.prepareToQuit()
             if Self.model.isRecording { await Self.model.stop() }
             sender.reply(toApplicationShouldTerminate: true)
         }

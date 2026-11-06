@@ -36,9 +36,9 @@ public struct MeetingsView: View {
             } else if let notice = model.notice {
                 banner(notice, systemImage: "info.circle", tint: .accentColor) { model.notice = nil }
             }
-            if !model.hasKey {
+            if !model.canProcess {
                 HStack {
-                    Label("Add your OpenRouter key to transcribe recordings. Recording works without it.", systemImage: "key")
+                    Label("Add your OpenRouter key, or choose Local in Settings, to transcribe recordings. Recording works without it.", systemImage: "key")
                     Spacer()
                     Button("Settings…") { model.showSettings = true }
                 }
@@ -325,11 +325,23 @@ struct MeetingDetail: View {
                 TagLine(model: model, meeting: meeting)
             }
             Spacer()
+            if model.runsLocally(meeting.id) {
+                // M27: the local run's own buttons, always in sight while it works.
+                if model.isPaused(meeting.id) {
+                    Button("Resume", systemImage: "play.fill") { model.resume(meeting.id) }
+                        .help("Go on with the transcription on this Mac")
+                } else if model.canPause(meeting.id) {
+                    Button("Pause", systemImage: "pause.fill") { model.pause(meeting.id) }
+                        .help("Pause the transcription on this Mac; nothing is lost")
+                }
+                Button("Stop", systemImage: "stop.fill", role: .destructive) { model.stopLocal(meeting.id) }
+                    .help("Kill whisper or Pi now. The pieces done so far stay; Try Again goes on from the next one.")
+            }
             SimilarMenu(model: model, meeting: meeting)
             TemplateMenu(model: model, meeting: meeting)
             if meeting.state == .failed, !model.processing.contains(meeting.id) {
                 Button("Try Again") { model.process(meeting.id, byUser: true) }
-                    .disabled(!model.hasKey || meeting.audioTrashed)
+                    .disabled(!model.canProcess || meeting.audioTrashed)
             }
             Menu {
                 Button("Ask About This Meeting…") { model.openAsk(meetingID: meeting.id) }
@@ -337,10 +349,10 @@ struct MeetingDetail: View {
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
                     .disabled(meeting.speakerKeys.isEmpty)
                 Button("Summarize Again") { model.summarizeAgain(meeting.id) }
-                    .disabled(!model.hasKey || meeting.segments.isEmpty || meeting.state != .done || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
+                    .disabled(!(model.hasKey || model.settings.summarizer == .pi) || meeting.segments.isEmpty || meeting.state != .done || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
                     .help("Write the summary again from the transcript (one text call, no audio)")
                 Button("Transcribe Again") { model.process(meeting.id, restart: true, byUser: true) }
-                    .disabled(!model.hasKey || meeting.audioTrashed || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
+                    .disabled(!model.canProcess || meeting.audioTrashed || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
                 if !model.links.isEmpty {
                     Divider()
                     let done = meeting.state == .done
@@ -401,14 +413,29 @@ struct MeetingDetail: View {
     /// What the meeting waits for, when it is not done.
     private func status(_ meeting: Meeting) -> String? {
         if meeting.id == model.recordingID { return "Recording. The summary and the transcript come after Stop." }
+        if model.processing.contains(meeting.id), let local = model.localStatus[meeting.id] { return Self.localText(local) }
         if model.processing.contains(meeting.id) || meeting.state == .transcribing {
             return meeting.transcribedChunks > 0 ? "Transcribing: \(meeting.transcribedChunks) part(s) of 30 min done…" : "Transcribing…"
         }
         switch meeting.state {
-        case .waiting: return model.hasKey ? "Waiting to be transcribed." : "Waiting: add your OpenRouter key in Settings."
+        case .waiting: return model.canProcess ? "Waiting to be transcribed." : "Waiting: add your OpenRouter key, or choose Local, in Settings."
         case .failed: return "Transcription stopped: \(meeting.failure ?? "unknown reason")"
         case .recording: return "This recording was not stopped; it is mixed and transcribed on the next start."
         case .done, .transcribing: return nil
+        }
+    }
+
+    /// M27: what the local run does now.
+    static func localText(_ status: LocalStatus) -> String {
+        let piece = status.pieces > 0 ? "piece \(status.piece) of \(status.pieces)" : ""
+        switch status.phase {
+        case .queued: return "Waiting: another meeting is transcribed on this Mac first."
+        case .transcribing: return "Transcribing on this Mac: \(piece) (5 min each)…"
+        case .resting: return "Transcribing on this Mac: \(piece) done, a short rest so the Mac stays free…"
+        case .summarizing: return "Pi writes the summary…"
+        case .paused(.user): return "Paused by you\(piece.isEmpty ? "" : " (\(piece))"). Resume goes on."
+        case .paused(.recording): return "Paused while a recording runs; goes on after Stop."
+        case .paused(.hot): return "Paused: the Mac is hot. Goes on when it cools down."
         }
     }
 

@@ -9,16 +9,31 @@ public struct MeetingProcessor: Sendable {
     public static let piecesPerChunk = 6
     let store: MeetingStore
     let settings: MeetingsSettings
-    let transcriber: Transcriber
+    /// nil without an OpenRouter key: then only local steps run (M26, M28).
+    let transcriber: Transcriber?
+    let local: LocalEnvironment
+    /// whisper-cli, its model and the converter; nil finds them (tests pass their own).
+    let whisper: LocalWhisper.Tools?
+    /// The login shell's environment for Pi; nil reads it (tests pass their own).
+    let piEnvironment: [String: String]?
     /// Called after each saved step, for the screen.
     let progress: @Sendable (Meeting) -> Void
 
-    public init(store: MeetingStore, settings: MeetingsSettings, client: OpenRouterClient, progress: @escaping @Sendable (Meeting) -> Void = { _ in }) {
+    public init(store: MeetingStore, settings: MeetingsSettings, client: OpenRouterClient?, local: LocalEnvironment = LocalEnvironment(),
+                whisper: LocalWhisper.Tools? = nil, piEnvironment: [String: String]? = nil,
+                progress: @escaping @Sendable (Meeting) -> Void = { _ in }) {
         self.store = store
         self.settings = settings
-        transcriber = Transcriber(client: client, settings: settings)
+        transcriber = client.map { Transcriber(client: $0, settings: settings) }
+        self.local = local
+        self.whisper = whisper
+        self.piEnvironment = piEnvironment
         self.progress = progress
     }
+
+    /// M27: a rest after each local piece as long as the piece took (at most a minute), so the
+    /// Mac is never busy for long at a time.
+    public static let longestRest: TimeInterval = 60
 
     /// A chunk: its pieces, where it starts in the recording, and how many pieces end with it.
     struct Chunk {
@@ -68,7 +83,8 @@ public struct MeetingProcessor: Sendable {
         guard let lock = MeetingLock.take(MeetingLock.processing(store, id)) else { throw MeetingsError.busy }
         defer { lock.release() }
         guard var meeting = store.load(id) else { throw MeetingsError.noAudio }
-        MeetingsLog.info(.processor, "\(id): run\(restart ? " (restart)" : ""), \(store.pieces(id).count) pieces, model \(settings.model)")
+        let isLocal = settings.transcription == .local
+        MeetingsLog.info(.processor, "\(id): run\(restart ? " (restart)" : ""), \(store.pieces(id).count) pieces, \(isLocal ? "local whisper" : "model \(settings.model)"), summary by \(settings.summarizer.rawValue)")
         // A restart without audio keeps the transcript it has (L1).
         if store.pieces(id).isEmpty && (restart || meeting.segments.isEmpty) {
             return try fail(&meeting, MeetingsError.noAudio)
@@ -82,22 +98,38 @@ public struct MeetingProcessor: Sendable {
         if plan.duration > 0 { meeting.duration = plan.duration }
         meeting.state = .transcribing
         meeting.failure = nil
-        meeting.model = settings.model
         meeting.transcribedPieces = min(done, store.pieces(id).count)
+        // The model that wrote the transcript; a run with nothing left to transcribe keeps it.
+        if !plan.chunks.isEmpty || restart { meeting.model = isLocal ? LocalWhisper.modelTitle + " (local)" : settings.model }
         try save(&meeting)
+        // M27: one local run at a time on this Mac, across meetings and both apps.
+        var turn: MeetingLock?
+        defer { turn?.release() }
         do {
-            for chunk in plan.chunks {
-                try checkLimit()
-                let answer = try await transcribe(chunk, id: id, previous: meeting.segments)
-                meeting.segments += answer.segments
-                meeting.costUSD += answer.cost
-                meeting.transcribedChunks += 1
-                meeting.transcribedPieces = chunk.endPiece
-                try save(&meeting)
+            if isLocal || settings.summarizer == .pi { turn = try await localTurn() }
+            if isLocal {
+                try await transcribeLocally(&meeting, from: done)
+            } else {
+                guard let transcriber else { throw MeetingsError.noKey }
+                for chunk in plan.chunks {
+                    try checkLimit()
+                    let answer = try await transcribe(chunk, id: id, previous: meeting.segments, transcriber: transcriber)
+                    meeting.segments += answer.segments
+                    meeting.costUSD += answer.cost
+                    meeting.transcribedChunks += 1
+                    meeting.transcribedPieces = chunk.endPiece
+                    try save(&meeting)
+                }
             }
             try await summarize(&meeting)
             MeetingsLog.info(.processor, "\(id): done, \(meeting.segments.count) segments, $\(meeting.costUSD) in all")
             return meeting
+        } catch MeetingsError.stopped where local.control.quitting {
+            // Quit: the meeting waits and goes on from its next piece at the next start.
+            meeting.state = .waiting
+            try save(&meeting)
+            MeetingsLog.info(.processor, "\(id): left for the next start (quit)")
+            throw MeetingsError.stopped
         } catch {
             return try fail(&meeting, error)
         }
@@ -138,7 +170,16 @@ public struct MeetingProcessor: Sendable {
         let summary: String
         if meeting.segments.isEmpty {
             summary = "## Summary\n\nNothing was said in this recording.\n"
+        } else if settings.summarizer == .pi {
+            // M28: the same prompt and template through Pi; no OpenRouter cost.
+            local.status(LocalStatus(phase: .summarizing))
+            let answer = try await PiSummarizer(settings: settings, local: local, environment: piEnvironment).summarize(meeting)
+            meeting.summaryModel = "pi" + (settings.piModel.map { ": \($0)" } ?? "")
+            if !answer.title.isEmpty { meeting.title = answer.title }
+            if meeting.tags == nil, !answer.tags.isEmpty { meeting.tags = answer.tags }
+            summary = answer.markdown
         } else {
+            guard let transcriber else { throw MeetingsError.noKey }
             try checkLimit()
             let answer = try await transcriber.summarize(meeting)
             meeting.costUSD += answer.completion.cost
@@ -154,6 +195,55 @@ public struct MeetingProcessor: Sendable {
         try save(&meeting)
     }
 
+    /// The lock file for one local run at a time; it is in the meetings folder both apps share.
+    var localTurnFile: URL { store.root.appending(path: ".local-run.lock") }
+
+    /// Waits (queued) until no other local run holds the turn.
+    func localTurn() async throws -> MeetingLock {
+        var reported = false
+        while true {
+            if let lock = MeetingLock.take(localTurnFile) { return lock }
+            if !reported {
+                local.status(LocalStatus(phase: .queued))
+                reported = true
+            }
+            try local.check()
+            try await Task.sleep(for: .seconds(1))
+        }
+    }
+
+    /// M26: each piece after `done` through whisper, saved after each piece, with a pause while
+    /// the Mac must not be busy and a rest after each piece (M27).
+    func transcribeLocally(_ meeting: inout Meeting, from done: Int) async throws {
+        let pieces = store.pieces(meeting.id)
+        guard done < pieces.count else { return }
+        guard let tools = whisper ?? LocalWhisper.findCLI().map({ LocalWhisper.Tools(cli: $0) }) else {
+            throw MeetingsError.local("whisper-cli is not installed. Click Install whisper.cpp in Meetings Settings.")
+        }
+        guard LocalWhisper.hasModel(tools.model) else {
+            throw MeetingsError.local("the whisper model is not downloaded. Click Download Model in Meetings Settings.")
+        }
+        let transcriber = LocalTranscriber(tools: tools, settings: settings, local: local)
+        let infos = pieces.map { store.pieceInfo($0) ?? PieceInfo(duration: 300, me: []) }
+        var offset = infos.prefix(done).reduce(0) { $0 + $1.duration }
+        for index in done..<pieces.count {
+            let phase = LocalStatus(phase: .transcribing, piece: index + 1, pieces: pieces.count)
+            try await local.waitWhilePaused(resume: phase)
+            local.status(phase)
+            let started = Date()
+            let segments = try await transcriber.transcribe(piece: pieces[index], info: infos[index], store: store, offset: offset, phase: phase)
+            meeting.segments = (meeting.segments + segments).sorted { $0.start < $1.start }
+            meeting.transcribedPieces = index + 1
+            try save(&meeting)
+            offset += infos[index].duration
+            MeetingsLog.info(.processor, "\(meeting.id): local piece \(index + 1)/\(pieces.count) → \(segments.count) segments in \(Int(Date().timeIntervalSince(started))) s")
+            if index + 1 < pieces.count {
+                let rest = min(Self.longestRest, Date().timeIntervalSince(started))
+                try await local.rest(rest, status: LocalStatus(phase: .resting, piece: index + 1, pieces: pieces.count))
+            }
+        }
+    }
+
     /// M20: whether this chunk goes as two tracks (mic, system) instead of the mix.
     func twoTracks(_ chunk: Chunk) -> Bool {
         let haveTracks = chunk.pieces.allSatisfy { store.track($0, .mic) != nil || store.track($0, .sys) != nil }
@@ -167,7 +257,7 @@ public struct MeetingProcessor: Sendable {
 
     /// One chunk: the mix in one call, or each source's track in its own call, the lines merged by
     /// time. ADTS frames carry their own headers, so pieces join by bytes.
-    func transcribe(_ chunk: Chunk, id: String, previous: [Segment]) async throws -> (segments: [Segment], cost: Double) {
+    func transcribe(_ chunk: Chunk, id: String, previous: [Segment], transcriber: Transcriber) async throws -> (segments: [Segment], cost: Double) {
         if twoTracks(chunk) {
             var segments: [Segment] = []
             var cost = 0.0

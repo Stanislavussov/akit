@@ -1407,3 +1407,8 @@ Friction («трение») — места, где агент спотыкалс
 - **Costs…** (Meetings, панель инструментов): расходы по дням, неделям, месяцам; **Group by**, **Period**, **Model**, итоги, график, **Copy CSV**. Подробнее: [Расходы](meetings#costs)
 - **Tracks** (Meetings Settings): **Auto**, **Mixed**, **Separate** — одна смешанная дорожка или микрофон и звук системы отдельно, где голоса накладываются. **Room 1**, **Room 2** — люди рядом с вами в комнате. Подробнее: [Записать встречу](meetings#record)
 - **Settings…** (Meetings): **Key**, **Save Key**, **Transcription**, **Summary**, **Reload**, **Summary and tasks**, **Spoken language**, **Echo cancellation**, **Folder**, **Monthly limit, $**. Подробнее: [Настройки](meetings#settings)
+- **Engine** (Meetings Settings): **Transcribe with** — **Cloud: OpenRouter** или **Local: whisper on this Mac (free)**; **Summary by** — **OpenRouter** или **Pi (your coding agent)**. Подробнее: [На этом Mac](meetings#local)
+- **On this Mac** (Meetings Settings): **Install whisper.cpp**, **Download Model (570 MB)**, **Spoken language** (**Detect** или язык), **Use the GPU at background priority**. Подробнее: [На этом Mac](meetings#local)
+- **Pi** → **Model** (Meetings Settings): модель Pi для Summary; **Pi's default** — модель Pi по умолчанию. Подробнее: [На этом Mac](meetings#local)
+- **Pause** / **Resume** / **Stop** (встреча, вверху справа, во время локальной расшифровки): пауза, продолжить, сразу убить whisper или Pi; готовые куски остаются. Подробнее: [На этом Mac](meetings#local)
+- **Me** / **Others** (Transcript в режиме Local): ваш микрофон и звук звонка; whisper не различает голоса. Подробнее: [На этом Mac](meetings#local)

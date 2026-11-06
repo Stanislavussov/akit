@@ -371,6 +371,14 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
     case noTranscript
     case notTranscribed
     case busy
+    /// M27: the user clicked Stop on a local run.
+    case stopped
+    /// M27: the Mac got critically hot during a local run.
+    case tooHot
+    /// M26: whisper.cpp or afconvert failed, or is missing.
+    case local(String)
+    /// M28: Pi failed or is missing.
+    case pi(String)
 
     public var errorDescription: String? {
         switch self {
@@ -384,6 +392,10 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
         case .noTranscript: "This meeting has no transcript to summarize yet."
         case .notTranscribed: "Part of this meeting is not transcribed yet. Try Again first, then the summary is written from the whole transcript."
         case .busy: "This meeting is being transcribed already (here or in the other Meetings app)."
+        case .stopped: "Stopped by you. Try Again goes on from the next piece."
+        case .tooHot: "Stopped: the Mac got critically hot. Try Again goes on from the next piece."
+        case .local(let detail): "Local transcription failed: \(detail)"
+        case .pi(let detail): "Pi could not write the summary: \(detail)"
         }
     }
 }

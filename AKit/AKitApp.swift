@@ -151,6 +151,8 @@ struct AKitApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task { @MainActor in
+            // M27: whisper or Pi of a local run end with the app, and Stop below starts no new run.
+            MeetingsScreen.shared.prepareToQuit()
             // M7: a running recording is stopped and its last piece mixed before AKit goes.
             if MeetingsScreen.shared.isRecording {
                 await KnowledgeModel.within(seconds: 5) { await MeetingsScreen.shared.stop() }
