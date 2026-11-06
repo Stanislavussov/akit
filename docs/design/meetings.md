@@ -1,9 +1,16 @@
 # Meetings: record a call or a talk, get the text, a summary and the tasks
 
-Status: designed 2026-11-06 (grilled with the user), nothing built yet. Asked by the user: record
+Status: designed 2026-11-06 (grilled with the user); steps 1–5 built the same day on branch
+`meetings-recorder`. Step 0's live checks (permission prompts, macOS signs while it records, one
+real OpenRouter call with Czech audio in ADTS AAC) wait for the user's OpenRouter key and a first
+real recording. Asked by the user: record
 the meetings of a day by a click, 2–3 hours a day, transcribe them through a cheap model and
 structure them (summary, decisions, tasks). It is built inside the AKit repo but as its own
 package, so it can later leave AKit and become its own app.
+
+Code: `Meetings/` (its own Swift package: `MeetingsCore`, `MeetingsAudio`, `MeetingsUI`,
+`Tests/MeetingsCoreTests`, `App/` for `Meetings.app`), `AKit/Meetings/` (the Crepe editor and the
+snapshot states), guide `docs/guides/meetings.ru.md`.
 
 ## Goal
 
@@ -35,7 +42,7 @@ Not a meeting bot that joins the call, not live captions, not recording all day.
 | M2 | Sound | Always two sources together: the microphone (`AVAudioEngine`, voice processing on, so the sound from the speakers is not recorded twice) and the system output (a Core Audio process tap of all output, macOS 14.2+; the app's target is 15.0). The tap takes the sound before it goes to the headphones, so headphones work |
 | M3 | Start | Only by the user: Record and Stop on the Meetings screen (and a keyboard shortcut in the app). No auto start, no recording all day |
 | M4 | No visible sign | Asked by the user (they share their screen): no menu bar item, no red or glowing button, no window that comes forward. While it records, only the Meetings screen shows a plain elapsed time. The orange microphone dot of macOS cannot be hidden by any app; in a call it is on anyway. Step 0 checks whether macOS shows a sign for the system tap too |
-| M5 | Files | Its own folder, by default `~/Meetings` (a setting), not in `~/.akit`: `~/Meetings/YYYY-MM-DD/HHMM-<slug>/` with `meeting.md` and `audio/`. The package knows nothing about AKit; AKit can read the folder later (Open) |
+| M5 | Files | Its own folder, by default `~/Meetings` (a setting), not in `~/.akit`: `~/Meetings/YYYY-MM-DD/HHmm/` with `meeting.json` (state, speakers, segments, cost), `summary.md`, `transcript.md` (made from the JSON), `tabs/<name>.md` and `audio/`. Settings shared by AKit and `Meetings.app` are in `~/Library/Application Support/Meetings/settings.json`. The package knows nothing about AKit; AKit can read the folder later (Open) |
 | M6 | Safe recording | The audio is written in 5-minute pieces while it records, so a crash or a sleep loses at most the open piece. A recording that was not stopped is found at the next start and offered for transcription |
 | M7 | Audio kept | The audio pieces (mixed mono AAC, ~30 MB per hour) are moved to the Trash 14 days after the recording; the text stays. A recording can be transcribed again while its audio is there |
 | M8 | Provider | OpenRouter only (the user's choice), plain HTTPS to `https://openrouter.ai/api/v1/chat/completions` with an `input_audio` part (base64; the format the model takes). No SDK: OpenRouter has no Swift one, and the API is OpenAI-compatible |
@@ -49,32 +56,30 @@ Not a meeting bot that joins the call, not live captions, not recording all day.
 | M16 | Screen | In AKit: Work → Meetings. In `Meetings.app`: the same view in its window. A list of days and meetings (title, length, cost, state: recording, waiting, transcribing, done, failed). A meeting opens on its tabs (M17), with Rename Speakers…, Transcribe Again, Show in Finder, Move to Trash… |
 | M17 | Tabs | Asked by the user the same day: a meeting is not "a recording" but its tabs. Summary first (summary, decisions, tasks), then Transcript, then the user's own tabs: plain Markdown pages (notes, links), added, renamed and removed like the Notebook's tabs. Own tabs are files `tabs/<name>.md` in the meeting's folder, never sent to a model. Summary is editable too (its section of `meeting.md`); Transcript is read only. The editor comes from the host app: AKit passes its Crepe editor (the Notebook's), `Meetings.app` a plain Markdown text editor, so the package needs no web bundle |
 
-## `meeting.md`
+## Pages
+
+`summary.md` (editable, the Summary tab):
 
 ```markdown
----
-started: 2026-11-06T10:00:12+01:00
-duration: 42m
-model: google/gemini-2.5-flash-lite
-cost_usd: 0.028
-speakers: {Me: Me, S1: Speaker 1, S2: Speaker 2}
-audio_until: 2026-11-20
----
-# Sync with the team
-
 ## Summary
-…
+3–5 sentences
 
 ## Decisions
 - …
 
 ## Tasks
 - [ ] Me: …
-- [ ] Speaker 2: …
+- [ ] Jana: …
+```
 
-## Transcript
-[00:00] Me: …
-[00:12] Speaker 1: …
+`transcript.md` (written from `meeting.json`, speakers by their names):
+
+```markdown
+# Sync with the team
+
+[00:00] **Me**: …
+
+[00:12] **Jana**: …
 ```
 
 ## Steps
