@@ -118,8 +118,7 @@ final class AskAKitModel {
     /// A screen as a question sees it: what it is for, what AKit found for it, and what its
     /// view shows now.
     func context(for section: SidebarSection) -> AskContext {
-        let place = section.host == section ? "" : "A tab above the screen of the \(section.host.title) sidebar item"
-        let facts = [section.summary, place, appFacts(section), screenFacts[section] ?? ""].filter { !$0.isEmpty }
+        let facts = [section.summary, appFacts(section), screenFacts[section] ?? ""].filter { !$0.isEmpty }
         return AskContext(screen: section.rawValue, screenTitle: section.title, summary: facts.joined(separator: "\n"))
     }
 

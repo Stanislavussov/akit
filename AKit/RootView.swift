@@ -33,22 +33,18 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The sidebar items of the group. Screens that belong together share one item and show
-    /// as tabs above the screen (`SidebarSection.tabs`): a new screen joins an item as a tab
-    /// before it gets an item of its own, so the sidebar stays short.
     var sections: [SidebarSection] {
         switch self {
-        case .installed: [.overview, .skills, .mcp]
+        case .installed: [.overview, .skills, .skillsSh, .mcp, .instructions]
         case .setup: [.brain]
-        case .activity: [.sessions]
-        case .improve: [.insights, .lab]
-        case .work: [.review, .knowledge, .meetings]
+        case .activity: [.sessions, .usage]
+        case .improve: [.insights, .lab, .analysis]
+        case .work: [.review, .knowledge, .notebook, .worklog, .meetings]
         }
     }
 }
 
-/// Every screen of the window. The sidebar shows the items of `SidebarGroup`; the other
-/// screens are tabs of an item (`tabs`).
+/// Sidebar sections. Their order on screen comes from `SidebarGroup`.
 enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case overview
     case skills
@@ -131,68 +127,6 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .meetings: "waveform"
         }
     }
-
-    /// The screens shown as tabs above this sidebar item's screen, in order: the item first.
-    /// Empty for an item without tabs and for a screen that is a tab of another item.
-    var tabs: [SidebarSection] {
-        switch self {
-        case .overview: [.overview, .instructions]
-        case .skills: [.skills, .skillsSh]
-        case .sessions: [.sessions, .usage]
-        case .lab: [.lab, .analysis]
-        case .knowledge: [.knowledge, .notebook, .worklog]
-        default: []
-        }
-    }
-
-    /// The sidebar item this screen sits under: itself, or the item it is a tab of.
-    var host: SidebarSection {
-        SidebarSection.allCases.first { $0.tabs.contains(self) } ?? self
-    }
-}
-
-/// The tabs above a screen whose sidebar item holds several screens (`SidebarSection.tabs`).
-/// Every screen keeps its own id, so links, menus and `make snapshot SECTION=` still open it.
-private struct ScreenTabBar: View {
-    let host: SidebarSection
-    @Binding var section: SidebarSection?
-    /// Opens the screens guide at a screen's section, like the sidebar's What Is … For?.
-    let showGuide: (SidebarSection) -> Void
-
-    // Not a segmented picker: many screens have one for their own views right below,
-    // and two alike controls stacked read as one.
-    var body: some View {
-        HStack(spacing: 18) {
-            ForEach(host.tabs) { tab in
-                let selected = tab == section
-                Button { section = tab } label: {
-                    Label(tab.title, systemImage: tab.icon)
-                        .fontWeight(selected ? .semibold : .regular)
-                        .foregroundStyle(selected ? .primary : .secondary)
-                        .padding(.vertical, 7)
-                        .overlay(alignment: .bottom) {
-                            Rectangle().fill(selected ? Color.accentColor : .clear).frame(height: 2)
-                        }
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(tab.summary)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-                .contextMenu {
-                    Button("What Is \(tab.title) For?", systemImage: "book") { showGuide(tab) }
-                    AskAKitMenuItem(title: "The \(tab.title) screen (tab of the \(host.title) sidebar item)",
-                                    facts: ["Tabs above the screen: \(host.tabs.map(\.title).joined(separator: ", "))",
-                                            "Tooltip: \(tab.summary)"],
-                                    screen: tab)
-                }
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .background(.bar)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(host.title) tabs")
-    }
 }
 
 struct RootView: View {
@@ -215,8 +149,6 @@ struct RootView: View {
     @State private var worklog: WorkLogModel
     /// Meetings belong to the app (H1): a recording goes on on other screens and after the window closes.
     private var meetings: MeetingsModel { MeetingsScreen.shared }
-    /// The tab last open under each sidebar item: choosing the item again shows it.
-    @State private var lastTab: [SidebarSection: SidebarSection] = [:]
 
     init() {
         let knowledge = KnowledgeModel()
@@ -229,13 +161,7 @@ struct RootView: View {
         @Bindable var model = model
         @Bindable var ask = ask
         NavigationSplitView {
-            // The sidebar marks the item of the screen in view, also when the screen is one of its tabs.
-            List(selection: Binding(get: { model.section?.host },
-                                    set: { item in
-                                        // ⌘-click on the marked item clears the selection: keep the screen.
-                                        guard let item else { return }
-                                        model.section = lastTab[item] ?? item
-                                    })) {
+            List(selection: $model.section) {
                 ForEach(SidebarGroup.allCases) { group in
                     Section {
                         ForEach(group.sections) { section in
@@ -248,7 +174,6 @@ struct RootView: View {
                                     }
                                     AskAKitMenuItem(title: "The \(section.title) screen (sidebar item)",
                                                     facts: ["Sidebar group: \(group.title)", "Tooltip: \(section.summary)",
-                                                            section.tabs.isEmpty ? "" : "Tabs above the screen: \(section.tabs.map(\.title).joined(separator: ", "))",
                                                             badge(for: section) > 0 ? "Number next to it: \(badge(for: section))" : ""],
                                                     screen: section)
                                 }
@@ -269,36 +194,24 @@ struct RootView: View {
                 }
             }
         } detail: {
-            VStack(spacing: 0) {
-                if let section = model.section, section.host.tabs.count > 1 {
-                    ScreenTabBar(host: section.host, section: $model.section) { showGuide($0.rawValue) }
-                    Divider()
-                }
-                Group {
-                    switch model.section ?? .overview {
-                    case .overview: OverviewView()
-                    case .skills: SkillsView()
-                    case .skillsSh: SkillsShView()
-                    case .mcp: MCPView()
-                    case .instructions: InstructionsView()
-                    case .sessions: SessionsView()
-                    case .usage: UsageView()
-                    case .insights: InsightsView()
-                    case .lab: LabView()
-                    case .analysis: ErrorAnalysisView()
-                    case .brain: BrainView()
-                    case .review: ReviewView()
-                    case .knowledge: KnowledgeView()
-                    case .notebook: NotebookView()
-                    case .worklog: WorkLogView()
-                    case .meetings: MeetingsScreen(model: meetings)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            switch model.section ?? .overview {
+            case .overview: OverviewView()
+            case .skills: SkillsView()
+            case .skillsSh: SkillsShView()
+            case .mcp: MCPView()
+            case .instructions: InstructionsView()
+            case .sessions: SessionsView()
+            case .usage: UsageView()
+            case .insights: InsightsView()
+            case .lab: LabView()
+            case .analysis: ErrorAnalysisView()
+            case .brain: BrainView()
+            case .review: ReviewView()
+            case .knowledge: KnowledgeView()
+            case .notebook: NotebookView()
+            case .worklog: WorkLogView()
+            case .meetings: MeetingsScreen(model: meetings)
             }
-        }
-        .onChange(of: model.section, initial: true) { _, section in
-            if let section { lastTab[section.host] = section }
         }
         .environment(review)
         .environment(knowledge)

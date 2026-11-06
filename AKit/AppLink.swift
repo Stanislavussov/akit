@@ -1,7 +1,7 @@
 import Foundation
 
 /// `akit://<screen>[/<tab>]` links (2026-10-26, the user's request: open the notebook from
-/// Raycast). The screen is a `SidebarSection` id (a sidebar item or a tab), any case (`notebook`, `review`, `skillssh`);
+/// Raycast). The screen is a sidebar section's id, any case (`notebook`, `review`, `skillssh`);
 /// for the notebook a tab may follow (`akit://notebook/Inbox`, `akit://notebook/Plans%20Q4`).
 /// The work log (2026-10-28): `akit://worklog` puts the cursor in its entry field,
 /// `akit://worklog?kind=bug` chooses a kind too, and `akit://worklog/add?text=…[&kind=bug]` adds an
