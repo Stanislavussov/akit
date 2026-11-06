@@ -1,4 +1,5 @@
 import AKitErrorAnalysis
+import MeetingsUI
 import SwiftUI
 
 /// Sidebar groups, by the question their screens answer. The screens guide has one section
@@ -28,7 +29,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .setup: "What the agents should have: your brain of skills and layers, rendered into projects"
         case .activity: "How the agents worked: their saved sessions, tokens and cost"
         case .improve: "What the setup costs unused, why sessions went wrong and whether a fix helped"
-        case .work: "Agents that help with your daily work: review of merge requests, a knowledge base of your services and flows, a notebook of plans and to-dos, a log of what you did"
+        case .work: "Agents that help with your daily work: review of merge requests, a knowledge base of your services and flows, a notebook of plans and to-dos, a log of what you did, recorded meetings with summaries"
         }
     }
 
@@ -38,7 +39,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .setup: [.brain]
         case .activity: [.sessions, .usage]
         case .improve: [.insights, .lab, .analysis]
-        case .work: [.review, .knowledge, .notebook, .worklog]
+        case .work: [.review, .knowledge, .notebook, .worklog, .meetings]
         }
     }
 }
@@ -60,6 +61,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case knowledge
     case notebook
     case worklog
+    case meetings
     var id: Self { self }
 
     var title: String {
@@ -79,6 +81,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .knowledge: "Knowledge"
         case .notebook: "Notebook"
         case .worklog: "Work Log"
+        case .meetings: "Meetings"
         }
     }
 
@@ -100,6 +103,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .knowledge: "Notes about your services, flows and teams by space, in a local git repo that agents read; edits are committed by AKit"
         case .notebook: "Short notes, plans, to-dos and what you did today, one tab per Markdown file in the knowledge base; check boxes, images, links"
         case .worklog: "What you did, one short line at a time: the day and time are added for you; a file per day in the knowledge base, with time per kind"
+        case .meetings: "Record a call or a talk by a click; OpenRouter writes the transcript, a summary and the tasks; your own Markdown tabs beside them"
         }
     }
 
@@ -120,6 +124,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .knowledge: "books.vertical"
         case .notebook: "note.text"
         case .worklog: "clock.badge.checkmark"
+        case .meetings: "waveform"
         }
     }
 }
@@ -142,6 +147,8 @@ struct RootView: View {
     @State private var notebook: NotebookModel
     /// The work log's days and entry field; its base is the Knowledge screen's.
     @State private var worklog: WorkLogModel
+    /// Meetings belong to the app (H1): a recording goes on on other screens and after the window closes.
+    private var meetings: MeetingsModel { MeetingsScreen.shared }
 
     init() {
         let knowledge = KnowledgeModel()
@@ -203,6 +210,7 @@ struct RootView: View {
             case .knowledge: KnowledgeView()
             case .notebook: NotebookView()
             case .worklog: WorkLogView()
+            case .meetings: MeetingsScreen(model: meetings)
             }
         }
         .environment(review)
@@ -224,6 +232,10 @@ struct RootView: View {
         // `akit://notebook/Inbox` from Raycast or a browser: this window shows the screen and tab.
         .onOpenURL { url in
             guard let link = AppLink(url) else { return }
+            if let action = link.meetingAction {
+                Task { await MeetingsScreen.perform(action) }
+                return
+            }
             model.section = link.section
             if let tab = link.tab { notebook.request(tab) }
             if link.section == .worklog { worklog.open(kind: link.kind, add: link.add) }

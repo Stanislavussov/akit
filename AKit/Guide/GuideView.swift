@@ -11,6 +11,7 @@ enum Guide: String, CaseIterable {
     case knowledge
     case notebook
     case worklog
+    case meetings
 
     var title: String {
         switch self {
@@ -21,6 +22,7 @@ enum Guide: String, CaseIterable {
         case .knowledge: "Knowledge Base"
         case .notebook: "Notebook"
         case .worklog: "Work Log"
+        case .meetings: "Meetings"
         }
     }
 

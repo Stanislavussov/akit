@@ -4287,6 +4287,31 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 Подробно: [записать](worklog#write), [Auto-Fill](worklog#autofill), [длина записи](worklog#time), [исправить](worklog#edit), [ссылки и Raycast](worklog#links), [файлы](worklog#files), [агент](worklog#agents).
 
+### Meetings
+<!-- section: meetings -->
+
+**Что это:** запись встреч. **Record** записывает микрофон и звук Mac до **Stop**. Потом модель через OpenRouter пишет текст разговора, краткое содержание, решения и задачи. Рядом — ваши вкладки Markdown со своими заметками и ссылками. Встреча — папка `~/Meetings/<дата>/<время>/`.
+
+У этого экрана есть своё руководство: кнопка **Guide** на экране или Help → **Meetings Guide**.
+
+**Когда пригодится:**
+
+- «Кто что обещал на встрече?» → вкладка **Summary**, раздел Tasks.
+- «Что точно сказали?» → вкладка **Transcript**.
+- «Куда положить ссылки к встрече?» → своя вкладка, **+**.
+- «Запись одной клавишей» → Raycast со ссылкой `akit://meetings/toggle`.
+
+![Экран Meetings: встречи за сегодня слева, справа Summary встречи с решениями и задачами](images/meetings.png)
+
+#### Что на экране
+<!-- section: meetings-screen -->
+
+- Панель инструментов: **Record** (⌥⌘R) или время записи и **Stop**, **Settings…**, **Guide**.
+- Слева: встречи по дням, у каждой время, длина, цена; внизу — сумма за месяц и лимит.
+- Справа: вкладки **Summary**, **Transcript**, свои вкладки и **+**; меню **Actions**: **Rename Speakers…**, **Transcribe Again**, **Show in Finder**, **Move to Trash…**.
+
+Подробно: [записать](meetings#record), [ссылки и Raycast](meetings#links), [Summary и Transcript](meetings#tabs), [свои вкладки](meetings#own-tabs), [Actions](meetings#actions), [настройки](meetings#settings), [файлы](meetings#files). Надписи: [словарь](terms#terms-meetings).
+
 ## Settings
 <!-- section: settings -->
 

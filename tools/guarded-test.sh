@@ -11,7 +11,8 @@ set -u
 
 limit_mb=${GUARD_MB:-1536}
 minutes=${GUARD_MINUTES:-10}
-cd "$(dirname "$0")/../AKitCore" || exit 2
+# GUARD_DIR: the package to test (default AKitCore; Meetings for the meetings package).
+cd "$(dirname "$0")/../${GUARD_DIR:-AKitCore}" || exit 2
 
 echo "guarded-test: swift test $* (stops above ${limit_mb} MB per process or after ${minutes} min)"
 swift test "$@" &

@@ -7,6 +7,9 @@ options:
 packages:
   AKitCore:
     path: AKitCore
+  # Meetings (docs/design/meetings.md): its own package, no AKitCore, so it can leave this repo.
+  Meetings:
+    path: Meetings
 targets:
   AKit:
     type: application
@@ -74,6 +77,10 @@ targets:
         product: AKitKnowledge
       - package: AKitCore
         product: AKitCorrections
+      - package: Meetings
+        product: MeetingsCore
+      - package: Meetings
+        product: MeetingsUI
     postBuildScripts:
       # Records where this build comes from; shown at the bottom of the sidebar.
       - name: Stamp build source
@@ -107,6 +114,9 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: dev.ussov.akit
             CFBundleURLSchemes: [akit]
+        # Work → Meetings records the microphone and the sound of the Mac.
+        NSMicrophoneUsageDescription: Meetings records your voice while you press Record.
+        NSAudioCaptureUsageDescription: Meetings records the sound of calls (Teams, Zoom, Meet) while you press Record.
     settings:
       base:
         PRODUCT_NAME: AKit
@@ -122,6 +132,12 @@ targets:
         # so it can access ~/.claude, ~/.pi and project folders.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
+        # A fixed designated requirement (the bundle id), not the ad-hoc cdhash: macOS keeps the
+        # Microphone and System Audio Recording permission across rebuilds and updates. With the
+        # cdhash every build was a new app, and macOS gave it silence (Meetings, 2026-11-06).
+        OTHER_CODE_SIGN_FLAGS: "--requirements $(SRCROOT)/tools/signing/akit.req"
+        # Xcode's debug dylibs would be signed with the same requirement and break the app's seal.
+        ENABLE_DEBUG_DYLIB: NO
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: NO
         # The build stamp script reads the git repository.
@@ -130,10 +146,42 @@ targets:
         # Orange icon for dev builds, so they are easy to tell from the installed app in the Dock.
         Debug:
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+  # The same Meetings screen as its own app, for when it leaves AKit (docs/design/meetings.md, M1).
+  Meetings:
+    type: application
+    platform: macOS
+    sources:
+      - path: Meetings/App
+    dependencies:
+      - package: Meetings
+        product: MeetingsCore
+      - package: Meetings
+        product: MeetingsUI
+    info:
+      path: Meetings/App/Info.plist
+      properties:
+        CFBundleDisplayName: Meetings
+        NSMicrophoneUsageDescription: Meetings records your voice while you press Record.
+        NSAudioCaptureUsageDescription: Meetings records the sound of calls (Teams, Zoom, Meet) while you press Record.
+    settings:
+      base:
+        PRODUCT_NAME: Meetings
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ussov.meetings
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        OTHER_CODE_SIGN_FLAGS: "--requirements $(SRCROOT)/tools/signing/meetings.req"
+        ENABLE_DEBUG_DYLIB: NO
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
 schemes:
   AKit:
     build:
       targets:
         AKit: all
+        Meetings: all
     run:
       config: Debug

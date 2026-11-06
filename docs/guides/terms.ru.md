@@ -1387,3 +1387,23 @@ Friction («трение») — места, где агент спотыкалс
 - **Propose Entries** (Auto-Fill): отправляет отрезки дня модели; записи приходят с флажками. Подробнее: [Auto-Fill](worklog#autofill)
 - **Add Selected** / **Discard** (Auto-Fill): добавить отмеченные записи в день / убрать предложения. Подробнее: [Auto-Fill](worklog#autofill)
 - **akit worklog** (терминал): `add TEXT [--kind] [--at]`, `show [ДЕНЬ] [--days N]`, `kinds`, `fill [ДЕНЬ] [--slot] [--add]`. Подробнее: [Агент и журнал](worklog#agents)
+
+## Meetings
+<!-- section: terms-meetings -->
+
+- **Meetings** (боковое меню, группа Work): запись встреч, текст разговора, краткое содержание и задачи через OpenRouter. Подробнее: [Встречи](meetings#overview)
+- **Record** / **Stop** (Meetings, панель инструментов, ⌥⌘R): начать и закончить запись микрофона и звука Mac. Подробнее: [Записать встречу](meetings#record)
+- Волны у таймера (Meetings, во время записи): микрофон и звук Mac; волна — звук идёт, прямая линия — тишина. Подробнее: [Записать встречу](meetings#record)
+- **Summary** (вкладка встречи): краткое содержание, Decisions, Tasks; можно править. Подробнее: [Summary и Transcript](meetings#tabs)
+- **Transcript** (вкладка встречи): текст разговора со временем и говорящим. Подробнее: [Summary и Transcript](meetings#tabs)
+- **Me**, **Speaker 1**, **Speaker 2** (Transcript): вы и другие люди по порядку. Подробнее: [Summary и Transcript](meetings#tabs)
+- **+**, **Rename…**, **Delete…** (вкладки встречи): своя вкладка Markdown; в модель не уходит. Подробнее: [Свои вкладки](meetings#own-tabs)
+- **Actions** (Meetings): **Rename Speakers…**, **Transcribe Again**, **Show in Finder**, **Move to Trash…**. Подробнее: [Меню Actions](meetings#actions)
+- `akit://meetings/record`, `/stop`, `/toggle` (ссылки): начать, остановить или переключить запись из Raycast, не показывая AKit. Подробнее: [Ссылки и Raycast](meetings#links)
+- **Notes** (своя вкладка встречи): ваш прежний текст Summary, когда модель написала новый. Подробнее: [Записать встречу](meetings#record)
+- **Try Again** (встреча `failed`): продолжить расшифровку с той части, где она остановилась. Подробнее: [Меню Actions](meetings#actions)
+- `recording`, `waiting`, `transcribing`, `failed` (строка встречи): идёт запись; ждёт расшифровки; расшифровывается; расшифровка не удалась. Подробнее: [Что на экране](meetings#overview)
+- **This month: $… of $…** (Meetings, под списком): цена встреч месяца и месячный лимит. Подробнее: [Настройки](meetings#settings)
+- **Costs…** (Meetings, панель инструментов): расходы по дням, неделям, месяцам; **Group by**, **Period**, **Model**, итоги, график, **Copy CSV**. Подробнее: [Расходы](meetings#costs)
+- **Tracks** (Meetings Settings): **Auto**, **Mixed**, **Separate** — одна смешанная дорожка или микрофон и звук системы отдельно, где голоса накладываются. **Room 1**, **Room 2** — люди рядом с вами в комнате. Подробнее: [Записать встречу](meetings#record)
+- **Settings…** (Meetings): **Key**, **Save Key**, **Transcription**, **Summary**, **Reload**, **Summary and tasks**, **Spoken language**, **Echo cancellation**, **Folder**, **Monthly limit, $**. Подробнее: [Настройки](meetings#settings)
