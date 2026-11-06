@@ -1,0 +1,12 @@
+# gitleaks settings for the git hooks (.githooks). Default rules plus a few known
+# false positives: made-up tokens in tests and the public Firebase key that ships
+# inside the vendored Excalidraw bundle.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake test secrets and vendored bundles"
+paths = [
+  '''^AKitCore/Tests/''',
+  '''^web/excalidraw/vendor/''',
+]
