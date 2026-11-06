@@ -109,7 +109,18 @@ struct RecordButton: View {
     let model: MeetingsModel
 
     var body: some View {
-        if let started = model.recordingStarted {
+        if model.recordingStarted == nil, let remote = model.remoteRecording {
+            // M31: the background recorder records; Stop asks it to end.
+            HStack(spacing: 6) {
+                TimelineView(.periodic(from: remote.started, by: 1)) { context in
+                    Text("Background " + timestamp(context.date.timeIntervalSince(remote.started))).monospacedDigit().foregroundStyle(.secondary)
+                }
+                .help("Meetings Recorder records in the background (⌥⌘R from any app)")
+                Button("Stop", systemImage: "stop") { Task { await model.stop() } }
+                    .labelStyle(.titleAndIcon)
+                    .help("Stop the background recording; it is then transcribed")
+            }
+        } else if let started = model.recordingStarted {
             HStack(spacing: 6) {
                 TimelineView(.periodic(from: started, by: 0.1)) { context in
                     let levels = model.levels
@@ -173,13 +184,13 @@ struct MeetingList: View {
             ForEach(days, id: \.day) { day in
                 Section(day.day.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
                     ForEach(day.meetings) { meeting in
-                        MeetingRow(meeting: meeting, recording: meeting.id == model.recordingID, busy: model.processing.contains(meeting.id),
+                        MeetingRow(meeting: meeting, recording: model.isLive(meeting.id), busy: model.processing.contains(meeting.id),
                                    hit: model.hit(meeting.id))
                             .tag(meeting.id)
                             .contextMenu {
                                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.folder(meeting.id)]) }
                                 Button("Move to Trash…", role: .destructive) { model.trashRequest = meeting.id }
-                                    .disabled(meeting.id == model.recordingID)
+                                    .disabled(model.isLive(meeting.id))
                             }
                     }
                 }
@@ -318,8 +329,8 @@ struct MeetingDetail: View {
                     if meeting.duration > 0 { Text(lengthText(meeting.duration)) }
                     if let model = meeting.model { Text(model) }
                     if meeting.costUSD > 0 { Text(String(format: "$%.3f", meeting.costUSD)) }
-                    if meeting.audioTrashed { Text("audio in the Trash") }
                 }
+                .lineLimit(1)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 TagLine(model: model, meeting: meeting)
@@ -349,10 +360,10 @@ struct MeetingDetail: View {
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
                     .disabled(meeting.speakerKeys.isEmpty)
                 Button("Summarize Again") { model.summarizeAgain(meeting.id) }
-                    .disabled(!(model.hasKey || model.settings.summarizer == .pi) || meeting.segments.isEmpty || meeting.state != .done || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
+                    .disabled(!(model.hasKey || model.settings.summarizer == .pi) || meeting.segments.isEmpty || meeting.state != .done || model.processing.contains(meeting.id) || model.isLive(meeting.id))
                     .help("Write the summary again from the transcript (one text call, no audio)")
                 Button("Transcribe Again") { model.process(meeting.id, restart: true, byUser: true) }
-                    .disabled(!model.canProcess || meeting.audioTrashed || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
+                    .disabled(!model.canProcess || meeting.audioTrashed || model.processing.contains(meeting.id) || model.isLive(meeting.id))
                 if !model.links.isEmpty {
                     Divider()
                     let done = meeting.state == .done
@@ -372,7 +383,7 @@ struct MeetingDetail: View {
                 Divider()
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.folder(meeting.id)]) }
                 Button("Move to Trash…", role: .destructive) { model.trashRequest = meeting.id }
-                    .disabled(meeting.id == model.recordingID)
+                    .disabled(model.isLive(meeting.id))
             } label: {
                 Label("Actions", systemImage: "ellipsis.circle")
             }
@@ -412,7 +423,7 @@ struct MeetingDetail: View {
 
     /// What the meeting waits for, when it is not done.
     private func status(_ meeting: Meeting) -> String? {
-        if meeting.id == model.recordingID { return "Recording. The summary and the transcript come after Stop." }
+        if model.isLive(meeting.id) { return "Recording. The summary and the transcript come after Stop." }
         if model.processing.contains(meeting.id), let local = model.localStatus[meeting.id] { return Self.localText(local) }
         if model.processing.contains(meeting.id) || meeting.state == .transcribing {
             return meeting.transcribedChunks > 0 ? "Transcribing: \(meeting.transcribedChunks) part(s) of 30 min done…" : "Transcribing…"
@@ -463,6 +474,20 @@ struct TagLine: View {
                 .font(.caption)
                 .help("Tags of this meeting, for search; the summary proposes some when it has none")
                 .popover(isPresented: $editing) { TagEditor(model: model, tags: meeting.tagList) }
+            Group {
+                if meeting.audioTrashed {
+                    Text("· audio in the Trash")
+                } else if meeting.state == .done {
+                    Text("· audio until " + meeting.audioUntil.formatted(.dateTime.day().month(.abbreviated)))
+                        .help("Then the audio goes to the Trash; the summary, transcript and tabs stay")
+                } else if !model.isLive(meeting.id) {
+                    Text("· audio kept until transcribed")
+                        .help("Audio of a meeting that is not fully transcribed never goes to the Trash on its own")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
         }
     }
 }

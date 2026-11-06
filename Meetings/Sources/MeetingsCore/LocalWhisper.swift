@@ -58,11 +58,27 @@ public enum LocalWhisper {
         return max(2, Int(count) - 1)
     }
 
-    static func arguments(model: URL, wav: URL, out: URL, language: String, gpu: Bool, threads: Int) -> [String] {
+    static func arguments(model: URL, wav: URL, out: URL, language: String, gpu: Bool, threads: Int, vocabulary: [String] = []) -> [String] {
         var arguments = ["-m", model.path, "-f", wav.path, "-l", language.isEmpty ? "auto" : language,
                          "-t", "\(threads)", "-oj", "-of", out.path, "-np"]
         if !gpu { arguments.append("-ng") }
+        if let prompt = initialPrompt(vocabulary) { arguments += ["--prompt", prompt] }
         return arguments
+    }
+
+    /// M30: whisper's initial prompt makes the project's words likely; it holds about 224 tokens,
+    /// so only the first terms (without their hints) go, up to 600 characters.
+    static func initialPrompt(_ vocabulary: [String]) -> String? {
+        var terms: [String] = []
+        var length = 0
+        for entry in vocabulary {
+            let term = entry.components(separatedBy: " — ").first?.components(separatedBy: ": ").first?
+                .components(separatedBy: " - ").first?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard !term.isEmpty, length + term.count + 2 <= 600 else { continue }
+            terms.append(term)
+            length += term.count + 2
+        }
+        return terms.isEmpty ? nil : terms.joined(separator: ", ") + "."
     }
 
     struct Line: Equatable {
@@ -166,7 +182,7 @@ public struct LocalTranscriber: Sendable {
         guard convert.status == 0 else { throw MeetingsError.local("afconvert could not read \(audio.lastPathComponent): \(Self.tail(convert.errors))") }
         let threads = settings.localGPU ? 4 : LocalWhisper.cpuThreads
         let whisper = try await ChildRun.run(tools.cli, LocalWhisper.arguments(model: tools.model, wav: wav, out: out, language: settings.localLanguage,
-                                                                         gpu: settings.localGPU, threads: threads),
+                                                                         gpu: settings.localGPU, threads: threads, vocabulary: settings.vocabulary),
                                              timeout: 3600, local: local, resume: phase)
         guard whisper.status == 0, let data = try? Data(contentsOf: out.appendingPathExtension("json")) else {
             throw MeetingsError.local("whisper-cli stopped (\(whisper.status)): \(Self.tail(whisper.errors))")

@@ -72,7 +72,7 @@ public struct PiSummarizer: Sendable {
         defer { try? FileManager.default.removeItem(at: folder) }
         let input = folder.appending(path: "transcript.md")
         let prompt = Transcriber.summaryPrompt(language: settings.language, transcript: Transcriber.plainTranscript(meeting),
-                                              template: settings.template(meeting.template))
+                                              template: settings.template(meeting.template), vocabulary: settings.vocabulary)
         try Data(prompt.utf8).write(to: input)
         let started = Date()
         // Pi waits on the network, not the CPU: it is not paused, only stopped.

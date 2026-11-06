@@ -64,6 +64,11 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
 
     /// Whether any step calls OpenRouter, so the key is needed.
     public var needsKey: Bool { transcription == .cloud || summarizer == .openRouter }
+    /// M30: the project's own words (names, services, products, terms), one per entry, so the
+    /// model writes them right instead of a word that sounds close.
+    public var vocabulary: [String] = []
+    /// M31: a short sound when the background recorder starts and stops (nothing on screen).
+    public var backgroundSounds: Bool = true
 
     public enum TrackMode: String, Codable, Sendable, CaseIterable {
         /// One mixed track (1×).
@@ -84,6 +89,30 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     }
 
     public init() {}
+
+    /// At most this many terms go into a prompt (about 6,000 tokens at most).
+    public static let vocabularyLimit = 1_500
+
+    /// The terms of a text or a file: one per line, or separated by commas or semicolons; a line
+    /// may be `term — hint` or `term: hint` (the hint stays, it helps the model). Lines starting
+    /// with `#` and repeats (case ignored) are left out.
+    public static func vocabulary(from text: String) -> [String] {
+        var seen = Set<String>()
+        var terms: [String] = []
+        for line in text.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+            // A line with a hint is one term; a plain line may list several.
+            let hasHint = trimmed.contains(" — ") || trimmed.contains(" - ") || trimmed.contains(": ")
+            let parts = hasHint ? [Substring(trimmed)] : trimmed.split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "\t" })
+            for part in parts {
+                let term = part.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\"'-*•")))
+                guard !term.isEmpty, term.count <= 200, seen.insert(term.lowercased()).inserted else { continue }
+                terms.append(term)
+            }
+        }
+        return terms
+    }
 
     public var templates: [MeetingTemplate] { MeetingTemplate.builtIn + customTemplates }
 
@@ -130,5 +159,7 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
         piModel = try c.decodeIfPresent(String.self, forKey: .piModel)
         localLanguage = try c.decodeIfPresent(String.self, forKey: .localLanguage) ?? d.localLanguage
         localGPU = try c.decodeIfPresent(Bool.self, forKey: .localGPU) ?? d.localGPU
+        vocabulary = (try? c.decodeIfPresent([String].self, forKey: .vocabulary)) ?? d.vocabulary
+        backgroundSounds = try c.decodeIfPresent(Bool.self, forKey: .backgroundSounds) ?? d.backgroundSounds
     }
 }

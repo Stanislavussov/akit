@@ -1,5 +1,6 @@
 import Foundation
 import MeetingsAudio
+import MeetingsBackground
 import MeetingsCore
 import Observation
 
@@ -26,6 +27,13 @@ public final class MeetingsModel {
     public private(set) var selectedTab = summaryTab
     public private(set) var page: MeetingsPage?
     public private(set) var recordingID: String?
+    /// M31: a meeting another process records now (the background recorder), read on refresh.
+    public private(set) var remoteRecordingID: String?
+    /// M31: true in the background recorder itself: it records here, never forwards.
+    public var isBackgroundHost = false
+    /// Called after each refresh (the background recorder announces its changes with it).
+    @ObservationIgnored public var didRefresh: (@MainActor () -> Void)?
+    @ObservationIgnored private var changeObserver: NSObjectProtocol?
     public private(set) var recordingStarted: Date?
     public private(set) var starting = false
     public private(set) var processing: Set<String> = []
@@ -125,6 +133,9 @@ public final class MeetingsModel {
     var store: MeetingStore { MeetingStore(root: settings.root) }
     public var root: URL { settings.root }
     public var isRecording: Bool { recordingID != nil }
+    /// Recording here or in the background recorder.
+    public func isLive(_ id: String) -> Bool { id == recordingID || id == remoteRecordingID }
+    public var remoteRecording: Meeting? { remoteRecordingID.flatMap { id in meetings.first { $0.id == id } } }
     /// The live waves while it records (read by the screen several times a second).
     public var levels: (mic: [Float], system: [Float]) { recorder?.levels ?? ([], []) }
     public var selected: Meeting? { meetings.first { $0.id == selectedID } }
@@ -180,10 +191,13 @@ public final class MeetingsModel {
         refresh()
         guard !loaded else { return }
         loaded = true
+        if !isBackgroundHost, changeObserver == nil {
+            // M31: the background recorder started, stopped or transcribed something.
+            changeObserver = BackgroundControl.onChange { [weak self] in Task { @MainActor in self?.refresh() } }
+        }
         // M27: whisper or Pi that a crash or a force quit left running, before any run starts.
         ChildRun.endLeftovers()
-        let store = self.store
-        Task.detached { store.trashExpiredAudio() }
+        startAudioCleanup()
         for meeting in meetings where meeting.id != recordingID {
             switch meeting.state {
             case .recording:
@@ -208,9 +222,30 @@ public final class MeetingsModel {
         }
     }
 
+    /// M7, M29: audio past its 14 days goes to the Trash now and every 6 hours while the app
+    /// runs (AKit can stay open for weeks), never during a recording's start.
+    private func startAudioCleanup() {
+        Task { [weak self] in
+            while let self, !Task.isCancelled {
+                let store = self.store
+                let count = await Task.detached { store.trashExpiredAudio() }.value
+                if count > 0 {
+                    MeetingsLog.info(.store, "audio of \(count) meeting(s) past \(MeetingStore.audioDays) days moved to the Trash")
+                    self.refresh()
+                }
+                try? await Task.sleep(for: .seconds(6 * 3600))
+            }
+        }
+    }
+
     public func refresh() {
         meetings = store.list()
         askEntries = AskLog(root: settings.root).entries()
+        let store = self.store
+        remoteRecordingID = meetings.first { meeting in
+            meeting.state == .recording && meeting.id != recordingID && !MeetingLock.isFree(MeetingLock.recording(store, meeting.id))
+        }?.id
+        defer { didRefresh?() }
         if let id = selectedID, !meetings.contains(where: { $0.id == id }) {
             selectedID = nil
             page = nil
@@ -245,6 +280,13 @@ public final class MeetingsModel {
 
     public func record() async {
         guard !isRecording, !starting else { return }
+        // M31: with the background recorder running, it records, so a meeting is never recorded twice.
+        if !isBackgroundHost, BackgroundControl.recorderRuns {
+            guard remoteRecordingID == nil else { return }
+            BackgroundControl.send("record")
+            notice = "Meetings Recorder records in the background; ⌥⌘R or Stop ends it."
+            return
+        }
         starting = true
         defer { starting = false }
         do {
@@ -273,6 +315,10 @@ public final class MeetingsModel {
     }
 
     public func stop() async {
+        if recordingID == nil, remoteRecordingID != nil {
+            BackgroundControl.send("stop")
+            return
+        }
         guard let id = recordingID, let recorder else { return }
         let result = await recorder.stop()
         self.recorder = nil
@@ -303,7 +349,7 @@ public final class MeetingsModel {
         switch action.lowercased() {
         case "record", "start": await record()
         case "stop": await stop()
-        case "toggle": if isRecording { await stop() } else { await record() }
+        case "toggle": if isRecording || remoteRecordingID != nil { await stop() } else { await record() }
         default: break
         }
     }
@@ -892,7 +938,7 @@ public final class MeetingsModel {
     }
 
     public func moveToTrash(_ id: String) {
-        guard id != recordingID else { return }
+        guard !isLive(id) else { return }
         do {
             try store.moveToTrash(id)
             if selectedID == id { select(nil) }
