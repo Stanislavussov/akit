@@ -17,9 +17,9 @@ let ctx = CGContext(data: nil, width: Int(W), height: Int(H), bitsPerComponent: 
 // 1. Rounded card with the icon's gradient, plus two soft glows.
 let card = CGPath(roundedRect: CGRect(x: 0, y: 0, width: W, height: H), cornerWidth: 64, cornerHeight: 64, transform: nil)
 ctx.addPath(card); ctx.clip()
-ctx.drawLinearGradient(CGGradient(colorsSpace: cs, colors: [rgb(0x7C5CFF), rgb(0x4338CA), rgb(0x0E7490)] as CFArray, locations: [0, 0.55, 1])!,
+ctx.drawLinearGradient(CGGradient(colorsSpace: cs, colors: [rgb(0x3A3F47), rgb(0x262A30), rgb(0x15171B)] as CFArray, locations: [0, 0.55, 1])!,
                        start: CGPoint(x: 0, y: H), end: CGPoint(x: W, y: 0), options: [])
-for (center, radius, color) in [(CGPoint(x: 420, y: 720), 700.0, rgb(0xFFFFFF, 0.16)), (CGPoint(x: 2350, y: 60), 800.0, rgb(0x22D3EE, 0.22))] {
+for (center, radius, color) in [(CGPoint(x: 420, y: 720), 700.0, rgb(0xFFFFFF, 0.16)), (CGPoint(x: 2350, y: 60), 800.0, rgb(0xA3A8B0, 0.12))] {
     ctx.drawRadialGradient(CGGradient(colorsSpace: cs, colors: [color, rgb(0xFFFFFF, 0)] as CFArray, locations: [0, 1])!,
                            startCenter: center, startRadius: 0, endCenter: center, endRadius: radius, options: [])
 }

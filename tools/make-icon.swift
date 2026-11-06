@@ -1,8 +1,7 @@
-// Draws the AKit icons (1024×1024) and every size: AppIcon (purple, release builds) and
+// Draws the AKit icons (1024×1024) and every size: AppIcon (graphite, release builds) and
 // AppIconDev (orange, debug builds), so a dev build is easy to tell apart in the Dock.
 // Run: swift tools/make-icon.swift   (from the akit folder), or `make icon`
 import AppKit
-import CoreText
 import Foundation
 
 let S: CGFloat = 1024
@@ -14,16 +13,51 @@ func gradient(_ colors: [CGColor]) -> CGGradient {
     CGGradient(colorsSpace: cs, colors: colors as CFArray, locations: nil)!
 }
 
-struct Palette {
-    let tileBase: UInt32, tile: [UInt32], bodyShadow: UInt32, bodyBottom: UInt32, letter: [UInt32]
-}
-let release = Palette(tileBase: 0x3B2FD1, tile: [0x7C5CFF, 0x4338CA, 0x0E7490], bodyShadow: 0x0B0633,
-                      bodyBottom: 0xE6E9FF, letter: [0x6D4AFF, 0x2563EB, 0x0891B2])
-let debug = Palette(tileBase: 0xC2410C, tile: [0xFBBF24, 0xF97316, 0xB91C1C], bodyShadow: 0x431407,
-                    bodyBottom: 0xFFEDD5, letter: [0xF59E0B, 0xEA580C, 0xDC2626])
+struct Palette { let tile: [UInt32], tileBase: UInt32 }
+// Release: dark graphite tile. Debug: orange tile, so a dev build stands out in the Dock.
+let release = Palette(tile: [0x3A3F47, 0x1C1F24], tileBase: 0x1C1F24)
+let debug = Palette(tile: [0xFBBF24, 0xEA580C], tileBase: 0xC2410C)
 
-let base = NSFont.systemFont(ofSize: 360, weight: .black)
-let useFont: CTFont = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: 360) } ?? base
+// Gray cat head in fine pixels: shapes are sampled on a 26×22 grid, so edges stay blocky but soft.
+let gridW = 26, gridH = 22
+let colors: [Character: UInt32] = ["G": 0xA3A8B0, "S": 0x7A7F88, "D": 0x5E636C, "L": 0xDDE0E5,
+                                   "P": 0xF2A0B0, "E": 0x16181C, "W": 0xFFFFFF]
+
+func inTriangle(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> Bool {
+    func side(_ p1: CGPoint, _ p2: CGPoint) -> CGFloat { (p.x - p2.x) * (p1.y - p2.y) - (p1.x - p2.x) * (p.y - p2.y) }
+    let d1 = side(a, b), d2 = side(b, c), d3 = side(c, a)
+    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
+}
+func inEllipse(_ p: CGPoint, _ cx: CGFloat, _ cy: CGFloat, _ rx: CGFloat, _ ry: CGFloat) -> CGFloat {
+    let dx = (p.x - cx) / rx, dy = (p.y - cy) / ry
+    return dx * dx + dy * dy
+}
+
+// Which color a grid cell gets (x right, y down, cell centers).
+func catCell(_ col: Int, _ row: Int) -> Character? {
+    let p = CGPoint(x: CGFloat(col) + 0.5, y: CGFloat(row) + 0.5)
+    let m = CGPoint(x: CGFloat(gridW) - p.x, y: p.y)          // mirrored, for symmetric parts
+    let q = p.x < CGFloat(gridW) / 2 ? p : m                  // left half coordinates
+    let head = inEllipse(p, 13, 13.5, 11.8, 8.3)
+    let earOuter = inTriangle(q, CGPoint(x: 2.2, y: 11), CGPoint(x: 4, y: 0.6), CGPoint(x: 11.5, y: 6.5))
+    let earInner = inTriangle(q, CGPoint(x: 4.3, y: 8.5), CGPoint(x: 5.2, y: 3.2), CGPoint(x: 9.4, y: 6.8))
+    guard head <= 1 || earOuter else { return nil }
+    if earInner && head > 0.78 { return "P" }
+    // eyes with a shine
+    if inEllipse(q, 8.5, 12.5, 1.9, 2.3) <= 1 { return (q.x < 8.5 && q.y < 12) ? "W" : "E" }
+    // nose and mouth
+    if p.y >= 15 && p.y < 16 && abs(p.x - 13) < 1.5 { return "P" }
+    if p.y >= 16 && p.y < 17 && abs(p.x - 13) < 0.6 { return "D" }
+    if p.y >= 17 && p.y < 18 && (abs(p.x - 11.5) < 0.6 || abs(p.x - 14.5) < 0.6) { return "D" }
+    if inEllipse(p, 13, 17.4, 4.2, 2.3) <= 1 { return "L" }
+    // forehead stripes
+    if p.y >= 6 && p.y < 9 && abs(p.x - 13) < 0.6 { return "S" }
+    if p.y >= 7 && p.y < 9 && (abs(p.x - 10.5) < 0.6 || abs(p.x - 15.5) < 0.6) { return "S" }
+    // darker rim along the bottom and the ear edges
+    if head <= 1 && head > 0.72 && p.y > 15 { return "S" }
+    if head > 1 { return earOuter && !inTriangle(q, CGPoint(x: 3, y: 10.5), CGPoint(x: 4.3, y: 1.8), CGPoint(x: 10.6, y: 6.6)) ? "S" : "G" }
+    return "G"
+}
 
 func draw(_ palette: Palette) -> CGImage {
 let ctx = CGContext(data: nil, width: Int(S), height: Int(S), bitsPerComponent: 8, bytesPerRow: 0,
@@ -36,66 +70,24 @@ ctx.saveGState()
 ctx.setShadow(offset: CGSize(width: 0, height: -14), blur: 28, color: rgb(0x000000, 0.35))
 ctx.addPath(tilePath); ctx.setFillColor(rgb(palette.tileBase)); ctx.fillPath()
 ctx.restoreGState()
-
 ctx.saveGState()
 ctx.addPath(tilePath); ctx.clip()
 ctx.drawLinearGradient(gradient(palette.tile.map { rgb($0) }),
-                       start: CGPoint(x: 150, y: 924), end: CGPoint(x: 874, y: 100), options: [])
-// soft highlight at the top
-ctx.drawRadialGradient(gradient([rgb(0xFFFFFF, 0.28), rgb(0xFFFFFF, 0)]),
-                       startCenter: CGPoint(x: 380, y: 880), startRadius: 0,
-                       endCenter: CGPoint(x: 380, y: 880), endRadius: 520, options: [])
+                       start: CGPoint(x: 0, y: 924), end: CGPoint(x: 0, y: 100), options: [])
 ctx.restoreGState()
 
-// 2. Case handle.
-let handle = CGPath(roundedRect: CGRect(x: 402, y: 600, width: 220, height: 150), cornerWidth: 50, cornerHeight: 50, transform: nil)
-ctx.saveGState()
-ctx.addPath(handle); ctx.setStrokeColor(rgb(0xFFFFFF, 0.92)); ctx.setLineWidth(46); ctx.strokePath()
-ctx.restoreGState()
-
-// 3. Case body with a shadow.
-let body = CGRect(x: 232, y: 232, width: 560, height: 420)
-let bodyPath = CGPath(roundedRect: body, cornerWidth: 78, cornerHeight: 78, transform: nil)
-ctx.saveGState()
-ctx.setShadow(offset: CGSize(width: 0, height: -18), blur: 36, color: rgb(palette.bodyShadow, 0.45))
-ctx.addPath(bodyPath); ctx.setFillColor(rgb(0xFFFFFF)); ctx.fillPath()
-ctx.restoreGState()
-ctx.saveGState()
-ctx.addPath(bodyPath); ctx.clip()
-ctx.drawLinearGradient(gradient([rgb(0xFFFFFF), rgb(palette.bodyBottom)]),
-                       start: CGPoint(x: 0, y: body.maxY), end: CGPoint(x: 0, y: body.minY), options: [])
-ctx.restoreGState()
-
-// 4. Gradient letter "A", centered on the case.
-var ch: [UniChar] = Array("A".utf16), glyph = [CGGlyph](repeating: 0, count: 1)
-CTFontGetGlyphsForCharacters(useFont, &ch, &glyph, 1)
-let glyphPath = CTFontCreatePathForGlyph(useFont, glyph[0], nil)!
-let gb = glyphPath.boundingBoxOfPath
-var move = CGAffineTransform(translationX: body.midX - gb.midX, y: body.midY - gb.midY - 6)
-let aPath = glyphPath.copy(using: &move)!
-ctx.saveGState()
-ctx.addPath(aPath); ctx.clip()
-ctx.drawLinearGradient(gradient(palette.letter.map { rgb($0) }),
-                       start: CGPoint(x: body.minX, y: body.maxY), end: CGPoint(x: body.maxX, y: body.minY), options: [])
-ctx.restoreGState()
-
-// 5. "Agent" sparkles — four-point stars in the top-right corner.
-func sparkle(center c: CGPoint, r: CGFloat) -> CGPath {
-    let p = CGMutablePath(); let k: CGFloat = 0.22
-    p.move(to: CGPoint(x: c.x, y: c.y + r))
-    p.addQuadCurve(to: CGPoint(x: c.x + r, y: c.y), control: CGPoint(x: c.x + r * k, y: c.y + r * k))
-    p.addQuadCurve(to: CGPoint(x: c.x, y: c.y - r), control: CGPoint(x: c.x + r * k, y: c.y - r * k))
-    p.addQuadCurve(to: CGPoint(x: c.x - r, y: c.y), control: CGPoint(x: c.x - r * k, y: c.y - r * k))
-    p.addQuadCurve(to: CGPoint(x: c.x, y: c.y + r), control: CGPoint(x: c.x - r * k, y: c.y + r * k))
-    return p
+// 2. The cat, crisp square pixels, centered on the tile.
+let cell: CGFloat = 26
+let cols = CGFloat(gridW), rows = CGFloat(gridH)
+let x0 = (S - cols * cell) / 2, yTop = (S + rows * cell) / 2 - 10
+ctx.setShouldAntialias(false)
+for r in 0..<gridH {
+    for c in 0..<gridW {
+        guard let ch = catCell(c, r), let hex = colors[ch] else { continue }
+        ctx.setFillColor(rgb(hex))
+        ctx.fill(CGRect(x: x0 + CGFloat(c) * cell, y: yTop - CGFloat(r + 1) * cell, width: cell, height: cell))
+    }
 }
-for (c, r, a) in [(CGPoint(x: 770, y: 770), CGFloat(92), CGFloat(1)), (CGPoint(x: 850, y: 640), CGFloat(40), CGFloat(0.85))] {
-    ctx.saveGState()
-    ctx.setShadow(offset: .zero, blur: 30, color: rgb(0xFDE68A, 0.9))
-    ctx.addPath(sparkle(center: c, r: r)); ctx.setFillColor(rgb(0xFFF7D6, a)); ctx.fillPath()
-    ctx.restoreGState()
-}
-
 return ctx.makeImage()!
 }
 
@@ -131,4 +123,4 @@ try writeIconSet(image, named: "AppIcon")
 try writeIconSet(draw(debug), named: "AppIconDev")
 try #"{"info":{"author":"xcode","version":1}}"#.write(to: URL(filePath: "AKit/Assets.xcassets/Contents.json"), atomically: true, encoding: .utf8)
 writePNG(image, px: 1024, to: URL(filePath: "tools/icon-1024.png"))
-print("ok:", CTFontCopyFullName(useFont))
+print("ok")
