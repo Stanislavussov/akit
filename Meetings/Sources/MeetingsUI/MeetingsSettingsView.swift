@@ -80,6 +80,31 @@ struct MeetingsSettingsView: View {
                               prompt: Text("Czech, sometimes Russian or English"))
                     Text("The transcript stays in the language spoken; this hint helps the model.").font(.caption).foregroundStyle(.secondary)
                 }
+                Section("Summary") {
+                    Picker("Template of a new meeting", selection: Binding(get: { model.settings.template(nil).id }, set: { value in model.update { $0.defaultTemplate = value } })) {
+                        ForEach(model.settings.templates) { Text($0.name).tag($0.id) }
+                    }
+                    Text("A template says which sections the summary lists besides Summary, Decisions and Tasks. Each meeting's header can change it.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    ForEach(model.settings.customTemplates) { template in
+                        OwnTemplateRow(model: model, template: template)
+                    }
+                    Button("Add Template") {
+                        model.update { settings in
+                            settings.customTemplates.append(MeetingTemplate(id: MeetingTemplate.newID(taken: settings.customTemplates), name: "My template",
+                                                                            sections: "Heading: what goes in it"))
+                        }
+                    }
+                    .help("Your own kind of meeting: a name and one section per line")
+                }
+                Section("Transcript") {
+                    Picker("Text", selection: Binding(get: { model.settings.cleanTranscript }, set: { value in model.update { $0.cleanTranscript = value } })) {
+                        Text("Clean: no filler words or repeats").tag(true)
+                        Text("Word for word").tag(false)
+                    }
+                    Text("Clean leaves out eh, ehm, stutters and words said twice; every word that carries meaning stays. Same call, same cost. Takes effect at the next transcription.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Tracks") {
                     Picker("Send to the model", selection: Binding(get: { model.settings.tracks }, set: { value in model.update { $0.tracks = value } })) {
                         ForEach(MeetingsSettings.TrackMode.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -163,5 +188,39 @@ struct MeetingsSettingsView: View {
         panel.directoryURL = model.root
         panel.prompt = "Use Folder"
         if panel.runModal() == .OK, let url = panel.url { model.update { $0.rootPath = url.path } }
+    }
+}
+
+/// One own template (M22): its name, its sections (one per line, `Heading: what goes in it`), Remove.
+struct OwnTemplateRow: View {
+    let model: MeetingsModel
+    let template: MeetingTemplate
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                TextField("Name", text: binding(\.name))
+                Button("Remove", role: .destructive) {
+                    model.update { settings in
+                        settings.customTemplates.removeAll { $0.id == template.id }
+                        if settings.defaultTemplate == template.id { settings.defaultTemplate = MeetingTemplate.generalID }
+                    }
+                }
+            }
+            TextEditor(text: binding(\.sections))
+                .font(.callout.monospaced())
+                .frame(height: 70)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(.quaternary))
+            Text("One section per line: Heading: what goes in it.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func binding(_ field: WritableKeyPath<MeetingTemplate, String>) -> Binding<String> {
+        Binding(get: { model.settings.customTemplates.first { $0.id == template.id }?[keyPath: field] ?? "" },
+                set: { value in
+                    model.update { settings in
+                        if let i = settings.customTemplates.firstIndex(where: { $0.id == template.id }) { settings.customTemplates[i][keyPath: field] = value }
+                    }
+                })
     }
 }

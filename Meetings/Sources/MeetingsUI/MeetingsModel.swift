@@ -135,7 +135,7 @@ public final class MeetingsModel {
         starting = true
         defer { starting = false }
         do {
-            let meeting = try store.create()
+            let meeting = try store.create(template: settings.defaultTemplate)
             // The lock right after the meeting exists, so the other host never takes it for a crash.
             let held = MeetingLock.take(Recorder.lockFile(store.audioFolder(meeting.id)))
             let recorder = Recorder(folder: store.audioFolder(meeting.id), echoCancellation: settings.echoCancellation, lock: held) { [weak self] text in
@@ -219,6 +219,57 @@ public final class MeetingsModel {
             processing.remove(id)
             refresh()
             if selectedID == id { reloadPage() }
+        }
+    }
+
+    /// M22: only the summary again (a new template): one text call over the transcript.
+    public func summarizeAgain(_ id: String) {
+        guard !processing.contains(id) else { return }
+        guard let key = keyStore.read() else {
+            problem = MeetingsError.noKey.errorDescription
+            return
+        }
+        processing.insert(id)
+        let processor = MeetingProcessor(store: store, settings: settings, client: OpenRouterClient(key: key, transport: transport)) { [weak self] meeting in
+            Task { @MainActor in self?.updated(meeting) }
+        }
+        Task {
+            do {
+                _ = try await processor.summarizeAgain(id)
+            } catch MeetingsError.busy {
+                notice = MeetingsError.busy.errorDescription
+            } catch {
+                problem = "The summary was not written again: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+            processing.remove(id)
+            refresh()
+            if selectedID == id { reloadPage() }
+        }
+    }
+
+    /// M22: a new template for the selected meeting; a done one gets its summary written again.
+    public func setTemplate(_ templateID: String) {
+        guard var meeting = fresh, meeting.template != templateID else { return }
+        do {
+            try store.setTemplate(&meeting, templateID)
+            updated(meeting)
+            if meeting.state == .done, !meeting.segments.isEmpty, hasKey {
+                notice = "Writing the summary again as \(settings.template(templateID).name)…"
+                summarizeAgain(meeting.id)
+            }
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    /// M23: the selected meeting's tags.
+    public func setTags(_ tags: [String]) {
+        guard var meeting = fresh else { return }
+        do {
+            try store.setTags(&meeting, tags)
+            updated(meeting)
+        } catch {
+            problem = error.localizedDescription
         }
     }
 

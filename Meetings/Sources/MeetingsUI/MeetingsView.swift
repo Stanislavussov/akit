@@ -262,6 +262,7 @@ struct MeetingDetail: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
+            TemplateMenu(model: model, meeting: meeting)
             if meeting.state == .failed, !model.processing.contains(meeting.id) {
                 Button("Try Again") { model.process(meeting.id, byUser: true) }
                     .disabled(!model.hasKey || meeting.audioTrashed)
@@ -269,6 +270,9 @@ struct MeetingDetail: View {
             Menu {
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
                     .disabled(meeting.speakerKeys.isEmpty)
+                Button("Summarize Again") { model.summarizeAgain(meeting.id) }
+                    .disabled(!model.hasKey || meeting.segments.isEmpty || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
+                    .help("Write the summary again from the transcript (one text call, no audio)")
                 Button("Transcribe Again") { model.process(meeting.id, restart: true, byUser: true) }
                     .disabled(!model.hasKey || meeting.audioTrashed || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
                 Divider()
@@ -326,6 +330,28 @@ struct MeetingDetail: View {
         }
     }
 
+}
+
+/// M22: the meeting's template; on a done meeting a change writes the summary again.
+struct TemplateMenu: View {
+    let model: MeetingsModel
+    let meeting: Meeting
+
+    var body: some View {
+        let current = model.settings.template(meeting.template)
+        Menu {
+            Picker("Template", selection: Binding(get: { current.id }, set: { model.setTemplate($0) })) {
+                ForEach(model.settings.templates) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label(current.name, systemImage: "rectangle.grid.1x2")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(model.processing.contains(meeting.id))
+        .help("What kind of meeting it is: the summary lists that kind's sections. On a done meeting a change writes the summary again (one text call, no audio)")
+    }
 }
 
 /// Summary, Transcript, then the own tabs; right-click renames or removes an own tab, + adds one.

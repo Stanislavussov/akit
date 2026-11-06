@@ -23,7 +23,7 @@ public struct MeetingStore: Sendable {
     // MARK: Meetings
 
     /// A new meeting folder for a recording that starts now.
-    public func create(started: Date = Date()) throws -> Meeting {
+    public func create(started: Date = Date(), template: String? = nil) throws -> Meeting {
         let day = Self.dayFormatter.string(from: started)
         let base = "\(day)/\(Self.timeFormatter.string(from: started))"
         var id = base
@@ -33,7 +33,8 @@ public struct MeetingStore: Sendable {
             n += 1
         }
         try FileManager.default.createDirectory(at: audioFolder(id), withIntermediateDirectories: true)
-        let meeting = Meeting(id: id, started: started)
+        var meeting = Meeting(id: id, started: started)
+        meeting.template = template
         try save(meeting)
         return meeting
     }
@@ -109,6 +110,20 @@ public struct MeetingStore: Sendable {
                 }
             }
         }
+    }
+
+    /// M22: the meeting's template (the summary is written again by the caller).
+    public func setTemplate(_ meeting: inout Meeting, _ id: String) throws {
+        meeting.template = id
+        try save(meeting)
+    }
+
+    /// M23: the meeting's tags, cleaned, without repeats; an empty list stays empty.
+    public func setTags(_ meeting: inout Meeting, _ tags: [String]) throws {
+        var kept: [String] = []
+        for tag in tags.map(Meeting.cleanTag) where !tag.isEmpty && !kept.contains(tag) { kept.append(tag) }
+        meeting.tags = kept
+        try save(meeting)
     }
 
     // MARK: Own tabs (M17)
@@ -312,6 +327,7 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
     case http(Int, String)
     case badAnswer(String)
     case noAudio
+    case noTranscript
     case busy
 
     public var errorDescription: String? {
@@ -323,6 +339,7 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
         case .http(let code, let message): "OpenRouter answered \(code): \(message)"
         case .badAnswer(let detail): "The model's answer could not be read: \(detail)"
         case .noAudio: "This meeting has no audio left to transcribe."
+        case .noTranscript: "This meeting has no transcript to summarize yet."
         case .busy: "This meeting is being transcribed already (here or in the other Meetings app)."
         }
     }

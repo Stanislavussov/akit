@@ -41,6 +41,13 @@ public struct Meeting: Codable, Equatable, Sendable, Identifiable {
     /// After this day the audio goes to the Trash (M7).
     public var audioUntil: Date
     public var audioTrashed: Bool
+    /// M22: the template's id; nil is the settings' default.
+    public var template: String?
+    /// M23: topic tags; nil until the summary proposes some or the user sets them (an empty list
+    /// is the user's choice and stays).
+    public var tags: [String]?
+    /// M25: where the host app took this meeting and when (`worklog`, `notebook`, `knowledge`).
+    public var exports: [String: Date]?
 
     public init(id: String, started: Date, audioDays: Int = MeetingStore.audioDays) {
         self.id = id
@@ -68,6 +75,14 @@ public struct Meeting: Codable, Equatable, Sendable, Identifiable {
         if key.hasPrefix("S"), let number = Int(key.dropFirst()) { return "Speaker \(number)" }
         if key.hasPrefix("R"), let number = Int(key.dropFirst()) { return "Room \(number)" }
         return key
+    }
+
+    public var tagList: [String] { tags ?? [] }
+
+    /// A tag as kept: lowercase, no `#`, inner spaces single, at most 30 characters.
+    public static func cleanTag(_ tag: String) -> String {
+        let words = tag.lowercased().replacingOccurrences(of: "#", with: "").split(whereSeparator: \.isWhitespace)
+        return String(words.joined(separator: " ").prefix(30))
     }
 
     /// The speaker keys in the order they first speak.

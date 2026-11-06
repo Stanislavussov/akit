@@ -23,6 +23,11 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     public var echoCancellation: Bool = true
     /// M20: how the microphone and the system sound go to the model.
     public var tracks: TrackMode = .auto
+    /// M22: the template a new meeting takes, and the user's own templates beside the built-in ones.
+    public var defaultTemplate: String = MeetingTemplate.generalID
+    public var customTemplates: [MeetingTemplate] = []
+    /// M22: a clean transcript (no filler words, stutters, repeats) or word for word.
+    public var cleanTranscript: Bool = true
 
     public enum TrackMode: String, Codable, Sendable, CaseIterable {
         /// One mixed track (1×).
@@ -43,6 +48,13 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     }
 
     public init() {}
+
+    public var templates: [MeetingTemplate] { MeetingTemplate.builtIn + customTemplates }
+
+    /// The template of an id; General for an unknown one (an own template that was removed).
+    public func template(_ id: String?) -> MeetingTemplate {
+        templates.first { $0.id == (id ?? defaultTemplate) } ?? templates.first { $0.id == defaultTemplate } ?? MeetingTemplate.builtIn[0]
+    }
 
     public var root: URL { rootPath.map { URL(filePath: $0, directoryHint: .isDirectory) } ?? MeetingStore.defaultRoot }
 
@@ -74,5 +86,8 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
         rootPath = try c.decodeIfPresent(String.self, forKey: .rootPath)
         echoCancellation = try c.decodeIfPresent(Bool.self, forKey: .echoCancellation) ?? d.echoCancellation
         tracks = (try? c.decodeIfPresent(TrackMode.self, forKey: .tracks)) ?? d.tracks
+        defaultTemplate = try c.decodeIfPresent(String.self, forKey: .defaultTemplate) ?? d.defaultTemplate
+        customTemplates = (try? c.decodeIfPresent([MeetingTemplate].self, forKey: .customTemplates)) ?? d.customTemplates
+        cleanTranscript = try c.decodeIfPresent(Bool.self, forKey: .cleanTranscript) ?? d.cleanTranscript
     }
 }

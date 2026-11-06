@@ -701,3 +701,74 @@ final class Closed: @unchecked Sendable {
     var indices: [Int] { lock.withLock { _indices } }
     func add(_ i: Int) { lock.withLock { _indices.append(i) } }
 }
+
+@Suite struct TemplateTests {
+    @Test func templateSectionsGoInPromptAndMarkdown() throws {
+        let standup = MeetingTemplate.builtIn.first { $0.id == "standup" }!
+        let prompt = Transcriber.summaryPrompt(language: "Czech", transcript: "[00:01] Me: ahoj", template: standup)
+        #expect(prompt.contains("\"Standup\""))
+        #expect(prompt.contains("    - Blockers: who is blocked by what"))
+        #expect(prompt.contains(#""sections": [{"heading""#))
+        #expect(!Transcriber.summaryPrompt(language: "Czech", transcript: "", template: MeetingTemplate.builtIn[0]).contains("sections"))
+        let summary = try Transcriber.parseSummary(#"""
+        {"title":"Standup","summary":"Krátce.","sections":[{"heading":"## Blokery:","items":["Jana čeká na API",""]},{"heading":"","items":["x"]}],
+         "decisions":[],"tasks":[{"owner":"Me","text":"napsat Janě"}],"tags":["#Release Plán","api","x","navíc"]}
+        """#)
+        #expect(summary.sections.map(\.heading) == ["Blokery"])
+        #expect(summary.sections.first?.items == ["Jana čeká na API"])
+        #expect(summary.tags == ["release plán", "api", "x"])
+        #expect(summary.markdown.contains("## Summary\n\nKrátce.\n\n## Blokery\n\n- Jana čeká na API\n\n## Decisions\n\n—\n\n## Tasks\n\n- [ ] Me: napsat Janě\n"))
+    }
+
+    @Test func unknownTemplateFallsBackAndOldSettingsLoad() throws {
+        var settings = MeetingsSettings()
+        #expect(settings.template("gone").id == MeetingTemplate.generalID)
+        settings.customTemplates = [MeetingTemplate(id: MeetingTemplate.newID(taken: []), name: "Sales", sections: "Deal")]
+        settings.defaultTemplate = "own-1"
+        #expect(settings.template(nil).name == "Sales")
+        #expect(MeetingTemplate.newID(taken: settings.customTemplates) == "own-2")
+        let old = try JSONDecoder().decode(MeetingsSettings.self, from: Data(#"{"model":"m"}"#.utf8))
+        #expect(old.cleanTranscript && old.defaultTemplate == MeetingTemplate.generalID && old.customTemplates.isEmpty)
+    }
+
+    @Test func cleanOrWordForWordSystemPrompt() async throws {
+        let store = TempRoot().store
+        let meeting = try ProcessorTests().meetingWithPieces(store, count: 1)
+        for clean in [true, false] {
+            let server = FakeServer([(200, chat(#"{"segments":[]}"#))])
+            var settings = MeetingsSettings()
+            settings.cleanTranscript = clean
+            _ = try await MeetingProcessor(store: store, settings: settings, client: server.client).run(meeting.id, restart: true)
+            let system = (server.body(0)["messages"] as? [[String: Any]])?.first?["content"] as? String ?? ""
+            #expect(system.contains("filler") == clean)
+            #expect(system.contains("word for word") == !clean)
+        }
+    }
+
+    @Test func summarizeAgainSendsOnlyTextAndKeepsUserTags() async throws {
+        let store = TempRoot().store
+        var meeting = try ProcessorTests().meetingWithPieces(store, count: 1)
+        let first = FakeServer([
+            (200, chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"ahoj"}]}"#)),
+            (200, chat(#"{"title":"Porada","summary":"A.","decisions":[],"tasks":[],"tags":["api"]}"#)),
+        ])
+        meeting = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: first.client).run(meeting.id)
+        #expect(meeting.tags == ["api"])
+        // The user changes the tags and the template; the summary is written again.
+        try store.setTags(&meeting, ["Release", "release", " "])
+        #expect(meeting.tags == ["release"])
+        try store.setTemplate(&meeting, "retro")
+        let again = FakeServer([(200, chat(#"{"title":"Retro","summary":"B.","sections":[{"heading":"Dobře","items":["vše"]}],"decisions":[],"tasks":[],"tags":["jiné"]}"#, cost: 0.001))])
+        let result = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: again.client).summarizeAgain(meeting.id)
+        #expect(again.requests.count == 1)
+        let parts = (again.body(0)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]] ?? []
+        #expect(parts.count == 1 && (parts.first?["text"] as? String ?? "").contains("\"Retro\""))
+        #expect(result.state == .done && result.segments.count == 1 && result.tags == ["release"] && result.title == "Retro")
+        #expect(store.summary(meeting.id).contains("## Dobře"))
+        #expect(abs(result.costUSD - 0.021) < 1e-9)
+        // A failed summary leaves the meeting done, with its transcript.
+        let broken = FakeServer([(500, #"{"error":{"message":"down"}}"#)])
+        await #expect(throws: MeetingsError.self) { try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: broken.client).summarizeAgain(meeting.id) }
+        #expect(store.load(meeting.id)?.state == .done)
+    }
+}

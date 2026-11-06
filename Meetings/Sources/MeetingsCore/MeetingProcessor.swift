@@ -95,27 +95,59 @@ public struct MeetingProcessor: Sendable {
                 meeting.transcribedPieces = chunk.endPiece
                 try save(&meeting)
             }
-            let summary: String
-            if meeting.segments.isEmpty {
-                summary = "## Summary\n\nNothing was said in this recording.\n"
-            } else {
-                try checkLimit()
-                let answer = try await transcriber.summarize(meeting)
-                meeting.costUSD += answer.completion.cost
-                meeting.summaryModel = settings.summaryModel ?? settings.model
-                if !answer.summary.title.isEmpty { meeting.title = answer.summary.title }
-                summary = answer.summary.markdown
-            }
-            try keepUserSummary(meeting.id)
-            try store.writeSummary(id, summary)
-            meeting.summaryHash = Self.hash(summary)
-            meeting.state = .done
-            try save(&meeting)
+            try await summarize(&meeting)
             MeetingsLog.info(.processor, "\(id): done, \(meeting.segments.count) segments, $\(meeting.costUSD) in all")
             return meeting
         } catch {
             return try fail(&meeting, error)
         }
+    }
+
+    /// M22: only the summary again, from the transcript it has (a new template, a new model):
+    /// one text call, no audio.
+    @discardableResult
+    public func summarizeAgain(_ id: String) async throws -> Meeting {
+        guard let lock = MeetingLock.take(MeetingLock.processing(store, id)) else { throw MeetingsError.busy }
+        defer { lock.release() }
+        guard var meeting = store.load(id) else { throw MeetingsError.noAudio }
+        guard !meeting.segments.isEmpty else { throw MeetingsError.noTranscript }
+        MeetingsLog.info(.processor, "\(id): summarize again, template \(settings.template(meeting.template).id)")
+        let before = meeting.state
+        meeting.state = .transcribing
+        meeting.failure = nil
+        try save(&meeting)
+        do {
+            try await summarize(&meeting)
+            return meeting
+        } catch {
+            // The transcript is whole: a failed summary leaves the meeting as it was, with the reason.
+            meeting.state = before == .failed ? .failed : .done
+            MeetingsLog.error(.processor, "\(id): summary failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)")
+            try save(&meeting)
+            throw error
+        }
+    }
+
+    /// The summary call over the transcript, `summary.md` (a user's own text kept in a tab first),
+    /// the title, proposed tags, state done.
+    func summarize(_ meeting: inout Meeting) async throws {
+        let summary: String
+        if meeting.segments.isEmpty {
+            summary = "## Summary\n\nNothing was said in this recording.\n"
+        } else {
+            try checkLimit()
+            let answer = try await transcriber.summarize(meeting)
+            meeting.costUSD += answer.completion.cost
+            meeting.summaryModel = settings.summaryModel ?? settings.model
+            if !answer.summary.title.isEmpty { meeting.title = answer.summary.title }
+            if meeting.tags == nil, !answer.summary.tags.isEmpty { meeting.tags = answer.summary.tags }
+            summary = answer.summary.markdown
+        }
+        try keepUserSummary(meeting.id)
+        try store.writeSummary(meeting.id, summary)
+        meeting.summaryHash = Self.hash(summary)
+        meeting.state = .done
+        try save(&meeting)
     }
 
     /// M20: whether this chunk goes as two tracks (mic, system) instead of the mix.
@@ -190,6 +222,8 @@ public struct MeetingProcessor: Sendable {
             disk.summaryHash = meeting.summaryHash
             disk.duration = meeting.duration
             if !meeting.title.isEmpty { disk.title = meeting.title }
+            // Proposed tags only while the user has never set any.
+            if disk.tags == nil, let tags = meeting.tags { disk.tags = tags }
             meeting = disk
         }
         try store.save(meeting)
