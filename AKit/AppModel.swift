@@ -70,7 +70,7 @@ final class AppModel {
     /// An MCP switch change shown in its sheet (with a project choice first for Off in Project…).
     var mcpSwitchRequest: MCPSwitchRequest?
 
-    /// Sidebar section shown in the window.
+    /// The screen shown in the window: a sidebar item or one of its tabs.
     var section: SidebarSection? = DebugSnapshot.options?.section ?? .overview
     /// A skill the Skills screen should select when it appears (set by "Show in Skills").
     var revealSkill: Skill.ID?

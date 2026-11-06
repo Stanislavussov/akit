@@ -461,3 +461,52 @@ struct LocalFixture {
         }
     }
 }
+
+@Suite struct ProcessingEstimateTests {
+    @Test func timeLeftIsPiecesLeftPlusSummary() {
+        #expect(ProcessingEstimate.remaining(done: 3, total: 12, perPiece: 70) == 9 * 70 + ProcessingEstimate.summarySeconds)
+        #expect(ProcessingEstimate.remaining(done: 12, total: 12, perPiece: 70, summaryLeft: false) == 0)
+    }
+
+    /// Waits (queue, pause, summary) never count as work; the speed is work to the last piece.
+    @Test func workClockLeavesWaitsOut() {
+        let t0 = Date(timeIntervalSince1970: 0)
+        var clock = WorkClock()
+        #expect(clock.perPiece == nil)
+        clock.run(true, at: t0)                                   // first piece starts
+        clock.done(1, at: t0.addingTimeInterval(60))              // 60 s of work
+        clock.run(false, at: t0.addingTimeInterval(80))           // paused after 20 s more
+        clock.run(true, at: t0.addingTimeInterval(1080))          // 1000 s paused
+        clock.done(1, at: t0.addingTimeInterval(1120))            // 40 s more: 120 s for 2 pieces
+        #expect(clock.perPiece == 60)
+        // 30 s into the next piece: 3 pieces left × 60 − 30 already spent.
+        #expect(clock.left(piecesLeft: 3, perPiece: 60, at: t0.addingTimeInterval(1150)) == 150)
+        // Never below zero.
+        #expect(clock.left(piecesLeft: 0, perPiece: 60, at: t0.addingTimeInterval(5000)) == 0)
+    }
+
+    @Test func remembersAndMixesTheSpeed() throws {
+        let defaults = try #require(UserDefaults(suiteName: "meetings-test-\(UUID().uuidString)"))
+        #expect(ProcessingEstimate.perPiece(.localGPU, defaults: defaults) == 70)
+        ProcessingEstimate.remember(40, for: .localGPU, defaults: defaults)
+        #expect(ProcessingEstimate.perPiece(.localGPU, defaults: defaults) == 40)
+        ProcessingEstimate.remember(60, for: .localGPU, defaults: defaults)
+        #expect(ProcessingEstimate.perPiece(.localGPU, defaults: defaults) == 50)
+        #expect(ProcessingEstimate.perPiece(.cloud, defaults: defaults) == 12)
+    }
+
+    @Test func wayFollowsTheSettings() {
+        var settings = MeetingsSettings()
+        #expect(ProcessingEstimate.Way(settings) == .cloud)
+        settings.transcription = .local
+        #expect(ProcessingEstimate.Way(settings) == .localGPU)
+        settings.localGPU = false
+        #expect(ProcessingEstimate.Way(settings) == .localCPU)
+    }
+
+    @Test func text() {
+        #expect(ProcessingEstimate.text(20) == "≈ 1 min")
+        #expect(ProcessingEstimate.text(390) == "≈ 7 min")
+        #expect(ProcessingEstimate.text(4200) == "≈ 1 h 10 min")
+    }
+}

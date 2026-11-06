@@ -6,7 +6,7 @@ import SwiftUI
 
 /// Work → Meetings in AKit: the package's screen with the Crepe editor and the Guide button, and
 /// the snapshot states the guide's screenshots need (`--select <HHmm>`, `--tab meetings-transcript`,
-/// `meetings-settings`, `meetings-local-settings`, `meetings-local-run`, `meetings-new-tab`, `meetings-ask`, `meetings-tasks`; `--query` fills the search field).
+/// `meetings-settings`, `meetings-local-settings`, `meetings-local-run`, `meetings-progress`, `meetings-new-tab`, `meetings-ask`, `meetings-tasks`; `--query` fills the search field).
 struct MeetingsScreen: View {
     let model: MeetingsModel
     @Environment(KnowledgeModel.self) private var knowledge
@@ -31,6 +31,9 @@ struct MeetingsScreen: View {
                     // M26, M28: Local + Pi in memory only, after load(), so nothing starts.
                     model.showMadeUpSettings { $0.transcription = .local; $0.summarizer = .pi }
                     model.showSettings = true
+                case "meetings-progress":
+                    // M32: a made-up local run at work on piece 3 of 12; nothing runs.
+                    if let id = model.selectedID { model.showMadeUpLocalRun(id, LocalStatus(phase: .transcribing, piece: 3, pieces: 12)) }
                 case "meetings-local-run":
                     // M27: a made-up local run on the chosen meeting, paused while the Mac is hot; nothing runs.
                     if let id = model.selectedID { model.showMadeUpLocalRun(id, LocalStatus(phase: .paused(.hot), piece: 3, pieces: 12)) }
