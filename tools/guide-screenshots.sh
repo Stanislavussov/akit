@@ -283,6 +283,9 @@ shot meetings-transcript $MAIN --section meetings --select 0930 --tab meetings-t
 shot meetings-tab        $MAIN --section meetings --select 0930 --tab meetings-tab
 shot meetings-settings   $MAIN --section meetings --tab meetings-settings
 shot meetings-costs      $MAIN --section meetings --tab meetings-costs
+shot meetings-search     $MAIN --section meetings --select 0930 --query testy
+shot meetings-ask        $MAIN --section meetings --select 0930 --tab meetings-ask
+shot meetings-tasks      $MAIN --section meetings --select 0930 --tab meetings-tasks
 shot knowledge-obsidian-setup 900x600 --section knowledge --select payments/orders-api --tab obsidian-setup
 shot knowledge-tags      $MAIN --section knowledge --select payments/orders-api --click 250,100
 shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties

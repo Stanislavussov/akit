@@ -202,7 +202,7 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         let rows = CostReport.rows(meetings, grouping: .week, from: from, to: to, calendar: calendar)
         #expect(rows.map(\.cost) == [1, 6, 0])
         let csv = CostReport.csv(rows, calendar: calendar)
-        #expect(csv.hasPrefix("period,meetings,hours,usd,usd_per_hour\n2026-10-26,1,0.50,1.0000,2.0000\n"))
+        #expect(csv.hasPrefix("period,meetings,hours,usd,usd_per_hour,questions\n2026-10-26,1,0.50,1.0000,2.0000,0\n"))
     }
 }
 
@@ -700,4 +700,304 @@ final class Closed: @unchecked Sendable {
     private var _indices: [Int] = []
     var indices: [Int] { lock.withLock { _indices } }
     func add(_ i: Int) { lock.withLock { _indices.append(i) } }
+}
+
+@Suite struct TemplateTests {
+    @Test func templateSectionsGoInPromptAndMarkdown() throws {
+        let standup = MeetingTemplate.builtIn.first { $0.id == "standup" }!
+        let prompt = Transcriber.summaryPrompt(language: "Czech", transcript: "[00:01] Me: ahoj", template: standup)
+        #expect(prompt.contains("\"Standup\""))
+        #expect(prompt.contains("    - Blockers: who is blocked by what"))
+        #expect(prompt.contains(#""sections": [{"heading""#))
+        #expect(!Transcriber.summaryPrompt(language: "Czech", transcript: "", template: MeetingTemplate.builtIn[0]).contains("sections"))
+        let summary = try Transcriber.parseSummary(#"""
+        {"title":"Standup","summary":"Krátce.","sections":[{"heading":"## Blokery:","items":["Jana čeká na API",""]},{"heading":"","items":["x"]}],
+         "decisions":[],"tasks":[{"owner":"Me","text":"napsat Janě"}],"tags":["#Release Plán","api","x","navíc"]}
+        """#)
+        #expect(summary.sections.map(\.heading) == ["Blokery"])
+        #expect(summary.sections.first?.items == ["Jana čeká na API"])
+        #expect(summary.tags == ["release plán", "api", "x"])
+        #expect(summary.markdown.contains("## Summary\n\nKrátce.\n\n## Blokery\n\n- Jana čeká na API\n\n## Decisions\n\n—\n\n## Tasks\n\n- [ ] Me: napsat Janě\n"))
+    }
+
+    @Test func unknownTemplateFallsBackAndOldSettingsLoad() throws {
+        var settings = MeetingsSettings()
+        #expect(settings.template("gone").id == MeetingTemplate.generalID)
+        let id = MeetingTemplate.newID()
+        settings.customTemplates = [MeetingTemplate(id: id, name: "Sales", sections: "Deal")]
+        settings.defaultTemplate = id
+        #expect(settings.template(nil).name == "Sales")
+        #expect(MeetingTemplate.newID() != id && id.hasPrefix("own-"))
+        let old = try JSONDecoder().decode(MeetingsSettings.self, from: Data(#"{"model":"m"}"#.utf8))
+        #expect(old.cleanTranscript && old.defaultTemplate == MeetingTemplate.generalID && old.customTemplates.isEmpty)
+    }
+
+    @Test func cleanOrWordForWordSystemPrompt() async throws {
+        let store = TempRoot().store
+        let meeting = try ProcessorTests().meetingWithPieces(store, count: 1)
+        for clean in [true, false] {
+            let server = FakeServer([(200, chat(#"{"segments":[]}"#))])
+            var settings = MeetingsSettings()
+            settings.cleanTranscript = clean
+            _ = try await MeetingProcessor(store: store, settings: settings, client: server.client).run(meeting.id, restart: true)
+            let system = (server.body(0)["messages"] as? [[String: Any]])?.first?["content"] as? String ?? ""
+            #expect(system.contains("filler") == clean)
+            #expect(system.contains("word for word") == !clean)
+        }
+    }
+
+    @Test func summarizeAgainSendsOnlyTextAndKeepsUserTags() async throws {
+        let store = TempRoot().store
+        var meeting = try ProcessorTests().meetingWithPieces(store, count: 1)
+        let first = FakeServer([
+            (200, chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"ahoj"}]}"#)),
+            (200, chat(#"{"title":"Porada","summary":"A.","decisions":[],"tasks":[],"tags":["api"]}"#)),
+        ])
+        meeting = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: first.client).run(meeting.id)
+        #expect(meeting.tags == ["api"])
+        // The user changes the tags and the template; the summary is written again.
+        try store.setTags(&meeting, ["Release", "release", " "])
+        #expect(meeting.tags == ["release"])
+        try store.setTemplate(&meeting, "retro")
+        let again = FakeServer([(200, chat(#"{"title":"Retro","summary":"B.","sections":[{"heading":"Dobře","items":["vše"]}],"decisions":[],"tasks":[],"tags":["jiné"]}"#, cost: 0.001))])
+        let result = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: again.client).summarizeAgain(meeting.id)
+        #expect(again.requests.count == 1)
+        let parts = (again.body(0)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]] ?? []
+        #expect(parts.count == 1 && (parts.first?["text"] as? String ?? "").contains("\"Retro\""))
+        #expect(result.state == .done && result.segments.count == 1 && result.tags == ["release"] && result.title == "Retro")
+        #expect(store.summary(meeting.id).contains("## Dobře"))
+        #expect(abs(result.costUSD - 0.021) < 1e-9)
+        // A failed summary leaves the meeting done, with its transcript.
+        let broken = FakeServer([(500, #"{"error":{"message":"down"}}"#)])
+        await #expect(throws: MeetingsError.self) { try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: broken.client).summarizeAgain(meeting.id) }
+        #expect(store.load(meeting.id)?.state == .done)
+    }
+}
+
+@Suite struct SearchTests {
+    func meeting(_ store: MeetingStore, title: String, tags: [String]?, summary: String, said: [String], tab: (String, String)? = nil) throws -> Meeting {
+        var meeting = try store.create(started: Date(timeIntervalSince1970: 1_800_000_000 + Double(Int.random(in: 0...100_000))))
+        meeting.title = title
+        meeting.tags = tags
+        meeting.state = .done
+        meeting.segments = said.enumerated().map { Segment(start: Double($0.offset * 10), speaker: $0.offset == 0 ? "Me" : "S1", text: $0.element) }
+        try store.save(meeting)
+        try store.writeSummary(meeting.id, summary)
+        if let tab { try store.addTab(&meeting, name: tab.0); try store.writeTab(meeting.id, tab.0, tab.1) }
+        return meeting
+    }
+
+    @Test func wordsAnywhereAccentsAndTags() throws {
+        let store = TempRoot().store
+        let a = try meeting(store, title: "Plán vydání", tags: ["release plán", "api"], summary: "## Summary\n\nVydání až po opravě.\n\n## Tasks\n\n- [ ] Me: přidat kontrolu idempotence\n",
+                            said: ["Dobré ráno", "Událost order-created přijde dvakrát"], tab: ("Odkazy", "- [MR](https://example.com/42)"))
+        let doc = MeetingSearch.document(a, store: store)
+        // Words on different lines, case and accents ignored.
+        #expect(MeetingSearch.match(doc, .init("PLAN dvakrat")) != nil)
+        #expect(MeetingSearch.match(doc, .init("idempotence"))?.place == "Summary")
+        #expect(MeetingSearch.match(doc, .init("idempotence"))?.snippet == "Me: přidat kontrolu idempotence")
+        #expect(MeetingSearch.match(doc, .init("order-created"))?.place == "Transcript")
+        #expect(MeetingSearch.match(doc, .init("example.com"))?.place == "Odkazy")
+        #expect(MeetingSearch.match(doc, .init("platby")) == nil)
+        // #tag from its start, spaces and accents left out; a tag-only search has no snippet.
+        #expect(MeetingSearch.match(doc, .init("#releaseplan")) != nil)
+        #expect(MeetingSearch.match(doc, .init("#rel")) != nil)
+        #expect(MeetingSearch.match(doc, .init("#pay")) == nil)
+        #expect(MeetingSearch.match(doc, .init("#api"))?.snippet == nil)
+        #expect(MeetingSearch.match(doc, .init("#api dvakrát")) != nil)
+        // A plain word may also be a tag.
+        #expect(MeetingSearch.match(doc, .init("api"))?.place == "Tags")
+    }
+
+    @Test func snippetCutsAroundTheWord() {
+        let text = String(repeating: "slovo ", count: 40) + "idempotence" + String(repeating: " další", count: 40)
+        let snippet = MeetingSearch.snippet(text, around: "idempotence")
+        #expect(snippet.hasPrefix("…") && snippet.hasSuffix("…") && snippet.contains("idempotence"))
+        #expect(snippet.count <= 113)
+    }
+
+    @Test func tagsAreCleanedAndProposedOnlyOnce() throws {
+        let store = TempRoot().store
+        var m = try meeting(store, title: "A", tags: nil, summary: "", said: ["x"])
+        try store.setTags(&m, [" #Release ", "release", "", "Platby  karty"])
+        #expect(store.load(m.id)?.tags == ["release", "platby karty"])
+        try store.setTags(&m, [])
+        #expect(store.load(m.id)?.tags == [])
+    }
+
+    @Test func similarByTitleTagsAndSummary() throws {
+        let store = TempRoot().store
+        let a = try meeting(store, title: "Platby kartou selhaly", tags: ["platby"], summary: "Selhalo dvanáct plateb kartou u banky.", said: ["x"])
+        let b = try meeting(store, title: "Platby: oprava", tags: ["platby"], summary: "Oprava plateb kartou u banky je hotová.", said: ["x"])
+        let c = try meeting(store, title: "Plán vydání", tags: ["release"], summary: "Vydání objednávek příští týden.", said: ["x"])
+        let docs = [a, b, c].map { MeetingSearch.document($0, store: store) }
+        let similar = MeetingSearch.similar(to: a.id, in: docs)
+        #expect(similar.map(\.id) == [b.id])
+        #expect(MeetingSearch.similar(to: "missing", in: docs).isEmpty)
+    }
+}
+
+@Suite struct AskTests {
+    func meetings(_ store: MeetingStore) throws -> [Meeting] {
+        let now = Date()
+        let s = SearchTests()
+        var a = try s.meeting(store, title: "Platby", tags: ["platby"], summary: "## Summary\n\nSelhaly platby kartou.\n", said: ["Banka vrací chybu 51", "Pošlu ID transakcí"])
+        var b = try s.meeting(store, title: "Vydání", tags: ["release"], summary: "## Summary\n\nVydání v pátek.\n", said: ["Vydáme v pátek", "Testy jsou hotové"])
+        var old = try s.meeting(store, title: "Starý plán", tags: ["release"], summary: "## Summary\n\nDávno.\n", said: ["Kdysi"])
+        a.started = now.addingTimeInterval(-3_600)
+        b.started = now.addingTimeInterval(-86_400)
+        old.started = now.addingTimeInterval(-40 * 86_400)
+        for m in [a, b, old] { try store.save(m) }
+        return [a, b, old]
+    }
+
+    @Test func scopeTagAndContext() throws {
+        let store = TempRoot().store
+        let all = try meetings(store)
+        #expect(MeetingAsk.meetings(all, scope: .days(7), tag: nil).map(\.title) == ["Platby", "Vydání"])
+        #expect(MeetingAsk.meetings(all, scope: .all, tag: "release").map(\.title) == ["Vydání", "Starý plán"])
+        #expect(MeetingAsk.meetings(all, scope: .meeting(all[2].id), tag: nil).map(\.title) == ["Starý plán"])
+        let docs = Dictionary(uniqueKeysWithValues: all.map { ($0.id, MeetingSearch.document($0, store: store)) })
+        let chosen = MeetingAsk.meetings(all, scope: .days(7), tag: nil)
+        // Summaries of all; transcripts best match first, those without a match after them.
+        let context = MeetingAsk.context(chosen, documents: docs, question: "Jakou chybu vrací banka?")
+        #expect(context.ids == [all[0].id, all[1].id])
+        #expect(context.text.contains("[1] ") && context.text.contains("Selhaly platby kartou.") && context.text.contains("Vydání v pátek."))
+        #expect(context.text.contains("Transcript of [1]:") && context.text.contains("chybu 51"))
+        #expect(context.text.contains("Transcript of [2]:"))
+        // The date is the local day.
+        #expect(context.text.contains("[1] " + MeetingAsk.day(all[0].started)))
+        #expect(MeetingAsk.prompt(question: "q", context: "", history: [], today: all[0].started).hasPrefix("Today is " + MeetingAsk.day(all[0].started)))
+        // One meeting always carries its transcript; a small budget cuts the list.
+        #expect(MeetingAsk.context([all[2]], documents: docs, question: "nic").text.contains("Transcript of [1]:"))
+        #expect(MeetingAsk.context(chosen, documents: docs, question: "x", budget: 120).ids.count == 1)
+    }
+
+    @Test func askSendsContextAndHistoryAndReadsSources() async throws {
+        let store = TempRoot().store
+        let all = try meetings(store)
+        let docs = Dictionary(uniqueKeysWithValues: all.map { ($0.id, MeetingSearch.document($0, store: store)) })
+        let context = MeetingAsk.context(Array(all.prefix(2)), documents: docs, question: "banka")
+        let server = FakeServer([(200, chat(#"{"answer":"Banka vrací chybu 51 [1]; vydání je v pátek [2, 9]."}"#, cost: 0.003))])
+        var settings = MeetingsSettings()
+        settings.summaryModel = "text/model"
+        let answer = try await MeetingAsk(client: server.client, settings: settings)
+            .ask("Co banka?", context: context, history: [.init(question: "Kdy vydání?", answer: "V pátek [2].")])
+        #expect(answer.sources.map(\.number) == [1, 2])
+        #expect(answer.sources.map(\.id) == [all[0].id, all[1].id])
+        #expect(server.body(0)["model"] as? String == "text/model")
+        let prompt = ((server.body(0)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        #expect(prompt.contains("Q: Kdy vydání?") && prompt.contains("Question: Co banka?") && prompt.contains("Selhaly platby"))
+        await #expect(throws: PaidFailure.self) {
+            try await MeetingAsk(client: FakeServer([(200, chat(#"{"text":"x"}"#))]).client, settings: settings).ask("?", context: context)
+        }
+    }
+
+    @Test func askCostsCountInMonthAndReport() throws {
+        let root = TempRoot()
+        let store = root.store
+        let log = AskLog(root: root.url)
+        #expect(log.entries().isEmpty)
+        try log.append(.init(date: Date(), model: "m", promptTokens: 10, completionTokens: 2, costUSD: 0.5))
+        try log.append(.init(date: Date(), model: "m", promptTokens: 10, completionTokens: 2, costUSD: 0.25))
+        try Data("not json\n".utf8).write(to: root.url.appending(path: "other.txt"))
+        #expect(log.entries().count == 2)
+        #expect(abs(store.monthCost() - 0.75) < 1e-9)
+        // The limit stops transcription when questions used it up.
+        let rows = CostReport.rows([], asks: log.entries(), grouping: .day, from: Date(), to: Date())
+        #expect(rows.count == 1 && rows[0].questions == 2 && abs(rows[0].cost - 0.75) < 1e-9 && rows[0].meetings == 0)
+        let totals = CostReport.totals([], asks: log.entries(), from: Date(), to: Date(), model: "other")
+        #expect(totals.questions == 0 && totals.cost == 0)
+        #expect(CostReport.models([], asks: log.entries()) == ["m"])
+        #expect(store.list().isEmpty)
+    }
+}
+
+@Suite struct LinkTests {
+    @Test func openTasksOfASummary() {
+        let summary = "## Tasks\n\n- [ ] Me: přidat kontrolu\n- [x] Jana: hotovo\n  - [ ] Jana: dopsat testy\n- [ ] bez vlastníka\n- [ ] Dlouhá věta s dvojtečkou daleko za začátkem, tedy ne vlastník: text\n- [ ] \n"
+        let tasks = SummaryTask.open(in: summary)
+        #expect(tasks.map(\.owner) == ["Me", "Jana", "", ""])
+        #expect(tasks.map(\.text) == ["přidat kontrolu", "dopsat testy", "bez vlastníka", "Dlouhá věta s dvojtečkou daleko za začátkem, tedy ne vlastník: text"])
+    }
+
+    @Test func summaryParagraphTakesTwoSentences() {
+        let summary = "## Summary\n\nPrvní věta. Druhá věta!\nTřetí věta.\n\n## Decisions\n\n- x\n"
+        #expect(summaryParagraph(summary) == "První věta. Druhá věta!")
+        #expect(summaryParagraph("## Summary\n\nBez tečky\n") == "Bez tečky")
+        #expect(summaryParagraph("## Summary\n\n—\n") == nil)
+        #expect(summaryParagraph("## Tasks\n\n- [ ] x\n") == nil)
+    }
+
+    @Test func factsParseAndPromptHasNotes() async throws {
+        let facts = try FactFinder.parse(#"""
+        {"facts":[{"note":"/Payments/Billing ","heading":"## Retries:","text":"Three tries.","reason":"Jana said so"},
+                  {"note":"payments/billing","heading":"Retries","text":"again"},
+                  {"note":"../etc","heading":"x","text":"y"},
+                  {"note":"payments/new thing","heading":"x","text":"y"},
+                  {"note":"payments/orders-api","heading":"Owner","text":""}]}
+        """#)
+        #expect(facts == [MeetingFact(note: "payments/billing", heading: "Retries", text: "Three tries.", reason: "Jana said so")])
+        #expect(facts[0].body == "## Retries\n\nThree tries.\n")
+        #expect(throws: MeetingsError.self) { try FactFinder.parse("{}") }
+        let prompt = FactFinder.prompt(summary: "S", transcript: "T", notes: [.init(id: "payments/billing", title: "Billing")])
+        #expect(prompt.contains("- payments/billing: Billing") && prompt.contains("Meeting summary:\nS"))
+        #expect(FactFinder.prompt(summary: "", transcript: "", notes: []).contains("(none yet)"))
+        // The call goes to the summary model with the meeting's transcript.
+        let store = TempRoot().store
+        let meeting = try SearchTests().meeting(store, title: "A", tags: nil, summary: "", said: ["Billing retries three times"])
+        let server = FakeServer([(200, chat(#"{"facts":[]}"#, cost: 0.002))])
+        let answer = try await FactFinder(client: server.client, settings: MeetingsSettings()).find(meeting, summary: "", notes: [])
+        #expect(answer.facts.isEmpty && answer.completion.cost == 0.002)
+        let text = ((server.body(0)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        #expect(text.contains("Billing retries three times"))
+    }
+
+    @Test func exportMarksAndCostStay() throws {
+        let store = TempRoot().store
+        var meeting = try store.create()
+        try store.markExport(&meeting, "worklog", at: Date(timeIntervalSince1970: 0))
+        try store.addCost(&meeting, 0.25)
+        let back = store.load(meeting.id)
+        #expect(back?.exports?["worklog"] == Date(timeIntervalSince1970: 0))
+        #expect(back?.costUSD == 0.25)
+    }
+}
+
+
+@Suite struct ReviewFixTests {
+    @Test func summarizeAgainRefusesAPartTranscribedMeeting() async throws {
+        let store = TempRoot().store
+        var meeting = try ProcessorTests().meetingWithPieces(store, count: 7)
+        meeting.segments = [Segment(start: 1, speaker: "Me", text: "ahoj")]
+        meeting.transcribedPieces = 6
+        meeting.state = .failed
+        meeting.failure = "limit"
+        try store.save(meeting)
+        let server = FakeServer([])
+        await #expect(throws: MeetingsError.notTranscribed) {
+            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).summarizeAgain(meeting.id)
+        }
+        #expect(server.requests.isEmpty)
+        #expect(store.load(meeting.id)?.state == .failed && store.load(meeting.id)?.failure == "limit")
+    }
+
+    @Test func unreadablePaidAnswerStillCosts() async throws {
+        let store = TempRoot().store
+        let meeting = try ProcessorTests().meetingWithPieces(store, count: 1)
+        let server = FakeServer([(200, chat("not json at all", cost: 0.04))])
+        await #expect(throws: PaidFailure.self) {
+            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
+        }
+        let back = store.load(meeting.id)
+        #expect(back?.state == .failed && abs((back?.costUSD ?? 0) - 0.04) < 1e-9)
+        #expect(back?.failure?.contains("JSON") == true)
+        let asked = FakeServer([(200, chat(#"{"x":1}"#, cost: 0.01))])
+        do {
+            _ = try await MeetingAsk(client: asked.client, settings: MeetingsSettings()).ask("?", context: ("", []))
+            Issue.record("no error")
+        } catch {
+            #expect(PaidFailure.cost(of: error) == 0.01)
+        }
+    }
 }

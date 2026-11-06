@@ -23,7 +23,7 @@ public struct MeetingStore: Sendable {
     // MARK: Meetings
 
     /// A new meeting folder for a recording that starts now.
-    public func create(started: Date = Date()) throws -> Meeting {
+    public func create(started: Date = Date(), template: String? = nil) throws -> Meeting {
         let day = Self.dayFormatter.string(from: started)
         let base = "\(day)/\(Self.timeFormatter.string(from: started))"
         var id = base
@@ -33,7 +33,8 @@ public struct MeetingStore: Sendable {
             n += 1
         }
         try FileManager.default.createDirectory(at: audioFolder(id), withIntermediateDirectories: true)
-        let meeting = Meeting(id: id, started: started)
+        var meeting = Meeting(id: id, started: started)
+        meeting.template = template
         try save(meeting)
         return meeting
     }
@@ -109,6 +110,34 @@ public struct MeetingStore: Sendable {
                 }
             }
         }
+    }
+
+    /// M22: the meeting's template (the summary is written again by the caller).
+    public func setTemplate(_ meeting: inout Meeting, _ id: String) throws {
+        meeting.template = id
+        try save(meeting)
+    }
+
+    /// M23: the meeting's tags, cleaned, without repeats; an empty list stays empty.
+    public func setTags(_ meeting: inout Meeting, _ tags: [String]) throws {
+        var kept: [String] = []
+        for tag in tags.map(Meeting.cleanTag) where !tag.isEmpty && !kept.contains(tag) { kept.append(tag) }
+        meeting.tags = kept
+        try save(meeting)
+    }
+
+    /// M25: when the host took the meeting somewhere (`worklog`, `notebook`, `knowledge`).
+    public func markExport(_ meeting: inout Meeting, _ place: String, at date: Date = Date()) throws {
+        var exports = meeting.exports ?? [:]
+        exports[place] = date
+        meeting.exports = exports
+        try save(meeting)
+    }
+
+    /// M25: a cost of a call made for the meeting after its run (facts for the knowledge base).
+    public func addCost(_ meeting: inout Meeting, _ cost: Double) throws {
+        meeting.costUSD += cost
+        try save(meeting)
     }
 
     // MARK: Own tabs (M17)
@@ -220,10 +249,13 @@ public struct MeetingStore: Sendable {
         return count
     }
 
-    /// What OpenRouter cost in the calendar month of `date`.
+    /// What OpenRouter cost in the calendar month of `date`: the meetings' calls and the
+    /// questions (M24).
     public func monthCost(of date: Date = Date()) -> Double {
         let calendar = Calendar.current
-        return list().filter { calendar.isDate($0.started, equalTo: date, toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+        let meetings = list().filter { calendar.isDate($0.started, equalTo: date, toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+        let asks = AskLog(root: root).entries().filter { calendar.isDate($0.date, equalTo: date, toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+        return meetings + asks
     }
 
     // MARK: Formats
@@ -245,6 +277,14 @@ public struct MeetingStore: Sendable {
     static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }()
+
+    /// One JSON line (`.asks.jsonl`).
+    static let encoderLine: JSONEncoder = {
+        let e = JSONEncoder()
+        e.outputFormatting = [.sortedKeys]
         e.dateEncodingStrategy = .iso8601
         return e
     }()
@@ -305,6 +345,22 @@ public struct TimeSpan: Codable, Equatable, Sendable {
     }
 }
 
+/// A call OpenRouter answered (and charged) whose answer could not be read: the cost still
+/// counts (review 2026-11-06).
+public struct PaidFailure: Error, LocalizedError {
+    public let cost: Double
+    public let underlying: Error
+    public var errorDescription: String? { (underlying as? LocalizedError)?.errorDescription ?? underlying.localizedDescription }
+
+    /// Runs `parse`; a failure carries the completion's cost.
+    public static func parse<T>(_ completion: Completion, _ parse: () throws -> T) throws -> T {
+        do { return try parse() } catch { throw PaidFailure(cost: completion.cost, underlying: error) }
+    }
+
+    /// The cost a thrown error carries; 0 for others.
+    public static func cost(of error: Error) -> Double { (error as? PaidFailure)?.cost ?? 0 }
+}
+
 public enum MeetingsError: Error, LocalizedError, Equatable {
     case badTabName(String)
     case noKey
@@ -312,6 +368,8 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
     case http(Int, String)
     case badAnswer(String)
     case noAudio
+    case noTranscript
+    case notTranscribed
     case busy
 
     public var errorDescription: String? {
@@ -323,6 +381,8 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
         case .http(let code, let message): "OpenRouter answered \(code): \(message)"
         case .badAnswer(let detail): "The model's answer could not be read: \(detail)"
         case .noAudio: "This meeting has no audio left to transcribe."
+        case .noTranscript: "This meeting has no transcript to summarize yet."
+        case .notTranscribed: "Part of this meeting is not transcribed yet. Try Again first, then the summary is written from the whole transcript."
         case .busy: "This meeting is being transcribed already (here or in the other Meetings app)."
         }
     }

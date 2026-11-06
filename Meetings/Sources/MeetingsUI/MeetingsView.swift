@@ -59,6 +59,10 @@ public struct MeetingsView: View {
         .toolbar {
             ToolbarItem { RecordButton(model: model) }
             ToolbarItem {
+                Button("Ask…", systemImage: "bubble.left.and.text.bubble.right") { model.openAsk() }
+                    .help("Ask a question about your meetings: what was decided, who does what")
+            }
+            ToolbarItem {
                 Button("Costs…", systemImage: "chart.bar") { model.showCosts = true }
                     .help("What OpenRouter charged by day, week or month, with filters and Copy CSV")
             }
@@ -70,6 +74,9 @@ public struct MeetingsView: View {
         }
         .sheet(isPresented: $model.showSettings) { MeetingsSettingsView(model: model) }
         .sheet(isPresented: $model.showCosts) { CostsView(model: model) }
+        .sheet(isPresented: $model.showAsk) { AskView(model: model) }
+        .sheet(isPresented: $model.tasksRequest) { TasksToNotebookSheet(model: model) }
+        .sheet(isPresented: $model.factsRequest) { FactsSheet(model: model) }
         .sheet(item: $model.tabNameRequest) { request in TabNameSheet(model: model, old: request.old) }
         .sheet(isPresented: $model.renameSpeakersRequest) { RenameSpeakersSheet(model: model) }
         .confirmationDialog("Move this meeting to the Trash?", isPresented: Binding(get: { model.trashRequest != nil }, set: { if !$0 { model.trashRequest = nil } })) {
@@ -161,11 +168,13 @@ struct MeetingList: View {
     @Bindable var model: MeetingsModel
 
     var body: some View {
+        let days = model.days
         List(selection: Binding(get: { model.selectedID }, set: { model.select($0) })) {
-            ForEach(model.days, id: \.day) { day in
+            ForEach(days, id: \.day) { day in
                 Section(day.day.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
                     ForEach(day.meetings) { meeting in
-                        MeetingRow(meeting: meeting, recording: meeting.id == model.recordingID, busy: model.processing.contains(meeting.id))
+                        MeetingRow(meeting: meeting, recording: meeting.id == model.recordingID, busy: model.processing.contains(meeting.id),
+                                   hit: model.hit(meeting.id))
                             .tag(meeting.id)
                             .contextMenu {
                                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.folder(meeting.id)]) }
@@ -180,8 +189,11 @@ struct MeetingList: View {
             if model.meetings.isEmpty {
                 ContentUnavailableView("No meetings yet", systemImage: "waveform",
                                        description: Text("Record starts a recording of the microphone and the sound of the Mac."))
+            } else if days.isEmpty {
+                ContentUnavailableView.search(text: model.searchText)
             }
         }
+        .safeAreaInset(edge: .top) { SearchBar(model: model) }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Text("This month: " + String(format: "$%.2f", model.monthCost) + " of " + String(format: "$%.0f", model.settings.monthlyLimitUSD))
@@ -194,10 +206,49 @@ struct MeetingList: View {
     }
 }
 
+/// M23: the search field over all meetings and the tag menu.
+struct SearchBar: View {
+    @Bindable var model: MeetingsModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search meetings", text: $model.searchText)
+                    .textFieldStyle(.plain)
+                if !model.searchText.isEmpty {
+                    Button("Clear", systemImage: "xmark.circle.fill") { model.searchText = "" }
+                        .labelStyle(.iconOnly).buttonStyle(.borderless).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+            .help("Looks in titles, tags, summaries, transcripts and your tabs; #tag shows the meetings with that tag")
+            let tags = model.allTags
+            Menu {
+                if tags.isEmpty { Text("No tags yet") }
+                ForEach(tags, id: \.tag) { item in
+                    Button("#\(item.tag) (\(item.count))") { model.filter(tag: item.tag) }
+                }
+            } label: {
+                Label("Tags", systemImage: "tag")
+            }
+            .menuStyle(.borderlessButton)
+            .labelStyle(.iconOnly)
+            .fixedSize()
+            .help("Show the meetings with a tag")
+        }
+        .padding(8)
+        .background(.bar)
+    }
+}
+
 struct MeetingRow: View {
     let meeting: Meeting
     let recording: Bool
     let busy: Bool
+    var hit: MeetingSearch.Hit?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -210,6 +261,17 @@ struct MeetingRow: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+            if let snippet = hit?.snippet {
+                (Text((hit?.place ?? "") + ": ").bold() + Text(snippet))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else if !meeting.tagList.isEmpty {
+                Text(meeting.tagList.map { "#" + $0 }.joined(separator: " "))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
         }
         .padding(.vertical, 2)
     }
@@ -260,17 +322,41 @@ struct MeetingDetail: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                TagLine(model: model, meeting: meeting)
             }
             Spacer()
+            SimilarMenu(model: model, meeting: meeting)
+            TemplateMenu(model: model, meeting: meeting)
             if meeting.state == .failed, !model.processing.contains(meeting.id) {
                 Button("Try Again") { model.process(meeting.id, byUser: true) }
                     .disabled(!model.hasKey || meeting.audioTrashed)
             }
             Menu {
+                Button("Ask About This Meeting…") { model.openAsk(meetingID: meeting.id) }
+                    .disabled(meeting.segments.isEmpty)
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
                     .disabled(meeting.speakerKeys.isEmpty)
+                Button("Summarize Again") { model.summarizeAgain(meeting.id) }
+                    .disabled(!model.hasKey || meeting.segments.isEmpty || meeting.state != .done || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
+                    .help("Write the summary again from the transcript (one text call, no audio)")
                 Button("Transcribe Again") { model.process(meeting.id, restart: true, byUser: true) }
                     .disabled(!model.hasKey || meeting.audioTrashed || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
+                if !model.links.isEmpty {
+                    Divider()
+                    let done = meeting.state == .done
+                    if model.links.addTasks != nil {
+                        Button("Add Tasks to Notebook…") { model.tasksRequest = true }
+                            .disabled(!done)
+                    }
+                    if model.links.addToWorkLog != nil {
+                        Button(meeting.exports?["worklog"] == nil ? "Add to Work Log" : "Add to Work Log Again") { Task { await model.addToWorkLog() } }
+                            .disabled(!done)
+                    }
+                    if model.links.propose != nil {
+                        Button("Propose to Knowledge…") { model.factsRequest = true }
+                            .disabled(!done || !model.hasKey || model.processing.contains(meeting.id))
+                    }
+                }
                 Divider()
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.folder(meeting.id)]) }
                 Button("Move to Trash…", role: .destructive) { model.trashRequest = meeting.id }
@@ -326,6 +412,104 @@ struct MeetingDetail: View {
         }
     }
 
+}
+
+/// M23: the meeting's tags (a click shows the meetings with it) and Edit Tags….
+struct TagLine: View {
+    let model: MeetingsModel
+    let meeting: Meeting
+    @State private var editing = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(meeting.tagList, id: \.self) { tag in
+                Button("#" + tag) { model.filter(tag: tag) }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(.quaternary.opacity(0.6), in: Capsule())
+                    .help("Show the meetings tagged \(tag)")
+            }
+            Button(meeting.tagList.isEmpty ? "Add Tags…" : "Edit…") { editing = true }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .help("Tags of this meeting, for search; the summary proposes some when it has none")
+                .popover(isPresented: $editing) { TagEditor(model: model, tags: meeting.tagList) }
+        }
+    }
+}
+
+struct TagEditor: View {
+    let model: MeetingsModel
+    let tags: [String]
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tags").font(.headline)
+            TextField("release, payments", text: $text)
+                .frame(width: 280)
+                .onSubmit(save)
+            Text("Separated by commas. An empty field removes them.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Save", action: save).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(14)
+        .onAppear { text = tags.joined(separator: ", ") }
+    }
+
+    private func save() {
+        model.setTags(text.split(separator: ",").map(String.init))
+        dismiss()
+    }
+}
+
+/// M24: the meetings most like this one, by the words of title, tags and summary (local).
+struct SimilarMenu: View {
+    let model: MeetingsModel
+    let meeting: Meeting
+
+    var body: some View {
+        let similar = model.similar(to: meeting.id)
+        Menu {
+            ForEach(similar) { other in
+                Button("\(other.displayTitle) — \(other.started.formatted(date: .abbreviated, time: .omitted))") { model.select(other.id) }
+            }
+        } label: {
+            Label("Similar", systemImage: "square.on.square")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(similar.isEmpty)
+        .help(similar.isEmpty ? "No meeting with a similar title, tags or summary" : "Meetings with a similar title, tags or summary")
+    }
+}
+
+/// M22: the meeting's template; on a done meeting a change writes the summary again.
+struct TemplateMenu: View {
+    let model: MeetingsModel
+    let meeting: Meeting
+
+    var body: some View {
+        let current = model.settings.template(meeting.template)
+        Menu {
+            Picker("Template", selection: Binding(get: { current.id }, set: { model.setTemplate($0) })) {
+                ForEach(model.settings.templates) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label(current.name, systemImage: "rectangle.grid.1x2")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(model.processing.contains(meeting.id))
+        .help("What kind of meeting it is: the summary lists that kind's sections. On a done meeting a change writes the summary again (one text call, no audio)")
+    }
 }
 
 /// Summary, Transcript, then the own tabs; right-click renames or removes an own tab, + adds one.

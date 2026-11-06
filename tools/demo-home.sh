@@ -1309,22 +1309,22 @@ done
 # transcript and an own tab; no audio (audioUntil far ahead, so nothing goes to the Trash).
 MDAY="$(date +%Y-%m-%d)"
 UDAY="$(date -u +%Y-%m-%d)"
-meeting() { # folder (HHmm), UTC start (HH:MM), seconds, title, cost, tabs (JSON list), segments (JSON list)
+meeting() { # folder (HHmm), UTC start (HH:MM), seconds, title, cost, tabs (JSON list), segments (JSON list), tags (JSON list)
     local dir="$DEMO/Meetings/$MDAY/$1"
     mkdir -p "$dir/tabs"
-    printf '{"id":"%s","title":"%s","started":"%sT%s:00Z","duration":%s,"state":"done","model":"google/gemini-2.5-flash-lite","costUSD":%s,"speakers":{"S1":"Jana"},"segments":%s,"transcribedChunks":1,"tabs":%s,"audioUntil":"2099-01-01T00:00:00Z","audioTrashed":false}\n' \
-        "$MDAY/$1" "$4" "$UDAY" "$2" "$3" "$5" "$7" "$6" > "$dir/meeting.json"
+    printf '{"id":"%s","title":"%s","started":"%sT%s:00Z","duration":%s,"state":"done","model":"google/gemini-2.5-flash-lite","costUSD":%s,"speakers":{"S1":"Jana"},"segments":%s,"transcribedChunks":1,"tabs":%s,"tags":%s,"audioUntil":"2099-01-01T00:00:00Z","audioTrashed":false}\n' \
+        "$MDAY/$1" "$4" "$UDAY" "$2" "$3" "$5" "$7" "$6" "$8" > "$dir/meeting.json"
 }
 meeting 0930 08:30 2520 "Plán vydání objednávek" 0.028 '["Odkazy"]' '[
  {"start":4,"speaker":"Me","text":"Dobré ráno, projdeme si plán vydání na příští týden."},
  {"start":11,"speaker":"S1","text":"Ráno. Opakování neúspěšné publikace už je hotové, chybí jen testy."},
  {"start":25,"speaker":"S2","text":"Na stagingu vidím, že událost order-created občas přijde dvakrát."},
  {"start":38,"speaker":"Me","text":"To musíme vyřešit před vydáním. Přidám kontrolu idempotence."},
- {"start":52,"speaker":"S1","text":"Dobře, já dopíšu testy do čtvrtka."}]'
+ {"start":52,"speaker":"S1","text":"Dobře, já dopíšu testy do čtvrtka."}]' '["vydání","objednávky"]'
 meeting 1400 13:00 1260 "Platby: chyby při stržení" 0.012 '[]' '[
  {"start":3,"speaker":"S1","text":"Včera selhalo dvanáct plateb kartou, všechny u jedné banky."},
  {"start":15,"speaker":"Me","text":"Máme z toho logy? Pošli mi prosím ID transakcí."},
- {"start":27,"speaker":"S1","text":"Pošlu je hned po poradě."}]'
+ {"start":27,"speaker":"S1","text":"Pošlu je hned po poradě."}]' '["platby"]'
 file "$DEMO/Meetings/$MDAY/0930/summary.md" <<'EOF'
 ## Summary
 

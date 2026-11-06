@@ -210,6 +210,17 @@ final class WorkLogModel {
         }
     }
 
+    /// Meetings → Add to Work Log (docs/design/meetings.md, M25): a `#meeting` line at the
+    /// meeting's start, with its summary.
+    func addMeeting(_ text: String, at date: Date, summary: String?) throws(KnowledgeBase.Failure) {
+        guard let worklog else {
+            throw KnowledgeBase.Failure(message: "The work log lives in a knowledge base. Create a base on the Knowledge screen first.")
+        }
+        let (day, time) = KnowledgeWorkLog.stamp(date)
+        let added = try worklog.add(text, kind: "meeting", day: day, time: time, summary: summary)
+        saved(added.path, added.hash, in: worklog)
+    }
+
     /// Again Now: the same kind and text, now (back to something you left).
     func again(_ entry: KnowledgeWorkLog.Entry) {
         add(entry.text, kind: entry.kind)

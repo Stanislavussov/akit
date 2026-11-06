@@ -38,6 +38,40 @@ public final class MeetingsModel {
     public private(set) var loadingModels = false
     public var problem: String?
     public var notice: String?
+    /// M23: the list's search field (`#tag` words filter by tag) and each meeting's searchable text.
+    public var searchText = ""
+    public private(set) var documents: [String: MeetingSearch.Document] = [:]
+    /// M24: the questions' costs, and the Ask chat.
+    public private(set) var askEntries: [AskLog.Entry] = []
+    public var showAsk = false
+    public var askScope: MeetingAsk.Scope = .days(30)
+    public var askTag: String?
+    public private(set) var askTurns: [AskTurn] = []
+    public private(set) var asking = false
+
+    /// M25: what the host app does with a meeting (AKit: Notebook, Work Log, knowledge base).
+    public var links: MeetingsLinks = .none
+    public var tasksRequest = false
+    public var factsRequest = false
+    public private(set) var facts: [MeetingFact] = []
+    public private(set) var findingFacts = false
+    public private(set) var factsProblem: String?
+
+    public struct AskTurn: Identifiable, Equatable {
+        public let id = UUID()
+        public var question: String
+        public var scope: String
+        public var answer: String?
+        /// `[n]` → meeting id of the marks the answer uses.
+        public var sources: [Int: String] = [:]
+        public var problem: String?
+        public var cost: Double = 0
+        public var meetings = 0
+    }
+    @ObservationIgnored private var indexGeneration = 0
+    /// Meetings read on their own since the last full read began: a full read that lands later
+    /// keeps their newer documents.
+    @ObservationIgnored private var readAlone: Set<String> = []
     /// Sheets and dialogs the view shows.
     public var showSettings = false
     public var showCosts = false
@@ -74,13 +108,42 @@ public final class MeetingsModel {
     /// The live waves while it records (read by the screen several times a second).
     public var levels: (mic: [Float], system: [Float]) { recorder?.levels ?? ([], []) }
     public var selected: Meeting? { meetings.first { $0.id == selectedID } }
-    public var monthCost: Double { meetings.filter { Calendar.current.isDate($0.started, equalTo: Date(), toGranularity: .month) }.reduce(0) { $0 + $1.costUSD } }
+    public var monthCost: Double {
+        let calendar = Calendar.current
+        return meetings.filter { calendar.isDate($0.started, equalTo: Date(), toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+            + askEntries.filter { calendar.isDate($0.date, equalTo: Date(), toGranularity: .month) }.reduce(0) { $0 + $1.costUSD }
+    }
 
-    /// The meetings by day, newest day first.
+    /// The meetings by day, newest day first; while the search field has text, only the ones
+    /// that match (a meeting not indexed yet shows until its text is read).
     public var days: [(day: Date, meetings: [Meeting])] {
         let calendar = Calendar.current
-        let groups = Dictionary(grouping: meetings) { calendar.startOfDay(for: $0.started) }
+        let query = MeetingSearch.Query(searchText)
+        let shown = query.isEmpty ? meetings : meetings.filter { meeting in
+            documents[meeting.id].map { MeetingSearch.match($0, query) != nil } ?? true
+        }
+        let groups = Dictionary(grouping: shown) { calendar.startOfDay(for: $0.started) }
         return groups.keys.sorted(by: >).map { ($0, groups[$0]!.sorted { $0.started > $1.started }) }
+    }
+
+    /// Where a meeting matched the search field, for its row.
+    public func hit(_ id: String) -> MeetingSearch.Hit? {
+        let query = MeetingSearch.Query(searchText)
+        guard !query.isEmpty, let document = documents[id] else { return nil }
+        return MeetingSearch.match(document, query)
+    }
+
+    /// Every tag with how many meetings have it, most used first.
+    public var allTags: [(tag: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for meeting in meetings { for tag in meeting.tagList { counts[tag, default: 0] += 1 } }
+        return counts.map { ($0.key, $0.value) }.sorted { $0.count != $1.count ? $0.count > $1.count : $0.tag < $1.tag }
+    }
+
+    /// The search field with only this tag (a click on a tag), or without it again.
+    public func filter(tag: String) {
+        let word = "#" + tag.replacingOccurrences(of: " ", with: "")
+        searchText = searchText == word ? "" : word
     }
 
     // MARK: Loading
@@ -122,9 +185,34 @@ public final class MeetingsModel {
 
     public func refresh() {
         meetings = store.list()
+        askEntries = AskLog(root: settings.root).entries()
         if let id = selectedID, !meetings.contains(where: { $0.id == id }) {
             selectedID = nil
             page = nil
+        }
+        reindex()
+    }
+
+    /// Reads every meeting's text for search off the main thread; a newer call wins.
+    func reindex(only id: String? = nil) {
+        if let id { readAlone.insert(id) } else {
+            indexGeneration += 1
+            readAlone = []
+        }
+        let generation = indexGeneration
+        let store = self.store
+        let chosen = id.map { id in meetings.filter { $0.id == id } } ?? meetings
+        Task {
+            let found = await Task.detached { chosen.map { MeetingSearch.document($0, store: store) } }.value
+            // A newer full read replaces an older one; one meeting's read always lands.
+            guard id != nil || generation == indexGeneration else { return }
+            if id == nil {
+                var fresh = Dictionary(found.map { ($0.id, $0) }) { a, _ in a }
+                for kept in readAlone { fresh[kept] = documents[kept] ?? fresh[kept] }
+                documents = fresh
+            } else {
+                for document in found { documents[document.id] = document }
+            }
         }
     }
 
@@ -135,7 +223,7 @@ public final class MeetingsModel {
         starting = true
         defer { starting = false }
         do {
-            let meeting = try store.create()
+            let meeting = try store.create(template: settings.defaultTemplate)
             // The lock right after the meeting exists, so the other host never takes it for a crash.
             let held = MeetingLock.take(Recorder.lockFile(store.audioFolder(meeting.id)))
             let recorder = Recorder(folder: store.audioFolder(meeting.id), echoCancellation: settings.echoCancellation, lock: held) { [weak self] text in
@@ -222,6 +310,257 @@ public final class MeetingsModel {
         }
     }
 
+    /// M22: only the summary again (a new template): one text call over the transcript.
+    public func summarizeAgain(_ id: String) {
+        guard !processing.contains(id) else { return }
+        guard let key = keyStore.read() else {
+            problem = MeetingsError.noKey.errorDescription
+            return
+        }
+        processing.insert(id)
+        let processor = MeetingProcessor(store: store, settings: settings, client: OpenRouterClient(key: key, transport: transport)) { [weak self] meeting in
+            Task { @MainActor in self?.updated(meeting) }
+        }
+        Task {
+            do {
+                _ = try await processor.summarizeAgain(id)
+            } catch MeetingsError.busy {
+                notice = MeetingsError.busy.errorDescription
+            } catch {
+                problem = "The summary was not written again: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+            processing.remove(id)
+            refresh()
+            if selectedID == id { reloadPage() }
+        }
+    }
+
+    /// M22: a new template for the selected meeting; a done one gets its summary written again.
+    public func setTemplate(_ templateID: String) {
+        guard var meeting = fresh, meeting.template != templateID else { return }
+        do {
+            try store.setTemplate(&meeting, templateID)
+            updated(meeting)
+            if meeting.state == .done, !meeting.segments.isEmpty, hasKey {
+                notice = "Writing the summary again as \(settings.template(templateID).name)…"
+                summarizeAgain(meeting.id)
+            }
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    /// M23: the selected meeting's tags.
+    public func setTags(_ tags: [String]) {
+        guard var meeting = fresh else { return }
+        do {
+            try store.setTags(&meeting, tags)
+            updated(meeting)
+            reindex(only: meeting.id)
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    // MARK: Links to the host app (M25)
+
+    /// The selected meeting's open tasks, from its summary.
+    public var selectedTasks: [SummaryTask] {
+        guard let meeting = selected else { return [] }
+        return SummaryTask.open(in: store.summary(meeting.id))
+    }
+
+    /// Whether a task is the user's own (`Me` or the name given to Me).
+    public func isMine(_ task: SummaryTask) -> Bool {
+        task.owner == "Me" || (selected.map { task.owner == $0.speakerName("Me") } ?? false)
+    }
+
+    /// Add Tasks to Notebook…: each task as `- [ ] task — title, date` (an owner other than Me
+    /// stays in front) under today's heading of `tab`.
+    public func addTasks(_ tasks: [SummaryTask], to tab: String) async -> Bool {
+        guard let addTasks = links.addTasks, var meeting = fresh, !tasks.isEmpty else { return false }
+        let source = "\(meeting.displayTitle), \(meeting.started.formatted(.dateTime.day().month(.defaultDigits)))"
+        let lines = tasks.map { task in (isMine(task) || task.owner.isEmpty ? "" : task.owner + ": ") + task.text + " — " + source }
+        do {
+            try await addTasks(lines, tab)
+            meeting = store.load(meeting.id) ?? meeting
+            try? store.markExport(&meeting, "notebook")
+            updated(meeting)
+            notice = "Added \(lines.count) task\(lines.count == 1 ? "" : "s") to the Notebook tab \(tab)."
+            MeetingsLog.info(.ui, "\(meeting.id): \(lines.count) tasks to the Notebook")
+            return true
+        } catch {
+            problem = "Could not add the tasks to the Notebook: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            return false
+        }
+    }
+
+    /// Add to Work Log: one `#meeting` line at the meeting's start.
+    public func addToWorkLog() async {
+        guard let addToWorkLog = links.addToWorkLog, var meeting = fresh else { return }
+        let line = MeetingsLinks.WorkLogLine(started: meeting.started, title: meeting.displayTitle, summary: summaryParagraph(store.summary(meeting.id)))
+        do {
+            try await addToWorkLog(line)
+            meeting = store.load(meeting.id) ?? meeting
+            try? store.markExport(&meeting, "worklog")
+            updated(meeting)
+            notice = "Added to the Work Log at \(meeting.started.formatted(date: .omitted, time: .shortened))."
+            MeetingsLog.info(.ui, "\(meeting.id): to the Work Log")
+        } catch {
+            problem = "Could not add the meeting to the Work Log: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
+    }
+
+    /// Propose to Knowledge…: one text call over the summary and the transcript with the base's
+    /// notes; its cost goes to the meeting.
+    public func findFacts() async {
+        guard let knowledgeNotes = links.knowledgeNotes, let meeting = fresh, !findingFacts else { return }
+        facts = []
+        factsProblem = nil
+        guard let key = keyStore.read() else {
+            factsProblem = MeetingsError.noKey.errorDescription
+            return
+        }
+        guard monthCost < settings.monthlyLimitUSD else {
+            factsProblem = MeetingsError.monthlyLimit(settings.monthlyLimitUSD).errorDescription
+            return
+        }
+        findingFacts = true
+        defer { findingFacts = false }
+        do {
+            let notes = try await knowledgeNotes()
+            let finder = FactFinder(client: OpenRouterClient(key: key, transport: transport), settings: settings)
+            let answer = try await finder.find(meeting, summary: store.summary(meeting.id), notes: notes)
+            if var current = store.load(meeting.id) {
+                try? store.addCost(&current, answer.completion.cost)
+                updated(current)
+            }
+            facts = answer.facts
+            if facts.isEmpty { factsProblem = "The model found no facts about systems in this meeting." }
+            MeetingsLog.info(.ui, "\(meeting.id): \(facts.count) facts for the knowledge base (\(notes.count) notes known), $\(answer.completion.cost)")
+        } catch {
+            if PaidFailure.cost(of: error) > 0, var current = store.load(meeting.id) {
+                try? store.addCost(&current, PaidFailure.cost(of: error))
+                updated(current)
+            }
+            factsProblem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// The chosen facts as proposals in the base's Inbox.
+    public func propose(_ chosen: [MeetingFact]) async -> Bool {
+        guard let propose = links.propose, var meeting = fresh, !chosen.isEmpty else { return false }
+        let source = "From the meeting “\(meeting.displayTitle)” of \(meeting.started.formatted(date: .abbreviated, time: .shortened))"
+        do {
+            let result = try await propose(chosen, source)
+            meeting = store.load(meeting.id) ?? meeting
+            if result.written > 0 { try? store.markExport(&meeting, "knowledge") }
+            updated(meeting)
+            if result.refused.isEmpty {
+                notice = "\(result.written) proposal\(result.written == 1 ? "" : "s") wait in the knowledge base's Inbox (Knowledge → Inbox)."
+                return true
+            }
+            factsProblem = "\(result.written) went to the Inbox. Refused: " + result.refused.joined(separator: "; ")
+            return false
+        } catch {
+            factsProblem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return false
+        }
+    }
+
+    // MARK: Ask (M24)
+
+    /// Ask… from the toolbar (`meetingID` nil) or About This Meeting….
+    public func openAsk(meetingID: String? = nil) {
+        if let meetingID {
+            if askScope != .meeting(meetingID) { askTurns = [] }
+            askScope = .meeting(meetingID)
+        } else if case .meeting = askScope {
+            askScope = .days(30)
+            askTurns = []
+        }
+        showAsk = true
+    }
+
+    public func newChat() { askTurns = [] }
+
+    /// One question over the meetings of the scope; earlier answers of the chat go with it.
+    public func ask(_ question: String) async {
+        let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, !asking else { return }
+        let chosen = MeetingAsk.meetings(meetings, scope: askScope, tag: askTag)
+        var turn = AskTurn(question: question, scope: askScopeTitle)
+        turn.meetings = chosen.count
+        let history = askTurns.compactMap { turn in turn.answer.map { MeetingAsk.Turn(question: turn.question, answer: $0) } }
+        guard let key = keyStore.read() else {
+            turn.problem = MeetingsError.noKey.errorDescription
+            askTurns.append(turn)
+            return
+        }
+        guard !chosen.isEmpty else {
+            turn.problem = "No transcribed meeting in this scope. Choose a longer time or another tag."
+            askTurns.append(turn)
+            return
+        }
+        guard monthCost < settings.monthlyLimitUSD else {
+            turn.problem = MeetingsError.monthlyLimit(settings.monthlyLimitUSD).errorDescription
+            askTurns.append(turn)
+            return
+        }
+        askTurns.append(turn)
+        asking = true
+        defer { asking = false }
+        let turnID = turn.id
+        let store = self.store
+        let known = documents
+        let context = await Task.detached {
+            var documents = known
+            for meeting in chosen where documents[meeting.id] == nil { documents[meeting.id] = MeetingSearch.document(meeting, store: store) }
+            return MeetingAsk.context(chosen, documents: documents, question: question)
+        }.value
+        let asker = MeetingAsk(client: OpenRouterClient(key: key, transport: transport), settings: settings)
+        MeetingsLog.info(.ask, "ask: \(chosen.count) meetings in scope, \(context.ids.count) sent, \(context.text.count) chars, \(history.count) earlier turns")
+        do {
+            let answer = try await asker.ask(question, context: context, history: history)
+            let entry = AskLog.Entry(date: Date(), model: settings.summaryModel ?? settings.model, promptTokens: answer.completion.promptTokens,
+                                     completionTokens: answer.completion.completionTokens, costUSD: answer.completion.cost)
+            do { try AskLog(root: settings.root).append(entry) } catch { MeetingsLog.error(.ask, "ask: cost not logged: \(error.localizedDescription)") }
+            askEntries.append(entry)
+            MeetingsLog.info(.ask, "ask: answered, \(answer.sources.count) meetings cited, $\(answer.completion.cost)")
+            // New Chat while it waited: the cost is kept, the answer has no turn to go to.
+            guard let index = askTurns.firstIndex(where: { $0.id == turnID }) else { return }
+            askTurns[index].answer = answer.text
+            askTurns[index].sources = Dictionary(answer.sources.map { ($0.number, $0.id) }) { a, _ in a }
+            askTurns[index].cost = answer.completion.cost
+        } catch {
+            if PaidFailure.cost(of: error) > 0 {
+                let entry = AskLog.Entry(date: Date(), model: settings.summaryModel ?? settings.model, promptTokens: 0, completionTokens: 0,
+                                         costUSD: PaidFailure.cost(of: error))
+                try? AskLog(root: settings.root).append(entry)
+                askEntries.append(entry)
+            }
+            let text = if case MeetingsError.http(401, _) = error {
+                (MeetingsError.http(401, "").errorDescription ?? "") + " " + KeyStore.shape(key)
+            } else {
+                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+            MeetingsLog.error(.ask, "ask: \(text)")
+            if let index = askTurns.firstIndex(where: { $0.id == turnID }) { askTurns[index].problem = text }
+        }
+    }
+
+    public var askScopeTitle: String {
+        var title = askScope.title
+        if case .meeting(let id) = askScope, let meeting = meetings.first(where: { $0.id == id }) { title = meeting.displayTitle }
+        if let askTag { title += " · #" + askTag }
+        return title
+    }
+
+    /// M24: the meetings most like this one (local, no model).
+    public func similar(to id: String) -> [Meeting] {
+        MeetingSearch.similar(to: id, in: Array(documents.values)).compactMap { hit in meetings.first { $0.id == hit.id } }
+    }
+
     private func updated(_ meeting: Meeting) {
         if let index = meetings.firstIndex(where: { $0.id == meeting.id }) { meetings[index] = meeting }
     }
@@ -282,6 +621,7 @@ public final class MeetingsModel {
             } else if meeting.tabs.contains(tab) {
                 try store.writeTab(id, tab, text)
             }
+            reindex(only: id)
         } catch {
             problem = "Could not save \(tab): \(error.localizedDescription)"
         }

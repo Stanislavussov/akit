@@ -18,6 +18,16 @@ public struct Transcriber: Sendable {
     Answer with one JSON object and nothing else.
     """
 
+    /// M22: Clean leaves out what carries no meaning; the words that do stay as spoken.
+    static let cleanSystem = """
+    You transcribe meeting audio as clean text. Leave out filler sounds and words used only as fillers \
+    (eh, ehm, um, ну, типа, jako, prostě, vlastně when they add nothing), stutters, false starts and words said twice. \
+    Keep every word that carries meaning, in the order spoken. Never summarize, never translate, never invent words. \
+    Answer with one JSON object and nothing else.
+    """
+
+    static func system(clean: Bool) -> String { clean ? cleanSystem : transcriptSystem }
+
     /// What one call hears (M20): the mix of both sources, the user's microphone alone (the user
     /// and the people in the room), or the call's sound alone (the other people).
     public enum Track: String, Sendable { case mixed, mic, system }
@@ -60,8 +70,8 @@ public struct Transcriber: Sendable {
     public func transcribe(audio: Data, format: String, length: TimeInterval, offset: TimeInterval, me: [TimeSpan], previous: [Segment],
                            track: Track = .mixed) async throws -> (segments: [Segment], completion: Completion) {
         let prompt = Self.transcriptPrompt(spokenHint: settings.spokenHint, length: length, me: me, previous: previous, track: track)
-        let completion = try await client.complete(model: settings.model, system: Self.transcriptSystem, text: prompt, audio: (audio, format))
-        let segments = try Self.parseSegments(completion.text, offset: offset, length: length)
+        let completion = try await client.complete(model: settings.model, system: Self.system(clean: settings.cleanTranscript), text: prompt, audio: (audio, format))
+        let segments = try PaidFailure.parse(completion) { try Self.parseSegments(completion.text, offset: offset, length: length) }
         return (segments, completion)
     }
 
@@ -110,17 +120,37 @@ public struct Transcriber: Sendable {
     public struct Summary: Equatable, Sendable {
         public var title: String
         public var summary: String
+        /// M22: the template's sections, headings in the summary's language.
+        public var sections: [(heading: String, items: [String])] = []
         public var decisions: [String]
         public var tasks: [(owner: String, text: String)]
+        /// M23: 1–3 topic tags the model proposes.
+        public var tags: [String] = []
+
+        public init(title: String, summary: String, sections: [(heading: String, items: [String])] = [], decisions: [String],
+                    tasks: [(owner: String, text: String)], tags: [String] = []) {
+            self.title = title
+            self.summary = summary
+            self.sections = sections
+            self.decisions = decisions
+            self.tasks = tasks
+            self.tags = tags
+        }
 
         public static func == (a: Summary, b: Summary) -> Bool {
-            a.title == b.title && a.summary == b.summary && a.decisions == b.decisions
+            a.title == b.title && a.summary == b.summary && a.decisions == b.decisions && a.tags == b.tags
+                && a.sections.map(\.heading) == b.sections.map(\.heading) && a.sections.map(\.items) == b.sections.map(\.items)
                 && a.tasks.map(\.owner) == b.tasks.map(\.owner) && a.tasks.map(\.text) == b.tasks.map(\.text)
         }
 
         /// `summary.md`.
         public var markdown: String {
-            var lines = ["## Summary", "", summary.isEmpty ? "—" : summary, "", "## Decisions", ""]
+            var lines = ["## Summary", "", summary.isEmpty ? "—" : summary]
+            for section in sections {
+                lines += ["", "## \(section.heading)", ""]
+                lines += section.items.isEmpty ? ["—"] : section.items.map { "- \($0)" }
+            }
+            lines += ["", "## Decisions", ""]
             lines += decisions.isEmpty ? ["—"] : decisions.map { "- \($0)" }
             lines += ["", "## Tasks", ""]
             lines += tasks.isEmpty ? ["—"] : tasks.map { "- [ ] \($0.owner): \($0.text)" }
@@ -128,15 +158,29 @@ public struct Transcriber: Sendable {
         }
     }
 
-    static func summaryPrompt(language: String, transcript: String) -> String {
-        """
+    static func summaryPrompt(language: String, transcript: String, template: MeetingTemplate = MeetingTemplate.builtIn[0]) -> String {
+        var asks = [
+            "- title: a short title of the meeting (at most 8 words);",
+            "- summary: 3–5 sentences: what it was about and what came out of it;",
+        ]
+        let sections = template.sectionLines
+        if !sections.isEmpty {
+            asks.append("- sections: this is a meeting of the kind \"\(template.name)\". One entry per section below, in this order; write the heading in \(language) and the items as short points (an empty list when the transcript has nothing for it):")
+            asks += sections.map { "    - \($0)" }
+        }
+        asks += [
+            "- decisions: what was decided (empty list if nothing);",
+            "- tasks: who does what next, owner as named in the transcript (\"Me\" for the user);",
+            "- tags: 1–3 topics of the meeting for search, one or two lowercase words each, in \(language).",
+        ]
+        let shape = sections.isEmpty
+            ? #"{"title": "…", "summary": "…", "decisions": ["…"], "tasks": [{"owner": "…", "text": "…"}], "tags": ["…"]}"#
+            : #"{"title": "…", "summary": "…", "sections": [{"heading": "…", "items": ["…"]}], "decisions": ["…"], "tasks": [{"owner": "…", "text": "…"}], "tags": ["…"]}"#
+        return """
         Below is the transcript of a meeting. "Me" is the user. Write in \(language):
-        - title: a short title of the meeting (at most 8 words);
-        - summary: 3–5 sentences: what it was about and what came out of it;
-        - decisions: what was decided (empty list if nothing);
-        - tasks: who does what next, owner as named in the transcript ("Me" for the user).
+        \(asks.joined(separator: "\n"))
         Use only what the transcript says.
-        Answer: {"title": "…", "summary": "…", "decisions": ["…"], "tasks": [{"owner": "…", "text": "…"}]}
+        Answer: \(shape)
 
         Transcript:
         \(transcript)
@@ -149,10 +193,11 @@ public struct Transcriber: Sendable {
     }
 
     public func summarize(_ meeting: Meeting) async throws -> (summary: Summary, completion: Completion) {
+        let template = settings.template(meeting.template)
         let completion = try await client.complete(model: settings.summaryModel ?? settings.model,
                                                    system: "You write short, faithful meeting notes. Answer with one JSON object and nothing else.",
-                                                   text: Self.summaryPrompt(language: settings.language, transcript: Self.plainTranscript(meeting)))
-        return (try Self.parseSummary(completion.text), completion)
+                                                   text: Self.summaryPrompt(language: settings.language, transcript: Self.plainTranscript(meeting), template: template))
+        return (try PaidFailure.parse(completion) { try Self.parseSummary(completion.text) }, completion)
     }
 
     static func parseSummary(_ text: String) throws -> Summary {
@@ -167,8 +212,16 @@ public struct Transcriber: Sendable {
             if let text = item as? String, !text.isEmpty { return ("?", text) }
             return nil
         }
+        let sections: [(heading: String, items: [String])] = ((object["sections"] as? [Any]) ?? []).compactMap { item in
+            guard let section = item as? [String: Any],
+                  let heading = (section["heading"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "#: ")),
+                  !heading.isEmpty else { return nil }
+            let items = ((section["items"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            return (heading, items)
+        }
         return Summary(title: ((object["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                        summary: ((object["summary"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
-                       decisions: strings("decisions"), tasks: tasks)
+                       sections: sections, decisions: strings("decisions"), tasks: tasks,
+                       tags: Array(strings("tags").map(Meeting.cleanTag).filter { !$0.isEmpty }.prefix(3)))
     }
 }

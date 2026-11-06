@@ -49,13 +49,13 @@ struct CostsView: View {
     var body: some View {
         let (start, end) = dates
         let filter = aiModel.isEmpty ? nil : aiModel
-        let rows = CostReport.rows(model.meetings, grouping: grouping, from: start, to: end, model: filter)
-        let totals = CostReport.totals(model.meetings, from: start, to: end, model: filter)
+        let rows = CostReport.rows(model.meetings, asks: model.askEntries, grouping: grouping, from: start, to: end, model: filter)
+        let totals = CostReport.totals(model.meetings, asks: model.askEntries, from: start, to: end, model: filter)
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Costs").font(.title3.bold())
                 Spacer()
-                Text("What OpenRouter charged for each meeting's calls.").font(.caption).foregroundStyle(.secondary)
+                Text("What OpenRouter charged for each meeting's calls and for Ask.").font(.caption).foregroundStyle(.secondary)
             }
             HStack(spacing: 12) {
                 Picker("Group by", selection: $grouping) {
@@ -69,7 +69,7 @@ struct CostsView: View {
                 .fixedSize()
                 Picker("Model", selection: $aiModel) {
                     Text("All models").tag("")
-                    ForEach(CostReport.models(model.meetings), id: \.self) { Text($0).tag($0) }
+                    ForEach(CostReport.models(model.meetings, asks: model.askEntries), id: \.self) { Text($0).tag($0) }
                 }
                 .fixedSize()
             }
@@ -83,6 +83,7 @@ struct CostsView: View {
             HStack(spacing: 24) {
                 total("Cost", String(format: "$%.3f", totals.cost))
                 total("Meetings", "\(totals.meetings)")
+                total("Questions", "\(totals.questions)")
                 total("Recorded", lengthText(totals.seconds))
                 total("Per hour", totals.costPerHour.map { String(format: "$%.3f", $0) } ?? "—")
                 total("Per day", String(format: "$%.3f", totals.costPerDay))
@@ -101,6 +102,7 @@ struct CostsView: View {
             Table(rows.reversed()) {
                 TableColumn("Period") { Text(CostReport.label($0, grouping: grouping)) }
                 TableColumn("Meetings") { Text("\($0.meetings)").monospacedDigit() }.width(70)
+                TableColumn("Questions") { Text($0.questions > 0 ? "\($0.questions)" : "—").monospacedDigit() }.width(70)
                 TableColumn("Recorded") { Text($0.seconds > 0 ? lengthText($0.seconds) : "—").monospacedDigit() }.width(90)
                 TableColumn("Cost") { Text(String(format: "$%.4f", $0.cost)).monospacedDigit() }.width(90)
                 TableColumn("Per hour") { Text($0.costPerHour.map { String(format: "$%.3f", $0) } ?? "—").monospacedDigit() }.width(80)
@@ -110,7 +112,7 @@ struct CostsView: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(CostReport.csv(rows), forType: .string)
                 }
-                .help("The table as CSV (period, meetings, hours, usd, usd_per_hour) for a spreadsheet")
+                .help("The table as CSV (period, meetings, hours, usd, usd_per_hour, questions) for a spreadsheet")
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
