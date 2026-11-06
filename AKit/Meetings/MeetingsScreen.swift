@@ -32,7 +32,7 @@ struct MeetingsScreen: View {
                     model.showMadeUpSettings { $0.transcription = .local; $0.summarizer = .pi }
                     model.showSettings = true
                 case "meetings-progress":
-                    // M29: a made-up local run at work on piece 3 of 12; nothing runs.
+                    // M32: a made-up local run at work on piece 3 of 12; nothing runs.
                     if let id = model.selectedID { model.showMadeUpLocalRun(id, LocalStatus(phase: .transcribing, piece: 3, pieces: 12)) }
                 case "meetings-local-run":
                     // M27: a made-up local run on the chosen meeting, paused while the Mac is hot; nothing runs.

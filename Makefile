@@ -82,4 +82,10 @@ screenshots: build   ## README screenshots (light and dark) from a made-up home:
 guide-screenshots: build   ## screenshots of the in-app guides (docs/guides/images) from a made-up home; [SHOTS="skills mcp"] redoes only those
 	tools/guide-screenshots.sh $(SHOTS)
 
-.PHONY: generate open build run restart test snapshot install install-cli icon release screenshots guide-screenshots banner
+hooks:   ## turn on the git hooks in .githooks: gitleaks secret check before commit and push
+	git config core.hooksPath .githooks
+
+secrets:   ## scan the whole git history for secrets (gitleaks, settings in .gitleaks.toml)
+	gitleaks git --redact --no-banner --config .gitleaks.toml .
+
+.PHONY: hooks secrets generate open build run restart test snapshot install install-cli icon release screenshots guide-screenshots banner

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Stop the commit if the staged changes contain a secret (gitleaks).
+# Skip once with: git commit --no-verify
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks not found, secret check skipped (brew install gitleaks)" >&2
+  exit 0
+fi
+exec gitleaks git --staged --redact -v --no-banner --log-level warn \
+  --config "$(git rev-parse --show-toplevel)/.gitleaks.toml" .

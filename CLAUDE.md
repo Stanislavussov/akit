@@ -23,6 +23,9 @@ Pi and other harnesses read this file too.
 - Message: imperative summary line in English (≤ 72 chars), optional body with the why.
   Example: `Add Trash-based skill deletion with confirmation`.
 - Never commit build output, `.omc/`, secrets or tokens (see .gitignore).
+- Once per clone run `make hooks`: the git hooks in `.githooks` stop a commit or push
+  that holds a secret (gitleaks). Known fakes go in `.gitleaks.toml`; `make secrets` scans
+  the whole history.
 - Don't push, rewrite history or force anything unless the user asks. The release step above
   is the one standing exception: it pushes master and the tag.
 

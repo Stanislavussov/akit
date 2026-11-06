@@ -1,6 +1,6 @@
 import Foundation
 
-/// M29: a rough time left for a meeting's processing: the pieces left times the seconds one
+/// M32: a rough time left for a meeting's processing: the pieces left times the seconds one
 /// piece takes (measured in this run, else remembered from earlier runs, else a first guess),
 /// plus the summary.
 public enum ProcessingEstimate {
