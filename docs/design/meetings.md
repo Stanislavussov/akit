@@ -1,12 +1,8 @@
 # Meetings: record a call or a talk, get the text, a summary and the tasks
 
-Status: designed 2026-11-06 (grilled with the user); steps 1–5 built the same day on branch
-`meetings-recorder`. Step 0's live checks (permission prompts, macOS signs while it records, one
-real OpenRouter call with Czech audio in ADTS AAC) wait for the user's OpenRouter key and a first
-real recording. Asked by the user: record
-the meetings of a day by a click, 2–3 hours a day, transcribe them through a cheap model and
-structure them (summary, decisions, tasks). It is built inside the AKit repo but as its own
-package, so it can later leave AKit and become its own app.
+Status: designed 2026-11-06 (grilled with the user); steps 0–5 built and checked on a real
+recording the same day (mic + system sound in headphones and through the speakers, OpenRouter with
+Gemini 2.5 Flash-Lite, the user: "works great"). Branch `meetings-recorder`, released v2026.11.06-2.
 
 Code: `Meetings/` (its own Swift package: `MeetingsCore`, `MeetingsAudio`, `MeetingsUI`,
 `Tests/MeetingsCoreTests`, `App/` for `Meetings.app`), `AKit/Meetings/` (the Crepe editor and the
