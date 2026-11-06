@@ -1403,4 +1403,5 @@ Friction («трение») — места, где агент спотыкалс
 - **Try Again** (встреча `failed`): продолжить расшифровку с той части, где она остановилась. Подробнее: [Меню Actions](meetings#actions)
 - `recording`, `waiting`, `transcribing`, `failed` (строка встречи): идёт запись; ждёт расшифровки; расшифровывается; расшифровка не удалась. Подробнее: [Что на экране](meetings#overview)
 - **This month: $… of $…** (Meetings, под списком): цена встреч месяца и месячный лимит. Подробнее: [Настройки](meetings#settings)
+- **Tracks** (Meetings Settings): **Auto**, **Mixed**, **Separate** — одна смешанная дорожка или микрофон и звук системы отдельно, где голоса накладываются. **Room 1**, **Room 2** — люди рядом с вами в комнате. Подробнее: [Записать встречу](meetings#record)
 - **Settings…** (Meetings): **Key**, **Save Key**, **Transcription**, **Summary**, **Reload**, **Summary and tasks**, **Spoken language**, **Echo cancellation**, **Folder**, **Monthly limit, $**. Подробнее: [Настройки](meetings#settings)

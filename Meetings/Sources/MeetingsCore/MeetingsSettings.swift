@@ -21,6 +21,26 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     public var rootPath: String?
     /// Echo cancellation on the microphone, so sound from the speakers is not recorded twice.
     public var echoCancellation: Bool = true
+    /// M20: how the microphone and the system sound go to the model.
+    public var tracks: TrackMode = .auto
+
+    public enum TrackMode: String, Codable, Sendable, CaseIterable {
+        /// One mixed track (1×).
+        case mixed
+        /// Mixed, but a chunk where the room and the call talk at the same time for a while goes as
+        /// two tracks.
+        case auto
+        /// Always two tracks (2×).
+        case separate
+
+        public var title: String {
+            switch self {
+            case .mixed: "Mixed: one track (cheapest)"
+            case .auto: "Auto: two tracks where voices overlap"
+            case .separate: "Separate: always two tracks (2× cost)"
+            }
+        }
+    }
 
     public init() {}
 
@@ -53,5 +73,6 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
         monthlyLimitUSD = try c.decodeIfPresent(Double.self, forKey: .monthlyLimitUSD) ?? d.monthlyLimitUSD
         rootPath = try c.decodeIfPresent(String.self, forKey: .rootPath)
         echoCancellation = try c.decodeIfPresent(Bool.self, forKey: .echoCancellation) ?? d.echoCancellation
+        tracks = (try? c.decodeIfPresent(TrackMode.self, forKey: .tracks)) ?? d.tracks
     }
 }

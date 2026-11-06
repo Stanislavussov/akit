@@ -86,9 +86,14 @@ public enum PieceMixer {
         func peak(_ samples: [Float]) -> String { String(format: "%.4f", samples.reduce(0) { max($0, abs($1)) }) }
         MeetingsLog.info(.mixer, "piece \(index): mic \(mic.count) part(s) \(String(format: "%.1f", Double(micSamples.count) / sampleRate)) s peak \(peak(micSamples)), system \(system.count) part(s) \(String(format: "%.1f", Double(sysSamples.count) / sampleRate)) s peak \(peak(sysSamples)), \(problems.count) unreadable")
         let info = PieceInfo(duration: Double(count) / sampleRate,
-                             me: SpeechSpans.spans(levels: levels(micSamples), window: levelWindow))
+                             me: SpeechSpans.spans(levels: levels(micSamples), window: levelWindow),
+                             others: SpeechSpans.spans(levels: levels(sysSamples), window: levelWindow))
         let out = folder.appending(path: pieceName(index))
         try write(mixed, to: out)
+        // M20: each source's own track too, for chunks sent as two tracks.
+        for (source, samples) in [("mic", micSamples), ("sys", sysSamples)] where samples.contains(where: { $0 != 0 }) {
+            try write(samples, to: folder.appending(path: pieceName(index).replacingOccurrences(of: "piece-", with: "\(source)-")))
+        }
         try JSONEncoder().encode(info).write(to: out.deletingPathExtension().appendingPathExtension("json"), options: .atomic)
         // The parts that mixed are removed. An unreadable part stays for a look as `bad-…`, out
         // of the `raw-` pattern, so a later mix does not replace this piece with an empty one.

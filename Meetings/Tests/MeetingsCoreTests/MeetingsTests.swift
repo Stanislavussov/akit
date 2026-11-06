@@ -399,6 +399,60 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         for text in [KeyStore.shape(good), KeyStore.shape("sk-or-v1-abc…xyz")] { #expect(!text.contains("a1a1") && !text.contains("abc")) }
     }
 
+    /// A piece with its own mic and sys tracks and the given speech spans.
+    func meetingWithTracks(_ store: MeetingStore, me: [TimeSpan], others: [TimeSpan]) throws -> Meeting {
+        var meeting = try store.create()
+        let folder = store.audioFolder(meeting.id)
+        try Data("mix".utf8).write(to: folder.appending(path: "piece-001.aac"))
+        try Data("mic".utf8).write(to: folder.appending(path: "mic-001.aac"))
+        try Data("sys".utf8).write(to: folder.appending(path: "sys-001.aac"))
+        try JSONEncoder().encode(PieceInfo(duration: 60, me: me, others: others)).write(to: folder.appending(path: "piece-001.json"))
+        meeting.state = .waiting
+        try store.save(meeting)
+        return meeting
+    }
+
+    func sentAudio(_ server: FakeServer, _ i: Int) -> String {
+        let parts = (server.body(i)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]]
+        let data = (parts?.last?["input_audio"] as? [String: String])?["data"] ?? ""
+        return String(decoding: Data(base64Encoded: data) ?? Data(), as: UTF8.self)
+    }
+
+    /// M20 Auto: room and call at once for longer than the threshold → two tracks, lines merged by time.
+    @Test func overlapSendsTwoTracks() async throws {
+        let store = TempRoot().store
+        let meeting = try meetingWithTracks(store, me: [TimeSpan(start: 0, end: 10)], others: [TimeSpan(start: 5, end: 20)])
+        let server = FakeServer([
+            (200, chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"já"},{"start":"00:07","speaker":"R1","text":"kolega"}]}"#)),
+            (200, chat(#"{"segments":[{"start":"00:06","speaker":"S1","text":"z hovoru"}]}"#)),
+            (200, chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)),
+        ])
+        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
+        #expect(sentAudio(server, 0) == "mic" && sentAudio(server, 1) == "sys")
+        #expect(done.segments.map(\.speaker) == ["Me", "S1", "R1"])
+        #expect(done.speakerName("R1") == "Room 1")
+        let systemPrompt = ((server.body(1)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        #expect(systemPrompt.contains("never use \"Me\""))
+    }
+
+    /// M20 Auto without overlap, and Mixed with it: one mixed call.
+    @Test func noOverlapOrMixedSendsTheMix() async throws {
+        for (overlap, mode) in [(false, MeetingsSettings.TrackMode.auto), (true, .mixed)] {
+            let store = TempRoot().store
+            let meeting = try meetingWithTracks(store, me: [TimeSpan(start: 0, end: 10)],
+                                                others: [TimeSpan(start: overlap ? 5 : 12, end: 20)])
+            let server = FakeServer([
+                (200, chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"a"}]}"#)),
+                (200, chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)),
+            ])
+            var settings = MeetingsSettings()
+            settings.tracks = mode
+            _ = try await MeetingProcessor(store: store, settings: settings, client: server.client).run(meeting.id)
+            #expect(sentAudio(server, 0) == "mix")
+            #expect(server.requests.count == 2)
+        }
+    }
+
     @Test func errorAnswerWith200IsAnError() {
         #expect(throws: MeetingsError.self) { try Completion.parse(Data(#"{"error":{"code":429,"message":"rate"}}"#.utf8)) }
     }
@@ -442,6 +496,10 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         #expect(info.me.count == 1)
         #expect(abs((info.me.first?.end ?? 0) - 2) < 0.15)
         #expect(PieceMixer.rawFiles(in: folder).isEmpty)
+        // M20: each source's own track, and when the system sound carried speech.
+        #expect(FileManager.default.fileExists(atPath: folder.appending(path: "mic-001.aac").path))
+        #expect(FileManager.default.fileExists(atPath: folder.appending(path: "sys-001.aac").path))
+        #expect(info.others?.isEmpty == false)
         // The piece reads back as about 3 s of audio.
         let samples = try PieceMixer.load(piece)
         #expect(abs(Double(samples.count) / PieceMixer.sampleRate - 3) < 0.2)

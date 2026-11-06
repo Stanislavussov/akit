@@ -18,14 +18,26 @@ public struct Transcriber: Sendable {
     Answer with one JSON object and nothing else.
     """
 
-    /// The prompt of one chunk: the language hint, the spans in which the user's own microphone
-    /// carried speech, and the last lines before this chunk, so the speakers keep their keys.
-    static func transcriptPrompt(spokenHint: String, length: TimeInterval, me: [TimeSpan], previous: [Segment]) -> String {
-        var lines = [
-            "Transcribe this audio (\(timestamp(length)) long). The language is most likely \(spokenHint); write each line in the language that is spoken.",
-            "Speakers: \"Me\" is the user. Other people are \"S1\", \"S2\", … in the order they first speak; keep the same key for the same voice.",
-        ]
-        if me.isEmpty {
+    /// What one call hears (M20): the mix of both sources, the user's microphone alone (the user
+    /// and the people in the room), or the call's sound alone (the other people).
+    public enum Track: String, Sendable { case mixed, mic, system }
+
+    /// The prompt of one chunk: the language hint, who can speak in this track, the spans in which
+    /// the user's own microphone carried speech, and the last lines before this chunk, so the
+    /// speakers keep their keys.
+    static func transcriptPrompt(spokenHint: String, length: TimeInterval, me: [TimeSpan], previous: [Segment], track: Track = .mixed) -> String {
+        var lines = ["Transcribe this audio (\(timestamp(length)) long). The language is most likely \(spokenHint); write each line in the language that is spoken."]
+        switch track {
+        case .mixed:
+            lines.append("Speakers: \"Me\" is the user. Other people are \"S1\", \"S2\", … in the order they first speak; keep the same key for the same voice. Where two people talk at the same time, write both lines, each with its own start.")
+        case .mic:
+            lines.append("This is only the user's own microphone. \"Me\" is the user. Other people heard in the same room are \"R1\", \"R2\", …; keep the same key for the same voice. The call's sound was recorded on its own track: leave out faint voices that come from speakers. Where two people talk at the same time, write both lines.")
+        case .system:
+            lines.append("This is only the sound of a call or a video on the computer. The user is not in it, so never use \"Me\". The people are \"S1\", \"S2\", … in the order they first speak; keep the same key for the same voice. Where two people talk at the same time, write both lines.")
+        }
+        if track == .system {
+            // No Me hints: the user is not on this track.
+        } else if me.isEmpty {
             lines.append("The user's microphone carried no speech in this audio, so \"Me\" probably does not speak.")
         } else {
             let spans = me.prefix(200).map { "\(timestamp($0.start))–\(timestamp($0.end))" }.joined(separator: ", ")
@@ -45,8 +57,9 @@ public struct Transcriber: Sendable {
 
     /// One chunk of audio → its segments, with times moved by `offset` (the chunk's start in the
     /// whole recording).
-    public func transcribe(audio: Data, format: String, length: TimeInterval, offset: TimeInterval, me: [TimeSpan], previous: [Segment]) async throws -> (segments: [Segment], completion: Completion) {
-        let prompt = Self.transcriptPrompt(spokenHint: settings.spokenHint, length: length, me: me, previous: previous)
+    public func transcribe(audio: Data, format: String, length: TimeInterval, offset: TimeInterval, me: [TimeSpan], previous: [Segment],
+                           track: Track = .mixed) async throws -> (segments: [Segment], completion: Completion) {
+        let prompt = Self.transcriptPrompt(spokenHint: settings.spokenHint, length: length, me: me, previous: previous, track: track)
         let completion = try await client.complete(model: settings.model, system: Self.transcriptSystem, text: prompt, audio: (audio, format))
         let segments = try Self.parseSegments(completion.text, offset: offset, length: length)
         return (segments, completion)

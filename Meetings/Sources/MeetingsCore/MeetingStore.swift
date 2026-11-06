@@ -257,15 +257,42 @@ public struct MeetingStore: Sendable {
 }
 
 /// `piece-NNN.json`: the piece's length in seconds and the spans (seconds from the piece's start)
-/// in which the microphone carried speech (M12).
+/// in which the microphone carried speech (M12) and in which the system sound did (`others`, M20;
+/// nil in pieces mixed before it).
 public struct PieceInfo: Codable, Equatable, Sendable {
     public var duration: TimeInterval
     public var me: [TimeSpan]
+    public var others: [TimeSpan]?
 
-    public init(duration: TimeInterval, me: [TimeSpan]) {
+    public init(duration: TimeInterval, me: [TimeSpan], others: [TimeSpan]? = nil) {
         self.duration = duration
         self.me = me
+        self.others = others
     }
+}
+
+/// M20: one source's own track of a piece, beside the mix (`mic-003.aac`, `sys-003.aac`); nil
+/// when the piece has none (an older piece, a silent source).
+public enum TrackSource: String, Sendable { case mic, sys }
+
+extension MeetingStore {
+    public func track(_ piece: URL, _ source: TrackSource) -> URL? {
+        let name = piece.lastPathComponent.replacingOccurrences(of: "piece-", with: "\(source.rawValue)-")
+        let url = piece.deletingLastPathComponent().appending(path: name)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+}
+
+/// Seconds in which both lists of spans overlap.
+public func overlapSeconds(_ a: [TimeSpan], _ b: [TimeSpan]) -> TimeInterval {
+    var total: TimeInterval = 0
+    for x in a {
+        for y in b {
+            let start = max(x.start, y.start), end = min(x.end, y.end)
+            if end > start { total += end - start }
+        }
+    }
+    return total
 }
 
 public struct TimeSpan: Codable, Equatable, Sendable {

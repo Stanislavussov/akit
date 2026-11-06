@@ -26,8 +26,12 @@ public struct MeetingProcessor: Sendable {
         var offset: TimeInterval
         var length: TimeInterval
         var me: [TimeSpan]
+        var others: [TimeSpan]
         var endPiece: Int
     }
+
+    /// The overlap that makes Auto send a chunk as two tracks: room and call voices at once.
+    public static let overlapForTwoTracks: TimeInterval = 3
 
     /// The chunks of the pieces after the first `done`; offsets count every piece before.
     func chunks(_ id: String, after done: Int) -> (chunks: [Chunk], duration: TimeInterval) {
@@ -39,9 +43,10 @@ public struct MeetingProcessor: Sendable {
         var index = start
         while index < pieces.count {
             let end = min(index + Self.piecesPerChunk, pieces.count)
-            var chunk = Chunk(pieces: Array(pieces[index..<end]), offset: offset, length: 0, me: [], endPiece: end)
+            var chunk = Chunk(pieces: Array(pieces[index..<end]), offset: offset, length: 0, me: [], others: [], endPiece: end)
             for info in infos[index..<end] {
                 chunk.me += info.me.map { TimeSpan(start: $0.start + chunk.length, end: $0.end + chunk.length) }
+                chunk.others += (info.others ?? []).map { TimeSpan(start: $0.start + chunk.length, end: $0.end + chunk.length) }
                 chunk.length += info.duration
             }
             result.append(chunk)
@@ -83,14 +88,9 @@ public struct MeetingProcessor: Sendable {
         do {
             for chunk in plan.chunks {
                 try checkLimit()
-                var audio = Data()
-                // ADTS frames carry their own headers, so pieces join by bytes.
-                for piece in chunk.pieces { audio += try Data(contentsOf: piece) }
-                let answer = try await transcriber.transcribe(audio: audio, format: "aac", length: chunk.length,
-                                                              offset: chunk.offset, me: chunk.me, previous: meeting.segments)
-                MeetingsLog.info(.processor, "\(id): chunk of \(chunk.pieces.count) pieces (\(Int(chunk.length)) s, \(audio.count) bytes) → \(answer.segments.count) segments, \(answer.completion.promptTokens)+\(answer.completion.completionTokens) tokens, $\(answer.completion.cost)")
+                let answer = try await transcribe(chunk, id: id, previous: meeting.segments)
                 meeting.segments += answer.segments
-                meeting.costUSD += answer.completion.cost
+                meeting.costUSD += answer.cost
                 meeting.transcribedChunks += 1
                 meeting.transcribedPieces = chunk.endPiece
                 try save(&meeting)
@@ -116,6 +116,47 @@ public struct MeetingProcessor: Sendable {
         } catch {
             return try fail(&meeting, error)
         }
+    }
+
+    /// M20: whether this chunk goes as two tracks (mic, system) instead of the mix.
+    func twoTracks(_ chunk: Chunk) -> Bool {
+        let haveTracks = chunk.pieces.allSatisfy { store.track($0, .mic) != nil || store.track($0, .sys) != nil }
+        guard haveTracks else { return false }
+        switch settings.tracks {
+        case .mixed: return false
+        case .separate: return true
+        case .auto: return overlapSeconds(chunk.me, chunk.others) >= Self.overlapForTwoTracks
+        }
+    }
+
+    /// One chunk: the mix in one call, or each source's track in its own call, the lines merged by
+    /// time. ADTS frames carry their own headers, so pieces join by bytes.
+    func transcribe(_ chunk: Chunk, id: String, previous: [Segment]) async throws -> (segments: [Segment], cost: Double) {
+        if twoTracks(chunk) {
+            var segments: [Segment] = []
+            var cost = 0.0
+            for (source, track) in [(TrackSource.mic, Transcriber.Track.mic), (.sys, .system)] {
+                let files = chunk.pieces.compactMap { store.track($0, source) }
+                // A source silent for the whole chunk has no track files: nothing to send.
+                guard !files.isEmpty else { continue }
+                var audio = Data()
+                for file in files { audio += try Data(contentsOf: file) }
+                let mine = previous.filter { track == .system ? $0.speaker.hasPrefix("S") : !$0.speaker.hasPrefix("S") }
+                let answer = try await transcriber.transcribe(audio: audio, format: "aac", length: chunk.length, offset: chunk.offset,
+                                                              me: track == .mic ? chunk.me : [], previous: mine, track: track)
+                MeetingsLog.info(.processor, "\(id): \(track.rawValue) track of \(files.count) piece(s) (\(Int(chunk.length)) s, \(audio.count) bytes) → \(answer.segments.count) segments, \(answer.completion.promptTokens)+\(answer.completion.completionTokens) tokens, $\(answer.completion.cost)")
+                segments += answer.segments
+                cost += answer.completion.cost
+            }
+            MeetingsLog.info(.processor, "\(id): two tracks (overlap \(Int(overlapSeconds(chunk.me, chunk.others))) s, mode \(settings.tracks.rawValue))")
+            return (segments.sorted { $0.start < $1.start }, cost)
+        }
+        var audio = Data()
+        for piece in chunk.pieces { audio += try Data(contentsOf: piece) }
+        let answer = try await transcriber.transcribe(audio: audio, format: "aac", length: chunk.length,
+                                                      offset: chunk.offset, me: chunk.me, previous: previous)
+        MeetingsLog.info(.processor, "\(id): mixed chunk of \(chunk.pieces.count) pieces (\(Int(chunk.length)) s, \(audio.count) bytes, overlap \(Int(overlapSeconds(chunk.me, chunk.others))) s) → \(answer.segments.count) segments, \(answer.completion.promptTokens)+\(answer.completion.completionTokens) tokens, $\(answer.completion.cost)")
+        return (answer.segments, answer.completion.cost)
     }
 
     /// H5: a `summary.md` the user wrote or changed (not the model's last one) moves to an own

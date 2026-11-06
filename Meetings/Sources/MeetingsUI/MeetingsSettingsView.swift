@@ -80,6 +80,13 @@ struct MeetingsSettingsView: View {
                               prompt: Text("Czech, sometimes Russian or English"))
                     Text("The transcript stays in the language spoken; this hint helps the model.").font(.caption).foregroundStyle(.secondary)
                 }
+                Section("Tracks") {
+                    Picker("Send to the model", selection: Binding(get: { model.settings.tracks }, set: { value in model.update { $0.tracks = value } })) {
+                        ForEach(MeetingsSettings.TrackMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    Text("The microphone (you and the room) and the system sound (the call) are recorded apart. Auto sends a 30-minute part as two tracks when the room and the call talk at the same time for more than \(Int(MeetingProcessor.overlapForTwoTracks)) s, so overlapping voices are not lost; that part costs twice.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Recording") {
                     Toggle("Echo cancellation", isOn: Binding(get: { model.settings.echoCancellation }, set: { value in model.update { $0.echoCancellation = value } }))
                     Text("Keeps the sound from the speakers out of the microphone, so the other people are not recorded twice. Takes effect at the next Record.")

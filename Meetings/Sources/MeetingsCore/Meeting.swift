@@ -66,6 +66,7 @@ public struct Meeting: Codable, Equatable, Sendable, Identifiable {
     public func speakerName(_ key: String) -> String {
         if let name = speakers[key], !name.isEmpty { return name }
         if key.hasPrefix("S"), let number = Int(key.dropFirst()) { return "Speaker \(number)" }
+        if key.hasPrefix("R"), let number = Int(key.dropFirst()) { return "Room \(number)" }
         return key
     }
 
