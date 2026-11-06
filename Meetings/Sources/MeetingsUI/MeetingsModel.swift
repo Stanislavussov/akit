@@ -390,7 +390,12 @@ public final class MeetingsModel {
         clocks[id] = clock
         runWays[id] = ProcessingEstimate.Way(settings)
         summaryStarted[id] = nil
-        if restart, let index = meetings.firstIndex(where: { $0.id == id }) { meetings[index].transcribedPieces = 0 }
+        // The count the run starts from, as the processor sees it, so its first save is not taken
+        // for pieces done in this run (an older file counts chunks of 6 pieces).
+        if let index = meetings.firstIndex(where: { $0.id == id }), let disk = store.load(id) {
+            meetings[index] = disk
+            meetings[index].transcribedPieces = restart ? 0 : disk.transcribedPieces ?? disk.transcribedChunks * MeetingProcessor.piecesPerChunk
+        }
         let client = key.map { OpenRouterClient(key: $0, transport: transport) }
         let control = LocalControl(recording: isRecording)
         controls[id] = control
