@@ -3,7 +3,7 @@
 Status: designed 2026-11-06 (grilled with the user); steps 0–5 built and checked on a real
 recording the same day (mic + system sound in headphones and through the speakers, OpenRouter with
 Gemini 2.5 Flash-Lite, the user: "works great"). Branch `meetings-recorder`, released v2026.11.06-2.
-M22–M25 (templates, search, Ask, AKit links): built 2026-11-06 on branch `meetings-more`; tests with a fake OpenRouter, the screens checked by snapshot; real model runs of Ask and Propose to Knowledge not yet checked.
+M22–M25 (templates, search, Ask, AKit links): built 2026-11-06, released v2026.11.06-3; tests with a fake OpenRouter, the screens checked by snapshot; real model runs of Ask and Propose to Knowledge not yet checked.
 
 Code: `Meetings/` (its own Swift package: `MeetingsCore`, `MeetingsAudio`, `MeetingsUI`,
 `Tests/MeetingsCoreTests`, `App/` for `Meetings.app`), `AKit/Meetings/` (the Crepe editor and the
