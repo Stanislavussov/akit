@@ -133,9 +133,9 @@ struct OverviewTests {
         var old = spec
         old.summaryLanguage = nil
         #expect(old.overviewLanguage(preferred: ["fr-FR"]) == .french && old.overviewLanguage(preferred: ["xx"]) == .english, "an older run")
-        let prompt = ReviewPrompts.brief(spec: spec)
+        let prompt = ReviewPrompts.overview(spec: spec)
         #expect(prompt.contains("akit_submit_overview") && prompt.contains("in Japanese (`ja`)") && prompt.contains("Only the overview uses"))
-        #expect(prompt.contains("your brief answer stays in English"), "the brief's own answer doesn't switch language")
+        #expect(!ReviewPrompts.brief(spec: spec).contains("akit_submit_overview"), "the brief's own answer doesn't switch language")
     }
 
     // MARK: - The overview check
@@ -381,7 +381,7 @@ extension ReviewProcessTests {
             choices.settings.summaryLanguage = .german
             let run = try await ReviewRunFixture.make(choices: choices)
             ImpactTests.playImpact(run)
-            run.home.write("fake/overview-brief.json", """
+            run.home.write("fake/overview-overview.json", """
             {"pass":"brief","points":["Logs less","Keeps the header out","Adds no test"],
              "modules":[{"name":"auth","files":["src/Auth.swift","src/Nope.swift"],"why":"Bug #41"}],
              "why_sources":["work-item"],
@@ -390,9 +390,13 @@ extension ReviewProcessTests {
             let lines = LockedBox<[String]>([])
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env, options: .init(progress: { line in lines.update { $0.append(line) } }))
 
-            #expect(run.args("brief").contains { $0.contains("akit_submit_boundaries,akit_submit_overview") })
+            #expect(!run.args("brief").contains { $0.contains("akit_submit_overview") })
+            #expect(run.args("overview").contains { $0.contains("akit_submit_overview") })
             #expect(!run.args("role-tests").contains { $0.contains("akit_submit_overview") })
-            let prompt = try String(contentsOf: run.folder.appending(path: "prompts/brief.md"), encoding: .utf8)
+            // A side session after the impact pass: the impact's fork goes on, the roles never see it.
+            #expect(run.args("impact").contains("--fork") && !run.args("overview").contains("--fork"))
+            #expect(!run.args("role-tests").contains("--fork"))
+            let prompt = try String(contentsOf: run.folder.appending(path: "prompts/overview.md"), encoding: .utf8)
             #expect(prompt.contains("in German (`de`)") && prompt.contains("work-items.md"))
             let overview = try #require(ReviewOverview.load(folder: run.folder))
             #expect(overview.language == .german && overview.modules.map(\.files) == [["src/Auth.swift"]])
@@ -408,7 +412,7 @@ extension ReviewProcessTests {
         @Test func noOverviewLeavesNoFile() async throws {
             let run = try await ReviewRunFixture.make()
             run.playTypicalRun()
-            run.home.write("fake/overview-brief.json", "not json")
+            run.home.write("fake/overview-overview.json", "not json")
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
             #expect(ReviewOverview.load(folder: run.folder) == nil)
         }

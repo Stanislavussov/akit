@@ -46,7 +46,7 @@ extension ReviewProcessTests {
             // The tests role read nothing; the verifier failed.
             var log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
             for index in log.passes.indices {
-                if log.passes[index].name == "role-tests" { log.passes[index].paths = [] }
+                if ["role-tests", "brief"].contains(log.passes[index].name) { log.passes[index].paths = [] }
                 if log.passes[index].name == "verifier" { log.passes[index].error = "quota exceeded" }
             }
             try ReviewJSON.write(log, to: run.folder.appending(path: "passes.json"))

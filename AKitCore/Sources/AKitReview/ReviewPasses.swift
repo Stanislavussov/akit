@@ -399,7 +399,8 @@ public enum ReviewPasses {
         // the monthly limit are checked against the most the passes may cost.
         let mayImpact = spec.impactMode != .off && spec.access.inPasses && !ReviewConsumers.gitlabServers(folder: folder, spec: spec).isEmpty
         let mayAddContracts = mayImpact && !roles.contains { $0.id == "contracts" } && !(spec.rolesOff ?? []).contains("contracts")
-        let extraPasses = (mayImpact ? 1 : 0) + (mayAddContracts ? 1 : 0)
+        // The overview pass always runs (in the side session).
+        let extraPasses = (mayImpact ? 1 : 0) + (mayAddContracts ? 1 : 0) + 1
         let estimate = ReviewCredits.estimate(contextCharacters: contextSize, systemCharacters: system.count,
                                               roles: roles.count + steps.count + extraPasses)
         try ReviewRuns.setStatus(.estimating, message: String(format: "≈ %.0f credits (cap %d)", estimate, spec.capCredits.value), folder: folder)
@@ -438,8 +439,9 @@ public enum ReviewPasses {
         let logFile = folder.appending(path: "passes.json")
         try ReviewJSON.write(log, to: logFile)
         try ReviewRuns.setStatus(.passes, folder: folder)
-        var skills = roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
-            + ReviewSkillLinks.flags(folder: folder, spec: spec)
+        // The role's checklist is in its pass prompt: its SKILL.md isn't loaded as a skill too, so no
+        // pass carries every role's listing or reads a checklist it already has.
+        let skills = ReviewSkillLinks.flags(folder: folder, spec: spec)
         let linkedTrees = ReviewLinked.worktrees(folder, spec: spec)
         let roots = ([readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)] + linkedTrees.map(\.path)).joined(separator: ":")
         // Where findings' files are read: the worktree, and `@key/…` in the linked worktrees beside it.
@@ -465,19 +467,33 @@ public enum ReviewPasses {
                 try? FileManager.default.removeItem(at: folder.appending(path: path))
             }
             let brief = try await pass("brief", role: nil, prompt: ReviewPrompts.brief(spec: spec), model: spec.passes.value, gate: passesGate,
-                                       session: main, tools: tools + ",akit_submit_boundaries,akit_submit_overview")
+                                       session: main, tools: tools + ",akit_submit_boundaries")
             log.brief = brief.answer.map(SecretFilter.masked)
             try ReviewJSON.write(log, to: logFile)
             // The boundaries the brief named (R41): only those whose quote is in a changed file.
             let boundaries = ReviewBoundaries.check(folder: folder, worktree: hasWorktree ? worktree : nil)
             try ReviewJSON.write(boundaries, to: folder.appending(path: "boundaries.json"))
             options.progress("Boundaries: \(boundaries.count) kept.")
-            // Other repositories (R42–R44): the impact pass, in the main session, before the roles.
-            let consumers = try await impact(folder: folder, spec: spec, boundaries: boundaries, options: options) { name, prompt, tools in
-                _ = try await pass(name, role: nil, prompt: prompt, model: spec.passes.value, gate: passesGate, session: main, tools: tools)
+            // The impact and overview passes go in a side session forked from the brief: the roles get
+            // their result in consumers.md, not GitLab's answers and the overview's text in their history.
+            var side = ["--fork", log.mainSession]
+            func sidePass(_ name: String, prompt: String, tools: String) async throws {
+                let output = try await pass(name, role: nil, prompt: prompt, model: spec.passes.value, gate: passesGate, session: side, tools: tools)
+                if let id = output.session { side = ["--session-id", id] }
+            }
+            // Other repositories (R42–R44): the impact pass, before the roles.
+            let consumers = try await impact(folder: folder, spec: spec, boundaries: boundaries, options: options, home: env.homeDirectory) { name, prompt, tools in
+                try await sidePass(name, prompt: prompt, tools: tools)
             }
             // The overview (R45–R47), after the impact pass so the flow shows the other repositories.
             // For the user only: a failure never fails the run.
+            do {
+                try await sidePass("overview", prompt: ReviewPrompts.overview(spec: spec, afterImpact: side.first == "--session-id"),
+                                   tools: tools + ",akit_submit_overview")
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw error }
+                options.progress("The overview pass failed: \(error.localizedDescription)")
+            }
             if let overview = ReviewOverview.check(folder: folder, spec: spec) {
                 do {
                     try overview.save(in: folder)
@@ -487,7 +503,7 @@ public enum ReviewPasses {
                     options.progress("The overview failed: \(error.localizedDescription)")
                 }
             } else {
-                options.progress("Overview: the brief submitted none.")
+                options.progress("Overview: the overview pass submitted none.")
             }
             // A use this change breaks is a contracts finding: that role runs whenever there are uses,
             // unless the user turned it off.
@@ -496,7 +512,6 @@ public enum ReviewPasses {
                     options.progress("Other repositories use the change, but the contracts role is off by the user's choice.")
                 } else if let role = try addContractsRole(folder: folder, spec: &spec) {
                     roles.append(role)
-                    skills += ["--skill", folder.appending(path: "roles/review-\(role.id)").path]
                     options.progress("Other repositories use the change: the contracts role runs too.")
                 }
             }
@@ -597,7 +612,7 @@ public enum ReviewPasses {
     /// one, the run gets a gap instead. Writes `consumers.json` and `context/consumers.md` and
     /// returns the kept uses. A failed pass is a gap too: the review goes on with the uses it
     /// submitted before it failed.
-    static func impact(folder: URL, spec: ReviewRunSpec, boundaries: [ReviewBoundary], options: Options,
+    static func impact(folder: URL, spec: ReviewRunSpec, boundaries: [ReviewBoundary], options: Options, home: URL? = nil,
                        run: (_ name: String, _ prompt: String, _ tools: String) async throws -> Void) async throws -> [ReviewConsumer] {
         // Nothing of an earlier run of the passes counts.
         for path in ["passes/consumers.json", "consumers.json", "context/consumers.md", "passes/gaps-impact.jsonl"] {
@@ -632,14 +647,23 @@ public enum ReviewPasses {
             return []
         }
         let tools = "read,grep,find,ls,akit_submit_consumers,akit_report_context_gap" + (boundaries.isEmpty ? ",akit_submit_boundaries" : "")
-        do {
-            try await run("impact", ReviewPrompts.impact(spec: spec, boundaries: boundaries, servers: servers), tools)
-        } catch {
-            if error is CancellationError || Task.isCancelled { throw error }
-            try gap(what, "The impact pass failed: \(SecretFilter.masked(error.localizedDescription))",
-                    how: "Run the passes again (akit review passes RUN), or check the GitLab server in Pi.")
-            // The uses it submitted before it failed are checked like any others.
-            options.progress("Other repositories: the impact pass failed; the review goes on.")
+        var reusedImpact = false
+        // An earlier run of this merge request searched for every one of these boundaries: its uses
+        // and GitLab's answers are checked again here, with no new search (`ReviewReuse`).
+        if let home, let earlier = ReviewReuse.earlierImpact(folder: folder, spec: spec, boundaries: boundaries, home: home) {
+            try ReviewReuse.copyImpact(from: earlier.folder, earlierBoundaries: earlier.boundaries, boundaries: boundaries, to: folder)
+            reusedImpact = true
+            options.progress("Other repositories: run \(earlier.id) searched for these boundaries; its uses are checked again, no GitLab search.")
+        } else {
+            do {
+                try await run("impact", ReviewPrompts.impact(spec: spec, boundaries: boundaries, servers: servers), tools)
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw error }
+                try gap(what, "The impact pass failed: \(SecretFilter.masked(error.localizedDescription))",
+                        how: "Run the passes again (akit review passes RUN), or check the GitLab server in Pi.")
+                // The uses it submitted before it failed are checked like any others.
+                options.progress("Other repositories: the impact pass failed; the review goes on.")
+            }
         }
         // `always` with no boundary from the brief: the pass named them, checked like the brief's.
         var kept = boundaries
@@ -648,7 +672,8 @@ public enum ReviewPasses {
             kept = ReviewBoundaries.check(folder: folder, worktree: FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path) ? worktree : nil)
             try ReviewJSON.write(kept, to: folder.appending(path: "boundaries.json"))
         }
-        let usage = ReviewConsumers.usage(folder: folder)
+        // The budget is the pass's own: copied answers are no new search.
+        let usage = reusedImpact ? (searches: 0, files: 0) : ReviewConsumers.usage(folder: folder)
         if usage.searches > ReviewConsumers.maxSearches {
             options.over("The impact pass made \(usage.searches) searches in GitLab, over its budget of \(ReviewConsumers.maxSearches). The review goes on.")
         }

@@ -136,7 +136,8 @@ public enum ReviewWhyMissed {
 
         // Who read it: the role passes and the Pi steps (their findings count as their role's).
         let sources = run.spec.roles.map { (role: $0, pass: "role-\($0.id)") } + (run.spec.steps ?? []).map { (role: $0.role, pass: "step-\($0.id)") }
-        let names = Set(sources.map(\.pass) + ["verifier"])
+        // The brief too: the roles use the files it read in their session.
+        let names = Set(sources.map(\.pass) + ["brief", "verifier"])
         let readers = (run.passes?.passes ?? []).filter { names.contains($0.name) }
         if readers.isEmpty {
             lines.append("- No role pass is recorded: the passes didn't run or failed (see Log…).")

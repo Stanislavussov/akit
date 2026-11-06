@@ -70,7 +70,7 @@ public struct ReviewOverview: Codable, Sendable, Hashable {
 
     // MARK: - Check
 
-    /// AKit's check of `<run>/passes/overview.json`: nil when the brief submitted none.
+    /// AKit's check of `<run>/passes/overview.json`: nil when the overview pass submitted none.
     static func check(folder: URL, spec: ReviewRunSpec) -> ReviewOverview? {
         guard let object = FileWalk.jsonObject(folder.appending(path: "passes/overview.json")) else { return nil }
         let diffs = ReviewJSON.read(ReviewSnapshot.self, from: folder.appending(path: "gitlab/snapshot.json"))?.diffs ?? []

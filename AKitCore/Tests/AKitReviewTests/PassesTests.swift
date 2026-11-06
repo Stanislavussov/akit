@@ -143,12 +143,12 @@ extension ReviewProcessTests {
             #expect(result.findings[1].kind == .ac && result.findings[1].verifier?.verdict == .confirmed)
 
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-            #expect(log.passes.map(\.name) == ["fetch", "brief", "role-bug-hunter", "role-contracts", "role-requirements", "role-tests", "verifier"])
+            #expect(log.passes.map(\.name) == ["fetch", "brief", "overview", "role-bug-hunter", "role-contracts", "role-requirements", "role-tests", "verifier"])
             #expect(log.passes.allSatisfy { $0.succeeded })
             #expect(log.brief == "Intent: log less.")
             #expect(log.verifierSession != nil && log.verifierSession != log.mainSession && log.verifierSessionFile != nil)
             #expect(log.passes[1].paths == ["context/diff.patch"])
-            #expect(abs(log.credits - 7 * (2.3 + 0.1)) < 1e-9, "the fetch pass counts too")
+            #expect(abs(log.credits - 8 * (2.3 + 0.1)) < 1e-9, "the fetch pass counts too")
 
             // One session for brief and roles; the verifier has a session of its own, with its own model and the brief.
             for pass in ["brief", "role-bug-hunter", "role-tests"] {
@@ -164,10 +164,12 @@ extension ReviewProcessTests {
                 #expect(brief.contains(flag), "\(flag)")
             }
             #expect(!brief.contains("--no-mcp"), "the passes read through Pi's MCP servers by default")
-            #expect(brief.contains(ReviewPasses.tools + ",akit_submit_boundaries,akit_submit_overview,codemode,tool_search,mcp__*"),
+            #expect(brief.contains(ReviewPasses.tools + ",akit_submit_boundaries,codemode,tool_search,mcp__*"),
                     "every server of Pi; the extension checks each call; the brief names the boundaries")
             #expect(brief.contains(run.folder.appending(path: "akit-review.ts").path))
-            #expect(brief.filter { $0 == "--skill" }.count == 4)
+            #expect(!brief.contains("--skill"), "a role's checklist is in its prompt, not a loaded skill")
+            let overview = run.args("overview")
+            #expect(overview.contains("--fork") && overview.contains(log.mainSession), "the overview forks the brief's session")
             let env = try String(contentsOf: run.home.url.appending(path: "fake/env-role-tests.txt"), encoding: .utf8)
             #expect(env.contains("AKIT_REVIEW_MAX=6") && env.contains("AKIT_REVIEW_ROLE=tests") && env.contains("AKIT_REVIEW_MODE=review"))
             #expect(env.contains(#"AKIT_REVIEW_MCP={"#))
@@ -190,7 +192,7 @@ extension ReviewProcessTests {
 
             // The send log records every pass, with the paths read.
             let sends = SendLog.records(env: run.home.env).filter { $0.runID == run.folder.lastPathComponent }
-            #expect(sends.map(\.purpose) == ["review-fetch", "review-brief", "review-role-bug-hunter", "review-role-contracts", "review-role-requirements", "review-role-tests",
+            #expect(sends.map(\.purpose) == ["review-fetch", "review-brief", "review-overview", "review-role-bug-hunter", "review-role-contracts", "review-role-requirements", "review-role-tests",
                                               "review-verifier"])
             #expect(sends[1].paths == ["context/diff.patch"] && sends[1].provider == "fake")
 
@@ -239,7 +241,7 @@ extension ReviewProcessTests {
                 #expect(error.localizedDescription.contains("quota exceeded"))
             }
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-            #expect(log.passes.map(\.name) == ["fetch", "brief", "role-bug-hunter", "role-contracts", "role-requirements"])
+            #expect(log.passes.map(\.name) == ["fetch", "brief", "overview", "role-bug-hunter", "role-contracts", "role-requirements"])
             #expect(log.passes.last?.error?.contains("quota") == true)
             #expect(SendLog.records(env: run.home.env).last?.error?.contains("quota") == true, "a failed pass's cost still counts")
             #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .failed)

@@ -187,6 +187,9 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var setup: [ReviewProfile.GatherCommand]?
     /// Filled by Gather: the clone the worktree came from and what git told before the fetch pass.
     public var repository: ReviewRepository.Use?
+    /// Filled by Gather: the earlier run of this merge request whose GitLab answers this run took
+    /// (`ReviewReuse`); nil when the fetch pass read everything.
+    public var gatherReused: ReviewReuse.Gather? = nil
     public var workItems: [Int]
     /// Filled by Gather: the commit the worktree and every finding refer to.
     public var headSHA: String?
