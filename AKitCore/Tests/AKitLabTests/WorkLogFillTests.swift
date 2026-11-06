@@ -44,6 +44,13 @@ struct WorkLogFillTests {
         #expect(throws: WorkLogFill.Failure.self) { try WorkLogFill.entries(fromAnswer: "no json") }
     }
 
+    @Test func aCalendarBlockHoldsItsTimeSoItsPromptsAreLeftOut() {
+        let moments = [moment("09:05", "a"), moment("09:35", "b"), moment("10:00", "c")]
+        let blocks = [KnowledgeWorkLog.Entry(time: "09:30", end: "10:00", kind: "meeting", text: "Standup")]
+        #expect(WorkLogFill.uncovered(moments, blocks: blocks).map(\.text) == ["a", "c"])
+        #expect(WorkLogFill.uncovered(moments, blocks: []).count == 3)
+    }
+
     @Test func theBranchAtAMomentComesFromTheReflog() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "akit-branch-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
