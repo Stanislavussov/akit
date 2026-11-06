@@ -99,7 +99,15 @@ public struct MeetingStore: Sendable {
         try save(meeting)
         if old != new {
             let text = summary(meeting.id)
-            if text.contains(old) { try writeSummary(meeting.id, text.replacingOccurrences(of: old, with: new)) }
+            if text.contains(old) {
+                let renamed = text.replacingOccurrences(of: old, with: new)
+                try writeSummary(meeting.id, renamed)
+                // Still the model's summary, only with the name: not a user edit to keep later.
+                if MeetingProcessor.hash(text) == meeting.summaryHash {
+                    meeting.summaryHash = MeetingProcessor.hash(renamed)
+                    try save(meeting)
+                }
+            }
         }
     }
 

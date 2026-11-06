@@ -222,13 +222,13 @@ struct MeetingDetail: View {
             }
             Spacer()
             if meeting.state == .failed, !model.processing.contains(meeting.id) {
-                Button("Try Again") { model.process(meeting.id) }
+                Button("Try Again") { model.process(meeting.id, byUser: true) }
                     .disabled(!model.hasKey || meeting.audioTrashed)
             }
             Menu {
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
                     .disabled(meeting.speakerKeys.isEmpty)
-                Button("Transcribe Again") { model.process(meeting.id, restart: true) }
+                Button("Transcribe Again") { model.process(meeting.id, restart: true, byUser: true) }
                     .disabled(!model.hasKey || meeting.audioTrashed || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
                 Divider()
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.folder(meeting.id)]) }

@@ -75,6 +75,19 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         #expect(page.contains("[01:05] **Speaker 1**: Dobrý den"))
     }
 
+    /// A rename in the model's own summary is still the model's: a new run keeps no Notes copy.
+    @Test func renameKeepsSummaryHash() throws {
+        let store = TempRoot().store
+        var meeting = try store.create()
+        meeting.segments = [Segment(start: 0, speaker: "S1", text: "Hi")]
+        let text = "- [ ] Speaker 1: plan"
+        try store.writeSummary(meeting.id, text)
+        meeting.summaryHash = MeetingProcessor.hash(text)
+        try store.save(meeting)
+        try store.renameSpeaker(&meeting, key: "S1", to: "Jana")
+        #expect(store.load(meeting.id)?.summaryHash == MeetingProcessor.hash(store.summary(meeting.id)))
+    }
+
     @Test func renameSpeakerRewritesTranscriptAndSummary() throws {
         let root = TempRoot()
         let store = root.store
@@ -439,6 +452,43 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         let files = PieceMixer.rawFiles(in: root.url)
         #expect(files[3]?[.mic]?.count == 2)
         #expect(files[1]?[.mic]?.count == 1)
+    }
+
+    /// Every piece is exactly as long as asked: a buffer that crosses the end is split there.
+    @Test func piecesAreExactAndGapsAcrossEndsAreWhole() throws {
+        let root = TempRoot()
+        let start = mach_absolute_time()
+        let writer = PieceWriter(folder: root.url, source: .mic, pieceSeconds: 1, startHost: start) { _, _ in }
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_096)!
+        buffer.frameLength = 4_096 // 0.256 s, does not divide 1 s
+        var host = start
+        for _ in 0..<5 { // 1.28 s
+            writer.append(buffer, hostTime: host)
+            host += AVAudioTime.hostTime(forSeconds: 0.256)
+        }
+        // A 1.5 s gap that crosses the end of piece 2, then one more buffer: 3.036 s in all.
+        writer.append(buffer, hostTime: host + AVAudioTime.hostTime(forSeconds: 1.5))
+        writer.stop()
+        let files = PieceMixer.rawFiles(in: root.url)
+        let lengths = try (1...4).map { i in try files[i]?[.mic]?.reduce(0) { $0 + (try AVAudioFile(forReading: $1).length) } ?? 0 }
+        #expect(lengths[0] == 16_000 && lengths[1] == 16_000 && lengths[2] == 16_000)
+        #expect(abs(Int(lengths[3]) - Int(0.036 * 16_000)) <= 2)
+    }
+
+    /// An unreadable part is kept as `bad-…`; a later mix keeps the piece.
+    @Test func badPartDoesNotEmptyThePieceLater() throws {
+        let root = TempRoot()
+        let folder = root.url
+        try writeTone(folder.appending(path: PieceMixer.rawName(.mic, index: 1, part: 1)), seconds: 1, rate: 16_000, channels: 1, amplitude: 0.3)
+        try Data("not audio".utf8).write(to: folder.appending(path: PieceMixer.rawName(.mic, index: 1, part: 2)))
+        let first = PieceMixer.mixPending(in: folder)
+        #expect(first.done == [1] && first.problems.count == 1)
+        #expect(FileManager.default.fileExists(atPath: folder.appending(path: "bad-mic-001-2.caf").path))
+        let second = PieceMixer.mixPending(in: folder)
+        #expect(second.done.isEmpty)
+        let info = try JSONDecoder().decode(PieceInfo.self, from: Data(contentsOf: folder.appending(path: "piece-001.json")))
+        #expect(abs(info.duration - 1) < 0.01)
     }
 
     /// M1: time before the first buffer and a gap between buffers become silence, so the source

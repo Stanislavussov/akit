@@ -20,14 +20,19 @@ public final class Recorder: @unchecked Sendable {
     private let micQueue = DispatchQueue(label: "meetings.mic-restart")
     private let lock = NSLock()
     private var closedPieces: [PieceMixer.Source: Set<Int>] = [:]
-    private var mixProblems: [String] = []
+    /// What went wrong while it recorded (a source that stopped, a write, a piece that did not
+    /// mix): shown at once and kept on the meeting by `stop()`.
+    private var problems: [String] = []
     private var configObserver: NSObjectProtocol?
     private var recordingLock: MeetingLock?
     private var running = false
     public private(set) var startedAt: Date?
 
-    public init(folder: URL, pieceSeconds: TimeInterval = 300, echoCancellation: Bool = true,
+    /// `lock`: the recording lock, when the caller took it already (right after creating the
+    /// meeting, so the other host never sees a free lock on a new recording).
+    public init(folder: URL, pieceSeconds: TimeInterval = 300, echoCancellation: Bool = true, lock: MeetingLock? = nil,
                 problem: @escaping @Sendable (String) -> Void = { _ in }) {
+        recordingLock = lock
         self.folder = folder
         self.pieceSeconds = pieceSeconds
         self.echoCancellation = echoCancellation
@@ -48,19 +53,22 @@ public final class Recorder: @unchecked Sendable {
             throw TapError("Microphone access is off. Turn it on in System Settings → Privacy & Security → Microphone.")
         }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        guard let held = MeetingLock.take(folder.appending(path: ".recording.lock")) else {
-            throw TapError("This meeting is recording in the other Meetings app.")
+        if recordingLock == nil {
+            guard let held = MeetingLock.take(Self.lockFile(folder)) else {
+                throw TapError("This meeting is recording in the other Meetings app.")
+            }
+            recordingLock = held
         }
-        recordingLock = held
+        let report: @Sendable (String) -> Void = { [weak self] text in self?.report(text) }
         let startHost = mach_absolute_time()
         let pieceDone: @Sendable (PieceMixer.Source, Int) -> Void = { [weak self] source, index in self?.closed(source, index) }
-        let micWriter = PieceWriter(folder: folder, source: .mic, pieceSeconds: pieceSeconds, startHost: startHost, closed: pieceDone, problem: problem)
-        let systemWriter = PieceWriter(folder: folder, source: .sys, pieceSeconds: pieceSeconds, startHost: startHost, closed: pieceDone, problem: problem)
+        let micWriter = PieceWriter(folder: folder, source: .mic, pieceSeconds: pieceSeconds, startHost: startHost, closed: pieceDone, problem: report)
+        let systemWriter = PieceWriter(folder: folder, source: .sys, pieceSeconds: pieceSeconds, startHost: startHost, closed: pieceDone, problem: report)
         mic = micWriter
         system = systemWriter
         do {
             try startMicrophone()
-            try tap.start(handler: { buffer, host in systemWriter.append(buffer, hostTime: host) }, problem: problem)
+            try tap.start(handler: { buffer, host in systemWriter.append(buffer, hostTime: host) }, problem: report)
         } catch {
             stopMicrophone()
             await tap.stop()
@@ -80,6 +88,8 @@ public final class Recorder: @unchecked Sendable {
 
     private func startMicrophone() throws {
         let input = engine.inputNode
+        // A try that failed after installTap left its tap; a second installTap would raise.
+        input.removeTap(onBus: 0)
         if echoCancellation {
             do {
                 try input.setVoiceProcessingEnabled(true)
@@ -114,7 +124,7 @@ public final class Recorder: @unchecked Sendable {
             if delay > 0 { Thread.sleep(forTimeInterval: delay) }
             if (try? startMicrophone()) != nil { return }
         }
-        problem("The microphone stopped after the audio device changed. Stop and Record again to record your voice.")
+        report("The microphone stopped after the audio device changed. Stop and Record again to record your voice.")
     }
 
     /// Stops both sources and mixes every piece left. Returns the recorded seconds and what could
@@ -134,7 +144,7 @@ public final class Recorder: @unchecked Sendable {
         }
         recordingLock?.release()
         recordingLock = nil
-        let problems = lock.withLock { mixProblems } + last
+        let problems = lock.withLock { self.problems } + last
         return (Self.recordedSeconds(in: folder), problems)
     }
 
@@ -162,11 +172,21 @@ public final class Recorder: @unchecked Sendable {
         let folder = self.folder
         mixQueue.async { [weak self] in
             let problems = PieceMixer.mixPending(in: folder, only: ready).problems
-            guard !problems.isEmpty, let self else { return }
-            self.lock.withLock { self.mixProblems += problems }
-            for text in problems { self.problem(text) }
+            guard let self else { return }
+            for text in problems { self.report(text) }
         }
     }
+
+    private func report(_ text: String) {
+        let new = lock.withLock { () -> Bool in
+            guard !problems.contains(text) else { return false }
+            problems.append(text)
+            return true
+        }
+        if new { problem(text) }
+    }
+
+    public static func lockFile(_ folder: URL) -> URL { folder.appending(path: ".recording.lock") }
 
     /// The sum of the mixed pieces' lengths.
     public static func recordedSeconds(in folder: URL) -> TimeInterval {
@@ -181,7 +201,7 @@ public final class Recorder: @unchecked Sendable {
     /// A recording that was not stopped (AKit quit or crashed): its raw pieces are mixed now. Nil
     /// when another host still records it (its lock is held).
     public static func recover(folder: URL) -> (seconds: TimeInterval, problems: [String])? {
-        guard let held = MeetingLock.take(folder.appending(path: ".recording.lock")) else { return nil }
+        guard let held = MeetingLock.take(lockFile(folder)) else { return nil }
         defer { held.release() }
         let problems = PieceMixer.mixPending(in: folder).problems
         return (recordedSeconds(in: folder), problems)

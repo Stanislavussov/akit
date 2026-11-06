@@ -54,6 +54,7 @@ public final class MeetingsModel {
     let transport: OpenRouterClient.Transport
     private var recorder: Recorder?
     private var generation = 0
+    @ObservationIgnored private var savedText: (key: String, text: String)?
     private var loaded = false
 
     public init(settingsFile: URL = MeetingsSettings.defaultFile, keyStore: KeyStore = KeyStore(),
@@ -130,7 +131,9 @@ public final class MeetingsModel {
         defer { starting = false }
         do {
             let meeting = try store.create()
-            let recorder = Recorder(folder: store.audioFolder(meeting.id), echoCancellation: settings.echoCancellation) { [weak self] text in
+            // The lock right after the meeting exists, so the other host never takes it for a crash.
+            let held = MeetingLock.take(Recorder.lockFile(store.audioFolder(meeting.id)))
+            let recorder = Recorder(folder: store.audioFolder(meeting.id), echoCancellation: settings.echoCancellation, lock: held) { [weak self] text in
                 Task { @MainActor in self?.problem = text }
             }
             do {
@@ -184,7 +187,9 @@ public final class MeetingsModel {
     // MARK: Transcription
 
     /// Transcribes in the background; `restart` starts the transcript over (Transcribe Again).
-    public func process(_ id: String, restart: Bool = false) {
+    /// `byUser`: a click (Try Again, Transcribe Again), which gets a notice when the other
+    /// Meetings app is already on it.
+    public func process(_ id: String, restart: Bool = false, byUser: Bool = false) {
         guard !processing.contains(id) else { return }
         guard let key = keyStore.read() else {
             problem = MeetingsError.noKey.errorDescription
@@ -200,6 +205,7 @@ public final class MeetingsModel {
                 _ = try await processor.run(id, restart: restart)
             } catch MeetingsError.busy {
                 // The other Meetings app transcribes it; its saves show up on the next refresh.
+                if byUser { notice = MeetingsError.busy.errorDescription }
             } catch {
                 problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
@@ -247,7 +253,8 @@ public final class MeetingsModel {
         let key = "\(meeting.id)#\(selectedTab)"
         let text = isSummary ? store.summary(meeting.id) : store.tab(meeting.id, selectedTab)
         // M6: the same page with the same text keeps its editor (and the typing not yet saved).
-        if let page, page.key == key, page.text == text { return }
+        if let page, page.key == key, page.text == text || savedText.map({ $0.key == key && $0.text == text }) == true { return }
+        savedText = nil
         generation += 1
         page = MeetingsPage(key: key, text: text, generation: generation,
                             folder: store.folder(meeting.id).appending(path: "tabs", directoryHint: .isDirectory), meetingID: meeting.id)
@@ -259,6 +266,9 @@ public final class MeetingsModel {
         guard let hash = key.lastIndex(of: "#") else { return }
         let id = String(key[..<hash]), tab = String(key[key.index(after: hash)...])
         guard let meeting = store.load(id) else { return }
+        // M6: the open page's newest text, so a reload of it keeps the editor (not observed: the
+        // editor already shows it).
+        if page?.key == key { savedText = (key, text) }
         do {
             if tab == Self.summaryTab {
                 try store.writeSummary(id, text)

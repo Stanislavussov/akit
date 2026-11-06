@@ -47,7 +47,13 @@ final class SystemAudioTap: @unchecked Sendable {
         handler = nil
     }
 
-    deinit { close() }
+    deinit {
+        if let listener {
+            var address = Self.address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, controlQueue, listener)
+        }
+        close()
+    }
 
     /// On `controlQueue`. A new device can take a moment to settle: a few tries, then a sentence
     /// for the screen. The writer fills the gap with silence.

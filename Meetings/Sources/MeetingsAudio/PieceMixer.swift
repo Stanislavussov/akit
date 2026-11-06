@@ -88,9 +88,15 @@ public enum PieceMixer {
         let out = folder.appending(path: pieceName(index))
         try write(mixed, to: out)
         try JSONEncoder().encode(info).write(to: out.deletingPathExtension().appendingPathExtension("json"), options: .atomic)
-        // An unreadable part stays for a look; the parts that mixed are removed.
-        for url in mic + system where !problems.contains(where: { $0.contains(url.lastPathComponent) }) {
-            try? FileManager.default.removeItem(at: url)
+        // The parts that mixed are removed. An unreadable part stays for a look as `bad-…`, out
+        // of the `raw-` pattern, so a later mix does not replace this piece with an empty one.
+        for url in mic + system {
+            if problems.contains(where: { $0.contains(url.lastPathComponent) }) {
+                let bad = url.deletingLastPathComponent().appending(path: "bad-" + url.lastPathComponent.dropFirst(4))
+                try? FileManager.default.moveItem(at: url, to: bad)
+            } else {
+                try? FileManager.default.removeItem(at: url)
+            }
         }
         return (info, problems)
     }
