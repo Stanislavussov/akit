@@ -37,7 +37,12 @@ struct MeetingsSettingsView: View {
                         }
                         .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
-                    Text("Kept in the login Keychain, never shown or written to a file. Create one at openrouter.ai/keys.")
+                    if let problem = model.keyProblem {
+                        Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
+                    } else if let notice = model.notice, notice.contains("key") {
+                        Text(notice).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text("Kept in the login Keychain, never shown or written to a file. Create one at openrouter.ai/keys (it starts with sk-or-v1-).")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Models") {
@@ -88,6 +93,19 @@ struct MeetingsSettingsView: View {
                     Text("Audio goes to the Trash \(MeetingStore.audioDays) days after a recording; summaries, transcripts and tabs stay.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Section("Log") {
+                    HStack {
+                        Text(MeetingsLog.file.path.replacingOccurrences(of: userHome.path, with: "~")).textSelection(.enabled)
+                        Spacer()
+                        Button("Show Log") { NSWorkspace.shared.activateFileViewerSelecting([MeetingsLog.file]) }
+                        Button("Copy Log") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(MeetingsLog.tail(), forType: .string)
+                        }
+                    }
+                    Text("What recording and OpenRouter did: times, sizes, answer codes. Never the key, audio or what was said.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Cost") {
                     HStack {
                         TextField("Monthly limit, $", value: $limit, format: .number.precision(.fractionLength(0...2)))
@@ -110,7 +128,10 @@ struct MeetingsSettingsView: View {
         .padding(20)
         .frame(width: 620, height: 720)
         .onAppear { limit = model.settings.monthlyLimitUSD }
-        .task { if model.audioModels.isEmpty { await model.loadModels() } }
+        .task {
+            if model.hasKey { await model.checkKey() }
+            if model.audioModels.isEmpty { await model.loadModels() }
+        }
     }
 
     private var languages: [String] {

@@ -2,6 +2,7 @@ import AudioToolbox
 @preconcurrency import AVFoundation
 import CoreAudio
 import Foundation
+import MeetingsCore
 
 /// The sound of the whole system (M2): a Core Audio process tap of every process's output
 /// (macOS 14.2+), read through a private aggregate device. The tap takes the sound before the
@@ -58,6 +59,7 @@ final class SystemAudioTap: @unchecked Sendable {
     /// On `controlQueue`. A new device can take a moment to settle: a few tries, then a sentence
     /// for the screen. The writer fills the gap with silence.
     private func restart() {
+        MeetingsLog.info(.recorder, "output device changed: restarting the system tap")
         close()
         for delay in [0.0, 0.3, 0.7, 1.5] {
             if delay > 0 { Thread.sleep(forTimeInterval: delay) }
@@ -107,13 +109,39 @@ final class SystemAudioTap: @unchecked Sendable {
         aggregateID = device
 
         let handler = self.handler
+        let first = FirstCallback()
         var proc: AudioDeviceIOProcID?
         try check(AudioDeviceCreateIOProcIDWithBlock(&proc, device, ioQueue) { _, input, inputTime, _, _ in
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: avFormat, bufferListNoCopy: input, deallocator: nil) else { return }
+            let buffer = Self.tapBuffer(input, format: avFormat)
+            if first.take() {
+                let list = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+                let sizes = list.map { "\($0.mNumberChannels)ch \($0.mDataByteSize)B" }.joined(separator: ", ")
+                MeetingsLog.info(.recorder, "system tap: first IO callback, \(list.count) buffer(s) [\(sizes)], tap buffer \(buffer.map { "\($0.frameLength) frames" } ?? "not found")")
+            }
+            guard let buffer else { return }
             handler?(buffer, inputTime.pointee.mHostTime)
         }, "attach to the aggregate device")
         procID = proc
         try check(AudioDeviceStart(device, proc), "start the aggregate device")
+        MeetingsLog.info(.recorder, "system tap on \(outputUID): \(avFormat)")
+    }
+
+    /// The tap's audio in the aggregate's input. The output device's own inputs come first (the
+    /// Mac's microphone array, a headset's microphone: `[6ch, 2ch]`, `[2ch, 2ch]`), the tap's
+    /// stream last; so the last buffer with the tap's channel count, copied into its own buffer.
+    static func tapBuffer(_ input: UnsafePointer<AudioBufferList>, format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let list = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+        let bytesPerFrame = Int(format.streamDescription.pointee.mBytesPerFrame)
+        guard format.isInterleaved, bytesPerFrame > 0,
+              let source = list.last(where: { $0.mNumberChannels == format.channelCount && $0.mData != nil }) else {
+            return list.count == 1 ? AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: input, deallocator: nil) : nil
+        }
+        let frames = Int(source.mDataByteSize) / bytesPerFrame
+        guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
+              let target = buffer.mutableAudioBufferList.pointee.mBuffers.mData else { return nil }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        memcpy(target, source.mData!, frames * bytesPerFrame)
+        return buffer
     }
 
     private func close() {
@@ -146,6 +174,13 @@ final class SystemAudioTap: @unchecked Sendable {
         guard let value = uid?.takeRetainedValue() else { throw TapError("the output device has no id") }
         return value as String
     }
+}
+
+/// True once: the first IO callback of a tap, for the log.
+final class FirstCallback: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func take() -> Bool { lock.withLock { defer { done = true }; return !done } }
 }
 
 struct TapError: Error, LocalizedError {

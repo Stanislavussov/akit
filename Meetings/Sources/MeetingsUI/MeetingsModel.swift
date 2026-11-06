@@ -30,6 +30,8 @@ public final class MeetingsModel {
     public private(set) var starting = false
     public private(set) var processing: Set<String> = []
     public private(set) var hasKey = false
+    /// The answer of the last key check, when OpenRouter refused the key.
+    public private(set) var keyProblem: String?
     public private(set) var audioModels: [ModelCatalog.Row] = []
     public private(set) var textModels: [ModelCatalog.Row] = []
     public private(set) var modelsProblem: String?
@@ -206,6 +208,8 @@ public final class MeetingsModel {
             } catch MeetingsError.busy {
                 // The other Meetings app transcribes it; its saves show up on the next refresh.
                 if byUser { notice = MeetingsError.busy.errorDescription }
+            } catch MeetingsError.http(401, _) {
+                problem = (MeetingsError.http(401, "").errorDescription ?? "") + " " + KeyStore.shape(key)
             } catch {
                 problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
@@ -375,16 +379,33 @@ public final class MeetingsModel {
     }
 
     public func saveKey(_ key: String) {
+        MeetingsLog.info(.ui, "Save Key: the field held \(key.count) chars")
         do {
             try keyStore.save(key)
             hasKey = keyStore.hasKey
-            notice = hasKey ? "The OpenRouter key is saved in the Keychain." : nil
+            notice = hasKey ? "The OpenRouter key is saved in the Keychain. Checking it…" : nil
+            if hasKey { Task { await checkKey() } }
             if hasKey {
                 Task { await loadModels() }
                 for meeting in meetings where meeting.state == .waiting { process(meeting.id) }
             }
         } catch {
             problem = "Could not save the key in the Keychain: \(error.localizedDescription)"
+        }
+    }
+
+    /// Asks OpenRouter whether it accepts the saved key.
+    public func checkKey() async {
+        guard let key = keyStore.read() else { return }
+        MeetingsLog.info(.key, "check: \(KeyStore.shape(key))")
+        do {
+            try await OpenRouterClient(key: key, transport: transport).checkKey()
+            notice = "OpenRouter accepts the key."
+            keyProblem = nil
+        } catch {
+            let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            keyProblem = reason + " " + KeyStore.shape(key)
+            notice = nil
         }
     }
 

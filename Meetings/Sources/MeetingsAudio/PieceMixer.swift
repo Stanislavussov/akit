@@ -83,6 +83,8 @@ public enum PieceMixer {
             let value = (i < micSamples.count ? micSamples[i] : 0) + (i < sysSamples.count ? sysSamples[i] : 0)
             mixed[i] = min(1, max(-1, value))
         }
+        func peak(_ samples: [Float]) -> String { String(format: "%.4f", samples.reduce(0) { max($0, abs($1)) }) }
+        MeetingsLog.info(.mixer, "piece \(index): mic \(mic.count) part(s) \(String(format: "%.1f", Double(micSamples.count) / sampleRate)) s peak \(peak(micSamples)), system \(system.count) part(s) \(String(format: "%.1f", Double(sysSamples.count) / sampleRate)) s peak \(peak(sysSamples)), \(problems.count) unreadable")
         let info = PieceInfo(duration: Double(count) / sampleRate,
                              me: SpeechSpans.spans(levels: levels(micSamples), window: levelWindow))
         let out = folder.appending(path: pieceName(index))
@@ -123,7 +125,13 @@ public enum PieceMixer {
         guard let converter = AVAudioConverter(from: inFormat, to: monoFormat) else {
             throw NSError(domain: "Meetings", code: 1, userInfo: [NSLocalizedDescriptionKey: "no converter from \(inFormat)"])
         }
-        converter.downmix = true
+        if inFormat.channelCount > 2 {
+            // Voice processing gives the microphone as many channels (9 on a MacBook) with the
+            // voice in the first; a downmix would thin it out.
+            converter.channelMap = [0]
+        } else {
+            converter.downmix = true
+        }
         let inCapacity: AVAudioFrameCount = 16_384
         guard let buffer = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: inCapacity) else { return [] }
         nonisolated(unsafe) let input = buffer

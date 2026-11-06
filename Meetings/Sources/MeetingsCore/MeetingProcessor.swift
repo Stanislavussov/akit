@@ -63,6 +63,7 @@ public struct MeetingProcessor: Sendable {
         guard let lock = MeetingLock.take(MeetingLock.processing(store, id)) else { throw MeetingsError.busy }
         defer { lock.release() }
         guard var meeting = store.load(id) else { throw MeetingsError.noAudio }
+        MeetingsLog.info(.processor, "\(id): run\(restart ? " (restart)" : ""), \(store.pieces(id).count) pieces, model \(settings.model)")
         // A restart without audio keeps the transcript it has (L1).
         if store.pieces(id).isEmpty && (restart || meeting.segments.isEmpty) {
             return try fail(&meeting, MeetingsError.noAudio)
@@ -87,6 +88,7 @@ public struct MeetingProcessor: Sendable {
                 for piece in chunk.pieces { audio += try Data(contentsOf: piece) }
                 let answer = try await transcriber.transcribe(audio: audio, format: "aac", length: chunk.length,
                                                               offset: chunk.offset, me: chunk.me, previous: meeting.segments)
+                MeetingsLog.info(.processor, "\(id): chunk of \(chunk.pieces.count) pieces (\(Int(chunk.length)) s, \(audio.count) bytes) → \(answer.segments.count) segments, \(answer.completion.promptTokens)+\(answer.completion.completionTokens) tokens, $\(answer.completion.cost)")
                 meeting.segments += answer.segments
                 meeting.costUSD += answer.completion.cost
                 meeting.transcribedChunks += 1
@@ -109,6 +111,7 @@ public struct MeetingProcessor: Sendable {
             meeting.summaryHash = Self.hash(summary)
             meeting.state = .done
             try save(&meeting)
+            MeetingsLog.info(.processor, "\(id): done, \(meeting.segments.count) segments, $\(meeting.costUSD) in all")
             return meeting
         } catch {
             return try fail(&meeting, error)
@@ -157,6 +160,7 @@ public struct MeetingProcessor: Sendable {
     }
 
     func fail(_ meeting: inout Meeting, _ error: Error) throws -> Meeting {
+        MeetingsLog.error(.processor, "\(meeting.id): failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)")
         meeting.state = .failed
         meeting.failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         try save(&meeting)

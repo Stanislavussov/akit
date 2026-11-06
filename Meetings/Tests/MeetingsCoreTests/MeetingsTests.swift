@@ -386,6 +386,19 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         #expect(store.load(meeting.id)?.segments.map(\.text) == ["keep"])
     }
 
+    @Test func pastedKeyIsCleaned() {
+        #expect(KeyStore.clean("  \"Bearer sk-or-v1-abc\"\n") == "sk-or-v1-abc")
+        #expect(KeyStore.clean("sk-or-v1-a b") == "sk-or-v1-ab")
+    }
+
+    @Test func keyShapeNeverShowsTheKey() {
+        let good = "sk-or-v1-" + String(repeating: "a1", count: 32)
+        #expect(KeyStore.shape(good).contains("has the form"))
+        #expect(KeyStore.shape("sk-or-v1-abc…xyz").contains("not 73"))
+        #expect(KeyStore.shape("sk-proj-123").contains("not sk-or-v1-"))
+        for text in [KeyStore.shape(good), KeyStore.shape("sk-or-v1-abc…xyz")] { #expect(!text.contains("a1a1") && !text.contains("abc")) }
+    }
+
     @Test func errorAnswerWith200IsAnError() {
         #expect(throws: MeetingsError.self) { try Completion.parse(Data(#"{"error":{"code":429,"message":"rate"}}"#.utf8)) }
     }
@@ -433,6 +446,42 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         let samples = try PieceMixer.load(piece)
         #expect(abs(Double(samples.count) / PieceMixer.sampleRate - 3) < 0.2)
         #expect(abs(Recorder.recordedSeconds(in: folder) - 3) < 0.05)
+    }
+
+    /// A voice-processing mic (9 channels, voice in the first) keeps its level.
+    @Test func manyChannelMicTakesTheFirst() throws {
+        let root = TempRoot()
+        let url = root.url.appending(path: "nine.caf")
+        let layout = AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 9)!
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, interleaved: false, channelLayout: layout)
+        let file = try AVAudioFile(forWriting: url, settings: format.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_000)!
+        buffer.frameLength = 48_000
+        for c in 0..<9 { for i in 0..<48_000 { buffer.floatChannelData![c][i] = c == 0 ? 0.5 * sin(Float(i) * 2 * .pi * 440 / 48_000) : 0 } }
+        try file.write(from: buffer)
+        file.close()
+        let peak = try PieceMixer.load(url).reduce(0) { max($0, abs($1)) }
+        #expect(peak > 0.4)
+    }
+
+    /// The aggregate's input is [the output device's mic, the tap]: the tap's buffer is the last one.
+    @Test func tapBufferIsTheLastMatchingStream() throws {
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: true)!
+        let frames = 4
+        var mic = [Float](repeating: 0.9, count: frames * 6)
+        var tap: [Float] = (0..<(frames * 2)).map { Float($0) / 10 }
+        let expected = tap[3]
+        let list = AudioBufferList.allocate(maximumBuffers: 2)
+        defer { free(list.unsafeMutablePointer) }
+        mic.withUnsafeMutableBytes { m in
+            tap.withUnsafeMutableBytes { t in
+                list[0] = AudioBuffer(mNumberChannels: 6, mDataByteSize: UInt32(m.count), mData: m.baseAddress)
+                list[1] = AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(t.count), mData: t.baseAddress)
+                let buffer = SystemAudioTap.tapBuffer(list.unsafePointer, format: format)
+                #expect(buffer?.frameLength == AVAudioFrameCount(frames))
+                #expect(buffer?.floatChannelData?[0][3] == expected)
+            }
+        }
     }
 
     @Test func pieceWriterRotatesAndParts() throws {

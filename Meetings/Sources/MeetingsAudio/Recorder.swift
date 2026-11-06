@@ -49,6 +49,7 @@ public final class Recorder: @unchecked Sendable {
     }
 
     public func start() async throws {
+        MeetingsLog.info(.recorder, "microphone permission: \(AVCaptureDevice.authorizationStatus(for: .audio).rawValue) (3 = allowed)")
         guard await Self.microphoneAllowed() else {
             throw TapError("Microphone access is off. Turn it on in System Settings → Privacy & Security → Microphone.")
         }
@@ -84,6 +85,7 @@ public final class Recorder: @unchecked Sendable {
         }
         running = true
         startedAt = Date()
+        MeetingsLog.info(.recorder, "started in \(folder.deletingLastPathComponent().lastPathComponent): mic \(engine.inputNode.outputFormat(forBus: 0)), echo cancellation \(echoCancellation)")
     }
 
     private func startMicrophone() throws {
@@ -120,9 +122,13 @@ public final class Recorder: @unchecked Sendable {
         lock.unlock()
         guard isRunning else { return }
         stopMicrophone()
+        MeetingsLog.info(.recorder, "audio configuration changed: restarting the microphone")
         for delay in [0.0, 0.3, 0.7, 1.5] {
             if delay > 0 { Thread.sleep(forTimeInterval: delay) }
-            if (try? startMicrophone()) != nil { return }
+            if (try? startMicrophone()) != nil {
+                MeetingsLog.info(.recorder, "microphone restarted: \(engine.inputNode.outputFormat(forBus: 0))")
+                return
+            }
         }
         report("The microphone stopped after the audio device changed. Stop and Record again to record your voice.")
     }
@@ -145,7 +151,9 @@ public final class Recorder: @unchecked Sendable {
         recordingLock?.release()
         recordingLock = nil
         let problems = lock.withLock { self.problems } + last
-        return (Self.recordedSeconds(in: folder), problems)
+        let seconds = Self.recordedSeconds(in: folder)
+        MeetingsLog.info(.recorder, "stopped: \(Int(seconds)) s in pieces, \(problems.count) problem(s)")
+        return (seconds, problems)
     }
 
     /// H1: a recorder released while it records (its window closed) stops its devices.
@@ -178,6 +186,7 @@ public final class Recorder: @unchecked Sendable {
     }
 
     private func report(_ text: String) {
+        MeetingsLog.error(.recorder, text)
         let new = lock.withLock { () -> Bool in
             guard !problems.contains(text) else { return false }
             problems.append(text)

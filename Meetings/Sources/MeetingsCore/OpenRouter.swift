@@ -25,6 +25,13 @@ public struct OpenRouterClient: Sendable {
         do { return try JSONDecoder().decode(List.self, from: data).data } catch { throw MeetingsError.badAnswer("model list: \(error)") }
     }
 
+    /// `GET /key`: whether OpenRouter accepts the key (401 when it does not).
+    public func checkKey() async throws {
+        var request = URLRequest(url: base.appending(path: "key"), timeoutInterval: 20)
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        _ = try await send(request)
+    }
+
     /// `POST /chat/completions`: one user message of text parts and at most one audio part. The
     /// answer is asked as a JSON object.
     public func complete(model: String, system: String, text: String, audio: (data: Data, format: String)? = nil, timeout: TimeInterval = 600) async throws -> Completion {
@@ -51,11 +58,25 @@ public struct OpenRouterClient: Sendable {
     }
 
     func send(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await transport(request)
+        let started = Date()
+        let what = "\(request.httpMethod ?? "GET") /\(request.url?.path(percentEncoded: false).split(separator: "/").suffix(2).joined(separator: "/") ?? "?")"
+        let auth = request.value(forHTTPHeaderField: "Authorization").map { "auth header, key \($0.dropFirst(7).count) chars" } ?? "no auth header"
+        MeetingsLog.info(.openrouter, "\(what): sending \(request.httpBody?.count ?? 0) bytes, \(auth)")
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await transport(request)
+        } catch {
+            MeetingsLog.error(.openrouter, "\(what): no answer after \(Int(Date().timeIntervalSince(started))) s: \(error.localizedDescription)")
+            throw error
+        }
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let ms = Int(Date().timeIntervalSince(started) * 1000)
         guard (200..<300).contains(code) else {
+            MeetingsLog.error(.openrouter, "\(what): \(code) after \(ms) ms: \(Self.errorMessage(data))")
             throw MeetingsError.http(code, Self.errorMessage(data))
         }
+        MeetingsLog.info(.openrouter, "\(what): \(code) after \(ms) ms, \(data.count) bytes")
         return data
     }
 

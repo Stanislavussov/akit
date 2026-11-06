@@ -292,6 +292,7 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
         case .badTabName(let name): "“\(name)” cannot be a tab name: it is empty, taken, or has a / or :."
         case .noKey: "No OpenRouter key. Add it in Meetings Settings."
         case .monthlyLimit(let limit): String(format: "This month's limit of $%.2f is reached. Raise it in Meetings Settings.", limit)
+        case .http(401, _): "OpenRouter does not accept the key (401). Paste a key from openrouter.ai/keys in Meetings Settings, then Try Again."
         case .http(let code, let message): "OpenRouter answered \(code): \(message)"
         case .badAnswer(let detail): "The model's answer could not be read: \(detail)"
         case .noAudio: "This meeting has no audio left to transcribe."
