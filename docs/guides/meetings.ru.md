@@ -121,6 +121,20 @@
 
 ![Окно Meetings Settings: ключ OpenRouter, модели Transcription и Summary с ценой часа, язык, Echo cancellation, папка, месячный лимит](images/meetings-settings.png)
 
+## Расходы
+<!-- section: costs -->
+
+**Costs…** в панели инструментов показывает, сколько OpenRouter списал за встречи.
+
+- **Group by** — по дням (**Day**), неделям (**Week**, с понедельника) или месяцам (**Month**).
+- **Period** — **This week**, **This month**, **Last 30 days**, **Last 3 months**, **This year**, **All time** или **Custom** со своими датами **From** и **To**.
+- **Model** — все модели или одна.
+- Сверху итоги: **Cost**, **Meetings**, **Recorded**, **Per hour** (цена часа записи), **Per day**, **Month limit**.
+- График и таблица по периодам. Пустые дни тоже видны, с нулём.
+- **Copy CSV** копирует таблицу для Numbers или Excel: период, встречи, часы, доллары, доллары в час.
+
+![Окно Costs: группировка по дням, период This month, итоги, график расходов по дням и таблица](images/meetings-costs.png)
+
 ## Файлы
 <!-- section: files -->
 

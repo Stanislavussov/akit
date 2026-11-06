@@ -59,12 +59,17 @@ public struct MeetingsView: View {
         .toolbar {
             ToolbarItem { RecordButton(model: model) }
             ToolbarItem {
+                Button("Costs…", systemImage: "chart.bar") { model.showCosts = true }
+                    .help("What OpenRouter charged by day, week or month, with filters and Copy CSV")
+            }
+            ToolbarItem {
                 Button("Settings…", systemImage: "gearshape") { model.showSettings = true }
                     .help("OpenRouter key, models, language, monthly limit, folder")
             }
             if let extraToolbar { ToolbarItem { extraToolbar } }
         }
         .sheet(isPresented: $model.showSettings) { MeetingsSettingsView(model: model) }
+        .sheet(isPresented: $model.showCosts) { CostsView(model: model) }
         .sheet(item: $model.tabNameRequest) { request in TabNameSheet(model: model, old: request.old) }
         .sheet(isPresented: $model.renameSpeakersRequest) { RenameSpeakersSheet(model: model) }
         .confirmationDialog("Move this meeting to the Trash?", isPresented: Binding(get: { model.trashRequest != nil }, set: { if !$0 { model.trashRequest = nil } })) {

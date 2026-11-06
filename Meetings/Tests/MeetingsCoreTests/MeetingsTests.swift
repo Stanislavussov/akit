@@ -160,6 +160,52 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
     }
 }
 
+@Suite struct CostReportTests {
+    var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Europe/Prague")!
+        c.firstWeekday = 2
+        return c
+    }
+
+    func meeting(_ day: Int, hour: Int = 10, cost: Double, minutes: Double = 30, model: String = "m/a") -> Meeting {
+        let date = calendar.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour))!
+        var m = Meeting(id: "\(day)/\(hour)", started: date)
+        m.costUSD = cost
+        m.duration = minutes * 60
+        m.model = model
+        return m
+    }
+
+    @Test func daysIncludeEmptyOnesAndSum() {
+        let meetings = [meeting(2, cost: 0.1), meeting(2, hour: 14, cost: 0.2), meeting(4, cost: 0.05, model: "m/b"), meeting(20, cost: 9)]
+        let from = calendar.date(from: DateComponents(year: 2026, month: 11, day: 2))!
+        let to = calendar.date(from: DateComponents(year: 2026, month: 11, day: 5))!
+        let rows = CostReport.rows(meetings, grouping: .day, from: from, to: to, calendar: calendar)
+        #expect(rows.count == 4)
+        #expect(rows.map(\.meetings) == [2, 0, 1, 0])
+        #expect(abs(rows[0].cost - 0.3) < 1e-9)
+        #expect(abs((rows[0].costPerHour ?? 0) - 0.3) < 1e-9)
+        let totals = CostReport.totals(meetings, from: from, to: to, calendar: calendar)
+        #expect(totals.meetings == 3 && totals.days == 4)
+        #expect(abs(totals.costPerDay - 0.35 / 4) < 1e-9)
+        let onlyB = CostReport.totals(meetings, from: from, to: to, model: "m/b", calendar: calendar)
+        #expect(onlyB.meetings == 1)
+        #expect(CostReport.models(meetings) == ["m/a", "m/b"])
+    }
+
+    @Test func weeksStartOnMondayAndCSV() {
+        // 2026-11-01 is a Sunday: it belongs to the week of 26. 10.
+        let meetings = [meeting(1, cost: 1), meeting(2, cost: 2), meeting(8, cost: 4)]
+        let from = calendar.date(from: DateComponents(year: 2026, month: 11, day: 1))!
+        let to = calendar.date(from: DateComponents(year: 2026, month: 11, day: 9))!
+        let rows = CostReport.rows(meetings, grouping: .week, from: from, to: to, calendar: calendar)
+        #expect(rows.map(\.cost) == [1, 6, 0])
+        let csv = CostReport.csv(rows, calendar: calendar)
+        #expect(csv.hasPrefix("period,meetings,hours,usd,usd_per_hour\n2026-10-26,1,0.50,1.0000,2.0000\n"))
+    }
+}
+
 @Suite struct CatalogTests {
     let models = [
         OpenRouterModel(id: "google/gemini-2.5-flash", input: ["text", "audio"], prompt: "0.0000003", completion: "0.0000025", audio: "0.000001"),

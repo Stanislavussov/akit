@@ -22,6 +22,7 @@ struct MeetingsScreen: View {
                 case "meetings-transcript": model.show(tab: MeetingsModel.transcriptTab)
                 case "meetings-tab": if let tab = model.selected?.tabs.first { model.show(tab: tab) }
                 case "meetings-settings": model.showSettings = true
+                case "meetings-costs": model.showCosts = true
                 case "meetings-new-tab": model.tabNameRequest = .init(old: nil)
                 default: break
                 }

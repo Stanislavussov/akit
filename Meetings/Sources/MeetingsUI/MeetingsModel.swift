@@ -40,6 +40,7 @@ public final class MeetingsModel {
     public var notice: String?
     /// Sheets and dialogs the view shows.
     public var showSettings = false
+    public var showCosts = false
     public var tabNameRequest: TabNameRequest?
     public var trashRequest: String?
     public var removeTabRequest: String?
