@@ -23,13 +23,18 @@ struct NotebookEditorView: NSViewRepresentable {
     var upload: (Data, String) async throws -> String
     /// Every message from the page (`type`: ready, loaded, linkOpen, save, problem).
     var onMessage: (MapCanvasMessage) -> Void = { _ in }
+    /// Another screen's pages (Meetings' tabs): it saves its own unsaved change on leaving, and
+    /// the Notebook's model never sees this editor (`Coordinator.current` stays the Notebook's).
+    var onUnsaved: ((String, String) -> Void)? = nil
 
     /// Crepe's Vue parts and CodeMirror set inline styles; images come from the notebook (`files/`),
     /// from a paste (`blob:`, `data:`). Scripts are the bundle's files only.
     static let contentSecurityPolicy = "default-src akit-web:; img-src akit-web: data: blob:; style-src akit-web: 'unsafe-inline'"
     static let pageURL = URL(string: "\(MapCanvasView.scheme)://app/index.html")!
 
-    func makeCoordinator() -> Coordinator { Coordinator(document: document, imageFile: imageFile, upload: upload, onMessage: onMessage) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(document: document, imageFile: imageFile, upload: upload, onMessage: onMessage, onUnsaved: onUnsaved)
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -60,7 +65,9 @@ struct NotebookEditorView: NSViewRepresentable {
     /// 800 ms post is taken from the page and saved first; the web view lives until it answered.
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
         Task { @MainActor in
-            if let unsaved = try? await coordinator.takeUnsaved(in: webView) { NotebookModel.current?.save(unsaved.key, text: unsaved.text) }
+            if let unsaved = try? await coordinator.takeUnsaved(in: webView) {
+                if let own = coordinator.onUnsaved { own(unsaved.key, unsaved.text) } else { NotebookModel.current?.save(unsaved.key, text: unsaved.text) }
+            }
             webView.configuration.userContentController.removeScriptMessageHandler(forName: "nb")
             webView.configuration.userContentController.removeScriptMessageHandler(forName: "nbUpload", contentWorld: .page)
         }
@@ -76,6 +83,7 @@ struct NotebookEditorView: NSViewRepresentable {
         var imageFile: (String) -> URL?
         var upload: (Data, String) async throws -> String
         var onMessage: (MapCanvasMessage) -> Void
+        let onUnsaved: ((String, String) -> Void)?
         weak var webView: WKWebView?
         private(set) var cancelledNavigations = 0
         private(set) var isReady = false
@@ -86,13 +94,14 @@ struct NotebookEditorView: NSViewRepresentable {
         private(set) static weak var current: Coordinator?
 
         init(document: Document, imageFile: @escaping (String) -> URL?, upload: @escaping (Data, String) async throws -> String,
-             onMessage: @escaping (MapCanvasMessage) -> Void) {
+             onMessage: @escaping (MapCanvasMessage) -> Void, onUnsaved: ((String, String) -> Void)? = nil) {
             self.document = document
             self.imageFile = imageFile
             self.upload = upload
             self.onMessage = onMessage
+            self.onUnsaved = onUnsaved
             super.init()
-            Self.current = self
+            if onUnsaved == nil { Self.current = self }
         }
 
         func start() {

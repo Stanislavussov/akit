@@ -19,8 +19,9 @@ restart: build   ## quit this checkout's AKit, rebuild and start it again (in th
 	sleep 1
 	open $(DERIVED)/Build/Products/Debug/AKit.app
 
-test:   ## core tests (no UI), under the memory and time guard (tools/guarded-test.sh)
+test:   ## core and Meetings tests (no UI), under the memory and time guard (tools/guarded-test.sh)
 	GUARD_MINUTES=25 tools/guarded-test.sh
+	GUARD_DIR=Meetings tools/guarded-test.sh
 
 snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview] [QUERY=tdd] [DELAY=2] [PROJECT=akit] [HARNESS=pi] [BRAIN=<folder>] [TAB=setup] [OWN=1] [ADD=1] [CAPTURE=1] [SELECT=<layer>|project:<id>] [SETTINGS=1] [LOCAL=1] [GUIDE=[screens:]<section id>] [CLICK=x,y] [RCLICK="x,y;x,y"] [ASK=1]
 	# Ignore saved window state: a running AKit (or one closed without windows) must not

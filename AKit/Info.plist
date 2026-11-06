@@ -29,5 +29,9 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Meetings records the sound of calls (Teams, Zoom, Meet) while you press Record.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Meetings records your voice while you press Record.</string>
 </dict>
 </plist>

@@ -1305,4 +1305,59 @@ for name in billing orders-db lint-examples; do
     git -C "$DEMO/Projects/$name" remote add origin "git@example.com:shop/$name.git"
 done
 
+# Work → Meetings (docs/design/meetings.md): two made-up meetings of today, done, with summary,
+# transcript and an own tab; no audio (audioUntil far ahead, so nothing goes to the Trash).
+MDAY="$(date +%Y-%m-%d)"
+UDAY="$(date -u +%Y-%m-%d)"
+meeting() { # folder (HHmm), UTC start (HH:MM), seconds, title, cost, tabs (JSON list), segments (JSON list)
+    local dir="$DEMO/Meetings/$MDAY/$1"
+    mkdir -p "$dir/tabs"
+    printf '{"id":"%s","title":"%s","started":"%sT%s:00Z","duration":%s,"state":"done","model":"google/gemini-2.5-flash-lite","costUSD":%s,"speakers":{"S1":"Jana"},"segments":%s,"transcribedChunks":1,"tabs":%s,"audioUntil":"2099-01-01T00:00:00Z","audioTrashed":false}\n' \
+        "$MDAY/$1" "$4" "$UDAY" "$2" "$3" "$5" "$7" "$6" > "$dir/meeting.json"
+}
+meeting 0930 08:30 2520 "Plán vydání objednávek" 0.028 '["Odkazy"]' '[
+ {"start":4,"speaker":"Me","text":"Dobré ráno, projdeme si plán vydání na příští týden."},
+ {"start":11,"speaker":"S1","text":"Ráno. Opakování neúspěšné publikace už je hotové, chybí jen testy."},
+ {"start":25,"speaker":"S2","text":"Na stagingu vidím, že událost order-created občas přijde dvakrát."},
+ {"start":38,"speaker":"Me","text":"To musíme vyřešit před vydáním. Přidám kontrolu idempotence."},
+ {"start":52,"speaker":"S1","text":"Dobře, já dopíšu testy do čtvrtka."}]'
+meeting 1400 13:00 1260 "Platby: chyby při stržení" 0.012 '[]' '[
+ {"start":3,"speaker":"S1","text":"Včera selhalo dvanáct plateb kartou, všechny u jedné banky."},
+ {"start":15,"speaker":"Me","text":"Máme z toho logy? Pošli mi prosím ID transakcí."},
+ {"start":27,"speaker":"S1","text":"Pošlu je hned po poradě."}]'
+file "$DEMO/Meetings/$MDAY/0930/summary.md" <<'EOF'
+## Summary
+
+Tým prošel plán vydání objednávek na příští týden. Opakování neúspěšné publikace je hotové, chybí testy. Na stagingu občas přijde událost order-created dvakrát; to se vyřeší před vydáním.
+
+## Decisions
+
+- Vydání až po opravě dvojitých událostí.
+
+## Tasks
+
+- [ ] Me: přidat kontrolu idempotence pro order-created
+- [ ] Jana: dopsat testy opakování do čtvrtka
+EOF
+file "$DEMO/Meetings/$MDAY/0930/tabs/Odkazy.md" <<'EOF'
+## Odkazy
+
+- [Merge request: retry publish](https://example.com/shop/orders-api/-/merge_requests/42)
+- [Staging dashboard](https://example.com/grafana/orders)
+EOF
+file "$DEMO/Meetings/$MDAY/1400/summary.md" <<'EOF'
+## Summary
+
+Včera selhalo dvanáct plateb kartou u jedné banky. Jana pošle ID transakcí, pak se projdou logy.
+
+## Decisions
+
+—
+
+## Tasks
+
+- [ ] Jana: poslat ID transakcí
+- [ ] Me: projít logy plateb
+EOF
+
 echo "Demo home: $DEMO"
