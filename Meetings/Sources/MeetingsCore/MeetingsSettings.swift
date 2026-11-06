@@ -28,10 +28,46 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     public var customTemplates: [MeetingTemplate] = []
     /// M22: a clean transcript (no filler words, stutters, repeats) or word for word.
     public var cleanTranscript: Bool = true
-    /// M27: the project's own words (names, services, products, terms), one per entry, so the
+    /// M26: who turns the audio into text: OpenRouter or whisper on this Mac.
+    public var transcription: Engine = .cloud
+    /// M28: who writes the summary: OpenRouter or Pi.
+    public var summarizer: Summarizer = .openRouter
+    /// Pi's model (`provider/id`); nil is Pi's own default.
+    public var piModel: String?
+    /// whisper's language code, `auto` to detect per piece.
+    public var localLanguage: String = "auto"
+    /// M27: whisper on the GPU at background priority (fast, little CPU); off is the efficiency
+    /// cores only (about 4× slower than the meeting).
+    public var localGPU: Bool = true
+
+    public enum Engine: String, Codable, Sendable, CaseIterable {
+        case cloud, local
+
+        public var title: String {
+            switch self {
+            case .cloud: "Cloud: OpenRouter"
+            case .local: "Local: whisper on this Mac (free)"
+            }
+        }
+    }
+
+    public enum Summarizer: String, Codable, Sendable, CaseIterable {
+        case openRouter, pi
+
+        public var title: String {
+            switch self {
+            case .openRouter: "OpenRouter"
+            case .pi: "Pi (your coding agent)"
+            }
+        }
+    }
+
+    /// Whether any step calls OpenRouter, so the key is needed.
+    public var needsKey: Bool { transcription == .cloud || summarizer == .openRouter }
+    /// M30: the project's own words (names, services, products, terms), one per entry, so the
     /// model writes them right instead of a word that sounds close.
     public var vocabulary: [String] = []
-    /// M28: a short sound when the background recorder starts and stops (nothing on screen).
+    /// M31: a short sound when the background recorder starts and stops (nothing on screen).
     public var backgroundSounds: Bool = true
 
     public enum TrackMode: String, Codable, Sendable, CaseIterable {
@@ -118,6 +154,11 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
         defaultTemplate = try c.decodeIfPresent(String.self, forKey: .defaultTemplate) ?? d.defaultTemplate
         customTemplates = (try? c.decodeIfPresent([MeetingTemplate].self, forKey: .customTemplates)) ?? d.customTemplates
         cleanTranscript = try c.decodeIfPresent(Bool.self, forKey: .cleanTranscript) ?? d.cleanTranscript
+        transcription = (try? c.decodeIfPresent(Engine.self, forKey: .transcription)) ?? d.transcription
+        summarizer = (try? c.decodeIfPresent(Summarizer.self, forKey: .summarizer)) ?? d.summarizer
+        piModel = try c.decodeIfPresent(String.self, forKey: .piModel)
+        localLanguage = try c.decodeIfPresent(String.self, forKey: .localLanguage) ?? d.localLanguage
+        localGPU = try c.decodeIfPresent(Bool.self, forKey: .localGPU) ?? d.localGPU
         vocabulary = (try? c.decodeIfPresent([String].self, forKey: .vocabulary)) ?? d.vocabulary
         backgroundSounds = try c.decodeIfPresent(Bool.self, forKey: .backgroundSounds) ?? d.backgroundSounds
     }

@@ -6,7 +6,7 @@ import os
 /// `~/Library/Logs/Meetings/meetings.log` (Settings → Show Log, Copy Log). It never holds the key,
 /// a request body, audio or transcript text: only what happened, sizes, codes and times.
 public enum MeetingsLog {
-    public enum Area: String, Sendable { case recorder, mixer, openrouter, processor, key, store, ui, ask }
+    public enum Area: String, Sendable { case recorder, mixer, openrouter, processor, key, store, ui, ask, local, pi }
 
     public static var file: URL {
         // Tests never write into the real home.

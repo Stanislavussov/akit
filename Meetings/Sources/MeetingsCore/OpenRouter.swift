@@ -9,7 +9,7 @@ public struct OpenRouterClient: Sendable {
     let key: String
     let base: URL
     let transport: Transport
-    /// M26: the waits before each retry of a busy or failed call (429, 408, 5xx, a lost
+    /// M29: the waits before each retry of a busy or failed call (429, 408, 5xx, a lost
     /// connection): three retries; a `Retry-After` header waits longer, up to 2 minutes.
     let retryDelays: [Duration]
 

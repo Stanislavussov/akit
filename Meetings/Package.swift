@@ -18,7 +18,7 @@ let package = Package(
         .target(name: "MeetingsCore"),
         // Microphone + system sound capture, 5-minute pieces, mixing.
         .target(name: "MeetingsAudio", dependencies: ["MeetingsCore"]),
-        // M28: the global hotkey, the background recorder's login item and its notifications.
+        // M31: the global hotkey, the background recorder's login item and its notifications.
         .target(name: "MeetingsBackground"),
         .target(name: "MeetingsUI", dependencies: ["MeetingsCore", "MeetingsAudio", "MeetingsBackground"]),
         .testTarget(name: "MeetingsCoreTests", dependencies: ["MeetingsCore", "MeetingsAudio"]),

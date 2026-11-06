@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// M28: the background recorder (`Meetings Recorder.app`, no window, no Dock or menu bar item)
+/// M31: the background recorder (`Meetings Recorder.app`, no window, no Dock or menu bar item)
 /// and the apps that show meetings talk through distributed notifications: a host asks it to
 /// record or stop, it says when something changed. The notifications carry only an action
 /// word, never a meeting's text.

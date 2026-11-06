@@ -35,7 +35,7 @@ public struct Transcriber: Sendable {
     /// The prompt of one chunk: the language hint, who can speak in this track, the spans in which
     /// the user's own microphone carried speech, and the last lines before this chunk, so the
     /// speakers keep their keys.
-    /// M27: the project's words for a prompt; nil without any.
+    /// M30: the project's words for a prompt; nil without any.
     static func vocabularyLine(_ vocabulary: [String], for use: String) -> String? {
         let terms = vocabulary.prefix(MeetingsSettings.vocabularyLimit)
         guard !terms.isEmpty else { return nil }

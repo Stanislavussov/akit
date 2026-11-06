@@ -1360,7 +1360,7 @@ Včera selhalo dvanáct plateb kartou u jedné banky. Jana pošle ID transakcí,
 - [ ] Me: projít logy plateb
 EOF
 
-# Meetings settings: a made-up project vocabulary (M27).
+# Meetings settings: a made-up project vocabulary (M30).
 file "$DEMO/Library/Application Support/Meetings/settings.json" <<'EOF'
 {"vocabulary":["orders-api","order-created","idempotence","Kafka — message broker","Jana Nováková","staging"]}
 EOF

@@ -139,7 +139,7 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         waiting.state = .waiting
         try store.save(waiting)
         _ = try store.create() // recent
-        // M26: a failed meeting and a done one with a piece not transcribed keep their audio.
+        // M29: a failed meeting and a done one with a piece not transcribed keep their audio.
         var failed = try store.create(started: old.addingTimeInterval(240))
         failed.state = .failed
         try store.save(failed)
@@ -1111,5 +1111,18 @@ final class Closed: @unchecked Sendable {
         #expect(Transcriber.vocabularyLine(many, for: "")?.hasSuffix("- term1500") == true)
         let old = try JSONDecoder().decode(MeetingsSettings.self, from: Data(#"{"model":"m"}"#.utf8))
         #expect(old.vocabulary.isEmpty && old.backgroundSounds)
+    }
+}
+
+
+@Suite struct VocabularyLocalTests {
+    @Test func whisperGetsTheTermsAsItsPrompt() {
+        let file = URL(filePath: "/tmp/x")
+        let args = LocalWhisper.arguments(model: file, wav: file, out: file, language: "cs", gpu: true, threads: 4,
+                                          vocabulary: ["orders-api", "Kafka — message broker", "idempotence: safe twice"])
+        #expect(args.suffix(2) == ["--prompt", "orders-api, Kafka, idempotence."])
+        #expect(!LocalWhisper.arguments(model: file, wav: file, out: file, language: "cs", gpu: true, threads: 4).contains("--prompt"))
+        let long = LocalWhisper.initialPrompt((1...500).map { "term\($0)" }) ?? ""
+        #expect(long.count <= 601)
     }
 }

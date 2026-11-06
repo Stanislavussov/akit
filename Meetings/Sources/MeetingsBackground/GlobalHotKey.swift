@@ -1,7 +1,7 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// M28: a hotkey that works in every app (Carbon's RegisterEventHotKey: no Accessibility
+/// M31: a hotkey that works in every app (Carbon's RegisterEventHotKey: no Accessibility
 /// permission). One per process; ⌥⌘R by default.
 @MainActor public final class GlobalHotKey {
     private var hotKey: EventHotKeyRef?

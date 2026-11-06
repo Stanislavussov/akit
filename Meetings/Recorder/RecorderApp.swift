@@ -3,7 +3,7 @@ import MeetingsBackground
 import MeetingsCore
 import MeetingsUI
 
-/// Meetings Recorder (docs/design/meetings.md, M28): records with ⌥⌘R from any app, with no
+/// Meetings Recorder (docs/design/meetings.md, M31): records with ⌥⌘R from any app, with no
 /// window, Dock icon or menu bar item (LSUIElement; M4: nothing to see on a shared screen). It
 /// starts at login as AKit's login item, records into the same folder with the same settings and
 /// key, transcribes after Stop, and tells the open apps when something changed. Record and Stop

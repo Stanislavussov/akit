@@ -1,7 +1,7 @@
 import AppKit
 import ServiceManagement
 
-/// M28: the background recorder as a login item of the host app (AKit embeds it in
+/// M31: the background recorder as a login item of the host app (AKit embeds it in
 /// `Contents/Library/LoginItems`). In a host without it (`Meetings.app`) it is not available.
 public enum BackgroundRecorder {
     static var service: SMAppService { .loginItem(identifier: BackgroundControl.recorderID) }
