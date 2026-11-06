@@ -49,6 +49,14 @@ public final class MeetingsModel {
     public private(set) var askTurns: [AskTurn] = []
     public private(set) var asking = false
 
+    /// M25: what the host app does with a meeting (AKit: Notebook, Work Log, knowledge base).
+    public var links: MeetingsLinks = .none
+    public var tasksRequest = false
+    public var factsRequest = false
+    public private(set) var facts: [MeetingFact] = []
+    public private(set) var findingFacts = false
+    public private(set) var factsProblem: String?
+
     public struct AskTurn: Identifiable, Equatable {
         public let id = UUID()
         public var question: String
@@ -343,6 +351,105 @@ public final class MeetingsModel {
             reindex(only: meeting.id)
         } catch {
             problem = error.localizedDescription
+        }
+    }
+
+    // MARK: Links to the host app (M25)
+
+    /// The selected meeting's open tasks, from its summary.
+    public var selectedTasks: [SummaryTask] {
+        guard let meeting = selected else { return [] }
+        return SummaryTask.open(in: store.summary(meeting.id))
+    }
+
+    /// Whether a task is the user's own (`Me` or the name given to Me).
+    public func isMine(_ task: SummaryTask) -> Bool {
+        task.owner == "Me" || (selected.map { task.owner == $0.speakerName("Me") } ?? false)
+    }
+
+    /// Add Tasks to Notebook…: each task as `- [ ] task — title, date` (an owner other than Me
+    /// stays in front) under today's heading of `tab`.
+    public func addTasks(_ tasks: [SummaryTask], to tab: String) async -> Bool {
+        guard let addTasks = links.addTasks, var meeting = fresh, !tasks.isEmpty else { return false }
+        let source = "\(meeting.displayTitle), \(meeting.started.formatted(.dateTime.day().month(.defaultDigits)))"
+        let lines = tasks.map { task in (isMine(task) || task.owner.isEmpty ? "" : task.owner + ": ") + task.text + " — " + source }
+        do {
+            try await addTasks(lines, tab)
+            try? store.markExport(&meeting, "notebook")
+            updated(meeting)
+            notice = "Added \(lines.count) task\(lines.count == 1 ? "" : "s") to the Notebook tab \(tab)."
+            MeetingsLog.info(.ui, "\(meeting.id): \(lines.count) tasks to the Notebook")
+            return true
+        } catch {
+            problem = "Could not add the tasks to the Notebook: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            return false
+        }
+    }
+
+    /// Add to Work Log: one `#meeting` line at the meeting's start.
+    public func addToWorkLog() async {
+        guard let addToWorkLog = links.addToWorkLog, var meeting = fresh else { return }
+        let line = MeetingsLinks.WorkLogLine(started: meeting.started, title: meeting.displayTitle, summary: summaryParagraph(store.summary(meeting.id)))
+        do {
+            try await addToWorkLog(line)
+            try? store.markExport(&meeting, "worklog")
+            updated(meeting)
+            notice = "Added to the Work Log at \(meeting.started.formatted(date: .omitted, time: .shortened))."
+            MeetingsLog.info(.ui, "\(meeting.id): to the Work Log")
+        } catch {
+            problem = "Could not add the meeting to the Work Log: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
+    }
+
+    /// Propose to Knowledge…: one text call over the summary and the transcript with the base's
+    /// notes; its cost goes to the meeting.
+    public func findFacts() async {
+        guard let knowledgeNotes = links.knowledgeNotes, let meeting = fresh, !findingFacts else { return }
+        facts = []
+        factsProblem = nil
+        guard let key = keyStore.read() else {
+            factsProblem = MeetingsError.noKey.errorDescription
+            return
+        }
+        guard monthCost < settings.monthlyLimitUSD else {
+            factsProblem = MeetingsError.monthlyLimit(settings.monthlyLimitUSD).errorDescription
+            return
+        }
+        findingFacts = true
+        defer { findingFacts = false }
+        do {
+            let notes = try await knowledgeNotes()
+            let finder = FactFinder(client: OpenRouterClient(key: key, transport: transport), settings: settings)
+            let answer = try await finder.find(meeting, summary: store.summary(meeting.id), notes: notes)
+            if var current = store.load(meeting.id) {
+                try? store.addCost(&current, answer.completion.cost)
+                updated(current)
+            }
+            facts = answer.facts
+            if facts.isEmpty { factsProblem = "The model found no facts about systems in this meeting." }
+            MeetingsLog.info(.ui, "\(meeting.id): \(facts.count) facts for the knowledge base (\(notes.count) notes known), $\(answer.completion.cost)")
+        } catch {
+            factsProblem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// The chosen facts as proposals in the base's Inbox.
+    public func propose(_ chosen: [MeetingFact]) async -> Bool {
+        guard let propose = links.propose, var meeting = fresh, !chosen.isEmpty else { return false }
+        let source = "From the meeting “\(meeting.displayTitle)” of \(meeting.started.formatted(date: .abbreviated, time: .shortened))"
+        do {
+            let result = try await propose(chosen, source)
+            if result.written > 0 { try? store.markExport(&meeting, "knowledge") }
+            updated(meeting)
+            if result.refused.isEmpty {
+                notice = "\(result.written) proposal\(result.written == 1 ? "" : "s") wait in the knowledge base's Inbox (Knowledge → Inbox)."
+                return true
+            }
+            factsProblem = "\(result.written) went to the Inbox. Refused: " + result.refused.joined(separator: "; ")
+            return false
+        } catch {
+            factsProblem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return false
         }
     }
 

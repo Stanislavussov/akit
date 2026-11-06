@@ -908,3 +908,54 @@ final class Closed: @unchecked Sendable {
         #expect(store.list().isEmpty)
     }
 }
+
+@Suite struct LinkTests {
+    @Test func openTasksOfASummary() {
+        let summary = "## Tasks\n\n- [ ] Me: přidat kontrolu\n- [x] Jana: hotovo\n  - [ ] Jana: dopsat testy\n- [ ] bez vlastníka\n- [ ] Dlouhá věta s dvojtečkou daleko za začátkem, tedy ne vlastník: text\n- [ ] \n"
+        let tasks = SummaryTask.open(in: summary)
+        #expect(tasks.map(\.owner) == ["Me", "Jana", "", ""])
+        #expect(tasks.map(\.text) == ["přidat kontrolu", "dopsat testy", "bez vlastníka", "Dlouhá věta s dvojtečkou daleko za začátkem, tedy ne vlastník: text"])
+    }
+
+    @Test func summaryParagraphTakesTwoSentences() {
+        let summary = "## Summary\n\nPrvní věta. Druhá věta!\nTřetí věta.\n\n## Decisions\n\n- x\n"
+        #expect(summaryParagraph(summary) == "První věta. Druhá věta!")
+        #expect(summaryParagraph("## Summary\n\nBez tečky\n") == "Bez tečky")
+        #expect(summaryParagraph("## Summary\n\n—\n") == nil)
+        #expect(summaryParagraph("## Tasks\n\n- [ ] x\n") == nil)
+    }
+
+    @Test func factsParseAndPromptHasNotes() async throws {
+        let facts = try FactFinder.parse(#"""
+        {"facts":[{"note":"/Payments/Billing ","heading":"## Retries:","text":"Three tries.","reason":"Jana said so"},
+                  {"note":"payments/billing","heading":"Retries","text":"again"},
+                  {"note":"../etc","heading":"x","text":"y"},
+                  {"note":"payments/new thing","heading":"x","text":"y"},
+                  {"note":"payments/orders-api","heading":"Owner","text":""}]}
+        """#)
+        #expect(facts == [MeetingFact(note: "payments/billing", heading: "Retries", text: "Three tries.", reason: "Jana said so")])
+        #expect(facts[0].body == "## Retries\n\nThree tries.\n")
+        #expect(throws: MeetingsError.self) { try FactFinder.parse("{}") }
+        let prompt = FactFinder.prompt(summary: "S", transcript: "T", notes: [.init(id: "payments/billing", title: "Billing")])
+        #expect(prompt.contains("- payments/billing: Billing") && prompt.contains("Meeting summary:\nS"))
+        #expect(FactFinder.prompt(summary: "", transcript: "", notes: []).contains("(none yet)"))
+        // The call goes to the summary model with the meeting's transcript.
+        let store = TempRoot().store
+        let meeting = try SearchTests().meeting(store, title: "A", tags: nil, summary: "", said: ["Billing retries three times"])
+        let server = FakeServer([(200, chat(#"{"facts":[]}"#, cost: 0.002))])
+        let answer = try await FactFinder(client: server.client, settings: MeetingsSettings()).find(meeting, summary: "", notes: [])
+        #expect(answer.facts.isEmpty && answer.completion.cost == 0.002)
+        let text = ((server.body(0)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        #expect(text.contains("Billing retries three times"))
+    }
+
+    @Test func exportMarksAndCostStay() throws {
+        let store = TempRoot().store
+        var meeting = try store.create()
+        try store.markExport(&meeting, "worklog", at: Date(timeIntervalSince1970: 0))
+        try store.addCost(&meeting, 0.25)
+        let back = store.load(meeting.id)
+        #expect(back?.exports?["worklog"] == Date(timeIntervalSince1970: 0))
+        #expect(back?.costUSD == 0.25)
+    }
+}

@@ -126,6 +126,20 @@ public struct MeetingStore: Sendable {
         try save(meeting)
     }
 
+    /// M25: when the host took the meeting somewhere (`worklog`, `notebook`, `knowledge`).
+    public func markExport(_ meeting: inout Meeting, _ place: String, at date: Date = Date()) throws {
+        var exports = meeting.exports ?? [:]
+        exports[place] = date
+        meeting.exports = exports
+        try save(meeting)
+    }
+
+    /// M25: a cost of a call made for the meeting after its run (facts for the knowledge base).
+    public func addCost(_ meeting: inout Meeting, _ cost: Double) throws {
+        meeting.costUSD += cost
+        try save(meeting)
+    }
+
     // MARK: Own tabs (M17)
 
     public func tabFile(_ id: String, _ name: String) -> URL {

@@ -6,13 +6,17 @@ import SwiftUI
 
 /// Work → Meetings in AKit: the package's screen with the Crepe editor and the Guide button, and
 /// the snapshot states the guide's screenshots need (`--select <HHmm>`, `--tab meetings-transcript`,
-/// `meetings-settings`, `meetings-new-tab`, `meetings-ask`; `--query` fills the search field).
+/// `meetings-settings`, `meetings-new-tab`, `meetings-ask`, `meetings-tasks`; `--query` fills the search field).
 struct MeetingsScreen: View {
     let model: MeetingsModel
+    @Environment(KnowledgeModel.self) private var knowledge
+    @Environment(WorkLogModel.self) private var worklog
 
     var body: some View {
         MeetingsView(model: model, editor: .crepe, extraToolbar: AnyView(GuideButton(guide: .meetings)))
             .task {
+                // M25: Notebook, Work Log and the knowledge base of this window.
+                model.links = MeetingsAKitLinks.make(knowledge: knowledge, worklog: worklog)
                 guard let options = DebugSnapshot.options, options.section == .meetings else { return }
                 await model.load()
                 if let select = options.select, let meeting = model.meetings.first(where: { $0.id.hasSuffix(select) }) {
@@ -25,6 +29,7 @@ struct MeetingsScreen: View {
                 case "meetings-settings": model.showSettings = true
                 case "meetings-costs": model.showCosts = true
                 case "meetings-ask": model.openAsk()
+                case "meetings-tasks": model.tasksRequest = true
                 case "meetings-new-tab": model.tabNameRequest = .init(old: nil)
                 default: break
                 }

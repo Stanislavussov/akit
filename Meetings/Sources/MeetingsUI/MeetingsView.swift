@@ -75,6 +75,8 @@ public struct MeetingsView: View {
         .sheet(isPresented: $model.showSettings) { MeetingsSettingsView(model: model) }
         .sheet(isPresented: $model.showCosts) { CostsView(model: model) }
         .sheet(isPresented: $model.showAsk) { AskView(model: model) }
+        .sheet(isPresented: $model.tasksRequest) { TasksToNotebookSheet(model: model) }
+        .sheet(isPresented: $model.factsRequest) { FactsSheet(model: model) }
         .sheet(item: $model.tabNameRequest) { request in TabNameSheet(model: model, old: request.old) }
         .sheet(isPresented: $model.renameSpeakersRequest) { RenameSpeakersSheet(model: model) }
         .confirmationDialog("Move this meeting to the Trash?", isPresented: Binding(get: { model.trashRequest != nil }, set: { if !$0 { model.trashRequest = nil } })) {
@@ -339,6 +341,22 @@ struct MeetingDetail: View {
                     .help("Write the summary again from the transcript (one text call, no audio)")
                 Button("Transcribe Again") { model.process(meeting.id, restart: true, byUser: true) }
                     .disabled(!model.hasKey || meeting.audioTrashed || model.processing.contains(meeting.id) || meeting.id == model.recordingID)
+                if !model.links.isEmpty {
+                    Divider()
+                    let done = meeting.state == .done
+                    if model.links.addTasks != nil {
+                        Button("Add Tasks to Notebook…") { model.tasksRequest = true }
+                            .disabled(!done)
+                    }
+                    if model.links.addToWorkLog != nil {
+                        Button(meeting.exports?["worklog"] == nil ? "Add to Work Log" : "Add to Work Log Again") { Task { await model.addToWorkLog() } }
+                            .disabled(!done)
+                    }
+                    if model.links.propose != nil {
+                        Button("Propose to Knowledge…") { model.factsRequest = true }
+                            .disabled(!done || !model.hasKey || model.processing.contains(meeting.id))
+                    }
+                }
                 Divider()
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.folder(meeting.id)]) }
                 Button("Move to Trash…", role: .destructive) { model.trashRequest = meeting.id }
