@@ -72,8 +72,6 @@ public final class MeetingsModel {
     /// The control of each running local run.
     @ObservationIgnored private var controls: [String: LocalControl] = [:]
     @ObservationIgnored private var download: URLSessionDownloadTask?
-    /// M23: held while this app records, so a local run in the other app pauses too.
-    @ObservationIgnored private var recordingActive: MeetingLock?
     /// The current run of each meeting; a status from an older run is dropped.
     @ObservationIgnored private var runTokens: [String: UUID] = [:]
     /// Set by Quit: no new run starts.
@@ -119,8 +117,8 @@ public final class MeetingsModel {
         refresh()
         guard !loaded else { return }
         loaded = true
-        // M23: whisper or Pi that a crash or a force quit left running.
-        Task.detached { ChildRun.endLeftovers() }
+        // M23: whisper or Pi that a crash or a force quit left running, before any run starts.
+        ChildRun.endLeftovers()
         let store = self.store
         Task.detached { store.trashExpiredAudio() }
         for meeting in meetings where meeting.id != recordingID {
@@ -175,7 +173,7 @@ public final class MeetingsModel {
                 throw error
             }
             self.recorder = recorder
-            recordingActive = MeetingLock.take(Self.recordingActiveFile(store.root))
+            RecordingSignal.set(Self.recordingActiveFile(store.root), recording: true)
             recordingID = meeting.id
             for control in controls.values { control.recording = true }
             recordingStarted = Date()
@@ -190,8 +188,7 @@ public final class MeetingsModel {
         guard let id = recordingID, let recorder else { return }
         let result = await recorder.stop()
         self.recorder = nil
-        recordingActive?.release()
-        recordingActive = nil
+        RecordingSignal.set(Self.recordingActiveFile(store.root), recording: false)
         recordingID = nil
         recordingStarted = nil
         for control in controls.values { control.recording = false }
@@ -248,7 +245,7 @@ public final class MeetingsModel {
                 guard let self, self.runTokens[id] == token else { return }
                 self.localStatus[id] = status
             }
-        }, recordingElsewhere: { !MeetingLock.isFree(activeFile) })
+        }, recordingElsewhere: { RecordingSignal.elsewhere(activeFile) })
         let processor = MeetingProcessor(store: store, settings: settings, client: client, local: local) { [weak self] meeting in
             Task { @MainActor in self?.updated(meeting) }
         }
@@ -300,14 +297,17 @@ public final class MeetingsModel {
     /// Whether this meeting runs on this Mac (whisper or Pi), so Pause and Stop apply.
     public func runsLocally(_ id: String) -> Bool { processing.contains(id) && localStatus[id] != nil }
 
-    static func recordingActiveFile(_ root: URL) -> URL { root.appending(path: ".recording-active.lock") }
+    static func recordingActiveFile(_ root: URL) -> URL { root.appending(path: ".recording-active") }
 
     /// Quit (after a running recording is stopped): no new run starts, and whisper or Pi are
     /// killed now, so nothing keeps working (or stays paused) after the app is gone. The
     /// meetings go on from their next piece at the next start.
     public func prepareToQuit() {
         quitting = true
-        for control in controls.values { control.stopped = true }
+        for control in controls.values {
+            control.quitting = true
+            control.stopped = true
+        }
         ChildRun.endAll()
     }
 

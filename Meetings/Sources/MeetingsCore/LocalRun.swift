@@ -17,6 +17,7 @@ public final class LocalControl: @unchecked Sendable {
     private var userPausedValue = false
     private var recordingValue = false
     private var stoppedValue = false
+    private var quittingValue = false
 
     public init(recording: Bool = false) { recordingValue = recording }
 
@@ -34,6 +35,12 @@ public final class LocalControl: @unchecked Sendable {
     public var stopped: Bool {
         get { lock.withLock { stoppedValue } }
         set { lock.withLock { stoppedValue = newValue } }
+    }
+
+    /// Quit: like Stop, but the meeting waits for the next start instead of failing.
+    public var quitting: Bool {
+        get { lock.withLock { quittingValue } }
+        set { lock.withLock { quittingValue = newValue } }
     }
 
     /// Why a run must wait now, nil when it may work. Heat goes first: it is the reason the user
@@ -168,6 +175,7 @@ public enum ChildRun {
                 while !lock.withLock({ stop }) {
                     guard poll(&poller, 1, 100) > 0 else { continue }
                     let count = read(fd, &buffer, buffer.count)
+                    if count < 0 && errno == EINTR { continue }
                     if count <= 0 { break }
                     lock.withLock { data.append(buffer, count: count) }
                 }
@@ -192,9 +200,12 @@ public enum ChildRun {
     private static let liveLock = NSLock()
     nonisolated(unsafe) private static var live: [pid_t: String] = [:]
 
-    /// The file of the live groups (`pid<TAB>program`), for the next launch after a crash.
-    /// Tests point it at a temporary folder.
-    nonisolated(unsafe) public static var liveFile = MeetingsSettings.defaultFile.deletingLastPathComponent().appending(path: "children.txt")
+    /// The folder of the live-group files: one per app process, `children-<pid>.txt`
+    /// (`pid<TAB>program` lines), so AKit and `Meetings.app` never touch each other's. Tests
+    /// point it at a temporary folder.
+    nonisolated(unsafe) public static var liveFolder = MeetingsSettings.defaultFile.deletingLastPathComponent().appending(path: "children", directoryHint: .isDirectory)
+
+    static var liveFile: URL { liveFolder.appending(path: "children-\(getpid()).txt") }
 
     static func remember(_ pid: pid_t, _ program: URL) {
         liveLock.withLock {
@@ -211,8 +222,12 @@ public enum ChildRun {
     }
 
     private static func writeLive() {
+        if live.isEmpty {
+            try? FileManager.default.removeItem(at: liveFile)
+            return
+        }
         let text = live.map { "\($0.key)\t\($0.value)" }.joined(separator: "\n")
-        try? FileManager.default.createDirectory(at: liveFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: liveFolder, withIntermediateDirectories: true)
         try? Data(text.utf8).write(to: liveFile, options: .atomic)
     }
 
@@ -221,27 +236,33 @@ public enum ChildRun {
         let pids = liveLock.withLock { Array(live.keys) }
         for pid in pids { signalGroup(pid, SIGCONT); signalGroup(pid, SIGTERM) }
         let deadline = Date().addingTimeInterval(2)
-        while Date() < deadline, pids.contains(where: { kill($0, 0) == 0 }) { usleep(50_000) }
-        for pid in pids where kill(pid, 0) == 0 { signalGroup(pid, SIGKILL) }
+        while Date() < deadline, pids.contains(where: { kill(-$0, 0) == 0 }) { usleep(50_000) }
+        for pid in pids where kill(-pid, 0) == 0 { signalGroup(pid, SIGKILL) }
         if !pids.isEmpty { MeetingsLog.info(.local, "quit: ended \(pids.count) child process(es)") }
     }
 
-    /// Launch: a group the file names is ended when its leader still runs the same program (a
-    /// crash or a force quit left it); then the file is emptied. Returns how many were ended.
+    /// Launch: the files of app processes that are gone (a crash or a force quit) name groups
+    /// that may still run; each is ended when its leader still runs the same program, then the
+    /// file goes. A living app's file is left alone. Returns how many groups were ended.
     @discardableResult
-    public static func endLeftovers(file: URL? = nil) -> Int {
-        let file = file ?? liveFile
-        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return 0 }
+    public static func endLeftovers() -> Int {
+        let files = (try? FileManager.default.contentsOfDirectory(at: liveFolder, includingPropertiesForKeys: nil)) ?? []
         var ended = 0
-        for line in text.split(separator: "\n") {
-            let parts = line.split(separator: "\t", maxSplits: 1)
-            guard parts.count == 2, let pid = pid_t(parts[0]), pid > 1, path(of: pid) == String(parts[1]) else { continue }
-            signalGroup(pid, SIGCONT)
-            signalGroup(pid, SIGKILL)
-            ended += 1
+        for file in files {
+            let name = file.deletingPathExtension().lastPathComponent
+            guard name.hasPrefix("children-"), let owner = pid_t(name.dropFirst("children-".count)) else { continue }
+            if owner == getpid() || kill(owner, 0) == 0 || errno == EPERM { continue }
+            let text = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+            for line in text.split(separator: "\n") {
+                let parts = line.split(separator: "\t", maxSplits: 1)
+                guard parts.count == 2, let pid = pid_t(parts[0]), pid > 1, path(of: pid) == String(parts[1]) else { continue }
+                signalGroup(pid, SIGCONT)
+                signalGroup(pid, SIGKILL)
+                ended += 1
+            }
+            try? FileManager.default.removeItem(at: file)
         }
-        try? FileManager.default.removeItem(at: file)
-        if ended > 0 { MeetingsLog.info(.local, "launch: ended \(ended) child process(es) left by the last run") }
+        if ended > 0 { MeetingsLog.info(.local, "launch: ended \(ended) child process(es) left by an earlier run") }
         return ended
     }
 
@@ -251,8 +272,11 @@ public enum ChildRun {
         return String(cString: buffer)
     }
 
-    static func signalGroup(_ pid: pid_t, _ signal: Int32) {
-        if kill(-pid, signal) != 0 { kill(pid, signal) }
+    /// Every child is its group's leader, so its pid is the group's id. Only the group gets the
+    /// signal: after the leader is reaped, its pid may belong to another process.
+    @discardableResult
+    static func signalGroup(_ pid: pid_t, _ signal: Int32) -> Bool {
+        kill(-pid, signal) == 0
     }
 
     // MARK: Running
@@ -283,6 +307,8 @@ public enum ChildRun {
                 let waited = waitpid(pid.pid, &raw, WNOHANG)
                 if waited == pid.pid {
                     status = (raw & 0x7f) == 0 ? (raw >> 8) & 0xff : 128 + (raw & 0x7f)
+                    // Ended by Stop or Quit (endAll) rather than on its own: say so.
+                    if local.control.stopped { throw MeetingsError.stopped }
                     break
                 }
                 if waited < 0 && errno != EINTR { status = -1; break }
@@ -295,13 +321,13 @@ public enum ChildRun {
                 if worked > timeout { throw MeetingsError.local("\(program.lastPathComponent) took longer than \(Int(timeout / 60)) min") }
                 if pausable {
                     let reason = local.pause()
-                    if reason != paused {
+                    // A signal right after the start can miss a group that is not set up yet:
+                    // the state changes only when the signal arrived, else the next tick tries again.
+                    if reason != paused, signalGroup(pid.pid, reason == nil ? SIGCONT : SIGSTOP) {
                         if let reason {
-                            signalGroup(pid.pid, SIGSTOP)
                             local.status(LocalStatus(phase: .paused(reason), piece: phase.piece, pieces: phase.pieces))
                             MeetingsLog.info(.local, "\(program.lastPathComponent) paused: \(reason.rawValue)")
                         } else {
-                            signalGroup(pid.pid, SIGCONT)
                             local.status(phase)
                             MeetingsLog.info(.local, "\(program.lastPathComponent) resumed")
                         }
@@ -311,7 +337,7 @@ public enum ChildRun {
                 try await Task.sleep(for: local.tick)
             }
         } catch {
-            end(pid.pid)
+            end(pid.pid, reaped: (try? waitpidDone(pid.pid)) ?? true)
             _ = output.finish(within: 0.5)
             _ = errors.finish(within: 0.5)
             MeetingsLog.info(.local, "\(program.lastPathComponent) killed: \(error)")
@@ -333,8 +359,14 @@ public enum ChildRun {
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
         posix_spawnattr_setpgroup(&attributes, 0)
+        // Default actions for every signal and an empty mask, as Foundation's Process does.
+        var all = sigset_t(), none = sigset_t()
+        sigfillset(&all)
+        sigemptyset(&none)
+        posix_spawnattr_setsigdefault(&attributes, &all)
+        posix_spawnattr_setsigmask(&attributes, &none)
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
@@ -359,8 +391,18 @@ public enum ChildRun {
         return (pid, outPipe[0], errPipe[0])
     }
 
+    /// Whether the leader is already reaped (then only its group may still need the signal).
+    static func waitpidDone(_ pid: pid_t) throws -> Bool {
+        var raw: Int32 = 0
+        return waitpid(pid, &raw, WNOHANG) != 0
+    }
+
     /// SIGTERM to the group (after SIGCONT, so a stopped one can take it), then SIGKILL after 2 s.
-    static func end(_ pid: pid_t) {
+    static func end(_ pid: pid_t, reaped: Bool = false) {
+        if reaped {
+            signalGroup(pid, SIGKILL)
+            return
+        }
         signalGroup(pid, SIGCONT)
         signalGroup(pid, SIGTERM)
         var raw: Int32 = 0
@@ -374,5 +416,47 @@ public enum ChildRun {
         }
         signalGroup(pid, SIGKILL)
         waitpid(pid, &raw, 0)
+    }
+}
+
+/// M23: "this app records now", seen by the other app's local runs. A POSIX record lock
+/// (`fcntl`), not `flock`: the other app tests it with F_GETLK without taking it, so a check
+/// never makes a starting recording miss its lock. One descriptor per file for the app's life,
+/// never closed (closing any descriptor of the file would drop the process's record locks).
+public final class RecordingSignal: @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var descriptors: [String: Int32] = [:]
+
+    static func descriptor(_ url: URL) -> Int32? {
+        lock.withLock {
+            if let fd = descriptors[url.path] { return fd }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let fd = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
+            guard fd >= 0 else { return nil }
+            descriptors[url.path] = fd
+            return fd
+        }
+    }
+
+    static func lockRecord(_ fd: Int32, _ type: Int32, command: Int32) -> flock {
+        var record = flock()
+        record.l_type = Int16(type)
+        record.l_whence = Int16(SEEK_SET)
+        record.l_start = 0
+        record.l_len = 0
+        _ = fcntl(fd, command, &record)
+        return record
+    }
+
+    /// Recording starts (true) or ends (false) in this app.
+    public static func set(_ url: URL, recording: Bool) {
+        guard let fd = descriptor(url) else { return }
+        _ = lockRecord(fd, recording ? F_WRLCK : F_UNLCK, command: F_SETLK)
+    }
+
+    /// Whether another process holds the signal now.
+    public static func elsewhere(_ url: URL) -> Bool {
+        guard let fd = descriptor(url) else { return false }
+        return lockRecord(fd, F_WRLCK, command: F_GETLK).l_type != Int16(F_UNLCK)
     }
 }

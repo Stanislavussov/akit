@@ -15,7 +15,7 @@ final class StatusLog: @unchecked Sendable {
 /// tests never write the user's `~/Library/Application Support/Meetings/children.txt`.
 enum TestChildren {
     static let ready: Void = {
-        ChildRun.liveFile = FileManager.default.temporaryDirectory.appending(path: "meetings-children-\(UUID().uuidString).txt")
+        ChildRun.liveFolder = FileManager.default.temporaryDirectory.appending(path: "meetings-children-\(UUID().uuidString)", directoryHint: .isDirectory)
     }()
 }
 
@@ -289,18 +289,46 @@ struct LocalFixture {
         #expect(log.saw(.paused(.recording)))
     }
 
-    /// A crash left a whisper running: the next launch ends it, and leaves a reused pid alone.
+    /// A crashed app left a whisper running: the next launch ends it; a living app's file stays.
     @Test func launchEndsLeftovers() throws {
-        let process = Process()
-        process.executableURL = URL(filePath: "/bin/sleep")
-        process.arguments = ["30"]
-        try process.run()
-        let file = FileManager.default.temporaryDirectory.appending(path: "children-\(UUID().uuidString).txt")
-        try Data("\(process.processIdentifier)\t/bin/sleep\n\(process.processIdentifier)\t/opt/other\n".utf8).write(to: file)
-        #expect(ChildRun.endLeftovers(file: file) == 1)
-        process.waitUntilExit()
-        #expect(process.terminationReason == .uncaughtSignal)
-        #expect(!FileManager.default.fileExists(atPath: file.path))
+        let child = try ChildRun.spawn(URL(filePath: "/bin/sleep"), ["/bin/sleep", "30"], environment: nil, directory: nil)
+        close(child.out); close(child.err)
+        let folder = ChildRun.liveFolder
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // A pid no process has (the owner is gone), and this test process's own (alive).
+        let dead = folder.appending(path: "children-99999.txt"), alive = folder.appending(path: "children-\(getppid()).txt")
+        try Data("\(child.pid)\t/bin/sleep\n\(child.pid)\t/opt/other\n".utf8).write(to: dead)
+        try Data("\(child.pid)\t/bin/sleep\n".utf8).write(to: alive)
+        #expect(ChildRun.endLeftovers() == 1)
+        var raw: Int32 = 0
+        waitpid(child.pid, &raw, 0)
+        #expect(raw & 0x7f == SIGKILL)
+        #expect(!FileManager.default.fileExists(atPath: dead.path))
+        #expect(FileManager.default.fileExists(atPath: alive.path))
+        try? FileManager.default.removeItem(at: alive)
+    }
+
+    /// The other app's recording, seen without taking its lock.
+    @Test func recordingSignalOfAnotherProcess() async throws {
+        let file = FileManager.default.temporaryDirectory.appending(path: "rec-\(UUID().uuidString)")
+        #expect(!RecordingSignal.elsewhere(file))
+        // Another process holds a record lock on the file (lockf takes a POSIX lock).
+        let holder = try ChildRun.spawn(URL(filePath: "/usr/bin/python3"),
+                                        ["python3", "-c", "import fcntl,time;f=open('\(file.path)','w');fcntl.lockf(f,fcntl.LOCK_EX);print('ok',flush=True);time.sleep(30)"],
+                                        environment: nil, directory: nil)
+        let reader = ChildRun.Reader(holder.out)
+        close(holder.err)
+        var seen = false
+        for _ in 0..<100 where !seen {
+            try await Task.sleep(for: .milliseconds(50))
+            seen = RecordingSignal.elsewhere(file)
+        }
+        #expect(seen)
+        kill(-holder.pid, SIGKILL)
+        var raw: Int32 = 0
+        waitpid(holder.pid, &raw, 0)
+        _ = reader.finish(within: 1)
+        #expect(!RecordingSignal.elsewhere(file))
     }
 
     @Test func readsTheOutput() async throws {
@@ -350,6 +378,21 @@ struct LocalFixture {
         #expect(saved.state == .failed)
         #expect(saved.failure == MeetingsError.stopped.errorDescription)
         #expect(saved.transcribedPieces == 0)
+    }
+
+    /// Quit during a piece: the meeting waits for the next start instead of failing.
+    @Test func quitLeavesTheMeetingWaiting() async throws {
+        let fixture = try LocalFixture(whisperSleeps: 20)
+        let control = LocalControl()
+        Task {
+            try await Task.sleep(for: .milliseconds(300))
+            control.quitting = true
+            control.stopped = true
+        }
+        await #expect(throws: MeetingsError.stopped) {
+            try await fixture.processor(LocalEnvironment(control: control, tick: .milliseconds(20))).run(fixture.meeting.id)
+        }
+        #expect(fixture.root.store.load(fixture.meeting.id)?.state == .waiting)
     }
 
     /// Stop during piece 2 keeps piece 1; Try Again goes on with piece 2 only, no line twice.

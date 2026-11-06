@@ -146,6 +146,12 @@ public struct MeetingProcessor: Sendable {
             try save(&meeting)
             MeetingsLog.info(.processor, "\(id): done, \(meeting.segments.count) segments, $\(meeting.costUSD) in all")
             return meeting
+        } catch MeetingsError.stopped where local.control.quitting {
+            // Quit: the meeting waits and goes on from its next piece at the next start.
+            meeting.state = .waiting
+            try save(&meeting)
+            MeetingsLog.info(.processor, "\(id): left for the next start (quit)")
+            throw MeetingsError.stopped
         } catch {
             return try fail(&meeting, error)
         }
