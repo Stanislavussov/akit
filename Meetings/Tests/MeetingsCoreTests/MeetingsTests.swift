@@ -1110,6 +1110,6 @@ final class Closed: @unchecked Sendable {
         #expect(Transcriber.vocabularyLine(many, for: "")?.contains("term1500\n") == false)
         #expect(Transcriber.vocabularyLine(many, for: "")?.hasSuffix("- term1500") == true)
         let old = try JSONDecoder().decode(MeetingsSettings.self, from: Data(#"{"model":"m"}"#.utf8))
-        #expect(old.vocabulary.isEmpty)
+        #expect(old.vocabulary.isEmpty && old.backgroundSounds)
     }
 }

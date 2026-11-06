@@ -31,6 +31,8 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     /// M27: the project's own words (names, services, products, terms), one per entry, so the
     /// model writes them right instead of a word that sounds close.
     public var vocabulary: [String] = []
+    /// M28: a short sound when the background recorder starts and stops (nothing on screen).
+    public var backgroundSounds: Bool = true
 
     public enum TrackMode: String, Codable, Sendable, CaseIterable {
         /// One mixed track (1×).
@@ -117,5 +119,6 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
         customTemplates = (try? c.decodeIfPresent([MeetingTemplate].self, forKey: .customTemplates)) ?? d.customTemplates
         cleanTranscript = try c.decodeIfPresent(Bool.self, forKey: .cleanTranscript) ?? d.cleanTranscript
         vocabulary = (try? c.decodeIfPresent([String].self, forKey: .vocabulary)) ?? d.vocabulary
+        backgroundSounds = try c.decodeIfPresent(Bool.self, forKey: .backgroundSounds) ?? d.backgroundSounds
     }
 }

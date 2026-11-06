@@ -81,6 +81,16 @@ targets:
         product: MeetingsCore
       - package: Meetings
         product: MeetingsUI
+      - package: Meetings
+        product: MeetingsBackground
+      # M28: the background recorder, a login item inside the app (SMAppService.loginItem).
+      # Signed by its own target (its own designated requirement), not again on copy.
+      - target: MeetingsRecorder
+        embed: true
+        codeSign: false
+        copy:
+          destination: wrapper
+          subpath: Contents/Library/LoginItems
     postBuildScripts:
       # Records where this build comes from; shown at the bottom of the sidebar.
       - name: Stamp build source
@@ -177,11 +187,46 @@ targets:
         ENABLE_DEBUG_DYLIB: NO
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: NO
+  # Meetings Recorder (docs/design/meetings.md, M28): ⌥⌘R from any app, no window, no Dock or
+  # menu bar item; AKit carries it as a login item.
+  MeetingsRecorder:
+    type: application
+    platform: macOS
+    sources:
+      - path: Meetings/Recorder
+    dependencies:
+      - package: Meetings
+        product: MeetingsCore
+      - package: Meetings
+        product: MeetingsUI
+      - package: Meetings
+        product: MeetingsBackground
+    info:
+      path: Meetings/Recorder/Info.plist
+      properties:
+        CFBundleDisplayName: Meetings Recorder
+        LSUIElement: true
+        NSMicrophoneUsageDescription: Meetings Recorder records your voice after you press ⌥⌘R, until you press it again.
+        NSAudioCaptureUsageDescription: Meetings Recorder records the sound of calls (Teams, Zoom, Meet) after you press ⌥⌘R, until you press it again.
+    settings:
+      base:
+        PRODUCT_NAME: Meetings Recorder
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ussov.meetings.recorder
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        OTHER_CODE_SIGN_FLAGS: "--requirements $(SRCROOT)/tools/signing/recorder.req"
+        ENABLE_DEBUG_DYLIB: NO
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
 schemes:
   AKit:
     build:
       targets:
         AKit: all
         Meetings: all
+        MeetingsRecorder: all
     run:
       config: Debug

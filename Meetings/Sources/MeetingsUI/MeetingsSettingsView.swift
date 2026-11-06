@@ -1,4 +1,5 @@
 import AppKit
+import MeetingsBackground
 import MeetingsCore
 import SwiftUI
 
@@ -115,6 +116,7 @@ struct MeetingsSettingsView: View {
                     Text("The microphone (you and the room) and the system sound (the call) are recorded apart. Auto sends a 30-minute part as two tracks when the room and the call talk at the same time for more than \(Int(MeetingProcessor.overlapForTwoTracks)) s, so overlapping voices are not lost; that part costs twice.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                BackgroundSection(model: model)
                 Section("Recording") {
                     Toggle("Echo cancellation", isOn: Binding(get: { model.settings.echoCancellation }, set: { value in model.update { $0.echoCancellation = value } }))
                     Text("Keeps the sound from the speakers out of the microphone, so the other people are not recorded twice. Takes effect at the next Record.")
@@ -273,6 +275,38 @@ struct VocabularyEditor: View {
             problem = nil
         } catch {
             problem = "Could not read \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+}
+
+/// M28: ⌥⌘R from any app, without opening a window: the background recorder as a login item.
+/// Only in a host that carries it (AKit).
+struct BackgroundSection: View {
+    let model: MeetingsModel
+    @State private var state = BackgroundRecorder.state
+    @State private var problem: String?
+
+    var body: some View {
+        if state != .unavailable {
+            Section("Background") {
+                Toggle("Record with ⌥⌘R from any app", isOn: Binding(get: { state == .on || state == .needsApproval }, set: { on in
+                    do { try BackgroundRecorder.set(on) } catch { problem = error.localizedDescription }
+                    state = BackgroundRecorder.state
+                }))
+                if state == .needsApproval {
+                    HStack {
+                        Label("macOS asks you to allow it in Login Items.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                        Button("Open Login Items") { BackgroundRecorder.openLoginItemsSettings() }
+                    }
+                    .font(.caption)
+                }
+                Toggle("Sound at start and stop", isOn: Binding(get: { model.settings.backgroundSounds }, set: { value in model.update { $0.backgroundSounds = value } }))
+                if let problem { Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption) }
+                Text("Meetings Recorder runs from login without a window, a Dock icon or a menu bar item. ⌥⌘R in any app starts a recording and stops it; Record here goes to it too. The first recording asks once for the microphone and the system audio. A short sound tells you it started or stopped; the meetings show up here as usual.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .onAppear { state = BackgroundRecorder.state }
         }
     }
 }
