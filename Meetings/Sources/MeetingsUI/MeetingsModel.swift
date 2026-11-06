@@ -61,9 +61,12 @@ public final class MeetingsModel {
     public private(set) var processingSince: [String: Date] = [:]
     /// M32: where each run started counting pieces (pieces done then, the time), and its way,
     /// for the time left.
-    /// When the last piece of each running meeting was done.
-    @ObservationIgnored private var lastPieceAt: [String: Date] = [:]
-    @ObservationIgnored private var runStart: [String: (pieces: Int, at: Date, way: ProcessingEstimate.Way)] = [:]
+    /// M32: each run's work clock and its way (for the remembered speed); observed, so the strip
+    /// redraws when a piece is done or the clock stops.
+    public private(set) var clocks: [String: WorkClock] = [:]
+    @ObservationIgnored private var runWays: [String: ProcessingEstimate.Way] = [:]
+    /// When the summary started (Pi's in a run, or Summarize Again).
+    public private(set) var summaryStarted: [String: Date] = [:]
     /// The meetings whose summary is written again now (Summarize Again, a new template).
     public private(set) var summarizingAgain: Set<String> = []
     /// The meetings whose local run the user paused.
@@ -380,7 +383,14 @@ public final class MeetingsModel {
         processing.insert(id)
         pieceTotals[id] = store.pieces(id).count
         processingSince[id] = Date()
-        runStart[id] = (restart ? 0 : store.load(id)?.transcribedPieces ?? 0, Date(), ProcessingEstimate.Way(settings))
+        var clock = WorkClock()
+        // Cloud runs report no status: their clock runs from the start. A local run's starts at
+        // its first piece (not while it is queued).
+        if settings.transcription == .cloud { clock.run(true) }
+        clocks[id] = clock
+        runWays[id] = ProcessingEstimate.Way(settings)
+        summaryStarted[id] = nil
+        if restart, let index = meetings.firstIndex(where: { $0.id == id }) { meetings[index].transcribedPieces = 0 }
         let client = key.map { OpenRouterClient(key: $0, transport: transport) }
         let control = LocalControl(recording: isRecording)
         controls[id] = control
@@ -392,6 +402,7 @@ public final class MeetingsModel {
             Task { @MainActor in
                 guard let self, self.runTokens[id] == token else { return }
                 self.localStatus[id] = status
+                self.clockFollows(id, status)
             }
         }, recordingElsewhere: { RecordingSignal.elsewhere(activeFile) })
         let processor = MeetingProcessor(store: store, settings: settings, client: client, local: local) { [weak self] meeting in
@@ -433,6 +444,7 @@ public final class MeetingsModel {
         }
         processing.insert(id)
         summarizingAgain.insert(id)
+        summaryStarted[id] = Date()
         processingSince[id] = Date()
         // M28: Pi writes it when chosen; Stop kills it like a local run.
         let control = LocalControl()
@@ -457,6 +469,7 @@ public final class MeetingsModel {
             } catch {
                 problem = "The summary was not written again: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
             }
+            summaryStarted[id] = nil
             summarizingAgain.remove(id)
             processing.remove(id)
             pieceTotals[id] = nil
@@ -700,22 +713,28 @@ public final class MeetingsModel {
     /// The seconds one piece takes in this meeting's run: measured once a piece is done, else
     /// what earlier runs on this Mac took.
     public func secondsPerPiece(_ id: String) -> TimeInterval? {
-        guard let start = runStart[id] else { return nil }
-        let done = (meetings.first { $0.id == id }?.transcribedPieces ?? start.pieces) - start.pieces
-        return ProcessingEstimate.measured(piecesDone: done, since: start.at) ?? ProcessingEstimate.perPiece(start.way)
+        guard let way = runWays[id] else { return nil }
+        return clocks[id]?.perPiece ?? ProcessingEstimate.perPiece(way)
     }
 
-    /// From when the time left counts: the last piece done, else the run's start.
-    public func estimateBase(_ id: String) -> Date? { lastPieceAt[id] ?? runStart[id]?.at }
+    /// The clock runs while pieces are transcribed or rest, and stands otherwise.
+    private func clockFollows(_ id: String, _ status: LocalStatus) {
+        guard clocks[id] != nil else { return }
+        switch status.phase {
+        case .transcribing, .resting: clocks[id]?.run(true)
+        case .summarizing:
+            clocks[id]?.run(false)
+            if summaryStarted[id] == nil { summaryStarted[id] = Date() }
+        case .queued, .paused: clocks[id]?.run(false)
+        }
+    }
 
     /// The run's measured speed for the next estimate (only when it did pieces).
     private func rememberSpeed(_ id: String) {
-        lastPieceAt[id] = nil
-        guard let start = runStart.removeValue(forKey: id), let meeting = store.load(id) else { return }
-        let done = (meeting.transcribedPieces ?? 0) - start.pieces
-        // The summary's time is not a piece's: leave it out.
-        let seconds = Date().timeIntervalSince(start.at) - (meeting.state == .done ? ProcessingEstimate.summarySeconds : 0)
-        if done > 0 { ProcessingEstimate.remember(seconds / Double(done), for: start.way) }
+        // Work up to the last piece only: no waits, no summary.
+        if let way = runWays.removeValue(forKey: id), let perPiece = clocks[id]?.perPiece { ProcessingEstimate.remember(perPiece, for: way) }
+        clocks[id] = nil
+        summaryStarted[id] = nil
     }
 
     // MARK: Local runs (M27)
@@ -770,7 +789,11 @@ public final class MeetingsModel {
         processing.insert(id)
         pieceTotals[id] = status.pieces
         processingSince[id] = Date().addingTimeInterval(-150)
-        runStart[id] = (0, Date().addingTimeInterval(-150), .localGPU)
+        var clock = WorkClock()
+        clock.run(true, at: Date().addingTimeInterval(-150))
+        clock.done(2, at: Date().addingTimeInterval(-10))
+        clocks[id] = clock
+        runWays[id] = .localGPU
         controls[id] = LocalControl()
         localStatus[id] = status
     }
@@ -857,8 +880,8 @@ public final class MeetingsModel {
 
     private func updated(_ meeting: Meeting) {
         // M32: the time of the last piece done, the base of the finish time.
-        if let old = meetings.first(where: { $0.id == meeting.id }), (meeting.transcribedPieces ?? 0) > (old.transcribedPieces ?? 0) {
-            lastPieceAt[meeting.id] = Date()
+        if let old = meetings.first(where: { $0.id == meeting.id }), clocks[meeting.id] != nil {
+            clocks[meeting.id]?.done((meeting.transcribedPieces ?? 0) - (old.transcribedPieces ?? 0))
         }
         if let index = meetings.firstIndex(where: { $0.id == meeting.id }) { meetings[index] = meeting }
     }
@@ -1084,6 +1107,18 @@ public struct MeetingProgress: Equatable, Sendable {
     public var total: Int
     public var paused: Bool
     public var since: Date?
-    /// When it is likely done, a rough guess; nil when unknown or paused.
-    public var finish: Date?
+    /// For the time left (nil when unknown or paused): the run's clock, the pieces left and the
+    /// seconds per piece, or when the summary started.
+    public var clock: WorkClock?
+    public var piecesLeft = 0
+    public var perPiece: TimeInterval = 0
+    public var summaryStarted: Date?
+    public var summaryLeft = true
+
+    /// Seconds left at `date`: the pieces left, then the summary.
+    public func left(at date: Date) -> TimeInterval? {
+        if let summaryStarted { return max(0, ProcessingEstimate.summarySeconds - date.timeIntervalSince(summaryStarted)) }
+        guard let clock, !paused else { return nil }
+        return clock.left(piecesLeft: piecesLeft, perPiece: perPiece, at: date) + (summaryLeft ? ProcessingEstimate.summarySeconds : 0)
+    }
 }

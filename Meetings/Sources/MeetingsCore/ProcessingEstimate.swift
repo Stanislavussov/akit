@@ -32,13 +32,6 @@ public enum ProcessingEstimate {
         Double(max(0, total - done)) * perPiece + (summaryLeft ? summarySeconds : 0)
     }
 
-    /// The seconds one piece took in this run: the time since the run started over the pieces
-    /// it did; nil before the first one.
-    public static func measured(piecesDone: Int, since start: Date, now: Date = Date()) -> TimeInterval? {
-        guard piecesDone > 0 else { return nil }
-        return now.timeIntervalSince(start) / Double(piecesDone)
-    }
-
     /// `≈ 1 min`, `≈ 6 min`, `≈ 1 h 10 min`.
     public static func text(_ seconds: TimeInterval) -> String {
         let minutes = max(1, Int((seconds / 60).rounded()))
@@ -60,5 +53,51 @@ public enum ProcessingEstimate {
         guard seconds > 0, seconds.isFinite else { return }
         let old = defaults.double(forKey: key(way))
         defaults.set(old > 0 ? old * 0.5 + seconds * 0.5 : seconds, forKey: key(way))
+    }
+}
+
+/// M32: the work time of one run: it runs while pieces are transcribed (rests between pieces
+/// included) and stands while the run is queued, paused or writes the summary. The speed is the
+/// work up to the last piece done over the pieces done, so waits never make it slower.
+public struct WorkClock: Equatable, Sendable {
+    var accumulated: TimeInterval = 0
+    var runningSince: Date?
+    /// Pieces done in this run, and the work time when the last one was done.
+    public private(set) var pieces = 0
+    var workAtLastPiece: TimeInterval = 0
+
+    public init() {}
+
+    public var isRunning: Bool { runningSince != nil }
+
+    /// Starts (true) or stops (false) the clock.
+    public mutating func run(_ on: Bool, at date: Date = Date()) {
+        if on, runningSince == nil {
+            runningSince = date
+        } else if !on, let since = runningSince {
+            accumulated += max(0, date.timeIntervalSince(since))
+            runningSince = nil
+        }
+    }
+
+    /// The work time so far.
+    public func work(at date: Date = Date()) -> TimeInterval {
+        accumulated + (runningSince.map { max(0, date.timeIntervalSince($0)) } ?? 0)
+    }
+
+    /// `count` more pieces are done now.
+    public mutating func done(_ count: Int, at date: Date = Date()) {
+        guard count > 0 else { return }
+        pieces += count
+        workAtLastPiece = work(at: date)
+    }
+
+    /// Seconds per piece in this run; nil before the first piece.
+    public var perPiece: TimeInterval? { pieces > 0 && workAtLastPiece > 0 ? workAtLastPiece / Double(pieces) : nil }
+
+    /// Seconds left for `piecesLeft` pieces at `perPiece`, less the work already spent on the
+    /// piece in hand.
+    public func left(piecesLeft: Int, perPiece: TimeInterval, at date: Date = Date()) -> TimeInterval {
+        max(0, Double(piecesLeft) * perPiece - (work(at: date) - workAtLastPiece))
     }
 }

@@ -446,13 +446,15 @@ struct MeetingDetail: View {
             }
         }
         done = min(done, total)
-        var finish: Date?
-        if !paused, let perPiece = model.secondsPerPiece(meeting.id), let base = model.estimateBase(meeting.id) {
-            let summarizing = model.summarizingAgain.contains(meeting.id) || model.localStatus[meeting.id]?.phase == .summarizing
-            finish = base.addingTimeInterval(summarizing ? ProcessingEstimate.summarySeconds
-                                             : ProcessingEstimate.remaining(done: done, total: total, perPiece: perPiece))
+        var result = MeetingProgress(text: text, done: done, total: total, paused: paused, since: model.processingSince[meeting.id])
+        if let started = model.summaryStarted[meeting.id] {
+            result.summaryStarted = started
+        } else if !paused, let clock = model.clocks[meeting.id], let perPiece = model.secondsPerPiece(meeting.id) {
+            result.clock = clock
+            result.piecesLeft = total - done
+            result.perPiece = perPiece
         }
-        return MeetingProgress(text: text, done: done, total: total, paused: paused, since: model.processingSince[meeting.id], finish: finish)
+        return result
     }
 
     /// M32: the progress strip's few words.
@@ -820,9 +822,10 @@ struct ProgressStrip: View {
                 Text("\(progress.done)/\(progress.total)").font(.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
                     .help("Pieces of 5 minutes done")
             }
-            if let finish = progress.finish {
+            if progress.left(at: Date()) != nil {
                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                    Text("\(ProcessingEstimate.text(finish.timeIntervalSince(context.date))) left, ~\(finish.formatted(date: .omitted, time: .shortened))")
+                    let left = progress.left(at: context.date) ?? 0
+                    Text("\(ProcessingEstimate.text(left)) left, ~\(context.date.addingTimeInterval(left).formatted(date: .omitted, time: .shortened))")
                         .font(.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
                 }
                 .help("A rough guess: the pieces left times the time one piece takes (in this run, or in earlier runs on this Mac), plus the summary")
