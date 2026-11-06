@@ -32,15 +32,23 @@ final class FakeServer: @unchecked Sendable {
     private var answers: [(Int, String)]
     private(set) var requests: [URLRequest] = []
 
-    init(_ answers: [(Int, String)]) { self.answers = answers }
+    /// Retries of the client: none by default, so a 500 fails at once; retry tests pass zero waits.
+    let retries: [Duration]
+    let headers: [String: String]
+
+    init(_ answers: [(Int, String)], retries: [Duration] = [], headers: [String: String] = [:]) {
+        self.answers = answers
+        self.retries = retries
+        self.headers = headers
+    }
 
     var client: OpenRouterClient {
-        OpenRouterClient(key: "test-key", base: URL(string: "https://fake.invalid/api/v1/")!) { [self] request in
+        OpenRouterClient(key: "test-key", base: URL(string: "https://fake.invalid/api/v1/")!, retryDelays: retries) { [self] request in
             let (code, body) = lock.withLock { () -> (Int, String) in
                 requests.append(request)
                 return answers.isEmpty ? (500, #"{"error":{"message":"no more answers"}}"#) : answers.removeFirst()
             }
-            return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: nil)!)
+            return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: headers)!)
         }
     }
 
@@ -131,11 +139,27 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         waiting.state = .waiting
         try store.save(waiting)
         _ = try store.create() // recent
+        // M26: a failed meeting and a done one with a piece not transcribed keep their audio.
+        var failed = try store.create(started: old.addingTimeInterval(240))
+        failed.state = .failed
+        try store.save(failed)
+        var partial = try store.create(started: old.addingTimeInterval(360))
+        for name in ["piece-001.aac", "piece-002.aac"] { try Data("x".utf8).write(to: store.audioFolder(partial.id).appending(path: name)) }
+        partial.state = .done
+        partial.transcribedPieces = 1
+        try store.save(partial)
         #expect(store.trashExpiredAudio() == 1)
         #expect(store.load(done.id)?.audioTrashed == true)
         #expect(!FileManager.default.fileExists(atPath: store.audioFolder(done.id).path))
-        #expect(FileManager.default.fileExists(atPath: store.audioFolder(waiting.id).path))
+        for kept in [waiting, failed, partial] {
+            #expect(FileManager.default.fileExists(atPath: store.audioFolder(kept.id).path))
+            #expect(store.load(kept.id)?.audioTrashed == false)
+        }
         #expect(store.trashExpiredAudio() == 0)
+        // Once the last piece is in the transcript, the audio goes too.
+        partial.transcribedPieces = 2
+        try store.save(partial)
+        #expect(store.trashExpiredAudio() == 1)
     }
 
     @Test func monthCost() throws {
@@ -999,5 +1023,55 @@ final class Closed: @unchecked Sendable {
         } catch {
             #expect(PaidFailure.cost(of: error) == 0.01)
         }
+    }
+}
+
+
+@Suite struct RetryTests {
+    let ok = chat(#"{"segments":[]}"#)
+
+    @Test func busyAndDownAreRetriedThreeTimes() async throws {
+        let server = FakeServer([(429, #"{"error":{"message":"rate"}}"#), (503, "down"), (502, "bad gateway"), (200, ok)], retries: [.zero, .zero, .zero])
+        let answer = try await server.client.complete(model: "m", system: "s", text: "t")
+        #expect(answer.text.contains("segments"))
+        #expect(server.requests.count == 4)
+    }
+
+    @Test func givesUpAfterThreeRetriesWithTheCode() async throws {
+        let server = FakeServer(Array(repeating: (429, #"{"error":{"message":"rate"}}"#), count: 5), retries: [.zero, .zero, .zero],
+                                headers: ["Retry-After": "0"])
+        await #expect(throws: MeetingsError.http(429, "rate")) { try await server.client.complete(model: "m", system: "s", text: "t") }
+        #expect(server.requests.count == 4)
+    }
+
+    @Test func otherErrorsAreNotRetried() async throws {
+        for code in [400, 401, 402, 404] {
+            let server = FakeServer([(code, #"{"error":{"message":"no"}}"#), (200, ok)], retries: [.zero, .zero, .zero])
+            await #expect(throws: MeetingsError.self) { try await server.client.complete(model: "m", system: "s", text: "t") }
+            #expect(server.requests.count == 1)
+        }
+    }
+
+    @Test func anErrorInsideA200IsRetriedByItsCode() async throws {
+        let server = FakeServer([(200, #"{"error":{"code":429,"message":"provider busy"}}"#), (200, ok)], retries: [.zero])
+        _ = try await server.client.complete(model: "m", system: "s", text: "t")
+        #expect(server.requests.count == 2)
+    }
+
+    @Test func aChunkSurvives429AndTheAudioStays() async throws {
+        let store = TempRoot().store
+        let meeting = try ProcessorTests().meetingWithPieces(store, count: 1)
+        let server = FakeServer([(429, "rate"), (200, chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"ahoj"}]}"#)),
+                                 (429, "rate"), (200, chat(#"{"title":"T","summary":"S.","decisions":[],"tasks":[]}"#))], retries: [.zero, .zero, .zero])
+        let result = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
+        #expect(result.state == .done && result.segments.count == 1)
+        #expect(store.pieces(meeting.id).count == 1)
+        // All retries used up: failed, audio kept for Try Again.
+        let again = try ProcessorTests().meetingWithPieces(store, count: 1)
+        let down = FakeServer(Array(repeating: (503, "down"), count: 4), retries: [.zero, .zero, .zero])
+        await #expect(throws: MeetingsError.self) { try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: down.client).run(again.id) }
+        #expect(store.load(again.id)?.state == .failed && store.pieces(again.id).count == 1)
+        #expect(store.trashExpiredAudio(now: Date().addingTimeInterval(30 * 86_400)) == 1) // only the done one
+        #expect(store.pieces(again.id).count == 1)
     }
 }

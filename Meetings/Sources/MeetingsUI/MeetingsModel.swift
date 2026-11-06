@@ -157,8 +157,7 @@ public final class MeetingsModel {
         refresh()
         guard !loaded else { return }
         loaded = true
-        let store = self.store
-        Task.detached { store.trashExpiredAudio() }
+        startAudioCleanup()
         for meeting in meetings where meeting.id != recordingID {
             switch meeting.state {
             case .recording:
@@ -180,6 +179,22 @@ public final class MeetingsModel {
         if selectedID == nil, let first = meetings.first { select(first.id) }
         if hasKey {
             for meeting in meetings where meeting.state == .waiting { process(meeting.id) }
+        }
+    }
+
+    /// M7, M26: audio past its 14 days goes to the Trash now and every 6 hours while the app
+    /// runs (AKit can stay open for weeks), never during a recording's start.
+    private func startAudioCleanup() {
+        Task { [weak self] in
+            while let self, !Task.isCancelled {
+                let store = self.store
+                let count = await Task.detached { store.trashExpiredAudio() }.value
+                if count > 0 {
+                    MeetingsLog.info(.store, "audio of \(count) meeting(s) past \(MeetingStore.audioDays) days moved to the Trash")
+                    self.refresh()
+                }
+                try? await Task.sleep(for: .seconds(6 * 3600))
+            }
         }
     }
 

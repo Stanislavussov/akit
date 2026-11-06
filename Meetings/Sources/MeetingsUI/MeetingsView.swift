@@ -318,8 +318,8 @@ struct MeetingDetail: View {
                     if meeting.duration > 0 { Text(lengthText(meeting.duration)) }
                     if let model = meeting.model { Text(model) }
                     if meeting.costUSD > 0 { Text(String(format: "$%.3f", meeting.costUSD)) }
-                    if meeting.audioTrashed { Text("audio in the Trash") }
                 }
+                .lineLimit(1)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 TagLine(model: model, meeting: meeting)
@@ -436,6 +436,20 @@ struct TagLine: View {
                 .font(.caption)
                 .help("Tags of this meeting, for search; the summary proposes some when it has none")
                 .popover(isPresented: $editing) { TagEditor(model: model, tags: meeting.tagList) }
+            Group {
+                if meeting.audioTrashed {
+                    Text("· audio in the Trash")
+                } else if meeting.state == .done {
+                    Text("· audio until " + meeting.audioUntil.formatted(.dateTime.day().month(.abbreviated)))
+                        .help("Then the audio goes to the Trash; the summary, transcript and tabs stay")
+                } else if meeting.id != model.recordingID {
+                    Text("· audio kept until transcribed")
+                        .help("Audio of a meeting that is not fully transcribed never goes to the Trash on its own")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
         }
     }
 }

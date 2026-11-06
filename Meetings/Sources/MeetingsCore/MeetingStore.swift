@@ -231,13 +231,13 @@ public struct MeetingStore: Sendable {
         return try? JSONDecoder().decode(PieceInfo.self, from: data)
     }
 
-    /// M7: the audio of meetings past their `audioUntil` goes to the Trash. Not while a meeting
-    /// records or waits for its transcript. Returns how many meetings lost their audio.
+    /// M7: the audio of meetings past their `audioUntil` goes to the Trash (recoverable there).
+    /// M26: only a done meeting whose transcript covers every piece; a failed, waiting or
+    /// recording one keeps its audio until it is transcribed. Returns how many lost their audio.
     @discardableResult
     public func trashExpiredAudio(now: Date = Date()) -> Int {
         var count = 0
-        for var meeting in list() where !meeting.audioTrashed && meeting.audioUntil < now
-            && (meeting.state == .done || meeting.state == .failed) {
+        for var meeting in list() where !meeting.audioTrashed && meeting.audioUntil < now && isFullyTranscribed(meeting) {
             let folder = audioFolder(meeting.id)
             if FileManager.default.fileExists(atPath: folder.path) {
                 guard (try? trash(folder)) != nil else { continue }
@@ -247,6 +247,14 @@ public struct MeetingStore: Sendable {
             count += 1
         }
         return count
+    }
+
+    /// Done, and every mixed piece is in the transcript (older files without `transcribedPieces`:
+    /// done is enough, as before).
+    public func isFullyTranscribed(_ meeting: Meeting) -> Bool {
+        guard meeting.state == .done else { return false }
+        guard let done = meeting.transcribedPieces else { return true }
+        return done >= pieces(meeting.id).count
     }
 
     /// What OpenRouter cost in the calendar month of `date`: the meetings' calls and the

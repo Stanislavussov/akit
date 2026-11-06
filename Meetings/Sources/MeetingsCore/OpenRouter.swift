@@ -9,18 +9,54 @@ public struct OpenRouterClient: Sendable {
     let key: String
     let base: URL
     let transport: Transport
+    /// M26: the waits before each retry of a busy or failed call (429, 408, 5xx, a lost
+    /// connection): three retries; a `Retry-After` header waits longer, up to 2 minutes.
+    let retryDelays: [Duration]
 
-    public init(key: String, base: URL = baseURL, transport: @escaping Transport = { try await URLSession.shared.data(for: $0) }) {
+    public static let defaultRetryDelays: [Duration] = [.seconds(5), .seconds(20), .seconds(60)]
+
+    public init(key: String, base: URL = baseURL, retryDelays: [Duration] = defaultRetryDelays,
+                transport: @escaping Transport = { try await URLSession.shared.data(for: $0) }) {
         self.key = key
         self.base = base
+        self.retryDelays = retryDelays
         self.transport = transport
+    }
+
+    /// Codes worth another try: too many requests, a timeout, the provider down or busy.
+    static func isRetryable(_ code: Int) -> Bool { [408, 429, 500, 502, 503, 504, 520, 522, 524, 529].contains(code) }
+
+    static func isRetryable(_ error: Error) -> Bool {
+        if let wrapped = error as? RetryAfter { return isRetryable(wrapped.error) }
+        if case MeetingsError.http(let code, _) = error { return isRetryable(code) }
+        if let error = error as? URLError {
+            return [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost].contains(error.code)
+        }
+        return false
+    }
+
+    /// Runs `call`; a retryable failure waits and tries again, at most `retryDelays.count` times.
+    func withRetries<T>(_ what: String, _ call: () async throws -> T) async throws -> T {
+        var attempt = 0
+        while true {
+            do {
+                return try await call()
+            } catch {
+                guard Self.isRetryable(error), attempt < retryDelays.count, !Task.isCancelled else { throw (error as? RetryAfter)?.error ?? error }
+                var delay = retryDelays[attempt]
+                if let after = (error as? RetryAfter)?.seconds { delay = max(delay, .seconds(min(after, 120))) }
+                attempt += 1
+                MeetingsLog.info(.openrouter, "\(what): retry \(attempt) of \(retryDelays.count) in \(delay.components.seconds) s after: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)")
+                try await Task.sleep(for: delay)
+            }
+        }
     }
 
     /// `GET /models`: OpenRouter's live list. It is public, so it loads before a key is saved.
     public func models() async throws -> [OpenRouterModel] {
         var request = URLRequest(url: base.appending(path: "models"))
         if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
-        let data = try await send(request)
+        let data = try await withRetries("GET /models") { try await send(request) }
         struct List: Decodable { var data: [OpenRouterModel] }
         do { return try JSONDecoder().decode(List.self, from: data).data } catch { throw MeetingsError.badAnswer("model list: \(error)") }
     }
@@ -29,7 +65,7 @@ public struct OpenRouterClient: Sendable {
     public func checkKey() async throws {
         var request = URLRequest(url: base.appending(path: "key"), timeoutInterval: 20)
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        _ = try await send(request)
+        do { _ = try await send(request) } catch let wrapped as RetryAfter { throw wrapped.error }
     }
 
     /// `POST /chat/completions`: one user message of text parts and at most one audio part. The
@@ -53,8 +89,8 @@ public struct OpenRouterClient: Sendable {
         request.setValue("https://github.com/ussov/akit", forHTTPHeaderField: "HTTP-Referer")
         request.setValue("Meetings", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let data = try await send(request)
-        return try Completion.parse(data)
+        // A 200 with an error object (a provider failed mid-way) is retried like the code it names.
+        return try await withRetries("POST /chat/completions") { try Completion.parse(try await send(request)) }
     }
 
     func send(_ request: URLRequest) async throws -> Data {
@@ -74,6 +110,8 @@ public struct OpenRouterClient: Sendable {
         let ms = Int(Date().timeIntervalSince(started) * 1000)
         guard (200..<300).contains(code) else {
             MeetingsLog.error(.openrouter, "\(what): \(code) after \(ms) ms: \(Self.errorMessage(data))")
+            let after = ((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After")).flatMap { Int64($0.trimmingCharacters(in: .whitespaces)) }
+            if let after { throw RetryAfter(seconds: after, error: MeetingsError.http(code, Self.errorMessage(data))) }
             throw MeetingsError.http(code, Self.errorMessage(data))
         }
         MeetingsLog.info(.openrouter, "\(what): \(code) after \(ms) ms, \(data.count) bytes")
@@ -86,6 +124,14 @@ public struct OpenRouterClient: Sendable {
            let error = object["error"] as? [String: Any], let message = error["message"] as? String { return message }
         return String(decoding: data.prefix(300), as: UTF8.self)
     }
+}
+
+/// An HTTP failure whose answer said how long to wait (`Retry-After`, seconds). Callers that do
+/// not retry see the inner error.
+struct RetryAfter: Error, LocalizedError {
+    let seconds: Int64
+    let error: MeetingsError
+    var errorDescription: String? { error.errorDescription }
 }
 
 /// A chat answer: the text and what it cost.
