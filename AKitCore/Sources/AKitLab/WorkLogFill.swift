@@ -79,6 +79,16 @@ public enum WorkLogFill {
         return moments.sorted { $0.0 < $1.0 }.map(\.1)
     }
 
+    /// The moments no calendar block holds: a meeting's time is the meeting's (W11).
+    public static func uncovered(_ moments: [Moment], blocks: [KnowledgeWorkLog.Entry]) -> [Moment] {
+        let ranges = blocks.compactMap { block in block.endMinute.map { block.minute..<$0 } }
+        guard !ranges.isEmpty else { return moments }
+        return moments.filter { moment in
+            let minute = KnowledgeWorkLog.minute(moment.time) ?? 0
+            return !ranges.contains { $0.contains(minute) }
+        }
+    }
+
     /// One slot of the day (15 or 30 minutes) with its prompts.
     public struct Slot: Sendable, Equatable {
         /// `HH:MM`, the slot's start.
@@ -153,7 +163,8 @@ public enum WorkLogFill {
     45 minutes without prompts. Each entry also has a summary: 2 to 3 sentences, in the same \
     language, of what the person did in that stretch: the problem or goal, what they tried, found \
     or decided, and the result when the prompts show it. Write only what the prompts support; no \
-    guesses. Leave out times the existing entries already cover. Never put secrets, tokens or \
+    guesses. Leave out times the existing entries already cover; an entry with a time range \
+    (09:00-09:30) is a calendar block and holds that whole range. Never put secrets, tokens or \
     personal data in the text or the summary.
     """
 
@@ -211,7 +222,7 @@ public enum WorkLogFill {
                                slotMinutes: Int = 30, language: LabLanguage = .czech, thinking: String = defaultThinking,
                                env: HarnessEnvironment) async throws(Failure)
         -> (entries: [KnowledgeWorkLog.Entry], prompts: Int, model: String) {
-        let moments = moments(sessions, day: day)
+        let moments = uncovered(moments(sessions, day: day), blocks: existing.filter(\.isBlock))
         guard !moments.isEmpty else {
             throw Failure(message: "No prompts on \(day) in the chosen harness's sessions, so there is nothing to fill from.")
         }

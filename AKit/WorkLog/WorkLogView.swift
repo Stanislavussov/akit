@@ -44,12 +44,19 @@ struct WorkLogView: View {
                 .labelsHidden()
                 .fixedSize()
                 .padding(.top, 8)
-                .help("Log: write and read entries. Auto-Fill: rebuild a day from your prompts to the agents")
-                if model.tab == .log {
+                .help("Log: write and read entries. Calendar: the week with meetings and blocks. Report: hours against the norm. Auto-Fill: rebuild a day from your prompts to the agents")
+                switch model.tab {
+                case .log:
                     WorkLogEntryBar()
                     Divider()
                     WorkLogDays()
-                } else {
+                case .calendar:
+                    Divider().padding(.top, 8)
+                    WorkLogCalendarView()
+                case .report:
+                    Divider().padding(.top, 8)
+                    WorkLogReportView()
+                case .autoFill:
                     Divider().padding(.top, 8)
                     WorkLogFillView()
                 }
@@ -332,12 +339,15 @@ private struct WorkLogEditSheet: View {
     @Environment(\.dismiss) private var dismiss
     let request: WorkLogModel.EditRequest
     @State private var time = ""
+    @State private var end = ""
     @State private var kind = ""
     @State private var text = ""
     @State private var summary = ""
 
     var body: some View {
+        let endMinute = end.wholeMatch(of: /0?24:00/) != nil ? 24 * 60 : KnowledgeWorkLog.minute(end)
         let validTime = KnowledgeWorkLog.minute(time) != nil
+            && (end.trimmingCharacters(in: .whitespaces).isEmpty || (endMinute ?? 0) > (KnowledgeWorkLog.minute(time) ?? 24 * 60))
         let kinds = KnowledgeWorkLog.presets.map(\.id) + (request.entry.kind.map { KnowledgeWorkLog.presets.map(\.id).contains($0) ? [] : [$0] } ?? [])
         VStack(alignment: .leading, spacing: 12) {
             Text("Edit Entry").font(.title3.bold())
@@ -345,6 +355,8 @@ private struct WorkLogEditSheet: View {
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Form {
                 TextField(text: $time, prompt: Text("09:30")) { RequiredLabel("Time") }
+                TextField("End", text: $end, prompt: Text("Optional: a block's end, like 10:00"))
+                    .help("With an end the entry is a block (a meeting, lunch): it holds its own time. Empty: it lasts until the next entry")
                 Picker("Kind", selection: $kind) {
                     Text("None").tag("")
                     ForEach(kinds, id: \.self) { id in
@@ -356,13 +368,14 @@ private struct WorkLogEditSheet: View {
                     .lineLimit(3...8)
             }
             if !validTime {
-                Label("Write the time as HH:MM.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+                Label("Write the times as HH:MM; an end comes after the start.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
             }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                 Button("Save") {
-                    if model.replace(request, with: .init(time: time, kind: kind.isEmpty ? nil : kind, text: text,
+                    let trimmed = end.trimmingCharacters(in: .whitespaces)
+                    if model.replace(request, with: .init(time: time, end: trimmed.isEmpty ? nil : trimmed, kind: kind.isEmpty ? nil : kind, text: text,
                                                        summary: summary)) { dismiss() }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -371,7 +384,9 @@ private struct WorkLogEditSheet: View {
         }
         .padding(20)
         .frame(width: 480)
-        .onAppear { (time, kind, text, summary) = (request.entry.time, request.entry.kind ?? "", request.entry.text, request.entry.summary ?? "") }
+        .onAppear {
+            (time, end, kind, text, summary) = (request.entry.time, request.entry.end ?? "", request.entry.kind ?? "", request.entry.text, request.entry.summary ?? "")
+        }
     }
 }
 

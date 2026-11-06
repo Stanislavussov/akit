@@ -550,7 +550,29 @@ public enum KnowledgeSeed {
             | Track parcels live | shipping |
 
             """),
-        // The work log (docs/design/worklog.md): two days, kinds, a break, a link.
+        // The work log (docs/design/worklog.md): two weekdays with calendar blocks (meetings,
+        // lunch) and a day of its own norm, then a weekend: kinds, a break, a link.
+        File(path: "worklog/2026-10-22.md", text: """
+            - 08:45 #reply Mail and chat after the trip
+            - 09:00-09:15 #meeting Standup
+            - 09:15 #bug COL-121 Refund total rounds wrong
+            - 11:00-12:00 #meeting COL-123 refinement
+            - 12:00-12:30 #break Lunch
+            - 12:30 #agent COL-121 fix and tests with Pi
+            - 14:00-15:00 #review COL-118 review of the outbox change
+            - 15:00 #task COL-121 release notes
+            - 16:30-16:45 #meeting Sync with billing
+
+            """),
+        File(path: "worklog/2026-10-23.md", text: """
+            norm: 6 h
+            - 09:00-09:15 #meeting Standup
+            - 09:15 #research Retry policy of the warehouse API
+            - 10:30-11:30 #meeting Checkout demo
+            - 11:30 #agent COL-123 first draft with Pi
+            - 12:30-13:00 #break Lunch
+
+            """),
         File(path: "worklog/2026-10-24.md", text: """
             - 09:05 #reply Answered logistics about the warehouse
             - 09:30 #agent Pi drew the order flow map

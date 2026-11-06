@@ -58,14 +58,17 @@ public struct KnowledgeWorkLog: Sendable {
         public var line: Int
         /// `HH:mm`, local time.
         public var time: String
+        /// A calendar block's end, `HH:mm` (W11): `- 09:00-09:30 #meeting Standup`. A block keeps
+        /// its own time; nil for an entry that lasts until the next one.
+        public var end: String?
         /// The tag without `#`, lowercased; nil for an entry without one.
         public var kind: String?
         public var text: String
         /// A few sentences of what was done, on the quoted line under the entry (W9).
         public var summary: String?
 
-        public init(line: Int = 0, time: String, kind: String?, text: String, summary: String? = nil) {
-            (self.line, self.time, self.kind, self.text, self.summary) = (line, time, kind, text, summary)
+        public init(line: Int = 0, time: String, end: String? = nil, kind: String?, text: String, summary: String? = nil) {
+            (self.line, self.time, self.end, self.kind, self.text, self.summary) = (line, time, end, kind, text, summary)
         }
 
         /// The entry's lines in the file: the entry, then its summary, one quoted line per line of
@@ -74,13 +77,18 @@ public struct KnowledgeWorkLog: Sendable {
             [markdown] + (summary?.split(separator: "\n", omittingEmptySubsequences: false).map { $0.isEmpty ? "  >" : "  > \($0)" } ?? [])
         }
 
-        /// The Markdown line: `- 09:14 #bug text`.
+        /// The Markdown line: `- 09:14 #bug text`, a block `- 09:00-09:30 #meeting text`.
         public var markdown: String {
-            (["- \(time)"] + [kind.map { "#\($0)" }, text.isEmpty ? nil : text].compactMap { $0 }).joined(separator: " ")
+            (["- \(time)" + (end.map { "-\($0)" } ?? "")] + [kind.map { "#\($0)" }, text.isEmpty ? nil : text].compactMap { $0 }).joined(separator: " ")
         }
 
         /// Minutes since midnight.
         public var minute: Int { KnowledgeWorkLog.minute(time) ?? 0 }
+        /// A block's end in minutes since midnight; nil for a plain entry.
+        public var endMinute: Int? { end.flatMap(KnowledgeWorkLog.minute) }
+        public var isBlock: Bool { end != nil }
+        /// The first ticket id in the text (`COL-123`), for the report.
+        public var ticket: String? { text.firstMatch(of: /\b[A-Z][A-Z0-9]+-\d+\b/).map { String($0.output) } }
     }
 
     /// A day: its entries in time order, with how long each lasted (W4).
@@ -88,7 +96,20 @@ public struct KnowledgeWorkLog: Sendable {
         public var date: String
         public var entries: [Entry]
         /// Per entry, in minutes; nil for the last entry of a past day (its end is unknown).
+        /// A block's time is its own; a plain entry gets the time no block holds (W11).
         public var minutes: [Int?]
+        /// Per entry, where its time ends (minutes since midnight); nil as in `minutes`.
+        public var ends: [Int?] = []
+        /// The day's own work norm in minutes (`norm: 8 h` in its file), nil for the default.
+        public var norm: Int?
+
+        /// The blocks of the day, in time order.
+        public var blocks: [Entry] { entries.filter(\.isBlock) }
+
+        /// Whether a block holds this minute (Auto-Fill leaves it out).
+        public func isCovered(_ minute: Int) -> Bool {
+            blocks.contains { minute >= $0.minute && minute < ($0.endMinute ?? 0) }
+        }
 
         /// Minutes per kind ("" for entries without a kind), largest first; breaks included.
         public var totals: [(kind: String, minutes: Int)] {
@@ -105,7 +126,9 @@ public struct KnowledgeWorkLog: Sendable {
             }
         }
 
-        public static func == (a: Day, b: Day) -> Bool { a.date == b.date && a.entries == b.entries && a.minutes == b.minutes }
+        public static func == (a: Day, b: Day) -> Bool {
+            a.date == b.date && a.entries == b.entries && a.minutes == b.minutes && a.ends == b.ends && a.norm == b.norm
+        }
     }
 
     public let base: KnowledgeBase
@@ -153,11 +176,11 @@ public struct KnowledgeWorkLog: Sendable {
     }
 
     /// The same at a given day and `HH:mm`.
-    public func add(_ text: String, kind: String?, day: String, time: String, summary: String? = nil) throws(Failure)
+    public func add(_ text: String, kind: String?, day: String, time: String, end: String? = nil, summary: String? = nil) throws(Failure)
         -> (entry: Entry, path: String, hash: String) {
         guard Self.isDate(day) else { throw Failure(message: "“\(day)” is no day: use YYYY-MM-DD.") }
         guard let minute = Self.minute(time) else { throw Failure(message: "“\(time)” is no time: use HH:MM.") }
-        var entry = try Self.checkedEntry(text, kind: kind, time: Self.time(minute), summary: summary)
+        var entry = try Self.checkedEntry(text, kind: kind, time: Self.time(minute), end: try Self.checkedEnd(end, after: minute), summary: summary)
         let old = try self.text(day)
         let (new, line) = Self.inserting(entry, into: old)
         entry.line = line
@@ -177,7 +200,8 @@ public struct KnowledgeWorkLog: Sendable {
     /// moves to its place in time order. Returns the path and the file's new hash.
     public func replace(_ old: Entry, on date: String, with new: Entry) throws(Failure) -> (path: String, hash: String) {
         guard let newMinute = Self.minute(new.time) else { throw Failure(message: "“\(new.time)” is no time: use HH:MM.") }
-        let checked = try Self.checkedEntry(new.text, kind: new.kind, time: Self.time(newMinute), takeTag: false, summary: new.summary)
+        let checked = try Self.checkedEntry(new.text, kind: new.kind, time: Self.time(newMinute), end: try Self.checkedEnd(new.end, after: newMinute),
+                                            takeTag: false, summary: new.summary)
         let text = try self.text(date)
         let without = try Self.removing(old, from: text, path: path(date))
         let (result, _) = Self.inserting(checked, into: without)
@@ -190,7 +214,7 @@ public struct KnowledgeWorkLog: Sendable {
         return (path(date), try write(date, old: text, new: try Self.removing(entry, from: text, path: path(date))))
     }
 
-    private func write(_ date: String, old: String, new: String) throws(Failure) -> String {
+    func write(_ date: String, old: String, new: String) throws(Failure) -> String {
         let file = file(date), bytes = Data(new.utf8)
         do {
             if FileWalk.isRegularFile(file) {
@@ -261,7 +285,7 @@ public struct KnowledgeWorkLog: Sendable {
 
     /// The text on one line, a leading `#tag` taken as the kind when none is given.
     /// `takeTag` false (Edit… with Kind None): a leading `#tag` stays text.
-    static func checkedEntry(_ text: String, kind: String?, time: String, takeTag: Bool = true, summary: String? = nil) throws(Failure) -> Entry {
+    static func checkedEntry(_ text: String, kind: String?, time: String, end: String? = nil, takeTag: Bool = true, summary: String? = nil) throws(Failure) -> Entry {
         var text = oneLine(text)
         var kind = try checkedKind(kind)
         if kind == nil, takeTag, let match = text.prefixMatch(of: /#([\p{L}\p{N}][\p{L}\p{N}_-]*)(\s+|$)/) {
@@ -270,7 +294,20 @@ public struct KnowledgeWorkLog: Sendable {
         }
         guard !text.isEmpty || kind != nil else { throw Failure(message: "Write what you did, or choose a kind.") }
         let summary = summary.flatMap(checkedSummary)
-        return Entry(time: time, kind: kind, text: text, summary: summary)
+        return Entry(time: time, end: end, kind: kind, text: text, summary: summary)
+    }
+
+    /// A block's end as written (`HH:MM`, after the start; `24:00` is the day's end), or nil.
+    static func checkedEnd(_ end: String?, after start: Int) throws(Failure) -> String? {
+        guard let end = end?.trimmingCharacters(in: .whitespaces), !end.isEmpty else { return nil }
+        guard let minute = endMinute(end) else { throw Failure(message: "“\(end)” is no end time: use HH:MM.") }
+        guard minute > start else { throw Failure(message: "A block ends after it starts: \(end) is not after \(time(start)).") }
+        return minute == 24 * 60 ? "24:00" : time(minute)
+    }
+
+    /// An end time: as `minute`, and `24:00` for midnight at the day's end.
+    static func endMinute(_ text: String) -> Int? {
+        text.wholeMatch(of: /0?24:00/) != nil ? 24 * 60 : minute(text)
     }
 
     /// A summary as kept: its lines trimmed, blank lines at its ends dropped, at most `maxSummary`
@@ -307,10 +344,23 @@ public struct KnowledgeWorkLog: Sendable {
 
     /// The entry a line holds (`- 09:14 #bug text`, `*` too), or nil.
     public static func entry(_ line: Substring, number: Int) -> Entry? {
-        guard let match = line.wholeMatch(of: /[-*]\s+(\d{1,2}:\d{2})(?:\s+#([\p{L}\p{N}][\p{L}\p{N}_-]*))?(?:\s+(.*))?\s*/),
+        guard let match = line.wholeMatch(of: /[-*]\s+(\d{1,2}:\d{2})(?:\s*[-–—]\s*(\d{1,2}:\d{2}))?(?:\s+#([\p{L}\p{N}][\p{L}\p{N}_-]*))?(?:\s+(.*))?\s*/),
               let minute = minute(String(match.1)) else { return nil }
-        return Entry(line: number, time: time(minute), kind: match.2.map { $0.lowercased() },
-                     text: match.3.map { $0.trimmingCharacters(in: .whitespaces) } ?? "")
+        // A block that doesn't end after it starts is read as a plain entry.
+        let end = match.2.flatMap { endMinute(String($0)) }.flatMap { $0 > minute ? ($0 == 24 * 60 ? "24:00" : time($0)) : nil }
+        return Entry(line: number, time: time(minute), end: end, kind: match.3.map { $0.lowercased() },
+                     text: match.4.map { $0.trimmingCharacters(in: .whitespaces) } ?? "")
+    }
+
+    /// A day's own norm line (`norm: 8 h`, `norm: 7,5`, `norm: 0` for a day off) → minutes.
+    static func norm(in text: String) -> Int? {
+        for line in lines(text) {
+            if let match = line.wholeMatch(of: /(?i)\s*norm:\s*(\d{1,2}(?:[.,]\d{1,2})?)\s*h?\s*/),
+               let hours = Double(match.1.replacingOccurrences(of: ",", with: ".")), hours <= 24 {
+                return Int((hours * 60).rounded())
+            }
+        }
+        return nil
     }
 
     /// The lines of a text; CRLF (one Character in Swift) and other line breaks split too. A
@@ -329,22 +379,39 @@ public struct KnowledgeWorkLog: Sendable {
         }
     }
 
-    /// A day from its file's text: entries in time order (the file's order for the same minute),
-    /// each lasting until the next; the last one until `now` when the day is today and `now` is later.
+    /// A day from its file's text: entries in time order (the file's order for the same minute).
+    /// A block holds its own minutes (an earlier block wins where two overlap). A plain entry
+    /// lasts until the next plain entry; the last one until `now` when the day is today and `now`
+    /// is later, else until the next block that starts after it, else its end is unknown. Minutes
+    /// a block holds don't count for the plain entry around it (W4, W11).
     public static func day(_ date: String, text: String, now: Date = .now) -> Day {
         let entries = entries(in: text).enumerated().sorted { ($0.element.minute, $0.offset) < ($1.element.minute, $1.offset) }.map(\.element)
         let (today, nowTime) = stamp(now)
-        var minutes: [Int?] = []
+        let nowMinute = date == today ? minute(nowTime) : nil
+        var owner = [Int?](repeating: nil, count: 24 * 60)
+        var ends = [Int?](repeating: nil, count: entries.count)
         for (index, entry) in entries.enumerated() {
-            if index + 1 < entries.count {
-                minutes.append(entries[index + 1].minute - entry.minute)
-            } else if date == today, let now = minute(nowTime), now >= entry.minute {
-                minutes.append(now - entry.minute)
-            } else {
-                minutes.append(nil)
-            }
+            guard let end = entry.endMinute else { continue }
+            ends[index] = end
+            for minute in entry.minute..<min(end, owner.count) where owner[minute] == nil { owner[minute] = index }
         }
-        return Day(date: date, entries: entries, minutes: minutes)
+        for (index, entry) in entries.enumerated() where !entry.isBlock {
+            let next = entries[(index + 1)...].first { !$0.isBlock }?.minute
+            let end: Int?
+            if let next {
+                end = next
+            } else if let nowMinute {
+                end = nowMinute >= entry.minute ? nowMinute : nil
+            } else {
+                end = entries.first { $0.isBlock && $0.minute > entry.minute }?.minute
+            }
+            ends[index] = end
+            if let end { for minute in entry.minute..<min(end, owner.count) where owner[minute] == nil { owner[minute] = index } }
+        }
+        var counts = [Int](repeating: 0, count: entries.count)
+        for case let index? in owner { counts[index] += 1 }
+        let minutes: [Int?] = entries.indices.map { ends[$0] == nil ? nil : counts[$0] }
+        return Day(date: date, entries: entries, minutes: minutes, ends: ends, norm: norm(in: text))
     }
 
     /// The text with the entry after the last entry at or before its time (before the first entry

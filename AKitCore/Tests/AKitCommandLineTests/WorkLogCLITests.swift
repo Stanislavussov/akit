@@ -45,4 +45,24 @@ struct WorkLogCLITests {
         #expect(await akit("worklog", "fill", "--thinking", "lots").err.contains("--thinking takes one of off, minimal, low"))
         #expect(await akit("worklog", "--help").out.contains("akit worklog add TEXT"))
     }
+
+    @Test func blocksHoursAndTheReport() async throws {
+        defer { try? fm.removeItem(at: home) }
+        #expect(await akit("kb", "init", "--world", "work").code == 0)
+        let block = await akit("worklog", "add", "Standup", "--kind", "meeting", "--at", "09:00", "--to", "09:30", "--day", "2026-11-02", "--json")
+        #expect(block.code == 0, "\(block.err)")
+        #expect(block.out.contains(#""end" : "09:30""#))
+        #expect(await akit("worklog", "add", "x", "--to", "10:00").code != 0)
+        #expect(await akit("worklog", "add", "COL-5 fix", "--kind", "bug", "--at", "10:00", "--to", "12:00", "--day", "2026-11-02").code == 0)
+        #expect(await akit("worklog", "hours", "8").out.contains("8 h, Monday to Friday, committed"))
+        #expect(await akit("worklog", "hours", "--day", "2026-11-03", "0").out.contains("2026-11-03: 0.00 h"))
+        let report = await akit("worklog", "report", "2026-11-02..2026-11-03", "--json")
+        #expect(report.code == 0, "\(report.err)")
+        #expect(report.out.contains(#""work_minutes" : 150"#) && report.out.contains(#""norm_minutes" : 480"#))
+        #expect(report.out.contains(#""COL-5" : 120"#))
+        let csv = await akit("worklog", "report", "2026-11-02..2026-11-03", "--csv").out
+        #expect(csv.contains("2026-11-02,Mon,8.00,2.50,5.50,0.00"))
+        #expect(csv.contains("2026-11-03,Tue,0.00,0.00,0.00"))
+        #expect(await akit("worklog", "report").out.contains("##"))
+    }
 }
