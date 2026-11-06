@@ -177,6 +177,12 @@ akit worklog show [today|yesterday|YYYY-MM-DD] [--days N] [--json]
                                                    # entries with minutes, totals per kind
 akit worklog add TEXT [--kind KIND] [--at HH:MM] [--json]
                                                    # today, now (--at: earlier today); committed
+akit worklog add TEXT --at HH:MM --to HH:MM [--day DAY] [--kind meeting] [--json]
+                                                   # a calendar block (meeting, lunch); holds its time
+akit worklog report [week|month|last-week|last-month|DAY..DAY] [--csv] [--json]
+                                                   # hours per day: norm, work, missing, kinds, tickets
+akit worklog hours [HOURS] [--day DAY HOURS|default] [--json]
+                                                   # work-day norm (7.5 default); set only when asked
 akit worklog kinds                                 # agent task bug research reply meeting review break
 akit worklog fill [DAY] [--slot 15|30] [--language cs] [--thinking low] [--harness claude|pi|all] [--model M] [--add] [--json]
                                                    # proposals with 2-3 sentence summaries ("  > …"

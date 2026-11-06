@@ -277,6 +277,8 @@ shot notebook-drawing    $MAIN --section notebook --tab notebook-draw-open --que
 shot worklog             $MAIN --section worklog --tab worklog-kind-bug --query "order-created: retry test"
 shot worklog-edit        $MAIN --section worklog --tab worklog-edit
 shot worklog-summary     $MAIN --section worklog --tab worklog-open
+shot worklog-calendar    $MAIN --section worklog --tab worklog-calendar --query 2026-10-22
+shot worklog-report      $MAIN --section worklog --tab worklog-report --query 2026-10-22
 shot worklog-fill        $MAIN --section worklog --tab worklog-fill --query 2026-10-05
 shot meetings            $MAIN --section meetings --select 0930
 shot meetings-transcript $MAIN --section meetings --select 0930 --tab meetings-transcript
