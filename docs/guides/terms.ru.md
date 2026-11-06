@@ -1387,3 +1387,18 @@ Friction («трение») — места, где агент спотыкалс
 - **Propose Entries** (Auto-Fill): отправляет отрезки дня модели; записи приходят с флажками. Подробнее: [Auto-Fill](worklog#autofill)
 - **Add Selected** / **Discard** (Auto-Fill): добавить отмеченные записи в день / убрать предложения. Подробнее: [Auto-Fill](worklog#autofill)
 - **akit worklog** (терминал): `add TEXT [--kind] [--at]`, `show [ДЕНЬ] [--days N]`, `kinds`, `fill [ДЕНЬ] [--slot] [--add]`. Подробнее: [Агент и журнал](worklog#agents)
+
+## Meetings
+<!-- section: terms-meetings -->
+
+- **Meetings** (боковое меню, группа Work): запись встреч, текст разговора, краткое содержание и задачи через OpenRouter. Подробнее: [Встречи](meetings#overview)
+- **Record** / **Stop** (Meetings, панель инструментов, ⌥⌘R): начать и закончить запись микрофона и звука Mac. Подробнее: [Записать встречу](meetings#record)
+- **Summary** (вкладка встречи): краткое содержание, Decisions, Tasks; можно править. Подробнее: [Summary и Transcript](meetings#tabs)
+- **Transcript** (вкладка встречи): текст разговора со временем и говорящим. Подробнее: [Summary и Transcript](meetings#tabs)
+- **Me**, **Speaker 1**, **Speaker 2** (Transcript): вы и другие люди по порядку. Подробнее: [Summary и Transcript](meetings#tabs)
+- **+**, **Rename…**, **Delete…** (вкладки встречи): своя вкладка Markdown; в модель не уходит. Подробнее: [Свои вкладки](meetings#own-tabs)
+- **Actions** (Meetings): **Rename Speakers…**, **Transcribe Again**, **Show in Finder**, **Move to Trash…**. Подробнее: [Меню Actions](meetings#actions)
+- **Try Again** (встреча `failed`): продолжить расшифровку с той части, где она остановилась. Подробнее: [Меню Actions](meetings#actions)
+- `recording`, `waiting`, `transcribing`, `failed` (строка встречи): идёт запись; ждёт расшифровки; расшифровывается; расшифровка не удалась. Подробнее: [Что на экране](meetings#overview)
+- **This month: $… of $…** (Meetings, под списком): цена встреч месяца и месячный лимит. Подробнее: [Настройки](meetings#settings)
+- **Settings…** (Meetings): **Key**, **Save Key**, **Transcription**, **Summary**, **Reload**, **Summary and tasks**, **Spoken language**, **Echo cancellation**, **Folder**, **Monthly limit, $**. Подробнее: [Настройки](meetings#settings)

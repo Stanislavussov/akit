@@ -278,6 +278,10 @@ shot worklog             $MAIN --section worklog --tab worklog-kind-bug --query 
 shot worklog-edit        $MAIN --section worklog --tab worklog-edit
 shot worklog-summary     $MAIN --section worklog --tab worklog-open
 shot worklog-fill        $MAIN --section worklog --tab worklog-fill --query 2026-10-05
+shot meetings            $MAIN --section meetings --select 0930
+shot meetings-transcript $MAIN --section meetings --select 0930 --tab meetings-transcript
+shot meetings-tab        $MAIN --section meetings --select 0930 --tab meetings-tab
+shot meetings-settings   $MAIN --section meetings --tab meetings-settings
 shot knowledge-obsidian-setup 900x600 --section knowledge --select payments/orders-api --tab obsidian-setup
 shot knowledge-tags      $MAIN --section knowledge --select payments/orders-api --click 250,100
 shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties
