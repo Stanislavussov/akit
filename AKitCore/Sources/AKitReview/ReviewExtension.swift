@@ -43,7 +43,7 @@ public enum ReviewExtension {
 
     /// The extension's pure rules, in plain JavaScript inside the TypeScript file, so AKit's tests
     /// run this same text with JavaScriptCore: the argument limit of open servers and of the
-    /// impact pass, the shape of a submitted use and of the brief's overview.
+    /// impact pass, the shape of a submitted use and of the overview.
     public static let rules = #"""
     const openArgumentLimit = 300;
     // The whole arguments of a call where the limit applies, as JSON.
@@ -96,7 +96,7 @@ public enum ReviewExtension {
       return out;
     }
 
-    // The brief's overview for the user (R45, R47): types and sizes. AKit checks the files and the flow.
+    // The overview pass's overview for the user (R45, R47): types and sizes. AKit checks the files and the flow.
     const overviewSources = ["work-item", "description", "notes", "none"];
     function overviewProblems(params) {
       const out = [];

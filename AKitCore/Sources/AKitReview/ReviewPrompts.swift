@@ -5,7 +5,8 @@ import Foundation
 public enum ReviewPrompts {
     /// 5 (2026-10-30): recall first, every potential problem with its severity; names,
     /// placement and separation of concerns of each entity the change adds or touches.
-    public static let version = 5
+    /// 6 (2026-11-06): the overview is a pass of its own; a role doesn't re-open files the session read.
+    public static let version = 6
 
     /// One confidence scale for the roles and the verifier: the same number means the same.
     static let confidenceScale = """
@@ -190,8 +191,7 @@ public enum ReviewPrompts {
     }
 
     static func brief(spec: ReviewRunSpec) -> String {
-        let language = spec.overviewLanguage()
-        return """
+        """
         Pass 1 of the review: the brief. Don't submit findings in this pass.
 
         Read the context pack: README.md, \(spec.notes == nil ? "" : "notes.md (the developer's own notes: start there), ")\
@@ -220,11 +220,21 @@ public enum ReviewPrompts {
         most often. For each: the name other repositories would search for, the changed file, the line and the exact code \
         line as the quote, with `side: "old"` and the line of the old file when the line is removed (in a deleted file too). \
         An empty list is a valid answer.
+        """
+    }
 
-        Then call akit_submit_overview once: an overview for the developer in AKit, never posted. Write its texts (the points, \
+    /// The overview (R45–R47), for the developer only. It runs in a side session forked from the
+    /// brief, with the impact pass, so its text never rides along in the role passes.
+    /// `afterImpact`: the side session holds the impact pass (it ran); else it is a fresh fork of the brief.
+    static func overview(spec: ReviewRunSpec, afterImpact: Bool = false) -> String {
+        let language = spec.overviewLanguage()
+        return """
+        Next pass: the overview. Don't submit findings in this pass. Use what the brief\
+        \(afterImpact ? " and the impact pass" : "") already read; open a file only when you need more.
+
+        Call akit_submit_overview once: an overview for the developer in AKit, never posted. Write its texts (the points, \
         the modules' names and why, the flow's labels) in \(language.name) (`\(language.rawValue)`). Only the overview uses \
-        this language: your brief answer stays in English, and findings, notes and gaps keep the language the rules above \
-        give them. \
+        this language. \
         `points`: 3–5 short points on what happens. `modules`: the parts that change, each with its changed files (paths as in \
         changes.md) and why it changes. Take the why from the work items in work-items.md, from the top of the chain down (the \
         epic's or feature's goal, then the user story, then the task), from the merge request's description and from the \
@@ -235,6 +245,7 @@ public enum ReviewPrompts {
         `class A,B changed`. Quote labels with `"…"`; no `click`, links or URLs, `@{…}` shapes or images, HTML (only `<br/>`), \
         `%%{`, scripts, CSS beyond fill, stroke, stroke-width, color, stroke-dasharray and font-weight, or ids that start with \
         `akit_`: AKit drops such a flow.
+        Then answer "done".
         """
     }
 
@@ -315,7 +326,7 @@ public enum ReviewPrompts {
 
     static func role(_ role: ReviewRunSpec.Role, body: String, spec: ReviewRunSpec, consumers: Bool = false) -> String {
         var text = """
-        Next pass: you are the `\(role.id)` reviewer (skill review-\(role.id)). Its checklist:
+        Next pass: you are the `\(role.id)` reviewer. Its checklist:
 
         \(body)
 
@@ -359,8 +370,9 @@ public enum ReviewPrompts {
 
 
         Look at the change again with this checklist and the review's four points (contracts, the entity, separation of \
-        concerns, behaviour); the brief and earlier passes are context, not your findings. Open each changed file whole, \
-        not only its diff. Then call akit_submit_findings once with your findings, the worst first, and answer "done". An empty list is right \
+        concerns, behaviour); the brief and earlier passes are context, not your findings. Files read earlier in this \
+        session are already in it: use them, don't read them again unless they are no longer in your context. Open a changed file whole, not only its diff, when this \
+        session hasn't read it yet. Then call akit_submit_findings once with your findings, the worst first, and answer "done". An empty list is right \
         only when you checked every changed entity and found nothing.
         """
         return text

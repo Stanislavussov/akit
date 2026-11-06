@@ -580,7 +580,7 @@ extension AKitCLI {
             try args.finish()
             if json && mermaid { throw Failure(message: "Choose one: --json or --mermaid.") }
             guard let overview = ReviewOverview.load(folder: try runFolder(id, env: env)) else {
-                throw Failure(message: "No overview for run \(id): the brief submitted none, or the run was made before overviews. Review it again.")
+                throw Failure(message: "No overview for run \(id): the overview pass submitted none, or the run was made before overviews. Review it again.")
             }
             if mermaid {
                 guard let flow = overview.flow else { throw Failure(message: "The overview of run \(id) has no flow.") }

@@ -20,6 +20,13 @@ Added 2026-11-02 (branch `review-send-publish`): R66, publishing at once, after 
 confirmation, when the GitLab MCP server has no draft notes (GitLab's own MCP server); the send
 pass's reason for a request it skipped is shown.
 
+Revised 2026-11-06 (branch `review-tokens`): fewer tokens per run. The impact pass and a new
+`overview` pass (the overview moved out of the brief) run in a side session forked from the brief,
+so the roles' history holds neither GitLab's answers from other repositories nor the overview's
+text; the roles read `consumers.md`. A role no longer re-opens a file the session already read.
+Role definitions are no longer loaded as `--skill` too: the checklist is in the role's prompt.
+R6 stands: the brief, the roles and the Pi steps share one session.
+
 Added 2026-10-28 (branch `review-debug`): R53, debugging a run (section "Debugging a run").
 
 Added 2026-10-25 (branch `review-linked-mrs`): R49–R52, one review of several linked merge
@@ -470,7 +477,7 @@ server for the other repositories that use it. The user names no repositories. B
 |---|---|---|
 | R40 | What is on the map? | Three lanes, left to right. **This change**: the changed files, grouped by module (the nearest folder with `package.json`, else the top folder), with lines added and removed and the worst severity of their findings. **Boundaries**: what the change provides or uses across the repository's edge. **Other repositories**: the projects and files that use a boundary. Faded nodes in the first lane: unchanged files of this repository that import a changed file. For TS/JS AKit reads the imports itself (`import`, `export … from`, `require`, `import()`), relative paths and the workspace's own package names; files of other languages are nodes without edges. The map is for the user only and is never posted. Saved as `<run>/map.json`; built again on each run and rerun |
 | R41 | Who finds the boundaries? | The brief, with a new tool `akit_submit_boundaries`. Each boundary has a kind (`http-api`, `graphql`, `mfe` (an exposed or remote module), `shared-lib` (a published package), `event` (a topic, a queue, a message schema), `db-schema`, `infra` (Helm, Terraform, Kubernetes, Docker), `ci` (a shared CI template, a job others include), `config` (an environment variable, a feature flag, a config key)), a direction (`provides` or `uses`), a name to search for (an endpoint path, a package name, a module name, a topic, a variable; at most 120 characters), the file, the line and a quote. AKit keeps a boundary only when its quote is in the file at the reviewed commit, like a finding (Checks without a model). A boundary of a file the change doesn't touch is dropped |
-| R42 | When does AKit look in other repositories? | Automatically, when the brief kept at least one boundary and the run has a GitLab server. A new pass `impact` runs after the brief and before the roles, in the main session, so the roles see what it found. `impact: auto` (default), `off` or `always` at the three config levels (review.yaml, the profile, the run: New Review… → Other repositories, `--impact`). `always` runs the pass even when the brief kept no boundary: the pass then looks at the diff itself. Without a GitLab server the run gets a gap |
+| R42 | When does AKit look in other repositories? | Automatically, when the brief kept at least one boundary and the run has a GitLab server. A new pass `impact` runs after the brief and before the roles, in a side session forked from the brief (since 2026-11-06), and the roles read what it found in `consumers.md`. `impact: auto` (default), `off` or `always` at the three config levels (review.yaml, the profile, the run: New Review… → Other repositories, `--impact`). `always` runs the pass even when the brief kept no boundary: the pass then looks at the diff itself. Without a GitLab server the run gets a gap |
 | R43 | How does the pass search? | GitLab's MCP server, reading tools only (R22's policy, the 300-character argument limit): `search` with `scope: blobs` and the name, first in the merge request's top group (`group_id`), then in the whole GitLab when the group gives fewer than 3 projects; `get_repository_file` to read a hit around the use; `semantic_search` and Orbit's `query_graph` when the server offers them. A budget, given to the pass in its prompt and counted by AKit: 20 searches and 30 files read; over it AKit only alerts (R37). When search over code in a group or the instance fails (it can need Advanced search), the pass reports a gap that says so and what it tried. The pass submits each use with `akit_submit_consumers`: the boundary, the project path, the file, the ref, the line, a quote and how the file uses the boundary, and whether this change breaks it with the reason. AKit keeps a use only when its quote is in an answer the pass got from GitLab in `mcp/calls/` (never the model's word alone) and the project is not the merge request's own. The kept uses go to `context/consumers.md` for the roles and onto the map |
 | R44 | Where do the uses go? | On the map (the third lane). A use that this change breaks is a candidate of the `contracts` role, which now runs in every run that has kept uses: its anchor is the changed line in this merge request (never a line in the other repository), its text names the other project and file, and it goes through the verifier and the user's approval like any finding. Answers from other projects are context: they never become this merge request's data (R30's rule) and AKit never writes to another project |
 
@@ -515,7 +522,7 @@ stale `map.json`, Mermaid control characters, and the map follows Discuss in Pi.
 Built: part (b) (2026-10-24): R42–R44, the `impact` pass (`ReviewPasses.impact`,
 `ReviewConsumers.swift`, `ReviewPrompts.impact`). `impact: auto | off | always` in review.yaml
 (top level), a profile's `review:` block and the run (`--impact`, also for `akit review local`);
-`config show` lists it. The pass runs after the brief's boundary check, in the main session, with
+`config show` lists it. The pass runs after the brief's boundary check, in a side session forked from the brief (2026-11-06), with
 the reading tools, MCP, `tool_search`, `akit_submit_consumers` and `akit_report_context_gap`.
 What differs from or adds to the table:
 
@@ -631,13 +638,13 @@ Built as part (d), before the Map tab.
 
 | # | Question | Decision |
 |---|---|---|
-| R45 | A short overview for the user | The brief submits it with a new tool `akit_submit_overview`: 3–5 points on what happens; the modules that change, each with its files and why it changes; where the why comes from (`work-item`, `description`, `notes`, `none`, more than one allowed). AKit keeps a module only when its files are changed files of the run, and keeps 3–5 points (fewer: the overview says it is short; more: the first 5). Saved as `<run>/overview.json`. Never posted |
+| R45 | A short overview for the user | The brief submits it (since 2026-11-06 the `overview` pass in the side session) with a new tool `akit_submit_overview`: 3–5 points on what happens; the modules that change, each with its files and why it changes; where the why comes from (`work-item`, `description`, `notes`, `none`, more than one allowed). AKit keeps a module only when its files are changed files of the run, and keeps 3–5 points (fewer: the overview says it is short; more: the first 5). Saved as `<run>/overview.json`. Never posted |
 | R46 | Its language | `summary_language` at the three config levels (review.yaml, the profile, the run: New Review… → Summary language, `--summary-language`), a `LabLanguage` code; default the Mac's preferred language when AKit knows it, else English. Only the overview and the flow's labels use it; GitLab text stays in `posting: language` (R35). Translate works on the overview too |
 | R47 | The flow | In the same tool: a Mermaid diagram (`flowchart` or `sequenceDiagram`, at most 40 nodes and 6000 characters) of the path a request or data takes through the system where the change is (UI → micro-frontend → API → service → database, a job, an event), with the changed parts in a class `changed`. After the `impact` pass AKit adds the other repositories' uses as nodes under a `subgraph` (from `consumers.json`, not from the model). AKit rejects a diagram with `click`, `href`, `call`, `%%{init` or `<script` and keeps the text for the gap. The app renders it with `mermaid.js` shipped inside AKit (a pinned version, MIT, no network: `securityLevel: "strict"`, a content policy with no outside loads), light and dark; a syntax error shows the source and the error. **Copy Mermaid** copies the source |
 | R48 | The work item chain | The fetch pass reads the work item named by the branch (R39), then its parent, the parent's parent and so on to the top (Task → User Story → Feature → Epic; at most 6 levels, a visited set against loops), each with its description, acceptance criteria and **all comments**; related items one level from the named item. Gather keeps the whole chain (R39's filter keeps ancestors of a named item, not only the direct parent). `work-items.md` shows the chain from the top down, so the overview's why can name the epic's or feature's goal |
 
 Built: part (d) (2026-10-24): R45–R48 and `akit review overview RUN [--json | --mermaid]`
-(`ReviewOverview.swift`). The brief gets `akit_submit_overview`; AKit checks it after the impact
+(`ReviewOverview.swift`). The `overview` pass gets `akit_submit_overview` (the brief until 2026-11-06; now the pass after `impact` in the side session); AKit checks it after the impact
 pass and writes `<run>/overview.json` (a failure there only writes a progress line). What differs
 from or adds to the table:
 
@@ -815,6 +822,7 @@ akit review <mr-url> [--wi N] [--scenario S]        or  Review → New Review…
    │
    ├─ 4 Passes, in order (brief, roles and Pi steps in one Pi session):
    │     brief      intent, touched components, what people already raised, AC, first gaps
+   │     impact, overview   a side session forked from the brief; the roles get consumers.md
    │     role × N   candidates (≤ max_findings each) through akit_submit_findings
    │     verifier   strong model, a fresh session with the brief, the candidates + snippets:
    │                confirms or rejects each, links and merges duplicates, turns a finding

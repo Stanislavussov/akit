@@ -66,10 +66,11 @@ extension ReviewProcessTests {
             let lines = LockedBox<[String]>([])
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env, options: .init(progress: { line in lines.update { $0.append(line) } }))
 
-            #expect(passes(run) == ["fetch", "brief", "impact", "role-bug-hunter", "role-contracts", "role-requirements", "role-tests", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-bug-hunter", "role-contracts", "role-requirements", "role-tests", "verifier"])
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
             let args = run.args("impact")
-            #expect(args.contains(log.mainSession), "the main session")
+            #expect(args.contains("--fork") && args.contains(log.mainSession), "a fork of the brief's session")
+            #expect(!run.args("role-tests").contains("--fork"), "the roles don't carry GitLab's answers")
             #expect(args.contains { $0.hasPrefix("read,grep,find,ls,akit_submit_consumers,akit_report_context_gap,codemode,tool_search") })
             #expect(!args.contains { $0.contains("akit_submit_boundaries") }, "the brief kept a boundary")
             #expect(log.passes.first { $0.name == "impact" }?.credits ?? 0 > 0)
@@ -167,18 +168,17 @@ extension ReviewProcessTests {
             Self.playImpact(run)
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
 
-            #expect(passes(run) == ["fetch", "brief", "impact", "role-security", "role-bug-hunter", "role-contracts", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-security", "role-bug-hunter", "role-contracts", "verifier"])
             let spec = try #require(ReviewJSON.read(ReviewRunSpec.self, from: run.folder.appending(path: "run.json")))
             #expect(spec.roles.last?.id == "contracts" && spec.roles.last?.reason == "added: other repositories use the change")
             let roleFolder = run.folder.appending(path: "roles/review-contracts")
             #expect(FileManager.default.fileExists(atPath: roleFolder.appending(path: "SKILL.md").path))
-            #expect(run.args("role-contracts").contains(roleFolder.path))
             #expect(try String(contentsOf: run.folder.appending(path: "prompts/role-contracts.md"), encoding: .utf8).contains("THIS merge request"))
 
             // The passes again, and this time no use is kept: the added role doesn't stick.
             try FileManager.default.removeItem(at: run.home.url.appending(path: "fake/consumers-impact.json"))
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
-            #expect(passes(run) == ["fetch", "brief", "impact", "role-security", "role-bug-hunter", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-security", "role-bug-hunter", "verifier"])
             #expect(ReviewJSON.read(ReviewRunSpec.self, from: run.folder.appending(path: "run.json"))?.roles.contains { $0.id == "contracts" } == false)
             #expect(!FileManager.default.fileExists(atPath: roleFolder.path))
         }
@@ -194,7 +194,7 @@ extension ReviewProcessTests {
             let lines = LockedBox<[String]>([])
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env, options: .init(progress: { line in lines.update { $0.append(line) } }))
 
-            #expect(passes(run) == ["fetch", "brief", "impact", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
             #expect(lines.value.contains("Other repositories use the change, but the contracts role is off by the user's choice."))
             #expect(ReviewJSON.read([ReviewConsumer].self, from: run.folder.appending(path: "consumers.json"))?.count == 2)
             #expect(ReviewJSON.read(ReviewRunSpec.self, from: run.folder.appending(path: "run.json"))?.roles.contains { $0.id == "contracts" } == false)
