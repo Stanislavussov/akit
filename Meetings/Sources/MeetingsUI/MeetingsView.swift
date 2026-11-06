@@ -99,8 +99,13 @@ struct RecordButton: View {
     var body: some View {
         if let started = model.recordingStarted {
             HStack(spacing: 6) {
-                TimelineView(.periodic(from: started, by: 1)) { context in
-                    Text(timestamp(context.date.timeIntervalSince(started))).monospacedDigit().foregroundStyle(.secondary)
+                TimelineView(.periodic(from: started, by: 0.1)) { context in
+                    let levels = model.levels
+                    HStack(spacing: 6) {
+                        LevelWave(levels: levels.mic, systemImage: "mic", help: "Your microphone: a wave while it hears you, a flat line in silence")
+                        LevelWave(levels: levels.system, systemImage: "speaker.wave.2", help: "The sound of the Mac (the call): a wave while it plays, a flat line in silence")
+                        Text(timestamp(context.date.timeIntervalSince(started))).monospacedDigit().foregroundStyle(.secondary)
+                    }
                 }
                 Button("Stop", systemImage: "stop") { Task { await model.stop() } }
                     .labelStyle(.titleAndIcon)
@@ -113,6 +118,37 @@ struct RecordButton: View {
                 .keyboardShortcut("r", modifiers: [.command, .option])
                 .help("Record the microphone and the sound of the Mac until Stop (⌥⌘R)")
         }
+    }
+}
+
+/// A small live wave of one source: the recent loudness as a line that swings around the middle;
+/// silence is a flat line. Plain colors, inside the screen only (M4).
+struct LevelWave: View {
+    let levels: [Float]
+    let systemImage: String
+    let help: String
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Image(systemName: systemImage).font(.caption2).foregroundStyle(.secondary)
+            Canvas { context, size in
+                let count = 48
+                let values = Array(repeating: Float(0), count: max(0, count - levels.count)) + levels.suffix(count)
+                let mid = size.height / 2
+                let step = size.width / CGFloat(count - 1)
+                var path = Path()
+                for (i, value) in values.enumerated() {
+                    // Alternate up and down, so loudness reads as a wave, not a bar chart.
+                    let y = mid - CGFloat(value) * (mid - 1) * (i.isMultiple(of: 2) ? 1 : -1)
+                    let point = CGPoint(x: CGFloat(i) * step, y: y)
+                    if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                }
+                context.stroke(path, with: .color(.secondary), lineWidth: 1.2)
+            }
+            .frame(width: 54, height: 16)
+        }
+        .help(help)
+        .accessibilityLabel(levels.last ?? 0 > 0.05 ? "Sound" : "Silence")
     }
 }
 

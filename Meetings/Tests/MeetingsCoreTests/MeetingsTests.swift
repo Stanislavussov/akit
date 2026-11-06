@@ -542,6 +542,17 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         }
     }
 
+    /// The live wave: silence is 0 (a flat line), speech-level sound fills it.
+    @Test func loudnessFlatInSilence() {
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: true)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 480)!
+        buffer.frameLength = 480
+        for i in 0..<960 { buffer.floatChannelData![0][i] = 0 }
+        #expect(Recorder.loudness(buffer) == 0)
+        for i in 0..<960 { buffer.floatChannelData![0][i] = 0.1 * sin(Float(i / 2) * 0.3) }
+        #expect(Recorder.loudness(buffer) > 0.3)
+    }
+
     @Test func pieceWriterRotatesAndParts() throws {
         let root = TempRoot()
         let closed = Closed()

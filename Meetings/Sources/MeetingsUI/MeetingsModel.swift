@@ -70,6 +70,8 @@ public final class MeetingsModel {
     var store: MeetingStore { MeetingStore(root: settings.root) }
     public var root: URL { settings.root }
     public var isRecording: Bool { recordingID != nil }
+    /// The live waves while it records (read by the screen several times a second).
+    public var levels: (mic: [Float], system: [Float]) { recorder?.levels ?? ([], []) }
     public var selected: Meeting? { meetings.first { $0.id == selectedID } }
     public var monthCost: Double { meetings.filter { Calendar.current.isDate($0.started, equalTo: Date(), toGranularity: .month) }.reduce(0) { $0 + $1.costUSD } }
 

@@ -1393,6 +1393,7 @@ Friction («трение») — места, где агент спотыкалс
 
 - **Meetings** (боковое меню, группа Work): запись встреч, текст разговора, краткое содержание и задачи через OpenRouter. Подробнее: [Встречи](meetings#overview)
 - **Record** / **Stop** (Meetings, панель инструментов, ⌥⌘R): начать и закончить запись микрофона и звука Mac. Подробнее: [Записать встречу](meetings#record)
+- Волны у таймера (Meetings, во время записи): микрофон и звук Mac; волна — звук идёт, прямая линия — тишина. Подробнее: [Записать встречу](meetings#record)
 - **Summary** (вкладка встречи): краткое содержание, Decisions, Tasks; можно править. Подробнее: [Summary и Transcript](meetings#tabs)
 - **Transcript** (вкладка встречи): текст разговора со временем и говорящим. Подробнее: [Summary и Transcript](meetings#tabs)
 - **Me**, **Speaker 1**, **Speaker 2** (Transcript): вы и другие люди по порядку. Подробнее: [Summary и Transcript](meetings#tabs)

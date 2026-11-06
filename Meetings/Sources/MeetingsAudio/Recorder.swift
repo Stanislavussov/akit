@@ -27,6 +27,10 @@ public final class Recorder: @unchecked Sendable {
     private var recordingLock: MeetingLock?
     private var running = false
     public private(set) var startedAt: Date?
+    /// The last ~4 s of loudness per source (0…1, newest last), for the screen's live waves.
+    private var micLevels: [Float] = []
+    private var sysLevels: [Float] = []
+    public static let levelHistory = 48
 
     /// `lock`: the recording lock, when the caller took it already (right after creating the
     /// meeting, so the other host never sees a free lock on a new recording).
@@ -61,6 +65,7 @@ public final class Recorder: @unchecked Sendable {
             recordingLock = held
         }
         let report: @Sendable (String) -> Void = { [weak self] text in self?.report(text) }
+        let level: @Sendable (PieceMixer.Source, AVAudioPCMBuffer) -> Void = { [weak self] source, buffer in self?.noteLevel(source, buffer) }
         let startHost = mach_absolute_time()
         let pieceDone: @Sendable (PieceMixer.Source, Int) -> Void = { [weak self] source, index in self?.closed(source, index) }
         let micWriter = PieceWriter(folder: folder, source: .mic, pieceSeconds: pieceSeconds, startHost: startHost, closed: pieceDone, problem: report)
@@ -69,7 +74,10 @@ public final class Recorder: @unchecked Sendable {
         system = systemWriter
         do {
             try startMicrophone()
-            try tap.start(handler: { buffer, host in systemWriter.append(buffer, hostTime: host) }, problem: report)
+            try tap.start(handler: { buffer, host in
+                systemWriter.append(buffer, hostTime: host)
+                level(.sys, buffer)
+            }, problem: report)
         } catch {
             stopMicrophone()
             await tap.stop()
@@ -104,8 +112,9 @@ public final class Recorder: @unchecked Sendable {
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw TapError("No microphone is available.") }
         let writer = mic
-        input.installTap(onBus: 0, bufferSize: 4_096, format: format) { buffer, when in
+        input.installTap(onBus: 0, bufferSize: 4_096, format: format) { [weak self] buffer, when in
             writer?.append(buffer, hostTime: when.isHostTimeValid ? when.hostTime : nil)
+            self?.noteLevel(.mic, buffer)
         }
         engine.prepare()
         try engine.start()
@@ -184,6 +193,34 @@ public final class Recorder: @unchecked Sendable {
             for text in problems { self.report(text) }
         }
     }
+
+    /// The loudness of one buffer: RMS of the first channel (the voice of a voice-processing
+    /// mic), shaped so speech fills the wave and silence stays flat.
+    static func loudness(_ buffer: AVAudioPCMBuffer) -> Float {
+        guard buffer.format.commonFormat == .pcmFormatFloat32, let data = buffer.floatChannelData, buffer.frameLength > 0 else { return 0 }
+        let stride = buffer.format.isInterleaved ? Int(buffer.format.channelCount) : 1
+        let count = Int(buffer.frameLength)
+        var sum: Float = 0
+        for i in 0..<count { let v = data[0][i * stride]; sum += v * v }
+        let rms = (sum / Float(count)).squareRoot()
+        return rms < 0.002 ? 0 : min(1, rms.squareRoot() * 2.2)
+    }
+
+    private func noteLevel(_ source: PieceMixer.Source, _ buffer: AVAudioPCMBuffer) {
+        let value = Self.loudness(buffer)
+        lock.withLock {
+            if source == .mic {
+                micLevels.append(value)
+                if micLevels.count > Self.levelHistory { micLevels.removeFirst(micLevels.count - Self.levelHistory) }
+            } else {
+                sysLevels.append(value)
+                if sysLevels.count > Self.levelHistory { sysLevels.removeFirst(sysLevels.count - Self.levelHistory) }
+            }
+        }
+    }
+
+    /// The recent loudness of the microphone and of the system sound, newest last.
+    public var levels: (mic: [Float], system: [Float]) { lock.withLock { (micLevels, sysLevels) } }
 
     private func report(_ text: String) {
         MeetingsLog.error(.recorder, text)
