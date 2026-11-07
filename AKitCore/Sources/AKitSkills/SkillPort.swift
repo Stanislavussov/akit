@@ -34,6 +34,9 @@ public enum SkillPort {
         public var changes: [String]
         /// Role prompts copied into `references/<role>.md`.
         public var roles: [String]
+        /// The user's extra rules and the answers' rules: applied after the built-in replacements,
+        /// and checked by the lint.
+        public var rules = SkillPortRules()
 
         public var skillText: String { texts[SkillPort.skillFile] ?? "" }
         /// Every path of the port.
@@ -49,24 +52,29 @@ public enum SkillPort {
     // MARK: Reading
 
     /// Reads the skill folder and runs the deterministic pass.
-    public static func port(folder: URL, env: HarnessEnvironment) throws -> Draft {
+    public static func port(folder: URL, env: HarnessEnvironment, rules: SkillPortRules = SkillPortRules()) throws -> Draft {
         let files = try read(folder)
         guard let skill = files.texts[skillFile] else { throw Failure("\(folder.path) has no \(skillFile).") }
         let name = Frontmatter.parse(skill)["name"].flatMap { $0.isEmpty ? nil : $0 } ?? folder.lastPathComponent
-        var draft = Draft(name: name, source: folder, texts: [:], originals: files.texts, binaries: files.binaries, changes: [], roles: [])
+        var draft = Draft(name: name, source: folder, texts: [:], originals: files.texts, binaries: files.binaries, changes: [], roles: [],
+                          rules: rules)
         var notes: [String: Int] = [:]
+        var userChanged = 0
         for (path, text) in files.texts {
             let result = transform(text, path: path)
-            draft.texts[path] = result.text
+            let ruled = rules.apply(to: result.text)
+            if ruled != result.text { userChanged += 1 }
+            draft.texts[path] = ruled
             for note in result.notes { notes[note, default: 0] += 1 }
             if path == skillFile, !result.dropped.isEmpty {
                 draft.changes.append("Frontmatter: dropped \(result.dropped.joined(separator: ", ")) (Claude Code only)")
             }
         }
         draft.changes += notes.keys.sorted().map { notes[$0]! > 1 ? "\($0) (\(notes[$0]!) files)" : $0 }
+        if userChanged > 0 { draft.changes.append("Your replacements changed \(userChanged) file\(userChanged == 1 ? "" : "s")") }
         for role in roles(in: Array(files.texts.values)) where draft.texts["references/\(role).md"] == nil && !draft.binaries.contains("references/\(role).md") {
             guard let file = roleFile(role, near: folder, env: env), let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            draft.texts["references/\(role).md"] = transform(text, path: "references/\(role).md").text
+            draft.texts["references/\(role).md"] = rules.apply(to: transform(text, path: "references/\(role).md").text)
             draft.roles.append(role)
         }
         if !draft.roles.isEmpty {

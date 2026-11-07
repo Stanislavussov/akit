@@ -1,8 +1,11 @@
 # Port to Pi
 
 Status: 2026-11-07, built on branch `port-skill-to-pi`: the deterministic pass, the model pass
-with one feedback round, the check, `akit skills port` and Skills → Port to Pi…. Not built: a
+with one feedback round, the check, `akit skills port` and Skills → Port to Pi…; then the
+questions before the port and the user's extra rules with presets (same day). Not built: a
 smoke run of the port in `pi -p` (see Later).
+
+The flow: **Analyze → Questions → Port → Check.**
 
 ## Question
 
@@ -58,6 +61,68 @@ Claude skill folder ──► 1 deterministic (AKitSkills/SkillPort) ──► 2
    - Verdict: a structure problem fails; leftovers and losses are warnings; else pass. A
      failed port is never written.
 
+## Questions
+
+Retargeting is generic: vitest → jest is one example among any technology, command, path or
+convention. Before the port AKit asks the skill's choice points, from three sources that merge
+(deduplicated by family):
+
+1. **The alternatives catalog** (data, `SkillPortCatalog`). Families of interchangeable tools
+   (test framework, package manager, HTTP client, logger, linter and formatter, ORM, CI, Python
+   package tool, …), each member with regex tokens that detect it and literal tokens that must
+   not remain after switching away, and pairwise rules where known (`vitest-to-jest`,
+   `npm-to-pnpm`, `npm-to-yarn`, `npm-to-bun`, `axios-to-fetch`). A family the skill uses becomes
+   a question: keep, or switch F to T (the pair's rules, else a note and F's forbidden tokens).
+   The bundled catalog is JSON kept in `SkillPortCatalogData.swift` (a string, not a resource
+   bundle: the standalone `akit` binary ships without one); the user adds families, members and
+   pairs in `~/.akit/port-presets/catalog.json` (same format; a member or pair of the same id
+   replaces the bundled one). No Swift logic names a technology.
+2. **The model** (`SkillPortModel.suggestQuestions`), on by default whenever a model is used
+   (`--no-model` turns it off): it reads the skill and returns choice points for anything the
+   user might want changed, each option with the rules it implies, written by the model
+   (replace, regex, forbid with at least one token, note). A question whose id or family is
+   asked already, whose recommended option is missing or whose rules don't parse is dropped.
+3. **Claude Code → Pi detectors** (a table in `SkillPortQuestions`):
+
+| id | Raised by | Options (recommended first) |
+|---|---|---|
+| `subagents` | `Agent(`, `subagent_type=` | inline role switch with `references/<role>.md`; a real `pi -p` via bash |
+| `questions` | `AskUserQuestion` | a numbered text question, stop the turn; keep (Pi has a questionnaire extension: `allow: AskUserQuestion`) |
+| `state` | TodoWrite, TaskCreate, `state_*`, `notepad_`, `.omc/` | `.pi/state/<skill>/`; `.pi/state/` |
+| `handoffs` | `Skill("x")` | tell the user to run /skill:x; drop |
+| `model-hints` | `model=opus` etc. | drop; keep as plain advice |
+
+Every question also takes **Other…** (`--answer ID=other:TEXT`), and the user can **Add a
+change…** in plain words (`--change "replace axios with fetch"`). One model call
+(`SkillPortModel.rules(forChanges:)`) turns these into rules with forbid checks based on what the
+files contain; a change that gets neither a replacement nor a forbidden token is reported as
+unchecked. They need a model.
+
+An option is a rules text, so answers go through the same engine as the user's rules. An
+unanswered question takes its recommended option; the report lists it as "(default)". The
+target (global / project) stays `--to` and the sheet's picker, not a question: it needs a path.
+
+## Extra rules
+
+`SkillPortRules`, one rule per line: `FROM => TO` (literal; a FROM starting with a letter matches
+at a word start, so `vi.` is not found in `navi.`), `re:PATTERN => TO` (`$1` in TO), `forbid: X`,
+`note: text`, `allow: <built-in lint rule>`, `answer: id=option`, `#` comments. Replacements run
+after the built-in ones, on every text file, in order, again on the model's answer. Notes,
+replacements and forbids go into the model's system prompt as the user's hard requirements
+(over the rewrite rules, never over the meaning rule). Each replacement's FROM (unless its TO
+contains it) and each forbidden token is a lint rule: its hits are `source: user` and carry the
+change that produced them (`origins`: an answer "package-manager: Switch npm to pnpm", a free
+change's text), so the report groups hits by change (the CLI shows `[your …]` under each
+change's heading); they go into the feedback round too. The
+model also gets each non-Markdown file that has a hit. A rule's TO must not re-create its FROM,
+or the second pass applies it again: `state`'s folder rule uses a negative lookahead for that.
+
+Presets: every catalog pair is a built-in preset named `<from>-to-<to>`. Saved presets live in `~/.akit/port-presets/<name>.rules`,
+not in the brain: they need no brain, need no brain commit, and on a work Mac its rules (tool
+names of work projects) stay off the personal brain. A saved preset carries the answers too, so
+a re-port with it asks nothing. Moving presets into the brain is a later choice if they should
+follow the user to every Mac.
+
 ## Writing
 
 The usual AKit rule: a preview first. The plan shows the target folder, whether one is there,
@@ -68,9 +133,17 @@ when the target appeared or went away since the preview.
 ## Surfaces
 
 - `akit skills port SKILL [--to global|project PATH] [--model HARNESS[:MODEL]] [--no-model] [--json] [--yes]`
-  and `akit skills port --check-only PATH [--json]`. Exit 1 on a failed check.
+  and `akit skills port --check-only PATH [--json]`. Exit 1 on a failed check. Extra rules:
+  `--rule` (repeatable), `--note`, `--forbid`, `--rules FILE|PRESET`, also for `--check-only`.
+  `--questions [--no-model] [--json]` prints the choice points (catalog and detectors; the
+  model's too unless `--no-model`); `--answer ID=OPTION` or `ID=other:TEXT` (repeatable);
+  `--change TEXT` (repeatable). `akit skills port presets [save NAME FILE]`.
 - Skills → a Claude Code skill (plugin skills too) → Port to Pi… (detail button and context
-  menu): target (Global / Project), model (No Model, or a harness and model), Run, the report,
+  menu): the Analyze page (each question as a Picker, the recommended option marked, Other…
+  with a text field; Add a change…; Find More Questions, the default first step with a model, or
+  Port Without Asking; Extra Rules with a preset Picker, the rules text and Save as Preset…), target
+  (Global / Project), model (No Model, or a harness and model), Port, the report (leftovers
+  grouped by the change that produced them),
   the SKILL.md diff against the original or the folder there now, Install… with a
   confirmation. Snapshot: `--tab port --select <folder name>` (`port-report` runs it without a
   model).

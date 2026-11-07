@@ -25,8 +25,28 @@ extension AKitCLI {
                                           --to project PATH: PATH/.pi/skills/NAME. Shows the diff;
                                           --yes writes it (an old folder goes to the Trash). A
                                           failed check is never written
-          akit skills port --check-only PATH [--json]
-                                          Check a Pi skill folder: leftovers and what Pi needs
+          akit skills port --check-only PATH [--rule …] [--forbid X] [--rules FILE|PRESET] [--json]
+                                          Check a Pi skill folder: leftovers and what Pi needs,
+                                          and leftovers of your rules
+          akit skills port SKILL --questions [--no-model] [--json]
+                                          The choice points found in the skill (test framework,
+                                          package manager, subagents, questions, state, handoffs,
+                                          model hints), each with options and the recommended one.
+                                          and the model's for any other technology,
+                                          command, path or convention it finds
+                                          (--no-model: only the catalog's)
+          akit skills port presets        The rules presets (built-in: vitest-to-jest; saved ones in
+                                          ~/.akit/port-presets)
+          akit skills port presets save NAME FILE
+
+        Extra rules for any port: --rule 'FROM => TO' or --rule 're:PATTERN => TO' (after the
+        built-in replacements), --note TEXT (a hard requirement for the model), --forbid X (must
+        not remain), --rules FILE|PRESET (one rule per line, also allow: RULE, answer: ID=OPTION,
+        # comments). --change TEXT (repeatable): a change in plain words ("replace axios with
+        fetch"); the model writes its rules and forbid checks. --answer ID=OPTION answers a
+        question (ID=other:TEXT in your own words); an unanswered one takes its
+        recommended option, and the report lists it as (default). Each FROM and forbidden token
+        is a lint rule: its hits show as [your rule …] and go to the model's feedback round.
 
         The check: pass, warnings (Claude Code leftovers by file and line, numbers or headings of
         the original lost) or fail (no name or description, name not the folder's or against Pi's
@@ -49,6 +69,9 @@ extension AKitCLI {
         let replaces: Bool?
         let installed: Bool
         let trashed: String?
+        let answers: [String: String]
+        let defaulted: [String]
+        let rules: String
     }
 
     static func skillPort(_ args: inout Arguments, json: Bool, yes: Bool, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
@@ -57,21 +80,52 @@ extension AKitCLI {
             out(skillPortUsage)
             return 0
         }
+        if args.peek == "presets" {
+            _ = args.positional()
+            return try portPresets(&args, env: env, cwd: cwd, out: out)
+        }
         let noModel = args.flag("--no-model")
         let checkOnly = args.value("--check-only")
         let modelText = args.value("--model")
         let toText = args.value("--to")
+        let ruleLines = args.values("--rule")
+        let notes = args.values("--note")
+        let forbids = args.values("--forbid")
+        let rulesSource = args.value("--rules")
+        let answerTexts = args.values("--answer")
+        let questionsOnly = args.flag("--questions")
+        let changes = args.values("--change")
         let skillText = args.positional()
         let projectText = toText == "project" ? args.positional() : nil
         try args.finish()
 
+        // The extra rules: a preset or rules file, then --rule, --forbid and --note.
+        var extra = SkillPortRules()
+        do {
+            if let rulesSource {
+                let file = resolve(rulesSource, cwd: cwd, env: env)
+                if let text = try? String(contentsOf: file, encoding: .utf8) {
+                    extra = try SkillPortRules.parse(text)
+                } else if let text = SkillPortRules.preset(rulesSource, env: env) {
+                    extra = try SkillPortRules.parse(text)
+                } else {
+                    throw Failure(message: "--rules is a file or a preset; \(rulesSource) is neither (akit skills port presets).")
+                }
+            }
+            extra = extra.merged(with: try SkillPortRules.parse(ruleLines.joined(separator: "\n")))
+            extra.forbids += forbids
+            extra.notes += notes
+        } catch let failure as SkillPortRules.Failure {
+            throw Failure(message: failure.message)
+        }
+
         if let checkOnly {
-            if skillText != nil || toText != nil || modelText != nil || noModel || yes {
-                throw Failure(message: "--check-only PATH goes alone (and with --json).")
+            if skillText != nil || toText != nil || modelText != nil || noModel || yes || questionsOnly || !changes.isEmpty || !answerTexts.isEmpty {
+                throw Failure(message: "--check-only PATH goes alone (with --rule, --forbid, --rules and --json).")
             }
             let folder = resolve(checkOnly, cwd: cwd, env: env)
             let report: SkillPortCheck.Report
-            do { report = try SkillPortCheck.check(folder: folder) } catch { throw Failure(message: error.localizedDescription) }
+            do { report = try SkillPortCheck.check(folder: folder, rules: extra) } catch { throw Failure(message: error.localizedDescription) }
             if json {
                 out(try labJSON(report))
             } else {
@@ -91,19 +145,78 @@ extension AKitCLI {
         case let other?: throw Failure(message: "--to is global or project PATH, not \(other).")
         }
         if noModel, modelText != nil { throw Failure(message: "--model doesn't go with --no-model.") }
+        if noModel, !changes.isEmpty || answerTexts.contains(where: { $0.contains("=" + SkillPortQuestions.otherPrefix) }) {
+            throw Failure(message: "--change and other: answers need the model, which turns them into rules: leave out --no-model.")
+        }
         if yes, target == nil { throw Failure(message: "--yes writes the port: say where with --to global or --to project PATH.") }
         let source = try portSource(skillText, env: env, cwd: cwd, projectsRoot: projectsRoot)
 
+        // Questions: the detectors' (and, asked for, the model's); answers from --answer, then the preset's.
         var draft: SkillPort.Draft
         do { draft = try SkillPort.port(folder: source, env: env) } catch { throw Failure(message: error.localizedDescription) }
+        let catalog: SkillPortCatalog
+        do { catalog = try SkillPortCatalog.load(env: env) } catch { throw Failure(message: error.localizedDescription) }
+        var questions = SkillPortQuestions.analyze(draft.originals, skill: draft.name, catalog: catalog)
+        let settings = noModel ? LabSettings() : try LabSettings.loadForSending(env: env)
+        let agent = try modelText.map(portAgent) ?? SkillPortModel.agent(settings: settings, env: env)
+        var gate: SendGate?
+        func openGate() async throws -> SendGate {
+            if let gate { return gate }
+            do { gate = try await SkillPortModel.gate(agent: agent, env: env) } catch { throw Failure(message: error.localizedDescription) }
+            return gate!
+        }
+        // The model's questions: on whenever a model is used, for whatever the catalog doesn't know.
+        if !noModel {
+            do {
+                questions += try await SkillPortModel.suggestQuestions(draft, known: questions, agent: agent, gate: try await openGate(), env: env)
+            } catch let failure as Failure { throw failure } catch { throw Failure(message: error.localizedDescription) }
+        }
+        if questionsOnly {
+            if json {
+                out(try labJSON(questions))
+            } else if questions.isEmpty {
+                out("No questions: the port needs no choice for \(draft.name).")
+            } else {
+                out(questions.map { question in
+                    ([" \(question.id): \(question.question)"] + question.options.map {
+                        "    \(question.id)=\($0.id)  \($0.title)\($0.id == question.recommended ? "  (recommended)" : "")"
+                    }).joined(separator: "\n")
+                }.joined(separator: "\n") + "\nAnswer with --answer ID=OPTION, or --answer ID=other:TEXT in your own words; an unanswered question takes its recommended option. --change TEXT adds a change of your own.")
+            }
+            return 0
+        }
+        var answers = extra.answers
+        for text in answerTexts {
+            let pair = text.split(separator: "=", maxSplits: 1).map(String.init)
+            guard pair.count == 2 else { throw Failure(message: "--answer is ID=OPTION, not \(text).") }
+            answers[pair[0]] = pair[1]
+        }
+        answers = answers.filter { id, _ in questions.contains { $0.id == id } || answerTexts.contains { $0.hasPrefix(id + "=") } }
+        let answered: (rules: SkillPortRules, chosen: [String: String], defaulted: [String], others: [String])
+        do { answered = try SkillPortQuestions.rules(questions, answers: answers) } catch let failure as SkillPortRules.Failure {
+            throw Failure(message: failure.message)
+        }
+        var all = answered.rules.merged(with: extra)
+        var unchecked: [String] = []
+        // "Other…" answers and free changes: the model writes their rules and forbid checks.
+        let free = answered.others + changes
+        if !free.isEmpty {
+            do {
+                let made = try await SkillPortModel.rules(forChanges: free, draft: draft, agent: agent, gate: try await openGate(), env: env)
+                all = all.merged(with: made.rules)
+                unchecked = made.unchecked
+            } catch let failure as Failure { throw failure } catch { throw Failure(message: error.localizedDescription) }
+        }
+        all.answers = answered.chosen
+        if !all.isEmpty {
+            do { draft = try SkillPort.port(folder: source, env: env, rules: all) } catch { throw Failure(message: error.localizedDescription) }
+        }
+        let answerLines = questions.map { "\($0.id)=\(answered.chosen[$0.id] ?? "")\(answered.defaulted.contains($0.id) ? " (default)" : "")" }
         var report = SkillPortCheck.check(draft)
         var modelLabel: String?
         var rounds = 0
         if !noModel {
-            let settings = try LabSettings.loadForSending(env: env)
-            let agent = try modelText.map(portAgent) ?? SkillPortModel.agent(settings: settings, env: env)
-            let gate: SendGate
-            do { gate = try await SkillPortModel.gate(agent: agent, env: env) } catch { throw Failure(message: error.localizedDescription) }
+            let gate = try await openGate()
             let outcome: SkillPortModel.Outcome
             do { outcome = try await SkillPortModel.run(draft, agent: agent, gate: gate, env: env) } catch {
                 throw Failure(message: error.localizedDescription)
@@ -129,12 +242,14 @@ extension AKitCLI {
             out(try labJSON(SkillPortJSON(name: draft.name, source: source.path, verdict: report.verdict.rawValue, report: report,
                                           changes: draft.changes, files: draft.paths.sorted(), skillMd: draft.skillText, model: modelLabel,
                                           rounds: rounds, target: plan?.folder.path, replaces: plan?.replaces, installed: installed,
-                                          trashed: trashed?.path)))
+                                          trashed: trashed?.path, answers: answered.chosen, defaulted: answered.defaulted, rules: all.text)))
             return report.verdict == .fail ? 1 : 0
         }
         let home = env.homeDirectory
         var lines = ["Port \(draft.name) from \(FileWalk.tilde(source, home: home)) to Pi"
                      + (modelLabel.map { " (model: \($0), \(rounds) round\(rounds == 1 ? "" : "s"))" } ?? " (no model)")]
+        if !answerLines.isEmpty { lines.append("Answers: \(answerLines.joined(separator: ", "))") }
+        lines += unchecked.map { "Note: no check for “\($0)”: its rules have no replacement or forbidden token." }
         lines.append("Changes:")
         lines += draft.changes.isEmpty ? ["  none"] : draft.changes.map { "  - \($0)" }
         lines += report.lines
@@ -158,6 +273,28 @@ extension AKitCLI {
         }
         out(lines.joined(separator: "\n"))
         return report.verdict == .fail ? 1 : 0
+    }
+
+    /// `akit skills port presets` lists the presets; `presets save NAME FILE` saves one.
+    static func portPresets(_ args: inout Arguments, env: HarnessEnvironment, cwd: URL, out: (String) -> Void) throws -> Int32 {
+        if args.peek == "save" {
+            _ = args.positional()
+            guard let name = args.positional(), let path = args.positional() else { throw Failure(message: "Use: akit skills port presets save NAME FILE") }
+            try args.finish()
+            let file = resolve(path, cwd: cwd, env: env)
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { throw Failure(message: "Can't read \(file.path).") }
+            do {
+                let saved = try SkillPortRules.save(preset: name, text: text, env: env)
+                out("Saved preset \(name): \(FileWalk.tilde(saved, home: env.homeDirectory))")
+            } catch let failure as SkillPortRules.Failure { throw Failure(message: failure.message) }
+            return 0
+        }
+        try args.finish()
+        let saved = SkillPortRules.savedPresets(env: env)
+        var lines = SkillPortRules.builtIns.keys.sorted().map { "\($0)  (built-in)" }
+        lines += saved.keys.sorted().map { "\($0)  \(FileWalk.tilde(SkillPortRules.presetsFolder(env: env).appending(path: "\($0).rules"), home: env.homeDirectory))" }
+        out(lines.joined(separator: "\n"))
+        return 0
     }
 
     /// `--model claude-code:haiku`, `pi`, `pi:zai/glm-5`.

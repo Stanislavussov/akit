@@ -243,7 +243,19 @@ remain. It prints the check: pass, warnings (leftovers by file:line, lost number
 or fail (exit 1). With `--to` it shows the SKILL.md diff; show it to the user, and after a yes
 run again with `--yes` (the old folder goes to the Trash; a failed check is never written).
 `--check-only PATH` checks an existing Pi skill folder. `--json` gives
-{name, verdict, report, changes, files, skillMd, target, installed}.
+{name, verdict, report, changes, files, skillMd, target, installed, answers, defaulted, rules}.
+
+Before porting, ask the user the skill's questions: `akit skills port SKILL --questions --json`
+gives [{id, family, question, options:[{id, title, rules}], recommended, evidence}]: the
+alternatives catalog's (any family: test framework, package manager, HTTP client, …), the
+Claude Code → Pi ones, and the model's for anything else (`--no-model`: without those). Ask
+each one, then pass `--answer ID=OPTION`, or `--answer ID=other:TEXT` for an answer in the
+user's words; an unanswered one takes its recommended option and shows as "(default)". A
+change of the user's own: `--change "replace axios with fetch"` (the model writes its rules
+and checks). Rules directly: `--rules PRESET|FILE` (`akit skills port presets` lists them, each
+catalog pair is one, e.g. npm-to-pnpm; `presets save NAME FILE` saves one), or `--rule 'FROM => TO'`,
+`--rule 're:PATTERN => TO'`, `--forbid TOKEN`, `--note TEXT` (all repeatable). Their
+leftovers show as `[your …]` hits. `--check-only PATH --rules …` checks a port against them.
 
 ## MCP servers
 

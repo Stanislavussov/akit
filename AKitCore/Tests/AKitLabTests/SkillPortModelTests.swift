@@ -99,4 +99,39 @@ struct SkillPortModelTests {
         try fakeClaude([["nothing": true]])
         await #expect(throws: SkillPort.Failure.self) { try await SkillPortModel.run(try draft, agent: agent, gate: gate, env: env) }
     }
+
+    @Test func userRulesReachThePromptAndTheFeedback() async throws {
+        let rules = try SkillPortRules.parse("note: use jest\nforbid: vitest\nallow: AskUserQuestion")
+        let left = "---\nname: interview\ndescription: Ask until clear\n---\n# Interview\nUse AskUserQuestion with vitest; stop at 0.2.\n"
+        try fakeClaude([["skill_md": left, "files": [], "changes": []], ["skill_md": left, "files": [], "changes": []]])
+        let ported = try SkillPort.port(folder: home.appending(path: ".claude/skills/interview"), env: env, rules: rules)
+        #expect(SkillPortModel.system(rules: rules).contains("- use jest") && SkillPortModel.system(rules: rules).contains("`vitest` must not remain"))
+        let outcome = try await SkillPortModel.run(ported, agent: agent, gate: gate, env: env)
+        #expect(outcome.rounds == 2)
+        // AskUserQuestion is allowed; vitest is the user's leftover, sent back as feedback.
+        #expect(outcome.report.hits.map(\.rule) == ["forbid: vitest"] && outcome.report.hits[0].source == "user")
+        let second = try String(contentsOf: home.appending(path: "stdin-2.txt"), encoding: .utf8)
+        #expect(second.contains("\"rule\" : \"forbid: vitest\""))
+    }
+
+    @Test func suggestedQuestionsAreCheckedBeforeUse() throws {
+        let answer = #"{"questions":[{"id":"ci","question":"CI?","recommended":"keep","options":[{"id":"keep","title":"Keep","rules":""},{"id":"gitlab","title":"GitLab","rules":"note: use GitLab CI"}]},{"id":"bad","question":"?","recommended":"x","options":[{"id":"keep","title":"Keep","rules":""},{"id":"y","title":"Y","rules":"no arrow"}]},{"id":"subagents","question":"dup","recommended":"a","options":[{"id":"a","title":"A","rules":""},{"id":"b","title":"B","rules":""}]}]}"#
+        let known = SkillPortQuestions.analyze(["SKILL.md": "Agent(x)"], skill: "s")
+        let questions = try SkillPortModel.questions(fromAnswer: answer, known: known)
+        #expect(questions.map(\.id) == ["ci"])
+        #expect(questions[0].family == nil)
+        #expect(questions[0].evidence == ["model"])
+    }
+
+    @Test func freeChangesBecomeLabeledRules() throws {
+        let answer = #"{"changes":[{"change":"replace axios with fetch","rules":"axios.get( => fetch(\nforbid: axios"},{"change":"use pnpm","rules":"note: use pnpm"}]}"#
+        let made = try SkillPortModel.changes(fromAnswer: answer, asked: ["replace axios with fetch", "use pnpm"])
+        #expect(made.unchecked == ["use pnpm"])
+        #expect(made.rules.apply(to: "axios.get(u)") == "fetch(u)")
+        #expect(SkillPortCheck.lint(["a.md": "axios"], extra: made.rules).map(\.change) == ["replace axios with fetch"])
+        #expect(throws: SkillPort.Failure.self) { try SkillPortModel.changes(fromAnswer: answer, asked: ["one"]) }
+        #expect(throws: SkillPort.Failure.self) {
+            try SkillPortModel.changes(fromAnswer: #"{"changes":[{"change":"x","rules":"bad"}]}"#, asked: ["x"])
+        }
+    }
 }

@@ -10,6 +10,20 @@ public enum SkillPortCheck {
         public let line: Int
         public let text: String
         public let rule: String
+        /// `built-in`, or `user` for a hit of the user's rules (the rule says which).
+        public var source = "built-in"
+        /// The chosen change the rule came from (an answer, a preset, a free change); nil: the
+        /// built-in rules, or a rule typed without one.
+        public var change: String?
+
+        public init(file: String, line: Int, text: String, rule: String, source: String = "built-in", change: String? = nil) {
+            self.change = change
+            self.file = file
+            self.line = line
+            self.text = text
+            self.rule = rule
+            self.source = source
+        }
     }
 
     public struct Report: Codable, Sendable, Hashable {
@@ -26,11 +40,28 @@ public enum SkillPortCheck {
             return hits.isEmpty && missingNumbers.isEmpty && missingHeadings.isEmpty ? .pass : .warnings
         }
 
+        /// The hits by the change that produced them: Claude Code leftovers first, then each change
+        /// in order of its first hit, then the user's rules typed without a change.
+        public var groups: [(title: String, hits: [Hit])] {
+            var order: [String] = []
+            var byTitle: [String: [Hit]] = [:]
+            for hit in hits {
+                let title = hit.source == "built-in" ? "Claude Code leftovers" : hit.change ?? "Your rules"
+                if byTitle[title] == nil { order.append(title) }
+                byTitle[title, default: []].append(hit)
+            }
+            let ranked = order.sorted { ($0 == "Claude Code leftovers" ? 0 : $0 == "Your rules" ? 2 : 1) < ($1 == "Claude Code leftovers" ? 0 : $1 == "Your rules" ? 2 : 1) }
+            return ranked.map { ($0, byTitle[$0]!) }
+        }
+
         /// Text lines for the terminal: the verdict, then each finding.
         public var lines: [String] {
             var lines = ["Check: \(verdict.rawValue)"]
             lines += problems.map { "  ✗ \($0)" }
-            lines += hits.map { "  ! \($0.file):\($0.line) [\($0.rule)] \($0.text)" }
+            for group in groups {
+                if groups.count > 1 || group.title != "Claude Code leftovers" { lines.append("  \(group.title):") }
+                lines += group.hits.map { "  ! \($0.file):\($0.line) [\($0.source == "user" ? "your " : "")\($0.rule)] \($0.text)" }
+            }
             if !missingNumbers.isEmpty { lines.append("  ! Numbers of the original missing in the port: \(missingNumbers.joined(separator: ", "))") }
             lines += missingHeadings.map { "  ! Heading missing in the port: \($0)" }
             return lines
@@ -56,15 +87,20 @@ public enum SkillPortCheck {
     ]
 
     /// Every rule match in every text, by file and line.
-    public static func lint(_ texts: [String: String]) -> [Hit] {
-        let compiled = rules.compactMap { rule in (try? NSRegularExpression(pattern: rule.pattern)).map { (rule.id, $0) } }
+    /// `extra`: the user's rules, whose FROMs and forbidden tokens are rules too, and whose
+    /// `allow:` entries turn built-in rules off.
+    public static func lint(_ texts: [String: String], extra: SkillPortRules = SkillPortRules()) -> [Hit] {
+        let all = rules.filter { !extra.allows.contains($0.id) }.map { ($0.id, $0.pattern, "built-in") }
+            + extra.lintRules.map { ($0.id, $0.pattern, "user") }
+        let compiled = all.compactMap { rule in (try? NSRegularExpression(pattern: rule.1)).map { (rule.0, rule.2, $0) } }
         var hits: [Hit] = []
         for path in texts.keys.sorted() {
             for (index, line) in texts[path]!.components(separatedBy: "\n").enumerated() {
                 let range = NSRange(line.startIndex..., in: line)
-                for (id, regex) in compiled where regex.firstMatch(in: line, range: range) != nil {
+                for (id, source, regex) in compiled where regex.firstMatch(in: line, range: range) != nil {
                     let shown = line.trimmingCharacters(in: .whitespaces)
-                    hits.append(Hit(file: path, line: index + 1, text: shown.count > 200 ? String(shown.prefix(200)) + "…" : shown, rule: id))
+                    hits.append(Hit(file: path, line: index + 1, text: shown.count > 200 ? String(shown.prefix(200)) + "…" : shown, rule: id,
+                                    source: source, change: source == "user" ? extra.origins[id] : nil))
                 }
             }
         }
@@ -144,14 +180,14 @@ public enum SkillPortCheck {
     /// The full check of a draft.
     public static func check(_ draft: SkillPort.Draft) -> Report {
         let meaning = meaning(original: draft.originals, ported: draft.texts)
-        return Report(hits: lint(draft.texts), problems: structure(folderName: draft.name, texts: draft.texts, paths: draft.paths),
+        return Report(hits: lint(draft.texts, extra: draft.rules), problems: structure(folderName: draft.name, texts: draft.texts, paths: draft.paths),
                       missingNumbers: meaning.numbers, missingHeadings: meaning.headings)
     }
 
     /// An installed Pi skill folder, with no original to compare: lint and structure.
-    public static func check(folder: URL) throws -> Report {
+    public static func check(folder: URL, rules: SkillPortRules = SkillPortRules()) throws -> Report {
         let files = try SkillPort.read(folder)
-        return Report(hits: lint(files.texts),
+        return Report(hits: lint(files.texts, extra: rules),
                       problems: structure(folderName: folder.standardizedFileURL.lastPathComponent, texts: files.texts,
                                           paths: Set(files.texts.keys).union(files.binaries)),
                       missingNumbers: [], missingHeadings: [])
