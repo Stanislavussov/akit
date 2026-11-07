@@ -289,8 +289,8 @@ struct BrainView: View {
         Task {
             do {
                 let result = try await model.syncBrain()
-                let outcome = result.sync
-                var lines = result.published.lines
+                let outcome = result.sync.sync
+                var lines = result.backup + result.sync.published.lines
                 if outcome.pulled > 0 { lines.append("Pulled \(outcome.pulled) commit\(outcome.pulled == 1 ? "" : "s").") }
                 if outcome.pushed > 0 { lines.append("Pushed \(outcome.pushed) commit\(outcome.pushed == 1 ? "" : "s").") }
                 let coreChanged = outcome.changesCore(in: model.brain)

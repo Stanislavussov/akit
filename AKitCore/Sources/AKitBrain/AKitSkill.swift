@@ -159,7 +159,10 @@ When the brain has a git remote (e.g. a private GitHub repo), run `akit sync` af
 committing a change: it pulls the other Macs' commits (a conflict is undone and reported,
 never forced) and pushes this Mac's. The app's Brain screen has the same Sync button. If
 sync says the core layer changed, run `akit apply --home`. Uncommitted edits are never
-synced; commit them first.
+synced; commit them first. On a personal Mac, sync first copies the text of the knowledge
+bases and meetings (no audio, pictures or index) into the brain's `knowledge/<world>/` and
+`meetings/` and commits it; never on a work Mac. Off: Settings → Brain repo → Back up
+knowledge and meetings to the brain.
 
 ## Usage stats
 

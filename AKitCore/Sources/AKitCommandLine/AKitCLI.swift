@@ -3,6 +3,7 @@ import AKitDoctor
 import AKitErrorAnalysis
 import AKitFoundation
 import AKitInsights
+import AKitKnowledge
 import AKitMCP
 import AKitProjectSetup
 import Foundation
@@ -664,6 +665,9 @@ public enum AKitCLI {
                 if projectArgument != nil { throw Failure(message: "akit sync takes no folder; use --brain DIR.") }
                 // Import, publish this Mac's summaries, then pull and push (`InsightsSync`, as the app's Sync).
                 // A publish that fails or is refused (work Mac) is only a warning: the pull and push still run.
+                // First the text copy of the bases and meetings (`BrainBackup`, personal Macs only).
+                let backup = await BrainBackup.run(env: env, brain: brain.root)
+                if !backup.lines.isEmpty { out(backup.lines.joined(separator: "\n")) }
                 let published = await InsightsSync.publish(env: env, brain: brain, projectsRoot: projectsRoot, hostName: hostName,
                                                            hardware: hardwareHash())
                 if let problem = published.problem { err("akit: usage summaries not published: \(problem)") }
