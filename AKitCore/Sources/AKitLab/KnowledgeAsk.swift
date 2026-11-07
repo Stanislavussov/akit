@@ -240,6 +240,20 @@ public enum KnowledgeAsk {
         return text + "\n\nMy question: \(question)"
     }
 
+    /// The question of **Add to Note** under an answer: Pi works what that answer said into the
+    /// note as a proposal (K36). Pi has the answer in its thread through the fork; the start of
+    /// it is quoted so Pi finds the right one.
+    public static func addToNoteQuestion(_ entry: Entry, note: Note) -> String {
+        let answer = (entry.answer ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let start = answer.count > 160 ? String(answer.prefix(160)) + "…" : answer
+        return """
+            Add what your answer \(entry.id) said to the note \(note.id) ("\(start.replacingOccurrences(of: "\n", with: " "))"). \
+            Fit the new facts into the note's sections where they belong, in the note's own style and language: \
+            no copy of the answer, no chat words, nothing the note already says. Propose it with akit kb propose --note \(note.id) \
+            (only the changed ## sections), then say in one line what you proposed.
+            """
+    }
+
     /// The session file the next question forks: the last good answer's; nil for the first.
     /// Throws when that session file is gone.
     static func fork(_ chat: Chat, entries: [Entry]) throws(Failure) -> URL? {

@@ -437,7 +437,7 @@ Obsidian открывает только заметки из своих хран
 
 **Изменения базы — только с вашего согласия.** Попросите «поправь владельца» или «допиши раздел о повторах» — Pi не правит файлы сам, а делает предложение через `akit kb propose`. Оно появляется карточкой под ответом и во вкладке **Inbox**; вы смотрите разницу и принимаете или отклоняете. Ничего другого Pi менять не должен: так сказано в его инструкции, а инструменты `edit` и `write` у него убраны. Команды (`bash`) и ваши MCP-серверы у него остаются, поэтому следите, о чём просите.
 
-![Панель заметки orders-api, под ней панель Ask Pi about orders-api: списки Model и Thinking, кнопки Log…, Open in Pi, New Chat и крестик; вопрос «Which services read the order created event?» и ответ Pi списком: billing и warehouse, с источником akit kb search, под ответом строка Pi · opencode-go/gpt-6-luna · thinking low и кнопка Log…; цитата раздела ## Events, под ней второй вопрос «What happens when billing is down?» и ответ про повтор через 5 минут, под ним карточка Proposal: payments/billing с причиной, разницей и кнопками Accept…, Reject… и Show in Inbox; внизу поле Ask Pi about this note… и кнопка Send](images/knowledge-ask.png)
+![Панель заметки orders-api, под ней панель Ask Pi about orders-api: списки Model и Thinking, кнопки Log…, Open in Pi, New Chat и крестик; вопрос «Which services read the order created event?» и ответ Pi списком: billing и warehouse, с источником akit kb search, под ответом строка Pi · opencode-go/gpt-6-luna · thinking low и кнопки Add to Note и Log…; цитата раздела ## Events, под ней второй вопрос «What happens when billing is down?» и ответ про повтор через 5 минут, под ним карточка Proposal: payments/billing с причиной, разницей и кнопками Accept…, Reject… и Show in Inbox; внизу поле Ask Pi about this note… и кнопка Send](images/knowledge-ask.png)
 
 ### Просто: задать вопрос
 <!-- section: ask-pi-ask -->
@@ -474,6 +474,18 @@ Pi получает этот раздел цитатой и путь замет�
 - **Show in Inbox** открывает предложение во вкладке **Inbox**: там есть ещё **Check Again**.
 
 Приняли или отклонили предложение во вкладке **Inbox** или командой `akit kb accept` — карточка в чате тоже покажет **Accepted** или **Rejected or removed**. Карточки сохраняются с чатом: снова открытый чат показывает их. Карточка следит именно за своим предложением: если Pi позже предложит то же самое и у нового предложения окажется тот же id, старая карточка останется **Accepted** или **Rejected or removed**.
+
+### Средне: Add to Note — добавить ответ в заметку
+<!-- section: ask-pi-add-to-note -->
+
+Ответ Pi полезен и его стоит сохранить в базе? Нажмите **Add to Note** под этим ответом.
+
+1. AKit сам отправляет Pi просьбу: встроить этот ответ в открытую заметку, например `payments/orders-api`.
+2. Pi раскладывает новые факты по нужным разделам заметки, в стиле заметки, без копии ответа и без повторов.
+3. Pi делает предложение через `akit kb propose`. Под его ответом появляется карточка **Proposal** с разницей.
+4. Нажмите **Accept…**, чтобы записать изменение, или **Reject…**, чтобы отказаться.
+
+Сама кнопка ничего в заметку не пишет: заметка меняется только после **Accept…**. Пока Pi отвечает, кнопка неактивна.
 
 ### Средне: продолжить, новый чат, Open in Pi
 <!-- section: ask-pi-chat -->
