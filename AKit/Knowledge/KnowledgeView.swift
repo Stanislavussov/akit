@@ -323,6 +323,7 @@ struct KnowledgeView: View {
                 .fontWeight(area.name == model.area ? .semibold : .regular)
             Spacer()
             Text("\(area.notes)").foregroundStyle(.secondary).monospacedDigit()
+            addNoteButton(area: area.name, group: nil)
         }
         .contentShape(Rectangle())
         .onTapGesture { model.toggle(area: area.name) }
@@ -406,12 +407,24 @@ struct KnowledgeView: View {
         }
     }
 
+    /// The + of a space or group row: New Note… with that space and group filled in.
+    private func addNoteButton(area: String, group: String?) -> some View {
+        Button {
+            model.newNoteRequest = KnowledgeModel.NewNoteRequest(area: area, group: group, name: "")
+        } label: {
+            Image(systemName: "plus")
+        }
+        .buttonStyle(.borderless)
+        .help(group.map { "New note in the group \($0)" } ?? "New note in the space \(area)")
+    }
+
     /// A group's row (K37): a folder in the space, folded and unfolded like a space.
     private func groupRow(_ group: String, in area: String, count: Int) -> some View {
         HStack {
             Label(group, systemImage: "rectangle.stack")
             Spacer()
             Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
+            addNoteButton(area: area, group: group)
         }
         .contentShape(Rectangle())
         .onTapGesture { model.toggle(group: group, in: area) }
