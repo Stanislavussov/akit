@@ -366,6 +366,10 @@ struct MeetingDetail: View {
                     .help("Open the Meetings log: it says why the run stopped (\(MeetingsLog.file.path))")
             }
             Menu {
+                Button("Record More", systemImage: "circle") { Task { await model.recordMore(meeting.id) } }
+                    .disabled(!model.canRecordMore(meeting.id))
+                    .help("Record another talk into this meeting: the transcript goes on after the last part and the summary is written again")
+                Divider()
                 Button("Ask About This Meeting…") { model.openAsk(meetingID: meeting.id) }
                     .disabled(meeting.segments.isEmpty)
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
@@ -496,7 +500,12 @@ struct MeetingDetail: View {
 
     /// What the meeting waits for, when it is not done.
     private func status(_ meeting: Meeting) -> String? {
-        if model.isLive(meeting.id) { return "Recording. The summary and the transcript come after Stop." }
+        if model.isLive(meeting.id) {
+            if meeting.transcribedPieces ?? 0 > 0 { return "Recording. \(meeting.transcribedPieces ?? 0) piece(s) of 5 min transcribed so far; the rest and the summary come after Stop." }
+            return model.settings.transcribeWhileRecording && model.settings.transcription == .cloud
+                ? "Recording. Each 5-minute piece is transcribed when it ends; the summary comes after Stop."
+                : "Recording. The summary and the transcript come after Stop."
+        }
         if let seconds = model.importing[meeting.id] { return "Importing the audio: \(lengthText(seconds)) read… The transcript comes next." }
         if model.processing.contains(meeting.id), let local = model.localStatus[meeting.id] { return Self.localText(local) }
         if model.summarizingAgain.contains(meeting.id) { return "Writing the summary again…" }

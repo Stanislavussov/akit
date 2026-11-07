@@ -225,6 +225,23 @@ public struct MeetingStore: Sendable {
         return names.filter { $0.hasPrefix("piece-") && $0.hasSuffix(".aac") }.sorted().map { folder.appending(path: $0) }
     }
 
+    /// How many pieces from the first are whole: the mixer writes a piece's `.json` last, so a
+    /// piece without it is still being written (while it records).
+    public func readyPieceCount(_ id: String) -> Int {
+        var count = 0
+        for piece in pieces(id) {
+            guard FileManager.default.fileExists(atPath: piece.deletingPathExtension().appendingPathExtension("json").path) else { break }
+            count += 1
+        }
+        return count
+    }
+
+    /// The number the next recorded piece gets (Record More): one after the highest piece.
+    public func nextPieceNumber(_ id: String) -> Int {
+        let numbers = pieces(id).compactMap { Int($0.deletingPathExtension().lastPathComponent.dropFirst("piece-".count)) }
+        return (numbers.max() ?? 0) + 1
+    }
+
     /// A piece's facts written by the mixer: its length and when the microphone carried speech.
     public func pieceInfo(_ piece: URL) -> PieceInfo? {
         guard let data = try? Data(contentsOf: piece.deletingPathExtension().appendingPathExtension("json")) else { return nil }

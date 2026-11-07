@@ -112,29 +112,7 @@ public struct MeetingProcessor: Sendable {
             } else {
                 guard let transcriber else { throw MeetingsError.noKey }
                 for chunk in plan.chunks {
-                    try checkLimit()
-                    let answer: (segments: [Segment], cost: Double)
-                    do {
-                        answer = try await transcribe(chunk, id: id, previous: meeting.segments, transcriber: transcriber)
-                    } catch let failure as PaidFailure where chunk.pieces.count > 1 {
-                        // A long answer the model cut off or looped in: the same pieces again, one per call.
-                        meeting.costUSD += failure.cost
-                        MeetingsLog.error(.processor, "\(id): answer for \(chunk.pieces.count) pieces not readable; trying them one by one")
-                        var segments: [Segment] = []
-                        let first = chunk.endPiece - chunk.pieces.count
-                        for single in chunks(id, after: first, size: 1).chunks.prefix(chunk.pieces.count) {
-                            try checkLimit()
-                            let part = try await transcribe(single, id: id, previous: meeting.segments + segments, transcriber: transcriber)
-                            segments += part.segments
-                            meeting.costUSD += part.cost
-                        }
-                        answer = (segments, 0)
-                    }
-                    meeting.segments += answer.segments
-                    meeting.costUSD += answer.cost
-                    meeting.transcribedChunks += 1
-                    meeting.transcribedPieces = chunk.endPiece
-                    try save(&meeting)
+                    try await transcribeCloud(chunk, into: &meeting, transcriber: transcriber)
                 }
             }
             try await summarize(&meeting)
@@ -149,6 +127,65 @@ public struct MeetingProcessor: Sendable {
         } catch {
             return try fail(&meeting, error)
         }
+    }
+
+    /// M35: while it records, the whole pieces not yet transcribed, one per call, through the
+    /// cloud. No summary, and the meeting's state, length and failure stay as the recorder keeps
+    /// them. A failed call only ends this run: the run after Stop sends the piece again. Returns
+    /// how many pieces it transcribed.
+    @discardableResult
+    public func runWhileRecording(_ id: String) async throws -> Int {
+        guard settings.transcription == .cloud, let transcriber else { return 0 }
+        guard let lock = MeetingLock.take(MeetingLock.processing(store, id)) else { throw MeetingsError.busy }
+        defer { lock.release() }
+        guard var meeting = store.load(id) else { return 0 }
+        let done = meeting.transcribedPieces ?? meeting.transcribedChunks * Self.piecesPerChunk
+        let ready = store.readyPieceCount(id)
+        guard ready > done else { return 0 }
+        let plan = chunks(id, after: done, size: 1).chunks.prefix(ready - done)
+        MeetingsLog.info(.processor, "\(id): while recording, pieces \(done + 1)–\(ready), model \(settings.model)")
+        meeting.model = settings.model
+        var count = 0
+        do {
+            for chunk in plan {
+                try await transcribeCloud(chunk, into: &meeting, transcriber: transcriber, keepState: true)
+                count += 1
+            }
+        } catch {
+            meeting.costUSD += PaidFailure.cost(of: error)
+            try? save(&meeting, keepState: true)
+            MeetingsLog.error(.processor, "\(id): while recording, stopped: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription); the run after Stop goes on")
+            throw error
+        }
+        return count
+    }
+
+    /// One chunk through the cloud into the transcript, then saved. A long answer the model cut
+    /// off or looped in sends the same pieces again, one per call.
+    private func transcribeCloud(_ chunk: Chunk, into meeting: inout Meeting, transcriber: Transcriber, keepState: Bool = false) async throws {
+        let id = meeting.id
+        try checkLimit()
+        let answer: (segments: [Segment], cost: Double)
+        do {
+            answer = try await transcribe(chunk, id: id, previous: meeting.segments, transcriber: transcriber)
+        } catch let failure as PaidFailure where chunk.pieces.count > 1 {
+            meeting.costUSD += failure.cost
+            MeetingsLog.error(.processor, "\(id): answer for \(chunk.pieces.count) pieces not readable; trying them one by one")
+            var segments: [Segment] = []
+            let first = chunk.endPiece - chunk.pieces.count
+            for single in chunks(id, after: first, size: 1).chunks.prefix(chunk.pieces.count) {
+                try checkLimit()
+                let part = try await transcribe(single, id: id, previous: meeting.segments + segments, transcriber: transcriber)
+                segments += part.segments
+                meeting.costUSD += part.cost
+            }
+            answer = (segments, 0)
+        }
+        meeting.segments += answer.segments
+        meeting.costUSD += answer.cost
+        meeting.transcribedChunks += 1
+        meeting.transcribedPieces = chunk.endPiece
+        try save(&meeting, keepState: keepState)
     }
 
     /// M22: only the summary again, from the transcript it has (a new template, a new model):
@@ -319,18 +356,21 @@ public struct MeetingProcessor: Sendable {
 
     /// M3: saves the fields this run owns over the file as it is now, so tabs and speakers the
     /// user changed meanwhile stay.
-    func save(_ meeting: inout Meeting) throws {
+    /// `keepState`: a run while it records leaves the state, failure and length to the recorder.
+    func save(_ meeting: inout Meeting, keepState: Bool = false) throws {
         if var disk = store.load(meeting.id) {
             disk.segments = meeting.segments
             disk.transcribedChunks = meeting.transcribedChunks
             disk.transcribedPieces = meeting.transcribedPieces
             disk.costUSD = meeting.costUSD
-            disk.state = meeting.state
-            disk.failure = meeting.failure
+            if !keepState {
+                disk.state = meeting.state
+                disk.failure = meeting.failure
+                disk.duration = meeting.duration
+            }
             disk.model = meeting.model
             disk.summaryModel = meeting.summaryModel
             disk.summaryHash = meeting.summaryHash
-            disk.duration = meeting.duration
             if !meeting.title.isEmpty { disk.title = meeting.title }
             // Proposed tags only while the user has never set any.
             if disk.tags == nil, let tags = meeting.tags { disk.tags = tags }

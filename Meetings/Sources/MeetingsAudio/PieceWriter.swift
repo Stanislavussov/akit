@@ -29,12 +29,14 @@ final class PieceWriter: @unchecked Sendable {
     /// A gap longer than this is not filled (a clock jump, not a real gap).
     static let longestGap: TimeInterval = 3_600
 
-    init(folder: URL, source: PieceMixer.Source, pieceSeconds: TimeInterval, startHost: UInt64? = nil,
+    /// `firstIndex`: the first piece's number (Record More goes on after the pieces a meeting has).
+    init(folder: URL, source: PieceMixer.Source, pieceSeconds: TimeInterval, startHost: UInt64? = nil, firstIndex: Int = 1,
          closed: @escaping @Sendable (PieceMixer.Source, Int) -> Void, problem: @escaping @Sendable (String) -> Void = { _ in }) {
         self.folder = folder
         self.source = source
         self.pieceSeconds = pieceSeconds
         nextHost = startHost
+        index = max(1, firstIndex)
         self.closed = closed
         self.problem = problem
     }

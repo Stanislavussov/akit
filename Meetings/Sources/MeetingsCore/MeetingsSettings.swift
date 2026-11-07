@@ -69,6 +69,9 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     public var vocabulary: [String] = []
     /// M31: a short sound when the background recorder starts and stops (nothing on screen).
     public var backgroundSounds: Bool = true
+    /// M35: while it records, each finished 5-minute piece is transcribed at once (cloud only), so
+    /// after Stop only the last piece and the summary are left.
+    public var transcribeWhileRecording: Bool = true
 
     public enum TrackMode: String, Codable, Sendable, CaseIterable {
         /// One mixed track (1×).
@@ -161,5 +164,6 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
         localGPU = try c.decodeIfPresent(Bool.self, forKey: .localGPU) ?? d.localGPU
         vocabulary = (try? c.decodeIfPresent([String].self, forKey: .vocabulary)) ?? d.vocabulary
         backgroundSounds = try c.decodeIfPresent(Bool.self, forKey: .backgroundSounds) ?? d.backgroundSounds
+        transcribeWhileRecording = try c.decodeIfPresent(Bool.self, forKey: .transcribeWhileRecording) ?? d.transcribeWhileRecording
     }
 }
