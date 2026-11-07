@@ -67,7 +67,7 @@ public enum BuiltInSkills {
         let items = templates.map { template in
             let before = try? String(contentsOf: root.appending(path: skillPath(template.name)), encoding: .utf8)
             let entry = listed.first { $0.name == template.name }
-            let state: Item.State = before == nil ? .missing : before == template.text ? .current : .outdated
+            let state: Item.State = before == nil ? .missing : same(before!, template.text) ? .current : .outdated
             return Item(name: template.name, state: state, inCore: entry != nil, mode: entry?.mode ?? template.mode,
                         before: before, template: template.text)
         }
@@ -136,6 +136,14 @@ public enum BuiltInSkills {
             throw Failure(message: error.message)
         }
         return message
+    }
+
+    /// The same text, line endings and trailing blank lines aside.
+    static func same(_ a: String, _ b: String) -> Bool {
+        func clean(_ t: String) -> String {
+            t.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return clean(a) == clean(b)
     }
 
     /// Paths among `paths` with uncommitted changes; nil when the brain is not a git repo.
