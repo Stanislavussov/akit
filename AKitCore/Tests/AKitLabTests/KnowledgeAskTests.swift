@@ -91,6 +91,17 @@ final class KnowledgeAskTests {
         #expect(next == "About this passage of the note payments/orders-api:\n\n> retry\n\nAnd this?")
     }
 
+    @Test func addToNoteAsksForAProposalIntoThisNote() {
+        var entry = KnowledgeAsk.Entry(id: "q2", question: "Who reads it?", asked: .now)
+        entry.answer = "Billing and\nwarehouse read it."
+        let question = KnowledgeAsk.addToNoteQuestion(entry, note: Self.note)
+        #expect(question.contains("answer q2") && question.contains("note payments/orders-api"))
+        #expect(question.contains("(\"Billing and warehouse read it.\")"))
+        #expect(question.contains("akit kb propose --note payments/orders-api"))
+        entry.answer = String(repeating: "a", count: 500)
+        #expect(KnowledgeAsk.addToNoteQuestion(entry, note: Self.note).contains(String(repeating: "a", count: 160) + "…\""))
+    }
+
     @Test func piKeepsTheUsersSetupButMayNotEditOrWrite() throws {
         let chat = try KnowledgeAsk.newChat(note: Self.note, cwd: home, env: env())
         let options = KnowledgeAsk.options(chat: chat, fork: nil, agent: Self.agent)

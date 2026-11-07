@@ -109,18 +109,21 @@ final class KnowledgeAskModel {
     }
 
     /// Sends the draft (and the passage) about the note: a new chat on the first question.
-    func send(noteText: String, cwd: URL) {
-        let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// `fixed` sends that question instead and leaves the draft and the passage alone (Add to Note).
+    func send(noteText: String, cwd: URL, fixed: String? = nil) {
+        let question = (fixed ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard let note, !question.isEmpty, !isRunning else { return }
-        let passage = passage
+        let passage = fixed == nil ? passage : nil
         let agent = agent
         let env = HarnessEnvironment.current
         let scope = Cancellation.Scope()
         self.scope = scope
         let generation = generation
         (running, step, problem) = ((question, passage, generation), "Starting Pi…", nil)
-        draft = ""
-        self.passage = nil
+        if fixed == nil {
+            draft = ""
+            self.passage = nil
+        }
         Task {
             do {
                 let chat = try self.chat ?? KnowledgeAsk.newChat(note: note, cwd: cwd, env: env)
@@ -142,7 +145,7 @@ final class KnowledgeAskModel {
                     problem = error.localizedDescription
                     // Not sent (refused, not confirmed): the question goes back to the field. One
                     // Pi answered but AKit couldn't save stays out of it.
-                    if (error as? KnowledgeAsk.Failure)?.sent != true {
+                    if fixed == nil, (error as? KnowledgeAsk.Failure)?.sent != true {
                         if draft.isEmpty { draft = question }
                         if self.passage == nil { self.passage = passage }
                     }
@@ -463,6 +466,17 @@ struct KnowledgeAskPanel: View {
             Text(["Pi", entry.model ?? (entry.thinking != nil ? "Pi's default model" : "model not recorded"), entry.thinking.map { "thinking \($0)" }]
                     .compactMap(\.self).joined(separator: " · "))
                 .font(.caption).foregroundStyle(.tertiary)
+            if entry.answer?.isEmpty == false, let note = ask.note {
+                Button("Add to Note", systemImage: "text.badge.plus") {
+                    guard let cwd = model.askWorkingFolder() else { return }
+                    ask.send(noteText: model.text, cwd: cwd, fixed: KnowledgeAsk.addToNoteQuestion(entry, note: note))
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .font(.caption)
+                .disabled(ask.isAskingHere || ask.isRunning)
+                .help("Pi works this answer into \(note.id) as a proposal: you see the diff here and Accept or Reject it")
+            }
             Button("Log…", systemImage: "doc.text.magnifyingglass") { logRequest = LogRequest(entry: entry.id) }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
