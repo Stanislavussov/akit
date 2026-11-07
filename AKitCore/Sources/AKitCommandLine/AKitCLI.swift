@@ -25,6 +25,10 @@ public enum AKitCLI {
           akit check                      Read every layer and skill; list problems (exit 1 if any)
           akit layers [--json]            Layers with their fields, skills and files
           akit skills                     Skills in the brain
+          akit skills builtin [NAME…] [--mode auto|manual] [--json] [--yes]
+                                          AKit's own skills (akit, akit-context) in this brain:
+                                          missing, outdated or not in core. --yes adds or updates
+                                          them (one brain commit); then akit apply --home
 
         Installed skills, on or off per harness (the harness's own setting; the skill's files stay):
           akit skills state [NAME]        Each skill Claude Code or Pi sees, with its state in each
@@ -550,6 +554,12 @@ public enum AKitCLI {
                 let folder = resolve((sync ? args.positional() : first) ?? ".", cwd: cwd, env: env)
                 try args.finish()
                 return try worktrees(sync: sync, folder: folder, env: env, out: out, err: err)
+            }
+            if command == "skills", args.peek == "builtin" {
+                try refuseProjectOptions(options, command: "skills builtin")
+                _ = args.positional()
+                return try await builtInSkills(&args, json: options.json, yes: options.yes,
+                                               brainRoot: brainRoot(options, cwd: cwd, env: env), env: env, out: out)
             }
             // Installed skills, switched per harness: no brain needed.
             if command == "skills", let subcommand = args.peek, subcommand == "state" || subcommand == "set" {

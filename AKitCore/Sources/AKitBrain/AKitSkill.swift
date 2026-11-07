@@ -25,6 +25,10 @@ edit brain files directly.
 akit check                      # problems in layers/skills (exit 1 if any)
 akit layers [--json]            # what exists: fields, skills, files per layer
 akit skills                     # skills in the brain
+akit skills builtin [NAME…] [--mode auto|manual] [--json] [--yes]
+                                # AKit's own skills (akit, akit-context) in an older brain:
+                                # missing, outdated or not in core; --yes adds or updates them
+                                # (one brain commit), then akit apply --home
 akit sync                       # pull other Macs' brain commits, push this one's
 akit doctor                     # when AKit doesn't behave, run this first: what it sees, what's wrong
 akit doctor pi [--live] [--json] # when Pi misbehaves: install, settings, env, MCP, packages, skills, context

@@ -35,13 +35,26 @@ struct SkillsView: View {
     /// Snapshots: `--tab invocation` opens the model invocation sheet once.
     @State private var snapshotInvocation = true
 
+    /// AKit's own skills in the brain: the strip shows when one is missing or older.
+    @State private var builtIn: BuiltInSkills.Plan?
+    @State private var showingBuiltIn = false
+    /// After AKit Skills… commits: Update Home Folder….
+    @State private var updatingHome = false
+    @State private var homeAfterBuiltIn = false
+
     enum BrainFilter: Hashable { case any, fromBrain, notInBrain }
 
     var body: some View {
         @Bindable var model = model
         HSplitView {
-            list
-                .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
+            VStack(spacing: 0) {
+                if let builtIn, builtIn.needsWork {
+                    BuiltInSkillsBanner(plan: builtIn) { showingBuiltIn = true }
+                    Divider()
+                }
+                list
+            }
+            .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
             Group {
                 if let skill = model.skills.first(where: { $0.id == selection }) {
                     SkillDetailView(skill: skill, link: model.brainLinks[skill.id],
@@ -139,6 +152,17 @@ struct SkillsView: View {
             let layer = importLayer(for: skill)
             BrainImportSheet(source: skill.folder.deletingLastPathComponent(), preselect: [skill.folder.lastPathComponent],
                              layer: layer, mode: layer == "core" ? .manual : .auto)
+        }
+        .sheet(isPresented: $showingBuiltIn, onDismiss: {
+            if homeAfterBuiltIn { homeAfterBuiltIn = false; updatingHome = true }
+        }) {
+            if let builtIn { BuiltInSkillsSheet(plan: builtIn) { homeAfterBuiltIn = true } }
+        }
+        .sheet(isPresented: $updatingHome) { ProjectSetupSheet(forHome: true) }
+        .task(id: model.lastScan) {
+            builtIn = await model.builtInSkillsPlan()
+            // Snapshots: `--tab builtin` opens AKit Skills….
+            if DebugSnapshot.options?.tab == "builtin", builtIn != nil, !showingBuiltIn { showingBuiltIn = true }
         }
         .sheet(item: $moving) { skill in MoveSkillSheet(name: Self.moveName(skill, link: model.brainLinks[skill.id])) }
         .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name, keep: $0.keep) }
