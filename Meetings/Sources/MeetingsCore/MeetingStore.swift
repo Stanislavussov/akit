@@ -384,7 +384,7 @@ public struct PaidFailure: Error, LocalizedError {
             let text = completion.text
             let shape = "\(text.count) chars, \(text.filter { $0 == "{" }.count) '{' / \(text.filter { $0 == "}" }.count) '}', starts with JSON: \(text.drop(while: \.isWhitespace).first == "{" || text.hasPrefix("```"))"
             let cutOff = completion.finishReason == "length" ? " The answer was cut off at the model's output limit." : ""
-            MeetingsLog.error(.openrouter, "answer not readable: \((error as? LocalizedError)?.errorDescription ?? "\(error)"); finish reason \(completion.finishReason ?? "none"), \(completion.completionTokens) output tokens, \(shape).\(cutOff)")
+            MeetingsLog.error(.openrouter, "answer not readable: \((error as? LocalizedError)?.errorDescription ?? "\(error)"); finish reason \(completion.finishReason ?? "none"), \(completion.completionTokens) output tokens, $\(completion.cost), \(shape).\(cutOff)")
             throw PaidFailure(cost: completion.cost, underlying: error)
         }
     }

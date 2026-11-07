@@ -161,23 +161,30 @@ public struct MeetingProcessor: Sendable {
     }
 
     /// One chunk through the cloud into the transcript, then saved. A long answer the model cut
-    /// off or looped in sends the same pieces again, one per call.
+    /// off or looped in sends the same pieces again, one per call. A piece whose answer stays
+    /// unreadable after `unreadableTries` calls gets a note line in the transcript instead, so one
+    /// bad answer does not stop the meeting; while recording it ends the run, and the run after
+    /// Stop sends it again.
     private func transcribeCloud(_ chunk: Chunk, into meeting: inout Meeting, transcriber: Transcriber, keepState: Bool = false) async throws {
         let id = meeting.id
         try checkLimit()
         let answer: (segments: [Segment], cost: Double)
         do {
             answer = try await transcribe(chunk, id: id, previous: meeting.segments, transcriber: transcriber)
-        } catch let failure as PaidFailure where chunk.pieces.count > 1 {
+        } catch let failure as PaidFailure {
             meeting.costUSD += failure.cost
-            MeetingsLog.error(.processor, "\(id): answer for \(chunk.pieces.count) pieces not readable; trying them one by one")
+            if chunk.pieces.count > 1 {
+                MeetingsLog.error(.processor, "\(id): answer for \(chunk.pieces.count) pieces not readable; trying them one by one")
+            }
             var segments: [Segment] = []
             let first = chunk.endPiece - chunk.pieces.count
-            for single in chunks(id, after: first, size: 1).chunks.prefix(chunk.pieces.count) {
-                try checkLimit()
-                let part = try await transcribe(single, id: id, previous: meeting.segments + segments, transcriber: transcriber)
-                segments += part.segments
-                meeting.costUSD += part.cost
+            let singles = chunk.pieces.count > 1 ? Array(chunks(id, after: first, size: 1).chunks.prefix(chunk.pieces.count)) : [chunk]
+            for (n, single) in singles.enumerated() {
+                // A single-piece chunk already had its first try above.
+                let tried = chunk.pieces.count == 1 ? 1 : 0
+                segments += try await transcribeSingle(single, number: first + n + 1, tried: tried, id: id,
+                                                       previous: meeting.segments + segments, meeting: &meeting,
+                                                       transcriber: transcriber, mayGiveUp: !keepState)
             }
             answer = (segments, 0)
         }
@@ -186,6 +193,41 @@ public struct MeetingProcessor: Sendable {
         meeting.transcribedChunks += 1
         meeting.transcribedPieces = chunk.endPiece
         try save(&meeting, keepState: keepState)
+    }
+
+    /// Calls for one piece until an answer reads, at most `unreadableTries` in all. When
+    /// `mayGiveUp`, the last unreadable answer becomes one note line; else it is thrown.
+    private func transcribeSingle(_ single: Chunk, number: Int, tried: Int, id: String, previous: [Segment], meeting: inout Meeting,
+                                  transcriber: Transcriber, mayGiveUp: Bool) async throws -> [Segment] {
+        var attempt = tried
+        while true {
+            try checkLimit()
+            do {
+                let part = try await transcribe(single, id: id, previous: previous, transcriber: transcriber)
+                meeting.costUSD += part.cost
+                return part.segments
+            } catch let failure as PaidFailure {
+                meeting.costUSD += failure.cost
+                attempt += 1
+                guard attempt >= Self.unreadableTries else {
+                    MeetingsLog.error(.processor, "\(id): piece \(number) not readable; try \(attempt + 1) of \(Self.unreadableTries)")
+                    continue
+                }
+                guard mayGiveUp else { throw failure }
+                MeetingsLog.error(.processor, "\(id): piece \(number) not readable after \(attempt) tries; skipped with a note")
+                return [Self.skippedNote(single)]
+            }
+        }
+    }
+
+    /// How many calls one piece gets before its unreadable answer is skipped.
+    static let unreadableTries = 3
+
+    /// The transcript line that stands for a piece the model never answered readably.
+    static func skippedNote(_ chunk: Chunk) -> Segment {
+        func clock(_ t: TimeInterval) -> String { String(format: "%d:%02d", Int(t) / 60, Int(t) % 60) }
+        return Segment(start: chunk.offset, speaker: "Note",
+                       text: "[Not transcribed: \(clock(chunk.offset))–\(clock(chunk.offset + chunk.length)). The model's answer could not be read three times.]")
     }
 
     /// M22: only the summary again, from the transcript it has (a new template, a new model):

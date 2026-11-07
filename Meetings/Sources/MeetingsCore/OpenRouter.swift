@@ -70,18 +70,20 @@ public struct OpenRouterClient: Sendable {
 
     /// `POST /chat/completions`: one user message of text parts and at most one audio part. The
     /// answer is asked as a JSON object.
-    public func complete(model: String, system: String, text: String, audio: (data: Data, format: String)? = nil, timeout: TimeInterval = 600) async throws -> Completion {
+    public func complete(model: String, system: String, text: String, audio: (data: Data, format: String)? = nil, timeout: TimeInterval = 600,
+                         maxTokens: Int? = nil) async throws -> Completion {
         var parts: [[String: Any]] = [["type": "text", "text": text]]
         if let audio {
             parts.append(["type": "input_audio", "input_audio": ["data": audio.data.base64EncodedString(), "format": audio.format]])
         }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "messages": [["role": "system", "content": system], ["role": "user", "content": parts]],
             "response_format": ["type": "json_object"],
             "temperature": 0,
             "usage": ["include": true],
         ]
+        if let maxTokens { body["max_tokens"] = maxTokens }
         var request = URLRequest(url: base.appending(path: "chat/completions"), timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
