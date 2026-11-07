@@ -199,6 +199,20 @@ final class AppModel {
         try await BrainImport.apply(plan, importing: names, env: .current)
     }
 
+    /// Where AKit's own skills (/akit, /akit-context) stand in the brain. Only reads.
+    func builtInSkillsPlan() async -> BuiltInSkills.Plan? {
+        guard let root = brain?.root else { return nil }
+        return await Task.detached { try? BuiltInSkills.plan(brain: root) }.value
+    }
+
+    /// Adds the chosen AKit skills to core or updates their copies (one brain commit), then rescans.
+    func applyBuiltInSkills(_ plan: BuiltInSkills.Plan, names: [String], modes: [String: LayerSkill.Mode]) async throws {
+        defer { Task { await refresh() } }
+        try await oneLayerEditAtATime { _ in
+            try await BuiltInSkills.apply(plan, names: names, modes: modes, env: .current)
+        }
+    }
+
     /// Adds a layer to the brain from the New Layer form and commits it, then rescans.
     func createLayer(_ draft: LayerWriter.Draft) async throws {
         guard let brain else {

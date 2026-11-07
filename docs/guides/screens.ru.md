@@ -649,6 +649,7 @@ AKit запоминает выбор на этом Mac.
 - «Скилл `release` должен запускаться только по `/release` в любом агенте» → строка **Model invocation** → **Manual**.
 - «Скилл `grilling` нужен только в проекте notes-mac, а его описание уходит в каждую сессию всех проектов» → **Move to Project…**.
 - «Хочу убрать скилл совсем, из всех папок и из brain» → **Remove Everywhere…**.
+- «На этом Mac нет скилла `/akit-context`» → полоса над списком → **AKit Skills…**.
 
 ![Экран Skills: вверху фильтры All Skills, All Harnesses, Any Origin, подпись 11 skills и поле поиска Name or description; слева список скиллов по группам Global и Project · notes-mac (в ней и скилл проекта note-templates) с метками brain · core, brain · base, not in brain, Claude, Codex, OpenCode, Pi; справа карточка скилла akit с кнопками Move to Project…, Edit in Brain, Show in Brain, Show in Finder, Remove Everywhere… и переключателями Claude (Manual) и Pi (On), ниже строка Model invocation (Manual)](images/skills.png)
 
@@ -663,6 +664,17 @@ AKit запоминает выбор на этом Mac.
 - Фильтр brain: **Any Origin**, **From Brain** или **Not in Brain**. Он есть, только если brain подключён.
 - Поле поиска **Name or description** ищет по имени и описанию скилла.
 - **Refresh** (кнопка с круглой стрелкой, ⌘R) перечитывает скиллы с диска.
+
+**Полоса AKit Skills**
+
+Полоса над списком появляется, когда в brain нет своего скилла AKit (`/akit`, `/akit-context`) или его копия старее, чем в этой версии AKit. Так бывает с brain, созданным раньше, чем появился скилл: новый brain получает их сам, старый — нет.
+
+1. Нажмите **AKit Skills…**.
+2. Отметьте скиллы. Для скилла, которого нет в `core`, выберите режим: **auto** (агент загружает его сам, когда задача подходит) или **manual** (только по `/имя`). **Show** показывает файл или diff со старой копией.
+3. Нажмите **Add to Brain**. AKit пишет скиллы в `skills/` и слой `core` одним коммитом.
+4. Сразу откроется **Update Home Folder**. Примените его, и агенты увидят скиллы.
+
+Потом режим меняется как у любого скилла: строка **Model invocation** или переключатели **Claude** и **Pi**. В терминале то же делает `akit skills builtin`.
 
 **Список слева**
 
