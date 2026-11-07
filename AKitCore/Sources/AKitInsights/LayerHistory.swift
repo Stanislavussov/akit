@@ -17,7 +17,8 @@ enum LayerHistory {
     static let callTimeout: TimeInterval = 5
 
     static func starts(project: String, database: IndexDatabase, store: ProjectStore, brain: Brain?, env: HarnessEnvironment,
-                       run: CommandRunner? = nil, budget: TimeInterval = gitBudget) async throws -> [String: Date] {
+                       run: CommandRunner? = nil, budget: TimeInterval = gitBudget,
+                       callTimeout: TimeInterval = callTimeout) async throws -> [String: Date] {
         var starts = try localStarts(project: project, database: database)
         guard let brainRoot = store.brain, let git = env.findExecutable("git") else { return starts }
         let run = run ?? CaptureInstaller.liveRunner(env)

@@ -412,7 +412,9 @@ extension RecommenderTests {
         let brain = try #require(Brain.load(from: brainRoot))
         let db = try database()
         func starts(_ store: ProjectStore) async throws -> [String: Date] {
-            try await LayerHistory.starts(project: Self.project, database: db, store: store, brain: brain, env: env)
+            // Long limits: under a busy full test run git can take longer than the app's 10 s.
+            try await LayerHistory.starts(project: Self.project, database: db, store: store, brain: brain, env: env,
+                                          budget: 300, callTimeout: 120)
         }
         // No local apply yet: the brain's history, requires included.
         #expect(try await starts(.brain(brainRoot)) == ["web": Date(timeIntervalSince1970: at(40)), "core": Date(timeIntervalSince1970: at(40)),
