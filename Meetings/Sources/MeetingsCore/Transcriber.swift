@@ -138,32 +138,73 @@ public struct Transcriber: Sendable {
         public var tasks: [(owner: String, text: String)]
         /// M23: 1–3 topic tags the model proposes.
         public var tags: [String] = []
+        /// The course of the talk: one entry per topic in the order it came up.
+        public var flow: [Topic] = []
+        /// Numbers, dates, deadlines, names and versions that were said.
+        public var facts: [String] = []
+        /// Questions raised and left without an answer.
+        public var openQuestions: [String] = []
+        /// A Mermaid diagram (timeline, flow, gantt…), or empty when none helps.
+        public var diagram: String = ""
+
+        public struct Topic: Equatable, Sendable {
+            public var time: String
+            public var topic: String
+            public var points: [String]
+            public init(time: String, topic: String, points: [String]) {
+                self.time = time
+                self.topic = topic
+                self.points = points
+            }
+        }
 
         public init(title: String, summary: String, sections: [(heading: String, items: [String])] = [], decisions: [String],
-                    tasks: [(owner: String, text: String)], tags: [String] = []) {
+                    tasks: [(owner: String, text: String)], tags: [String] = [], flow: [Topic] = [], facts: [String] = [],
+                    openQuestions: [String] = [], diagram: String = "") {
             self.title = title
             self.summary = summary
             self.sections = sections
             self.decisions = decisions
             self.tasks = tasks
             self.tags = tags
+            self.flow = flow
+            self.facts = facts
+            self.openQuestions = openQuestions
+            self.diagram = diagram
         }
 
         public static func == (a: Summary, b: Summary) -> Bool {
             a.title == b.title && a.summary == b.summary && a.decisions == b.decisions && a.tags == b.tags
                 && a.sections.map(\.heading) == b.sections.map(\.heading) && a.sections.map(\.items) == b.sections.map(\.items)
                 && a.tasks.map(\.owner) == b.tasks.map(\.owner) && a.tasks.map(\.text) == b.tasks.map(\.text)
+                && a.flow == b.flow && a.facts == b.facts && a.openQuestions == b.openQuestions && a.diagram == b.diagram
         }
 
         /// `summary.md`.
         public var markdown: String {
             var lines = ["## Summary", "", summary.isEmpty ? "—" : summary]
+            if !flow.isEmpty {
+                lines += ["", "## Course of the Meeting"]
+                for topic in flow {
+                    lines += ["", "### " + (topic.time.isEmpty ? "" : "[\(topic.time)] ") + topic.topic, ""]
+                    lines += topic.points.map { "- \($0)" }
+                }
+            }
             for section in sections {
                 lines += ["", "## \(section.heading)", ""]
                 lines += section.items.isEmpty ? ["—"] : section.items.map { "- \($0)" }
             }
+            if !facts.isEmpty {
+                lines += ["", "## Key Facts and Dates", ""] + facts.map { "- \($0)" }
+            }
+            if !diagram.isEmpty {
+                lines += ["", "## Diagram", "", "```mermaid", diagram, "```"]
+            }
             lines += ["", "## Decisions", ""]
             lines += decisions.isEmpty ? ["—"] : decisions.map { "- \($0)" }
+            if !openQuestions.isEmpty {
+                lines += ["", "## Open Questions", ""] + openQuestions.map { "- \($0)" }
+            }
             lines += ["", "## Tasks", ""]
             lines += tasks.isEmpty ? ["—"] : tasks.map { "- [ ] \($0.owner): \($0.text)" }
             return lines.joined(separator: "\n") + "\n"
@@ -173,7 +214,8 @@ public struct Transcriber: Sendable {
     static func summaryPrompt(language: String, transcript: String, template: MeetingTemplate = MeetingTemplate.builtIn[0], vocabulary: [String] = []) -> String {
         var asks = [
             "- title: a short title of the meeting (at most 8 words);",
-            "- summary: 3–5 sentences: what it was about and what came out of it;",
+            "- summary: one paragraph of 4–8 sentences: why the meeting happened, what was discussed, what came out of it;",
+            "- flow: the course of the whole talk, one entry per topic in the order it came up, so a reader who missed the meeting can follow it. time: the start of the topic as in the transcript (mm:ss); topic: a short name; points: 2–8 short points: what was said, by whom when it matters, the arguments for and against, the examples, the numbers. Cover every topic, small ones too; skip only greetings and small talk;",
         ]
         let sections = template.sectionLines
         if !sections.isEmpty {
@@ -181,17 +223,20 @@ public struct Transcriber: Sendable {
             asks += sections.map { "    - \($0)" }
         }
         asks += [
+            "- facts: every number, date, deadline, amount, version, name of a system or person's role that was said, each with what it is about (empty list if none);",
+            "- diagram: a Mermaid diagram when one makes the meeting clearer: `timeline` or `gantt` for dates and plans, `flowchart LR` for a process or how systems talk, `sequenceDiagram` for who does what in order. Only what the transcript says; quote labels with special characters (\"…\"); no styling. An empty string when no diagram helps;",
             "- decisions: what was decided (empty list if nothing);",
+            "- open_questions: questions raised and left without an answer (empty list if none);",
             "- tasks: who does what next, owner as named in the transcript (\"Me\" for the user);",
             "- tags: 1–3 topics of the meeting for search, one or two lowercase words each, in \(language).",
         ]
         let shape = sections.isEmpty
-            ? #"{"title": "…", "summary": "…", "decisions": ["…"], "tasks": [{"owner": "…", "text": "…"}], "tags": ["…"]}"#
-            : #"{"title": "…", "summary": "…", "sections": [{"heading": "…", "items": ["…"]}], "decisions": ["…"], "tasks": [{"owner": "…", "text": "…"}], "tags": ["…"]}"#
+            ? #"{"title": "…", "summary": "…", "flow": [{"time": "mm:ss", "topic": "…", "points": ["…"]}], "facts": ["…"], "diagram": "…", "decisions": ["…"], "open_questions": ["…"], "tasks": [{"owner": "…", "text": "…"}], "tags": ["…"]}"#
+            : #"{"title": "…", "summary": "…", "flow": [{"time": "mm:ss", "topic": "…", "points": ["…"]}], "sections": [{"heading": "…", "items": ["…"]}], "facts": ["…"], "diagram": "…", "decisions": ["…"], "open_questions": ["…"], "tasks": [{"owner": "…", "text": "…"}], "tags": ["…"]}"#
         return """
         Below is the transcript of a meeting. "Me" is the user. Write in \(language):
         \(asks.joined(separator: "\n"))
-        Use only what the transcript says.\(vocabularyLine(vocabulary, for: "Where the transcript has a word that sounds like one of them, it is that word: write it exactly as listed.").map { "\n" + $0 } ?? "")
+        Be thorough: the notes replace listening to the recording. Use only what the transcript says; never invent a fact, date or name.\(vocabularyLine(vocabulary, for: "Where the transcript has a word that sounds like one of them, it is that word: write it exactly as listed.").map { "\n" + $0 } ?? "")
         Answer: \(shape)
 
         Transcript:
@@ -204,10 +249,24 @@ public struct Transcriber: Sendable {
         meeting.segments.map { "[\(timestamp($0.start))] \(meeting.speakerName($0.speaker)): \($0.text)" }.joined(separator: "\n")
     }
 
+    /// The transcript as plain text for the clipboard: with speakers one line per segment, without
+    /// them one paragraph per run of the same speaker.
+    public static func copyText(_ meeting: Meeting, speakers: Bool) -> String {
+        if speakers { return meeting.segments.map { "\(meeting.speakerName($0.speaker)): \($0.text)" }.joined(separator: "\n") }
+        var paragraphs: [String] = []
+        var last: String?
+        for segment in meeting.segments {
+            if segment.speaker == last, !paragraphs.isEmpty { paragraphs[paragraphs.count - 1] += " " + segment.text }
+            else { paragraphs.append(segment.text) }
+            last = segment.speaker
+        }
+        return paragraphs.joined(separator: "\n\n")
+    }
+
     public func summarize(_ meeting: Meeting) async throws -> (summary: Summary, completion: Completion) {
         let template = settings.template(meeting.template)
         let completion = try await client.complete(model: settings.summaryModel ?? settings.model,
-                                                   system: "You write short, faithful meeting notes. Answer with one JSON object and nothing else.",
+                                                   system: "You write detailed, well-structured, faithful meeting notes. Answer with one JSON object and nothing else.",
                                                    text: Self.summaryPrompt(language: settings.language, transcript: Self.plainTranscript(meeting), template: template,
                                                                             vocabulary: settings.vocabulary))
         return (try PaidFailure.parse(completion) { try Self.parseSummary(completion.text) }, completion)
@@ -232,9 +291,25 @@ public struct Transcriber: Sendable {
             let items = ((section["items"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
             return (heading, items)
         }
+        let flow: [Summary.Topic] = ((object["flow"] as? [Any]) ?? []).compactMap { item in
+            guard let entry = item as? [String: Any],
+                  let topic = (entry["topic"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !topic.isEmpty else { return nil }
+            let points = ((entry["points"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            return Summary.Topic(time: ((entry["time"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines), topic: topic, points: points)
+        }
         return Summary(title: ((object["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                        summary: ((object["summary"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                        sections: sections, decisions: strings("decisions"), tasks: tasks,
-                       tags: Array(strings("tags").map(Meeting.cleanTag).filter { !$0.isEmpty }.prefix(3)))
+                       tags: Array(strings("tags").map(Meeting.cleanTag).filter { !$0.isEmpty }.prefix(3)),
+                       flow: flow, facts: strings("facts"), openQuestions: strings("open_questions"),
+                       diagram: Self.cleanDiagram(object["diagram"] as? String))
+    }
+
+    /// The diagram without a ``` fence the model may have added.
+    static func cleanDiagram(_ text: String?) -> String {
+        var lines = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+        if lines.first?.hasPrefix("```") == true { lines.removeFirst() }
+        if lines.last?.hasPrefix("```") == true { lines.removeLast() }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
