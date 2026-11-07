@@ -7,6 +7,10 @@ import Foundation
 /// holds the meeting's processing lock, so a second host does not send the same audio again.
 public struct MeetingProcessor: Sendable {
     public static let piecesPerChunk = 6
+    /// Pieces per cloud call. One: the progress bar moves every 5 minutes of audio, a looping
+    /// or unreadable answer costs one piece, and the output cap stays small. Earlier files
+    /// counted chunks of `piecesPerChunk`.
+    public var cloudChunkSize = 1
     let store: MeetingStore
     let settings: MeetingsSettings
     /// nil without an OpenRouter key: then only local steps run (M26, M28).
@@ -90,7 +94,7 @@ public struct MeetingProcessor: Sendable {
             return try fail(&meeting, MeetingsError.noAudio)
         }
         let done = restart ? 0 : meeting.transcribedPieces ?? meeting.transcribedChunks * Self.piecesPerChunk
-        let plan = chunks(id, after: done)
+        let plan = chunks(id, after: done, size: isLocal ? Self.piecesPerChunk : cloudChunkSize)
         if restart {
             meeting.segments = []
             meeting.transcribedChunks = 0

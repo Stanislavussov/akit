@@ -89,7 +89,7 @@ import Testing
             (200, chat(#"{"segments":[{"start":"00:02","speaker":"S1","text":"b"}]}"#)),
             (200, chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)),
         ])
-        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: after.client).run(meeting.id)
+        let done = try await sixPieces(MeetingProcessor(store: store, settings: MeetingsSettings(), client: after.client)).run(meeting.id)
         #expect(done.state == .done)
         #expect(done.segments.map(\.start) == [1, 302])
         #expect(done.transcribedPieces == 3)

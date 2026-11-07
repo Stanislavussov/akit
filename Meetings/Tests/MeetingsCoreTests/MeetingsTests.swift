@@ -315,7 +315,7 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         ])
         var settings = MeetingsSettings()
         settings.monthlyLimitUSD = 5
-        let result = try await MeetingProcessor(store: store, settings: settings, client: server.client).run(meeting.id)
+        let result = try await sixPieces(MeetingProcessor(store: store, settings: settings, client: server.client)).run(meeting.id)
         #expect(result.state == .done)
         #expect(result.title == "Porada")
         #expect(result.segments.map(\.start) == [10.0, 1_820.0])
@@ -333,6 +333,18 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         #expect(text.contains("05:01–05:02"))
     }
 
+    @Test func cloudSendsOnePiecePerCallAndSavesEach() async throws {
+        let store = TempRoot().store
+        let meeting = try meetingWithPieces(store, count: 3)
+        let line = chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"a"}]}"#)
+        let server = FakeServer([(200, line), (200, line), (200, line), (200, chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#))])
+        let saves = Saves()
+        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client) { saves.add($0.transcribedPieces ?? 0) }.run(meeting.id)
+        #expect(server.requests.count == 4)
+        #expect(done.segments.map(\.start) == [1, 301, 601])
+        #expect(Set([1, 2, 3]).isSubset(of: Set(saves.values)))  // saved after each piece
+    }
+
     @Test func failureKeepsDoneChunksAndRetryGoesOn() async throws {
         let store = TempRoot().store
         let meeting = try meetingWithPieces(store, count: 7)
@@ -341,7 +353,7 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
             (502, #"{"error":{"message":"provider down"}}"#),
         ])
         await #expect(throws: MeetingsError.self) {
-            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: first.client).run(meeting.id)
+            try await sixPieces(MeetingProcessor(store: store, settings: MeetingsSettings(), client: first.client)).run(meeting.id)
         }
         let failed = try #require(store.load(meeting.id))
         #expect(failed.state == .failed)
@@ -351,7 +363,7 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
             (200, chat(#"{"segments":[{"start":"00:01","speaker":"S1","text":"druhý"}]}"#)),
             (200, chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)),
         ])
-        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: second.client).run(meeting.id)
+        let done = try await sixPieces(MeetingProcessor(store: store, settings: MeetingsSettings(), client: second.client)).run(meeting.id)
         #expect(done.state == .done)
         #expect(done.segments.map(\.text) == ["první", "druhý"])
         #expect(second.requests.count == 2)
@@ -380,7 +392,7 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
             (500, #"{"error":{"message":"down"}}"#),
         ])
         await #expect(throws: MeetingsError.self) {
-            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: first.client).run(meeting.id)
+            try await sixPieces(MeetingProcessor(store: store, settings: MeetingsSettings(), client: first.client)).run(meeting.id)
         }
         #expect(store.load(meeting.id)?.transcribedPieces == 3)
         for i in 4...8 {
@@ -392,7 +404,7 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
             (200, chat(#"{"segments":[{"start":"00:01","speaker":"S1","text":"b"}]}"#)),
             (200, chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)),
         ])
-        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: second.client).run(meeting.id)
+        let done = try await sixPieces(MeetingProcessor(store: store, settings: MeetingsSettings(), client: second.client)).run(meeting.id)
         let parts = (second.body(0)["messages"] as? [[String: Any]])?.last?["content"] as? [[String: Any]]
         let audio = (parts?.last?["input_audio"] as? [String: String])?["data"] ?? ""
         #expect(Data(base64Encoded: audio) == Data("piece4piece5piece6piece7piece8".utf8))
@@ -1064,7 +1076,7 @@ final class Closed: @unchecked Sendable {
         let summary = chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)
         // Both pieces at once: unreadable; piece 1: fine; piece 2: unreadable, then fine.
         let server = FakeServer([(200, bad), (200, one), (200, bad), (200, one), (200, summary)])
-        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
+        let done = try await sixPieces(MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client)).run(meeting.id)
         #expect(server.requests.count == 5)
         #expect(done.state == .done && done.segments.map(\.text) == ["ahoj", "ahoj"])
         // The output cap follows the audio length: 2 × 300 s, then 300 s.
@@ -1219,4 +1231,18 @@ final class Closed: @unchecked Sendable {
         #expect(watch.check(buffers: 50) == .none)
         #expect(watch.check(buffers: 50) == .restart)
     }
+}
+
+/// Tests written for 30-minute cloud calls (6 pieces each).
+func sixPieces(_ processor: MeetingProcessor) -> MeetingProcessor {
+    var processor = processor
+    processor.cloudChunkSize = 6
+    return processor
+}
+
+final class Saves: @unchecked Sendable {
+    private let lock = NSLock()
+    private var list: [Int] = []
+    func add(_ value: Int) { lock.withLock { list.append(value) } }
+    var values: [Int] { lock.withLock { list } }
 }
