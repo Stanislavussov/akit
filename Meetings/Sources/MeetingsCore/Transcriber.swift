@@ -82,10 +82,16 @@ public struct Transcriber: Sendable {
                            track: Track = .mixed) async throws -> (segments: [Segment], completion: Completion) {
         let prompt = Self.transcriptPrompt(spokenHint: settings.spokenHint, length: length, me: me, previous: previous, track: track,
                                            vocabulary: settings.vocabulary)
-        let completion = try await client.complete(model: settings.model, system: Self.system(clean: settings.cleanTranscript), text: prompt, audio: (audio, format))
+        let completion = try await client.complete(model: settings.model, system: Self.system(clean: settings.cleanTranscript), text: prompt, audio: (audio, format),
+                                                  maxTokens: Self.outputBudget(length))
         let segments = try PaidFailure.parse(completion) { try Self.parseSegments(completion.text, offset: offset, length: length) }
         return (segments, completion)
     }
+
+    /// The most output tokens a transcript of `length` seconds may take: fast speech with its
+    /// JSON is about 300 tokens a minute, so twice that and a margin. A model that loops stops
+    /// here instead of at its 65k limit, which billed the whole loop.
+    static func outputBudget(_ length: TimeInterval) -> Int { 2_000 + Int(length / 60 * 600) }
 
     static func parseSegments(_ text: String, offset: TimeInterval, length: TimeInterval) throws -> [Segment] {
         guard let object = jsonObject(text) else { throw MeetingsError.badAnswer("the transcript is not a JSON object") }
