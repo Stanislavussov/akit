@@ -20,8 +20,9 @@ import Foundation
 ///
 /// Claude Code and OpenCode list a file once by its real path; Pi and Codex compare paths as
 /// written, so a link to a file above is read twice there. Files in subfolders that load only
-/// when the agent touches a file there are not listed; Claude Code rules with `paths:` are
-/// listed apart (they load only for matching files).
+/// when the agent touches a file there are listed apart ("Loads Later", or "Not Loaded" for a
+/// harness that reads them only when a session starts there); Claude Code rules with `paths:`
+/// are listed apart too (they load only for matching files).
 public enum InstructionScanner {
     /// What a session in `project` (nil: only the global files) gets from `harness`.
     /// `top`: the highest folder walked (tests); nil walks to `/`. `managed`: Claude Code's
@@ -37,6 +38,7 @@ public enum InstructionScanner {
         case .openCode: scan.openCode(folders: folders)
         default: break
         }
+        if let project { scan.subfolders(of: project.standardizedFileURL, harness: harness) }
         return InstructionView(harness: harness, project: project, entries: scan.entries)
     }
 
@@ -105,6 +107,44 @@ public enum InstructionScanner {
             }
             entries.append(InstructionEntry(file: url, level: level, status: status, text: text, note: note))
             return true
+        }
+
+        // MARK: Subfolders
+
+        /// Folders a project walk never enters: tools' output and dependencies.
+        static let skippedFolders: Set<String> = ["node_modules", "build", "dist", "out", "target", "vendor", "Pods",
+                                                  "DerivedData", "Carthage", "venv", "__pycache__", "coverage"]
+
+        /// AGENTS.md and CLAUDE.md files in the project's subfolders, so the screen shows every
+        /// file of the tree. Claude Code reads a subfolder's CLAUDE.md when the agent works on a
+        /// file there; the other files load only for a session started in that folder. Bounded:
+        /// 8 folders deep, 4000 folders, hidden folders and dependency folders skipped, each real
+        /// folder once (links can loop).
+        mutating func subfolders(of project: URL, harness: HarnessID) {
+            var visited: Set<String> = [real(project)], budget = 4000
+            var queue: [(URL, Int)] = FileWalk.children(of: project).filter(FileWalk.isDirectory).map { ($0, 1) }
+            var found: [URL] = []
+            while !queue.isEmpty, budget > 0 {
+                let (folder, depth) = queue.removeFirst()
+                budget -= 1
+                guard !Self.skippedFolders.contains(folder.lastPathComponent), visited.insert(real(folder)).inserted else { continue }
+                var spellings: Set<String> = []
+                for name in ["CLAUDE.md", "AGENTS.md", "AGENTS.override.md", "CLAUDE.MD", "AGENTS.MD"] {
+                    let url = folder.appending(path: name)
+                    if read(url) != nil, spellings.insert(real(url)).inserted { found.append(url) }
+                }
+                if depth < 8 {
+                    queue += FileWalk.children(of: folder).filter(FileWalk.isDirectory).map { ($0, depth + 1) }
+                }
+            }
+            for url in found {
+                let relative = String(url.deletingLastPathComponent().path.dropFirst(project.path.count + 1))
+                if harness == .claudeCode, url.lastPathComponent == "CLAUDE.md" {
+                    add(url, .project, .onDemand("Claude Code reads it when the agent works on a file in \(relative)/"))
+                } else {
+                    add(url, .project, .skipped("In the subfolder \(relative)/: \(harness.displayName) reads it only in a session started there"))
+                }
+            }
         }
 
         // MARK: Claude Code

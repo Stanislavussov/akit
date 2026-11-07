@@ -52,6 +52,7 @@ struct InstructionScannerTests {
         #expect(lines(view(.claudeCode)) == [
             ".claude/CLAUDE.md", ".claude/rules/style.md", "Projects/CLAUDE.md",
             "Projects/app/CLAUDE.md", "Projects/app/AGENTS.md <- CLAUDE.md", "Projects/app/CLAUDE.local.md",
+            "(Projects/app/docs/AGENTS.md)",
         ])
     }
 
@@ -228,5 +229,15 @@ struct InstructionScannerTests {
         #expect(InstructionText.imports(in: text) == ["docs/test.md"])
         #expect(InstructionText.lines(text).joined(separator: "\n") == text)
         #expect(InstructionText.frontMatterKeys("---\r\npaths: a\r\n---\r\nbody") == ["paths"])
+    }
+
+    @Test func subfolderFilesAreListedApartAndDependencyFoldersAreSkipped() throws {
+        try write("Projects/app/web/AGENTS.md", "web")
+        try write("Projects/app/api/CLAUDE.md", "api")
+        try write("Projects/app/node_modules/x/AGENTS.md", "dep")
+        try write("Projects/app/.hidden/AGENTS.md", "hidden")
+        #expect(lines(view(.claudeCode)) == ["Projects/app/api/CLAUDE.md (later)", "(Projects/app/web/AGENTS.md)"])
+        #expect(lines(view(.pi)) == ["(Projects/app/api/CLAUDE.md)", "(Projects/app/web/AGENTS.md)"])
+        #expect(view(.pi).loaded.isEmpty)
     }
 }
