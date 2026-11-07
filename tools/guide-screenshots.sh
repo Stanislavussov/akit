@@ -258,6 +258,7 @@ shot review-local        $MAIN --section review --query "$DEMO/work/orders-servi
 shot review-local-find   $MAIN --section review --query "$DEMO/work/orders-service" --tab find-base --add
 # Knowledge (guide knowledge.ru.md): the made-up base from tools/demo-home.sh.
 shot knowledge           $MAIN --section knowledge --select payments/orders-api
+shot knowledge-groups    $MAIN --section knowledge --select payments/flows/order-to-billing
 shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
 # Ask Pi about the note: the panel under it with a made-up chat (no Pi runs), the second question about a section.
 shot knowledge-ask       $MAIN --section knowledge --select payments/orders-api --tab knowledge-ask

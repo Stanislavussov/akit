@@ -165,6 +165,28 @@ final class KnowledgeBaseTests {
         await #expect(throws: KnowledgeBase.Failure.self) { try await base.newNote(area: "a", name: ".hidden", kind: nil, env: env()) }
     }
 
+    @Test func groupsAreFoldersOfAnArea() async throws {
+        let base = try await TemplateBase.base(home: home)
+        try base.newArea("payments")
+        try base.newGroup(area: "payments", name: "flows")
+        #expect(throws: KnowledgeBase.Failure.self) { try base.newGroup(area: "payments", name: "flows") }
+        #expect(throws: KnowledgeBase.Failure.self) { try base.newGroup(area: "payments", name: "maps") }
+        #expect(throws: KnowledgeBase.Failure.self) { try base.newGroup(area: "nowhere", name: "x") }
+        let path = try await base.newNote(area: "payments", group: "flows", name: "order-to-billing", kind: nil, env: env())
+        #expect(path == "areas/payments/flows/order-to-billing.md")
+        #expect(try await git("log", "-1", "--format=%s", in: base.root) == "Add note payments/flows/order-to-billing")
+        try FileManager.default.createDirectory(at: base.areasFolder.appending(path: "payments/maps"), withIntermediateDirectories: true)
+        try base.newGroup(area: "payments", name: "apis")
+        #expect(base.groups(area: "payments") == ["apis", "flows"])
+        let entries = try base.notes(area: "payments")
+        #expect(entries.first { $0.id == "payments/flows/order-to-billing" }?.group == "flows")
+        #expect(entries.filter { $0.id.split(separator: "/").count == 2 }.allSatisfy { $0.group == nil })
+        await #expect(throws: KnowledgeBase.Failure.self) { try await base.newNote(area: "payments", group: "maps", name: "y", kind: nil, env: env()) }
+        try await base.moveToTrash(group: "payments/flows", env: env(), trash: { url in try FileManager.default.removeItem(at: url); return nil })
+        #expect(base.groups(area: "payments") == ["apis"])
+        #expect(try await git("log", "-1", "--format=%s", in: base.root).contains("payments/flows"))
+    }
+
     @Test func commitOfNothingChangedMakesNoCommit() async throws {
         let base = try await TemplateBase.base(home: home)
         let git = KnowledgeGit(base: base.root, env: env())

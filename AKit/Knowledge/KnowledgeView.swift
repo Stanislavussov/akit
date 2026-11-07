@@ -90,8 +90,9 @@ struct KnowledgeView: View {
         .navigationSubtitle(model.base.map { "\($0.name) · \($0.root.tildePath)" } ?? "")
         .toolbar { toolbar }
         .sheet(item: $model.newNoteRequest) { request in
-            NewNoteSheet(initialArea: request.area, initialName: request.name)
+            NewNoteSheet(initialArea: request.area, initialGroup: request.group, initialName: request.name)
         }
+        .modifier(GroupDialogs())
         .sheet(item: $sheet, content: sheetView)
         // A query shows its hits in the Notes view, so typing one leaves the Lint and Inbox views.
         .searchable(text: Binding(get: { model.searchText }, set: {
@@ -328,13 +329,19 @@ struct KnowledgeView: View {
         // Drag a space onto another to put it there (K31); a dropped note is no space.
         .draggable(Self.spaceDragPrefix + area.name)
         .dropDestination(for: String.self) { items, _ in
-            guard let name = items.first(where: { $0.hasPrefix(Self.spaceDragPrefix) })?.dropFirst(Self.spaceDragPrefix.count) else { return false }
-            Task { await model.move(space: String(name), onto: area.name) }
+            if let name = items.first(where: { $0.hasPrefix(Self.spaceDragPrefix) })?.dropFirst(Self.spaceDragPrefix.count) {
+                Task { await model.move(space: String(name), onto: area.name) }
+                return true
+            }
+            // A note dropped on a space goes to its top, out of any group (K37).
+            guard let note = items.first else { return false }
+            Task { await model.move(note: note, toArea: area.name, group: nil) }
             return true
         }
-        .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")" + (area.title.map { " · \($0)" } ?? "") + ". Click to fold or unfold; drag onto another space to put it there (after it when dragged down)")
+        .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")" + (area.title.map { " · \($0)" } ?? "") + ". Click to fold or unfold; drag onto another space to put it there (after it when dragged down); drop a note here to move it into this space")
         .contextMenu {
             Button("New Note…") { model.newNoteRequest = KnowledgeModel.NewNoteRequest(area: area.name, name: "") }
+            Button("New Group…") { model.newGroupRequest = area.name }
             Button("Area Settings…") {
                 model.choose(area: area.name)
                 sheet = .areaSettings
@@ -356,10 +363,11 @@ struct KnowledgeView: View {
         }
     }
 
-    /// A space's maps, then its notes.
+    /// A space's maps, then its groups (K37) with their notes, then the notes at its top.
     @ViewBuilder private func areaRows(_ area: String) -> some View {
         let maps = model.maps(in: area)
         let notes = model.notes(in: area)
+        let groups = model.groups(in: area)
         // The row's ForEach id is its selection value (a .tag isn't), so it carries the "map:" itself.
         ForEach(maps.map { "map:" + $0 }, id: \.self) { row in
             let id = String(row.dropFirst("map:".count))
@@ -374,44 +382,154 @@ struct KnowledgeView: View {
                     Button("Delete…", role: .destructive) { model.mapDeleteRequest = id }
                 }
         }
-        ForEach(notes, id: \.id) { note in
-            VStack(alignment: .leading, spacing: 2) {
-                Text(note.title).fontWeight(.medium).lineLimit(1)
-                Text([note.kind, note.id.split(separator: "/").dropFirst().joined(separator: "/")].compactMap(\.self).joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                if !note.tags.isEmpty {
-                    WrapLayout(spacing: 3) {
-                        ForEach(note.tags, id: \.self) { TagBadge(tag: $0) }
-                    }
-                    .padding(.top, 1)
+        // The id carries the space: two spaces may both have a group flows, and the list mixes up
+        // rows with one id.
+        ForEach(groups.map { area + "/" + $0 }, id: \.self) { key in
+            let group = String(key.dropFirst(area.count + 1))
+            let inGroup = notes.filter { $0.group == group }
+            DisclosureGroup(isExpanded: Binding(get: { !model.collapsedGroups.contains(area + "/" + group) }, set: { open in
+                if open { model.collapsedGroups.remove(area + "/" + group) } else { model.collapsedGroups.insert(area + "/" + group) }
+            })) {
+                ForEach(inGroup, id: \.id) { noteRow($0) }
+                if inGroup.isEmpty {
+                    Text("Empty: New Note… here, or drop a note on the group").font(.callout).foregroundStyle(.secondary)
+                        .selectionDisabled()
                 }
-            }
-            .padding(.vertical, 2)
-            // Its whole height, never squeezed into a row height the list kept from before the
-            // space unfolded (lines cut at the top or bottom).
-            .fixedSize(horizontal: false, vertical: true)
-            .tag(Optional(note.id))
-            // Drag onto an open map: a block linked to the note (K6).
-            .draggable(note.id)
-            .contextMenu {
-                Button("Ask Pi About This Note") {
-                    Task {
-                        await model.closeMap()
-                        model.open(note.id)
-                        model.showAsk()
-                    }
-                }
-                Button("Show in Finder") {
-                    if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(note.id)]) }
-                }
-                Button("Rename…") { model.renameRequest = note.id }
-                Button("Delete…", role: .destructive) { model.deleteRequest = note.id }
+            } label: {
+                groupRow(group, in: area, count: inGroup.count)
             }
         }
-        if maps.isEmpty, notes.isEmpty {
+        ForEach(notes.filter { $0.group == nil }, id: \.id) { noteRow($0) }
+        if maps.isEmpty, notes.isEmpty, groups.isEmpty {
             Text("No notes yet: New Note… writes one").font(.callout).foregroundStyle(.secondary)
                 .selectionDisabled()
         }
+    }
+
+    /// A group's row (K37): a folder in the space, folded and unfolded like a space.
+    private func groupRow(_ group: String, in area: String, count: Int) -> some View {
+        HStack {
+            Label(group, systemImage: "rectangle.stack")
+            Spacer()
+            Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { model.toggle(group: group, in: area) }
+        .dropDestination(for: String.self) { items, _ in
+            guard let note = items.first, !note.hasPrefix(Self.spaceDragPrefix) else { return false }
+            Task { await model.move(note: note, toArea: area, group: group) }
+            return true
+        }
+        .help("areas/\(area)/\(group): \(count) note\(count == 1 ? "" : "s"). Click to fold or unfold; drop a note here to move it into the group")
+        .contextMenu {
+            Button("New Note…") { model.newNoteRequest = KnowledgeModel.NewNoteRequest(area: area, group: group, name: "") }
+            Button("Show in Finder") {
+                if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.areasFolder.appending(path: area + "/" + group)]) }
+            }
+            Divider()
+            Button("Delete…", role: .destructive) { model.groupDeleteRequest = area + "/" + group }
+        }
+    }
+
+    private func noteRow(_ note: KnowledgeBase.NoteEntry) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(note.title).fontWeight(.medium).lineLimit(1)
+            // The path under its group (or space), so a group's name isn't said twice.
+            Text([note.kind, note.id.split(separator: "/").dropFirst(note.group == nil ? 1 : 2).joined(separator: "/")].compactMap(\.self).joined(separator: " · "))
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            if !note.tags.isEmpty {
+                WrapLayout(spacing: 3) {
+                    ForEach(note.tags, id: \.self) { TagBadge(tag: $0) }
+                }
+                .padding(.top, 1)
+            }
+        }
+        .padding(.vertical, 2)
+        // Its whole height, never squeezed into a row height the list kept from before the
+        // space unfolded (lines cut at the top or bottom).
+        .fixedSize(horizontal: false, vertical: true)
+        .tag(Optional(note.id))
+        // Drag onto an open map: a block linked to the note (K6); onto a group: moved there (K37).
+        .draggable(note.id)
+        .contextMenu {
+            Button("Ask Pi About This Note") {
+                Task {
+                    await model.closeMap()
+                    model.open(note.id)
+                    model.showAsk()
+                }
+            }
+            Button("Show in Finder") {
+                if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(note.id)]) }
+            }
+            Button("Rename…") { model.renameRequest = note.id }
+            if !model.groups(in: note.area).isEmpty || note.group != nil {
+                Menu("Move to Group") {
+                    if note.group != nil {
+                        Button("Top of \(note.area)") { Task { await model.move(note: note.id, toArea: note.area, group: nil) } }
+                        Divider()
+                    }
+                    ForEach(model.groups(in: note.area).filter { $0 != note.group }, id: \.self) { group in
+                        Button(group) { Task { await model.move(note: note.id, toArea: note.area, group: group) } }
+                    }
+                }
+            }
+            Button("Delete…", role: .destructive) { model.deleteRequest = note.id }
+        }
+    }
+}
+
+/// New Group… and a group's Delete… (K37).
+struct GroupDialogs: ViewModifier {
+    @Environment(KnowledgeModel.self) private var model
+
+    func body(content: Content) -> some View {
+        content
+        .sheet(item: Binding(get: { model.newGroupRequest.map(GroupRequest.init) }, set: { model.newGroupRequest = $0?.area })) { request in
+            NewGroupSheet(area: request.area)
+        }
+        .confirmationDialog("Move the group \(model.groupDeleteRequest ?? "") and all its notes to the Trash?",
+                            isPresented: Binding(get: { model.groupDeleteRequest != nil }, set: { if !$0 { model.groupDeleteRequest = nil } })) {
+            Button("Move to Trash", role: .destructive) {
+                if let group = model.groupDeleteRequest { Task { await model.delete(group: group) } }
+            }
+        } message: {
+            Text("The folder goes to the Trash, and its removal is committed in the base's git. Links to its notes turn grey.")
+        }
+    }
+}
+
+/// The space a New Group… sheet adds to.
+struct GroupRequest: Identifiable {
+    let area: String
+    var id: String { area }
+}
+
+/// New Group…: a folder in the space (K37). Its notes show under it in the note list.
+struct NewGroupSheet: View {
+    @Environment(KnowledgeModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let area: String
+    @State private var name = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New Group").font(.title3.bold())
+            Text("A group of notes in the space \(area), like flows or apis. It folds like a space.")
+                .foregroundStyle(.secondary)
+            Form {
+                TextField(text: $name, prompt: Text("flows")) { RequiredLabel("Name") }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Add Group") { if model.newGroup(area: area, name: name) { dismiss() } }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 400)
     }
 }
 
@@ -483,8 +601,10 @@ struct NewNoteSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// Create Note… of a lint finding: the broken link's area (maybe a new one) and name.
     var initialArea: String?
+    var initialGroup: String?
     var initialName = ""
     @State private var area = ""
+    @State private var group = ""
     @State private var name = ""
     @State private var kind = ""
     @State private var working = false
@@ -496,6 +616,11 @@ struct NewNoteSheet: View {
                 Picker(selection: $area) {
                     ForEach(areaNames, id: \.self) { Text($0).tag($0) }
                 } label: { RequiredLabel("Area") }
+                Picker("Group", selection: $group) {
+                    Text("None").tag("")
+                    ForEach(model.groups(in: area), id: \.self) { Text($0).tag($0) }
+                }
+                .help("A group of the space: the note goes into its folder. New Group… in the space's menu adds one")
                 TextField(text: $name, prompt: Text("orders-api")) { RequiredLabel("Name") }
                 Picker("Kind", selection: $kind) {
                     Text("None").tag("")
@@ -512,7 +637,7 @@ struct NewNoteSheet: View {
                 Button("Add Note") {
                     working = true
                     Task {
-                        if await model.newNote(area: area, name: name, kind: kind.isEmpty ? nil : kind) { dismiss() }
+                        if await model.newNote(area: area, group: group.isEmpty ? nil : group, name: name, kind: kind.isEmpty ? nil : kind) { dismiss() }
                         working = false
                     }
                 }
@@ -524,8 +649,10 @@ struct NewNoteSheet: View {
         .frame(width: 420)
         .onAppear {
             area = initialArea ?? model.area ?? model.areas.first?.name ?? ""
+            group = initialGroup ?? ""
             name = initialName
         }
+        .onChange(of: area) { if !model.groups(in: area).contains(group) { group = "" } }
     }
 
     /// The areas, and a new one a broken link names.
