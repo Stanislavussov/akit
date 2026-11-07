@@ -124,6 +124,10 @@ struct MeetingsSettingsView: View {
                     Toggle("Echo cancellation", isOn: Binding(get: { model.settings.echoCancellation }, set: { value in model.update { $0.echoCancellation = value } }))
                     Text("Keeps the sound from the speakers out of the microphone, so the other people are not recorded twice. Takes effect at the next Record.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Toggle("Transcribe while recording", isOn: Binding(get: { model.settings.transcribeWhileRecording }, set: { value in model.update { $0.transcribeWhileRecording = value } }))
+                        .disabled(model.settings.transcription != .cloud)
+                    Text("Cloud only. Each finished 5-minute piece goes to the model at once, so after Stop only the last piece and the summary are left. The cost is the same; each piece is its own call, so speaker names can drift a little more than with 30-minute parts. Local whisper always waits for Stop.")
+                        .font(.caption).foregroundStyle(.secondary)
                     LabeledContent("Folder") {
                         HStack {
                             Text(model.root.path.replacingOccurrences(of: userHome.path, with: "~")).textSelection(.enabled)

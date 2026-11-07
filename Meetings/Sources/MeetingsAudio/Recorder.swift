@@ -12,6 +12,11 @@ public final class Recorder: @unchecked Sendable {
     let echoCancellation: Bool
     /// A sentence for the screen when a source stops or a piece cannot be written or mixed.
     let problem: @Sendable (String) -> Void
+    /// The first piece's number: 1 for a new meeting, after the last piece for Record More.
+    let firstPiece: Int
+    /// Called on a background queue after pieces are mixed while it records (they can be
+    /// transcribed before Stop).
+    let piecesMixed: @Sendable () -> Void
     /// Replaced by a new one when the microphone sends nothing (`MicWatch`); changed only on
     /// `micQueue` while it records.
     private var engine = AVAudioEngine()
@@ -41,8 +46,11 @@ public final class Recorder: @unchecked Sendable {
     /// `lock`: the recording lock, when the caller took it already (right after creating the
     /// meeting, so the other host never sees a free lock on a new recording).
     public init(folder: URL, pieceSeconds: TimeInterval = 300, echoCancellation: Bool = true, lock: MeetingLock? = nil,
+                firstPiece: Int = 1, piecesMixed: @escaping @Sendable () -> Void = {},
                 problem: @escaping @Sendable (String) -> Void = { _ in }) {
         recordingLock = lock
+        self.firstPiece = firstPiece
+        self.piecesMixed = piecesMixed
         self.folder = folder
         self.pieceSeconds = pieceSeconds
         self.echoCancellation = echoCancellation
@@ -78,8 +86,8 @@ public final class Recorder: @unchecked Sendable {
         let level: @Sendable (PieceMixer.Source, AVAudioPCMBuffer) -> Void = { [weak self] source, buffer in self?.noteLevel(source, buffer) }
         let startHost = mach_absolute_time()
         let pieceDone: @Sendable (PieceMixer.Source, Int) -> Void = { [weak self] source, index in self?.closed(source, index) }
-        let micWriter = PieceWriter(folder: folder, source: .mic, pieceSeconds: pieceSeconds, startHost: startHost, closed: pieceDone, problem: report)
-        let systemWriter = PieceWriter(folder: folder, source: .sys, pieceSeconds: pieceSeconds, startHost: startHost, closed: pieceDone, problem: report)
+        let micWriter = PieceWriter(folder: folder, source: .mic, pieceSeconds: pieceSeconds, startHost: startHost, firstIndex: firstPiece, closed: pieceDone, problem: report)
+        let systemWriter = PieceWriter(folder: folder, source: .sys, pieceSeconds: pieceSeconds, startHost: startHost, firstIndex: firstPiece, closed: pieceDone, problem: report)
         mic = micWriter
         system = systemWriter
         do {
@@ -231,9 +239,10 @@ public final class Recorder: @unchecked Sendable {
         guard !ready.isEmpty else { return }
         let folder = self.folder
         mixQueue.async { [weak self] in
-            let problems = PieceMixer.mixPending(in: folder, only: ready).problems
+            let result = PieceMixer.mixPending(in: folder, only: ready)
             guard let self else { return }
-            for text in problems { self.report(text) }
+            for text in result.problems { self.report(text) }
+            if !result.done.isEmpty, self.lock.withLock({ self.running }) { self.piecesMixed() }
         }
     }
 

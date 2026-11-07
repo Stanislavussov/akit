@@ -295,10 +295,37 @@ public final class MeetingsModel {
 
     // MARK: Recording (M3)
 
-    public func record() async {
+    public func record() async { await startRecording(into: nil) }
+
+    /// M34: a second talk after Stop goes into the same meeting: new pieces after its last one,
+    /// then the transcript goes on from the next piece and the summary is written again.
+    public func recordMore(_ id: String) async {
+        guard canRecordMore(id) else { return }
+        if !isBackgroundHost, BackgroundControl.recorderRuns {
+            BackgroundControl.send(Self.recordMoreAction + id)
+            notice = "Meetings Recorder records in the background; ⌥⌘R or Stop ends it."
+            return
+        }
+        await startRecording(into: id)
+    }
+
+    static let recordMoreAction = "record-more:"
+
+    /// Whether Record More can start on this meeting now: nothing records, it is not processed
+    /// or imported, and its audio is still here.
+    public func canRecordMore(_ id: String) -> Bool {
+        guard !isRecording, !starting, remoteRecordingID == nil, !processing.contains(id), importing[id] == nil,
+              let meeting = meetings.first(where: { $0.id == id }) else { return false }
+        // Not while the other Meetings app processes it (it holds the processing lock).
+        return meeting.state != .recording && meeting.state != .transcribing && !meeting.audioTrashed
+            && recordingRuns[id] == nil && MeetingLock.isFree(MeetingLock.processing(store, id))
+    }
+
+    /// A new meeting (`existing` nil) or more pieces for `existing`.
+    private func startRecording(into existing: String?) async {
         guard !isRecording, !starting else { return }
         // M31: with the background recorder running, it records, so a meeting is never recorded twice.
-        if !isBackgroundHost, BackgroundControl.recorderRuns {
+        if existing == nil, !isBackgroundHost, BackgroundControl.recorderRuns {
             guard remoteRecordingID == nil else { return }
             BackgroundControl.send("record")
             notice = "Meetings Recorder records in the background; ⌥⌘R or Stop ends it."
@@ -306,31 +333,71 @@ public final class MeetingsModel {
         }
         starting = true
         defer { starting = false }
+        var before: Meeting?
         do {
-            let meeting = try store.create(template: settings.defaultTemplate)
+            let meeting: Meeting
+            if let existing {
+                guard var old = store.load(existing) else { return }
+                before = old
+                old.state = .recording
+                try store.save(old)
+                meeting = old
+            } else {
+                meeting = try store.create(template: settings.defaultTemplate)
+            }
+            let id = meeting.id
+            let folder = store.audioFolder(id)
             // The lock right after the meeting exists, so the other host never takes it for a crash.
-            let held = MeetingLock.take(Recorder.lockFile(store.audioFolder(meeting.id)))
-            let recorder = Recorder(folder: store.audioFolder(meeting.id), echoCancellation: settings.echoCancellation, lock: held) { [weak self] text in
+            let held = MeetingLock.take(Recorder.lockFile(folder))
+            let mixed: @Sendable () -> Void = { [weak self] in
+                Task { @MainActor in self?.transcribeWhileRecording(id) }
+            }
+            let report: @Sendable (String) -> Void = { [weak self] text in
                 Task { @MainActor in
                     self?.problem = text
                     self?.didReportProblem?(text)
                 }
             }
+            let recorder = Recorder(folder: folder, echoCancellation: settings.echoCancellation, lock: held,
+                                    firstPiece: store.nextPieceNumber(id), piecesMixed: mixed, problem: report)
             do {
                 try await recorder.start()
             } catch {
-                try? store.moveToTrash(meeting.id)
+                held?.release()
+                if let before { try? store.save(before) } else { try? store.moveToTrash(id) }
                 throw error
             }
+            if existing != nil { MeetingsLog.info(.recorder, "\(id): record more from piece \(store.nextPieceNumber(id))") }
             self.recorder = recorder
             RecordingSignal.set(Self.recordingActiveFile(store.root), recording: true)
-            recordingID = meeting.id
+            recordingID = id
             for control in controls.values { control.recording = true }
             recordingStarted = Date()
             refresh()
-            select(meeting.id)
+            select(id)
         } catch {
             problem = "Could not start the recording: \(error.localizedDescription)"
+            if before != nil { refresh() }
+        }
+    }
+
+    // MARK: Transcription while recording (M35)
+
+    /// Meetings with a run while they record; Stop waits for it before it saves the meeting.
+    @ObservationIgnored private var recordingRuns: [String: Task<Void, Never>] = [:]
+
+    /// The whole pieces not yet transcribed go to the cloud now, so after Stop only the last piece
+    /// and the summary are left. Pieces mixed while it runs are taken by the next turn.
+    private func transcribeWhileRecording(_ id: String) {
+        guard settings.transcribeWhileRecording, settings.transcription == .cloud, recordingID == id,
+              recordingRuns[id] == nil, !processing.contains(id), !quitting, let key = keyStore.read() else { return }
+        let processor = MeetingProcessor(store: store, settings: settings, client: OpenRouterClient(key: key, transport: transport)) { [weak self] meeting in
+            Task { @MainActor in self?.updated(meeting) }
+        }
+        recordingRuns[id] = Task {
+            let count = (try? await processor.runWhileRecording(id)) ?? 0
+            recordingRuns[id] = nil
+            if recordingID == id, count > 0 { transcribeWhileRecording(id) }
         }
     }
 
@@ -408,6 +475,8 @@ public final class MeetingsModel {
         }
         guard let id = recordingID, let recorder else { return }
         let result = await recorder.stop()
+        // M35: a piece still being transcribed is saved first, so this save does not undo it.
+        if let run = recordingRuns[id] { await run.value }
         self.recorder = nil
         RecordingSignal.set(Self.recordingActiveFile(store.root), recording: false)
         recordingID = nil
@@ -437,6 +506,8 @@ public final class MeetingsModel {
         case "record", "start": await record()
         case "stop": await stop()
         case "toggle": if isRecording || remoteRecordingID != nil { await stop() } else { await record() }
+        case let more where more.hasPrefix(Self.recordMoreAction):
+            await recordMore(String(action.dropFirst(Self.recordMoreAction.count)))
         default: break
         }
     }
