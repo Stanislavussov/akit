@@ -137,7 +137,8 @@ struct MeetingsSettingsView: View {
                     HStack {
                         Text(MeetingsLog.file.path.replacingOccurrences(of: userHome.path, with: "~")).textSelection(.enabled)
                         Spacer()
-                        Button("Show Log") { NSWorkspace.shared.activateFileViewerSelecting([MeetingsLog.file]) }
+                        Button("Open Log") { MeetingsLog.open() }
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([MeetingsLog.file]) }
                         Button("Copy Log") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(MeetingsLog.tail(), forType: .string)

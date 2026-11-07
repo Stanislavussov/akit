@@ -49,7 +49,7 @@ public struct MeetingProcessor: Sendable {
     public static let overlapForTwoTracks: TimeInterval = 3
 
     /// The chunks of the pieces after the first `done`; offsets count every piece before.
-    func chunks(_ id: String, after done: Int) -> (chunks: [Chunk], duration: TimeInterval) {
+    func chunks(_ id: String, after done: Int, size: Int = piecesPerChunk) -> (chunks: [Chunk], duration: TimeInterval) {
         let pieces = store.pieces(id)
         let infos = pieces.map { store.pieceInfo($0) ?? PieceInfo(duration: 300, me: []) }
         let start = min(done, pieces.count)
@@ -57,7 +57,7 @@ public struct MeetingProcessor: Sendable {
         var result: [Chunk] = []
         var index = start
         while index < pieces.count {
-            let end = min(index + Self.piecesPerChunk, pieces.count)
+            let end = min(index + max(1, size), pieces.count)
             var chunk = Chunk(pieces: Array(pieces[index..<end]), offset: offset, length: 0, me: [], others: [], endPiece: end)
             for info in infos[index..<end] {
                 chunk.me += info.me.map { TimeSpan(start: $0.start + chunk.length, end: $0.end + chunk.length) }
@@ -113,7 +113,23 @@ public struct MeetingProcessor: Sendable {
                 guard let transcriber else { throw MeetingsError.noKey }
                 for chunk in plan.chunks {
                     try checkLimit()
-                    let answer = try await transcribe(chunk, id: id, previous: meeting.segments, transcriber: transcriber)
+                    let answer: (segments: [Segment], cost: Double)
+                    do {
+                        answer = try await transcribe(chunk, id: id, previous: meeting.segments, transcriber: transcriber)
+                    } catch let failure as PaidFailure where chunk.pieces.count > 1 {
+                        // A long answer the model cut off or looped in: the same pieces again, one per call.
+                        meeting.costUSD += failure.cost
+                        MeetingsLog.error(.processor, "\(id): answer for \(chunk.pieces.count) pieces not readable; trying them one by one")
+                        var segments: [Segment] = []
+                        let first = chunk.endPiece - chunk.pieces.count
+                        for single in chunks(id, after: first, size: 1).chunks.prefix(chunk.pieces.count) {
+                            try checkLimit()
+                            let part = try await transcribe(single, id: id, previous: meeting.segments + segments, transcriber: transcriber)
+                            segments += part.segments
+                            meeting.costUSD += part.cost
+                        }
+                        answer = (segments, 0)
+                    }
                     meeting.segments += answer.segments
                     meeting.costUSD += answer.cost
                     meeting.transcribedChunks += 1

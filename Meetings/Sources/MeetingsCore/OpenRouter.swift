@@ -141,6 +141,8 @@ public struct Completion: Equatable, Sendable {
     public var completionTokens: Int
     /// USD as OpenRouter reported it; 0 when the answer had no cost.
     public var cost: Double
+    /// Why the model stopped ("stop", "length" when cut off at the output limit, …); nil when not said.
+    public var finishReason: String? = nil
 
     static func parse(_ data: Data) throws -> Completion {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -156,7 +158,8 @@ public struct Completion: Equatable, Sendable {
         }
         let usage = object["usage"] as? [String: Any] ?? [:]
         func number(_ key: String) -> Double { (usage[key] as? NSNumber)?.doubleValue ?? 0 }
-        return Completion(text: text, promptTokens: Int(number("prompt_tokens")), completionTokens: Int(number("completion_tokens")), cost: number("cost"))
+        return Completion(text: text, promptTokens: Int(number("prompt_tokens")), completionTokens: Int(number("completion_tokens")), cost: number("cost"),
+                          finishReason: (choices.first?["finish_reason"] as? String) ?? (choices.first?["native_finish_reason"] as? String))
     }
 }
 

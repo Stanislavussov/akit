@@ -1006,6 +1006,19 @@ final class Closed: @unchecked Sendable {
         #expect(store.load(meeting.id)?.state == .failed && store.load(meeting.id)?.failure == "limit")
     }
 
+    @Test func unreadableLongAnswerIsRetriedPieceByPiece() async throws {
+        let store = TempRoot().store
+        let meeting = try ProcessorTests().meetingWithPieces(store, count: 2)
+        let one = chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"ahoj"}]}"#, cost: 0.01)
+        let summary = chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)
+        let server = FakeServer([(200, chat(#"{"segments":[{"start":"00:01","text":"ah"#, cost: 0.04)), (200, one), (200, one), (200, summary)])
+        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
+        #expect(server.requests.count == 4)
+        #expect(done.segments.count == 2 && done.state == .done)
+        #expect(done.transcribedPieces == 2)
+        #expect(abs(done.costUSD - 0.07) < 1e-9)  // 0.04 failed + 2 × 0.01 + summary 0.01
+    }
+
     @Test func unreadablePaidAnswerStillCosts() async throws {
         let store = TempRoot().store
         let meeting = try ProcessorTests().meetingWithPieces(store, count: 1)

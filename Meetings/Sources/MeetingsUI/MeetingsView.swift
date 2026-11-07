@@ -361,6 +361,8 @@ struct MeetingDetail: View {
             if meeting.state == .failed, !model.processing.contains(meeting.id) {
                 Button("Try Again") { model.process(meeting.id, byUser: true) }
                     .disabled(!model.canProcess || meeting.audioTrashed)
+                Button("Open Log") { MeetingsLog.open() }
+                    .help("Open the Meetings log: it says why the run stopped (\(MeetingsLog.file.path))")
             }
             Menu {
                 Button("Ask About This Meeting…") { model.openAsk(meetingID: meeting.id) }
@@ -368,6 +370,7 @@ struct MeetingDetail: View {
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
                     .disabled(meeting.speakerKeys.isEmpty)
                 Button("Summarize Again") { model.summarizeAgain(meeting.id) }
+                Button("Open Log") { MeetingsLog.open() }
                     .disabled(!(model.hasKey || model.settings.summarizer == .pi) || meeting.segments.isEmpty || meeting.state != .done || model.processing.contains(meeting.id) || model.isLive(meeting.id))
                     .help("Write the summary again from the transcript (one text call, no audio)")
                 Button("Transcribe Again") { model.process(meeting.id, restart: true, byUser: true) }
