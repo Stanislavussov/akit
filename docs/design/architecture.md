@@ -190,7 +190,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
 | `AKitRender` | Foundation (`JSONValue`), Brain |
 | `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Instructions (the core block markers), Brain, Render, Insights, MCP (MCP switches' project files) |
-| `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac), Knowledge (`KnowledgeChecker`: the check model's call on a proposal, shared by `akit kb check` and the app's Inbox, 2026-10-25; `KnowledgeMapDrawer`: Draw Map with Pi…, 5.4; `KnowledgeAsk`: Ask Pi about a note, K30) |
+| `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac), Knowledge (`KnowledgeChecker`: the check model's call on a proposal, shared by `akit kb check` and the app's Inbox, 2026-10-25; `KnowledgeMapDrawer`: Draw Map with Pi…, 5.4; `KnowledgeAsk`: Ask Pi about a note, K30), Skills (`SkillPortModel`: Port to Pi's model pass on `SkillPort`'s draft and `SkillPortCheck`, 2026-11-07, `skill-port.md`) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer), Instructions (Analyze… of the global instructions, 2026-10-30) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup, Knowledge (the knowledge base line) |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
