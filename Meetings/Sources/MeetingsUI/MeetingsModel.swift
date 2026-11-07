@@ -91,6 +91,7 @@ public final class MeetingsModel {
     public var links: MeetingsLinks = .none
     public var tasksRequest = false
     public var factsRequest = false
+    public var saveNoteRequest = false
     public private(set) var facts: [MeetingFact] = []
     public private(set) var findingFacts = false
     public private(set) var factsProblem: String?
@@ -634,6 +635,35 @@ public final class MeetingsModel {
         } catch {
             problem = "Could not add the meeting to the Work Log: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         }
+    }
+
+    /// Save to Knowledge…: the whole summary as a new note, with the meeting's date, people and
+    /// tags on top. No model call.
+    public func saveToKnowledge(area: String, name: String) async -> Bool {
+        guard let saveNote = links.saveNote, var meeting = fresh else { return false }
+        let text = Self.knowledgeNote(meeting, name: name, summary: store.summary(meeting.id))
+        do {
+            let id = try await saveNote(area, name, text)
+            meeting = store.load(meeting.id) ?? meeting
+            try? store.markExport(&meeting, "knowledge")
+            updated(meeting)
+            notice = "Saved to the knowledge base as \(id)."
+            MeetingsLog.info(.ui, "\(meeting.id): to the knowledge base")
+            return true
+        } catch {
+            problem = "Could not save the meeting to the knowledge base: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            return false
+        }
+    }
+
+    /// The note's text: frontmatter, title, a line with date and people, the summary.
+    nonisolated static func knowledgeNote(_ meeting: Meeting, name: String, summary: String) -> String {
+        let date = meeting.started.formatted(date: .long, time: .shortened)
+        let people = meeting.speakerKeys.map(meeting.speakerName).filter { !$0.isEmpty }
+        var head = ["---", "kind: meeting"]
+        if !meeting.tagList.isEmpty { head.append("tags: [\(meeting.tagList.map { "\"\($0)\"" }.joined(separator: ", "))]") }
+        head += ["---", "# \(name)", "", "*\(date)*" + (people.isEmpty ? "" : " · " + people.joined(separator: ", ")), ""]
+        return head.joined(separator: "\n") + "\n" + summary
     }
 
     /// Propose to Knowledge…: one text call over the summary and the transcript with the base's

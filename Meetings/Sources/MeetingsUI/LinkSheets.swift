@@ -67,6 +67,62 @@ struct TasksToNotebookSheet: View {
     }
 }
 
+/// Save to Knowledge…: the summary as a new note in a chosen area.
+struct SaveNoteSheet: View {
+    let model: MeetingsModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var areas: [String] = []
+    @State private var area = ""
+    @State private var name = ""
+    @State private var problem: String?
+    @State private var saving = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Save to Knowledge").font(.title3.bold())
+            Text("The whole summary becomes a new note, with the meeting's date, people and tags on top. Edit it later on the Knowledge screen.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Picker("Area", selection: $area) {
+                ForEach(areas, id: \.self) { Text($0).tag($0) }
+            }
+            .disabled(areas.isEmpty)
+            TextField("Note name", text: $name)
+            if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Save") {
+                    saving = true
+                    Task {
+                        if await model.saveToKnowledge(area: area, name: name.trimmingCharacters(in: .whitespaces)) { dismiss() }
+                        saving = false
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(area.isEmpty || name.trimmingCharacters(in: .whitespaces).isEmpty || saving)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+        .task {
+            if let meeting = model.selected {
+                let day = meeting.started.formatted(.iso8601.year().month().day())
+                name = "\(day) \(meeting.displayTitle)".replacingOccurrences(of: "/", with: "-")
+            }
+            do {
+                areas = try await model.links.knowledgeAreas?() ?? []
+                area = areas.first ?? ""
+                if areas.isEmpty { problem = "The knowledge base has no areas yet. Add one on the Knowledge screen." }
+            } catch {
+                problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        }
+    }
+}
+
 /// Propose to Knowledge… (M25): the facts the model found, each aimed at a note; the chosen ones
 /// go to the knowledge base's Inbox as proposals.
 struct FactsSheet: View {

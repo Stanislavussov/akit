@@ -44,6 +44,17 @@ import MeetingsUI
         links.knowledgeNotes = {
             try await base().notes().map { FactFinder.Note(id: $0.id, title: $0.title) }
         }
+        links.knowledgeAreas = {
+            try await base().areas().map(\.name)
+        }
+        links.saveNote = { area, name, text in
+            let base = try await base()
+            let path = try await base.newNote(area: area, name: name, kind: "meeting", env: knowledge.env)
+            let id = String(path.dropFirst("areas/".count).dropLast(".md".count))
+            try base.save(note: id, text: text)
+            knowledge.enqueueEdit(path, in: base)
+            return id
+        }
         links.propose = { facts, source in
             let base = try await base()
             var written = 0

@@ -17,11 +17,16 @@ public struct MeetingsLinks {
     /// why the others were not.
     public var propose: (@MainActor (_ facts: [MeetingFact], _ source: String) async throws -> (written: Int, refused: [String]))?
 
+    /// The knowledge base's areas, for Save to Knowledge….
+    public var knowledgeAreas: (@MainActor () async throws -> [String])?
+    /// Writes the meeting's notes as a new note `area/name`; returns the note's id.
+    public var saveNote: (@MainActor (_ area: String, _ name: String, _ text: String) async throws -> String)?
+
     public init() {}
 
     @MainActor public static let none = MeetingsLinks()
 
-    public var isEmpty: Bool { addTasks == nil && addToWorkLog == nil && propose == nil }
+    public var isEmpty: Bool { addTasks == nil && addToWorkLog == nil && propose == nil && saveNote == nil }
 
     /// A Work Log line: when, the title, a short summary.
     public struct WorkLogLine: Sendable, Equatable {

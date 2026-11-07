@@ -744,6 +744,30 @@ final class Closed: @unchecked Sendable {
         #expect(summary.markdown.contains("## Summary\n\nKrátce.\n\n## Blokery\n\n- Jana čeká na API\n\n## Decisions\n\n—\n\n## Tasks\n\n- [ ] Me: napsat Janě\n"))
     }
 
+    @Test func detailedSummaryHasFlowFactsDiagramAndQuestions() throws {
+        let prompt = Transcriber.summaryPrompt(language: "Czech", transcript: "[00:01] Me: ahoj")
+        #expect(prompt.contains("- flow:") && prompt.contains("- facts:") && prompt.contains("- diagram:") && prompt.contains("- open_questions:"))
+        let summary = try Transcriber.parseSummary(#"""
+        {"title":"Plán","summary":"Delší.","flow":[{"time":"00:01","topic":"Release","points":["Jana: v pátek",""]},{"topic":"","points":["x"]}],
+         "facts":["Release 2.4 — 14. 11."],"diagram":"```mermaid\ntimeline\n  14. 11. : Release 2.4\n```",
+         "decisions":["Ano"],"open_questions":["Kdo testuje?"],"tasks":[]}
+        """#)
+        #expect(summary.flow == [.init(time: "00:01", topic: "Release", points: ["Jana: v pátek"])])
+        #expect(summary.diagram == "timeline\n  14. 11. : Release 2.4")
+        #expect(summary.markdown.contains("## Summary\n\nDelší.\n\n## Course of the Meeting\n\n### [00:01] Release\n\n- Jana: v pátek\n"))
+        #expect(summary.markdown.contains("## Key Facts and Dates\n\n- Release 2.4 — 14. 11.\n\n## Diagram\n\n```mermaid\ntimeline\n  14. 11. : Release 2.4\n```\n\n## Decisions\n\n- Ano\n\n## Open Questions\n\n- Kdo testuje?\n\n## Tasks"))
+        // An old short answer still gives the old page.
+        #expect(!(try Transcriber.parseSummary(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)).markdown.contains("Course"))
+    }
+
+    @Test func copyTextWithAndWithoutSpeakers() {
+        var meeting = Meeting(id: "m", started: .now)
+        meeting.segments = [.init(start: 0, speaker: "me", text: "Ahoj."), .init(start: 1, speaker: "me", text: "Jak?"),
+                            .init(start: 2, speaker: "s1", text: "Dobře.")]
+        #expect(Transcriber.copyText(meeting, speakers: false) == "Ahoj. Jak?\n\nDobře.")
+        #expect(Transcriber.copyText(meeting, speakers: true).components(separatedBy: "\n").count == 3)
+    }
+
     @Test func unknownTemplateFallsBackAndOldSettingsLoad() throws {
         var settings = MeetingsSettings()
         #expect(settings.template("gone").id == MeetingTemplate.generalID)

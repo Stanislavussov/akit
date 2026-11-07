@@ -83,6 +83,7 @@ public struct MeetingsView: View {
         .sheet(isPresented: $model.showAsk) { AskView(model: model) }
         .sheet(isPresented: $model.tasksRequest) { TasksToNotebookSheet(model: model) }
         .sheet(isPresented: $model.factsRequest) { FactsSheet(model: model) }
+        .sheet(isPresented: $model.saveNoteRequest) { SaveNoteSheet(model: model) }
         .sheet(item: $model.tabNameRequest) { request in TabNameSheet(model: model, old: request.old) }
         .sheet(isPresented: $model.renameSpeakersRequest) { RenameSpeakersSheet(model: model) }
         .confirmationDialog("Move this meeting to the Trash?", isPresented: Binding(get: { model.trashRequest != nil }, set: { if !$0 { model.trashRequest = nil } })) {
@@ -370,9 +371,13 @@ struct MeetingDetail: View {
                 Button("Rename Speakers…") { model.renameSpeakersRequest = true }
                     .disabled(meeting.speakerKeys.isEmpty)
                 Button("Summarize Again") { model.summarizeAgain(meeting.id) }
-                Button("Open Log") { MeetingsLog.open() }
                     .disabled(!(model.hasKey || model.settings.summarizer == .pi) || meeting.segments.isEmpty || meeting.state != .done || model.processing.contains(meeting.id) || model.isLive(meeting.id))
                     .help("Write the summary again from the transcript (one text call, no audio)")
+                Button("Open Log") { MeetingsLog.open() }
+                Button("Copy Transcript with Speakers") { copy(Transcriber.copyText(meeting, speakers: true)) }
+                    .disabled(meeting.segments.isEmpty)
+                Button("Copy Transcript Text Only") { copy(Transcriber.copyText(meeting, speakers: false)) }
+                    .disabled(meeting.segments.isEmpty)
                 Button("Transcribe Again") { model.process(meeting.id, restart: true, byUser: true) }
                     .disabled(!model.canProcess || meeting.audioTrashed || model.processing.contains(meeting.id) || model.isLive(meeting.id))
                 if !model.links.isEmpty {
@@ -385,6 +390,11 @@ struct MeetingDetail: View {
                     if model.links.addToWorkLog != nil {
                         Button(meeting.exports?["worklog"] == nil ? "Add to Work Log" : "Add to Work Log Again") { Task { await model.addToWorkLog() } }
                             .disabled(!done)
+                    }
+                    if model.links.saveNote != nil {
+                        Button(meeting.exports?["knowledge"] == nil ? "Save to Knowledge…" : "Save to Knowledge Again…") { model.saveNoteRequest = true }
+                            .disabled(!done)
+                            .help("Save the whole summary as a new note of the knowledge base")
                     }
                     if model.links.propose != nil {
                         Button("Propose to Knowledge…") { model.factsRequest = true }
@@ -909,4 +919,9 @@ struct AudioDrop: ViewModifier {
             model.importAudio(urls)
         }
     }
+}
+
+@MainActor private func copy(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
 }
