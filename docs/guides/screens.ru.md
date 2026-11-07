@@ -2720,6 +2720,8 @@ AKit не считает стоимость по прайс-листам. Он �
 - **Сводки использования.** Перед обменом Sync записывает в brain сводки использования скиллов с этого Mac. В них только счётчики, без текста сессий.
 - **Рабочий Mac.** Там в сводку идут только счётчики скиллов из brain, под псевдонимом.
 - **Сводки не записались.** Sync всё равно получает и отправляет изменения. Причина видна в окне результата.
+- **Копия базы знаний и встреч.** На личном Mac перед обменом Sync копирует в brain текст баз знаний (папка `knowledge/<мир>/`) и встреч (папка `meetings/`) и делает один коммит «Back up knowledge and meetings». Звук, картинки, индекс и черновики Inbox не копируются. Удалённая заметка или встреча уходит и из копии. В окне результата строка «Backed up knowledge and meetings to the brain (N files changed).». Если ничего не изменилось, строки нет. Выключить: Settings → **Brain repo** → **Back up knowledge and meetings to the brain**.
+- **На рабочем Mac копии нет.** В окне строка «Knowledge and meetings are not backed up on a work Mac.». Так же, если файл machine.json не читается.
 
 #### Средне: забрать свои скиллы в brain
 <!-- section: brain-import -->
@@ -4352,7 +4354,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 - **Project folders**: список папок, в которых AKit ищет проекты. У каждой папки справа кнопка с минусом в кружке: она убирает папку из списка. Кнопки **Add Folder…** и **Reset to Default**.
 - **This Mac**: переключатель **This Mac is** с двумя значениями, **Personal** и **Work**. На рабочем Mac появляется поле **Name of this Mac**. Под переключателем написано, что значит текущий выбор.
-- **Brain repo**: путь к вашему brain. Кнопки **Choose…** и **Reset to Default**. Если brain — git-репозиторий, ниже стоят поля **Commit name** и **Commit email** и кнопка **Save**.
+- **Brain repo**: путь к вашему brain. Кнопки **Choose…** и **Reset to Default**. Если brain — git-репозиторий, ниже стоят поля **Commit name** и **Commit email** и кнопка **Save**. На личном Mac там же переключатель **Back up knowledge and meetings to the brain** (включён по умолчанию): копировать ли текст баз знаний и встреч в brain при каждом **Sync**. На рабочем Mac переключателя нет.
 - **Knowledge**: папка базы знаний каждого мира, например `work`. У строки мира кнопки **Choose…**, **Move Base…**, **Show in Finder** и **Reset to Default**. Подробно: [Папка базы и Obsidian](knowledge#folder).
 - **Lab**: список **Review language**, язык новых разборов сессий.
 - **Translation model**: кем переводит кнопка **Translate**: **Harness**, **Model** с меню **Models** и **Effort** (у Pi — **Thinking**). Кнопка **Reset to Default** возвращает Claude Code · haiku. Подробно: [выбрать модель перевода](#settings-translation).

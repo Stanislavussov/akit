@@ -306,6 +306,8 @@
 - `meeting.json` — состояние, говорящие, шаблон, теги, цена;
 - `audio/` — звук кусками по 5 минут.
 
+**Копия в brain.** На личном Mac каждый **Sync** на экране Brain в AKit копирует `meeting.json`, `summary.md`, `transcript.md` и вкладки `tabs/<имя>.md` в папку `meetings/` brain. Звук и картинки не копируются. На рабочем Mac копии нет. Выключить: Settings → **Brain repo** → **Back up knowledge and meetings to the brain**. Подробнее: [Получить изменения с другого Mac](screens#brain-sync)
+
 В самой папке `~/Meetings` файл `.asks.jsonl` — цена каждого вопроса **Ask…**: дата, модель, токены. Без текста.
 
 **Аудио хранится 14 дней,** потом уходит в Корзину. Текст, Summary и вкладки остаются. В шапке встречи видно «audio until 20 Nov» — до какого дня.

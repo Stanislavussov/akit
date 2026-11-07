@@ -1,5 +1,7 @@
 import AKitBrain
 import AKitHarnesses
+import AKitFoundation
+import AKitKnowledge
 import AKitLab
 import AppKit
 import SwiftUI
@@ -9,6 +11,8 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var machineName = ""
     @State private var machineError: String?
+    @State private var backupOn = BrainBackup.isEnabled(home: HarnessEnvironment.current.homeDirectory)
+    @State private var backupError: String?
     @State private var machineNotes: [String] = []
     @State private var confirmPersonal = false
     @State private var brainName = ""
@@ -130,6 +134,20 @@ struct SettingsView: View {
                             .disabled(typedIdentity.name == nil || typedIdentity.email == nil || typedIdentity == identity)
                     }
                 }
+                if !model.machine.isWork, model.machine.problem == nil {
+                    Toggle("Back up knowledge and meetings to the brain", isOn: Binding(get: { backupOn }, set: { on in
+                        do {
+                            try BrainBackup.setEnabled(on, home: HarnessEnvironment.current.homeDirectory)
+                            backupOn = on
+                            backupError = nil
+                        } catch {
+                            backupError = error.localizedDescription
+                        }
+                    }))
+                    if let backupError {
+                        Label(backupError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                    }
+                }
             } header: {
                 Text("Brain repo")
             } footer: {
@@ -137,7 +155,10 @@ struct SettingsView: View {
                      + (model.brainIdentity == nil ? "" : " Commit name and email go into the commits AKit makes in the brain. They are kept in the brain's own git settings on this Mac. "
                         + (model.machine.isWork
                            ? "A work Mac needs them, so the work name and email of your global git settings never reach the brain's remote."
-                           : "Without them a personal Mac uses your global git name and email.")))
+                           : "Without them a personal Mac uses your global git name and email."))
+                     + (model.machine.isWork || model.machine.problem != nil
+                        ? " Knowledge and meetings are never backed up to the brain on a work Mac."
+                        : " With the backup on, each Sync copies the text of your knowledge bases and meetings (no audio, no pictures, no index) into knowledge/ and meetings/ of the brain and commits it before the push."))
                     .foregroundStyle(.secondary)
             }
             // Not .task: it would run again when the section scrolls back into view and drop typed text.
