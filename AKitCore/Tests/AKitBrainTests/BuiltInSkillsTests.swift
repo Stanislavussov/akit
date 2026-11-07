@@ -73,6 +73,12 @@ struct BuiltInSkillsTests {
         #expect(try await git("log", "-1", "--format=%s").contains("Add akit-context to core"))
     }
 
+    @Test func aFinalNewlineIsTheSameCopy() async throws {
+        try await BrainSetup.create(at: root, env: env)
+        try Data((AKitContextSkill.text + "\n").utf8).write(to: root.appending(path: "skills/akit-context/SKILL.md"))
+        #expect(try BuiltInSkills.plan(brain: root).items.first { $0.name == "akit-context" }?.state == .current)
+    }
+
     @Test func onlyTheChosenOnes() async throws {
         try await oldBrain()
         let plan = try BuiltInSkills.plan(brain: root)

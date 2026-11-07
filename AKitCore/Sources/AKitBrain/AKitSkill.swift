@@ -4,7 +4,7 @@ enum AKitSkill {
     static let text = #"""
 ---
 name: akit
-description: Create or edit harness layers in the AKit brain (~/.akit/registry) and set up a project's harness from them with the akit command. Use when the user asks to make or change a layer, add skills or fields to one, or set up / re-render a project's AGENTS.md and skills, and to set up the knowledge base (akit kb init, path, focus, accept, reject). Reading the base and the notebook is the akit-context skill.
+description: Create or edit harness layers in the AKit brain (~/.akit/registry) and set up a project's harness from them with the akit command. Use when the user asks to make or change a layer, add skills or fields to one, or set up / re-render a project's AGENTS.md and skills, to set up the knowledge base (akit kb init, path, focus, accept, reject), and to read or run the weekly digest of GitLab and Azure DevOps (akit digest). Reading the knowledge base and the notebook is the akit-context skill.
 ---
 
 # AKit: layers and project setup
@@ -333,14 +333,6 @@ range at another branch or commit than HEAD (without the uncommitted changes), e
 `--base v1.4.0 --head v1.5.0` for what a release added. In the app: New Review… → Local
 Workspace → Find… next to Base and Head.
 
-`akit review MR-URL MR-URL… [flags]` reviews several linked merge requests (a frontend and its
-API in other repositories) as one change: the roles read every diff and check that the sides still
-fit, the first sets the profile, scenario and roles, each finding goes to drafts in its own merge
-request, and files of the others are named `@<project>/<path>`. `MR-URL@COMMIT` reports only on
-lines changed after that commit of the merge request; without it the review starts at the merge
-base. Use it when the user's change spans repositories, or asks to look only at the last commits.
-In the app: New Review… → Merge requests, one address per line, a commit after an address.
-
 ### Review roles and configuration
 
 When the user wants a new review role (what a reviewer checks: translations, accessibility, their
@@ -431,6 +423,43 @@ when a profile adds it (`roles: { add: [...] }`), or for one run with `akit revi
 Check the result with `akit review config show [--project P] [--scenario S]`. In the app:
 Review → Roles / Scenarios (New Role…, Save…, Duplicate to Project…, Reset to Brain).
 
+`akit review MR-URL MR-URL… [flags]` reviews several linked merge requests (a frontend and its
+API in other repositories) as one change: the roles read every diff and check that the sides still
+fit, the first sets the profile, scenario and roles, each finding goes to drafts in its own merge
+request, and files of the others are named `@<project>/<path>`. `MR-URL@COMMIT` reports only on
+lines changed after that commit of the merge request; without it the review starts at the merge
+base. Use it when the user's change spans repositories, or asks to look only at the last commits.
+In the app: New Review… → Merge requests, one address per line, a commit after an address.
+
+## Weekly digest (GitLab and Azure DevOps)
+
+What happened in the user's GitLab project and Azure DevOps (work items and wiki): Pi reads them
+through the user's MCP servers (reading tools only), AKit builds every list, a model writes only
+short lines of meaning. Use it when the user asks what moved in their projects, what the team or
+one person did, or what changed in the wiki.
+
+```
+akit digest show last [--json | --log]             # the latest digest as Markdown; read it first:
+                                                   # it may already answer the question (free)
+akit digest list [--json]                          # past digests: id, state, period, credits
+akit digest run [--period since-last|last-week|last-sprint|current-sprint|last-month]
+                [--from YYYY-MM-DD --to YYYY-MM-DD] [--source NAME]… [--cap N] [--language CODE]
+                [--collect-model M] [--collect-thinking T] [--meaning-model M] [--meaning-thinking T]
+                [--yes] [--json]                   # without --yes: the plan and the last run's
+                                                   # credits, nothing runs
+akit digest person NAME [--period …] [--yes] [--json]   # one person's work (username, name or e-mail)
+akit digest settings [--json]                      # sources, starred people, models, cap, reminder
+akit digest check [--json]                         # which Pi MCP servers and reading tools each
+                                                   # source would use; no model
+akit digest reminder install|remove|status         # the weekly launchd reminder (it only asks)
+```
+
+A run costs credits (1 credit = 1,000 tokens; the cap stops Pi). Show the plan (the command
+without `--yes`) and ask the user before you add `--yes`. Sources and the reminder are set in
+the app (Digest → Digest Settings…) or `~/.akit/local/digest/settings.json`. A digest names
+colleagues and their work: it stays in `~/.akit/local/digest`; never copy it into the brain or
+a commit.
+
 ## Knowledge base
 
 Notes and maps of the systems around a repository: which service sends what to whom, which
@@ -454,7 +483,7 @@ commit per command:
 
 ```
 akit kb init [--world NAME]                        # create a base
-akit kb new-note AREA NAME [--kind K]              # a new note
+akit kb new-note AREA NAME [--group G] [--kind K]  # a new note (--group: in the folder G of the area)
 akit kb new-map AREA NAME                          # a new, empty map areas/AREA/maps/NAME.excalidraw
 akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json]
                                                    # note properties (kind=flow, owner=team-a,
