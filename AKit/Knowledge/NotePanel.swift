@@ -4,7 +4,7 @@ import AppKit
 import SwiftUI
 
 /// The open note tabs and the note in view: read (frontmatter and Markdown) or Edit, which saves
-/// the file at once; Properties (kind and fields), Copy, Paste, Open in Obsidian and Delete….
+/// the file at once; Properties (kind and fields), Copy, Paste, Export PDF…, Open in Obsidian and Delete….
 /// Ask Pi (K30) opens a chat about the note under it.
 struct NotePanel: View {
     @Environment(KnowledgeModel.self) private var model
@@ -93,6 +93,8 @@ struct NotePanel: View {
     @ViewBuilder private func otherButtons(_ entry: KnowledgeBase.NoteEntry) -> some View {
         Button("Open in Obsidian", systemImage: "arrow.up.forward.app") { model.openInObsidian() }
             .help("Open the note in Obsidian: the base is a plain Obsidian vault")
+        Button("Export PDF…", systemImage: "arrow.down.doc") { model.exportPDF() }
+            .help("Save the note as a PDF file, drawn as you read it, in A4 pages")
         Button("Rename…", systemImage: "character.cursor.ibeam") { model.renameRequest = entry.id }
             .help("Rename the note and every link to it in notes and maps, all or nothing, in one commit")
         Button("Delete…", systemImage: "trash") { model.deleteRequest = entry.id }
@@ -176,9 +178,9 @@ struct NotePanel: View {
                 }
                 HStack(spacing: 8) {
                     copyButtons.labelStyle(.iconOnly)
-                    moreMenu("More: Open in Obsidian, Rename…, Delete…") { otherButtons(entry) }
+                    moreMenu("More: Export PDF…, Open in Obsidian, Rename…, Delete…") { otherButtons(entry) }
                 }
-                moreMenu("More: Copy, Paste, Open in Obsidian, Rename…, Delete…") {
+                moreMenu("More: Copy, Paste, Export PDF…, Open in Obsidian, Rename…, Delete…") {
                     copyButtons
                     otherButtons(entry)
                 }

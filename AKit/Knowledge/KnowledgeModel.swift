@@ -824,6 +824,19 @@ final class KnowledgeModel {
         notice = "The note's text is copied."
     }
 
+    /// Export PDF…: the note as it reads, to a PDF file the person picks.
+    func exportPDF() {
+        guard let entry = noteEntry else { return }
+        do {
+            if let url = try NotePDFExport.export(title: entry.title, text: text) {
+                notice = "Saved \(url.lastPathComponent)."
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        } catch {
+            problem = "AKit couldn't save the PDF: \(error.localizedDescription)"
+        }
+    }
+
     func openInObsidian() {
         guard let base, let note, let url = Obsidian.openURL(note: base.noteFile(note)) else { return }
         if NSWorkspace.shared.urlForApplication(toOpen: url) == nil {
