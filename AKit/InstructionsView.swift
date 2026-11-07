@@ -235,7 +235,7 @@ struct InstructionsView: View {
         .overlay {
             if let view, view.entries.isEmpty {
                 ContentUnavailableView("No instruction files", systemImage: "doc.text",
-                                       description: Text("\(view.harness.displayName) loads no AGENTS.md or CLAUDE.md for this session."))
+                                       description: Text("\(view.harness.displayName) loads no AGENTS.md or CLAUDE.md for this session, and none is in the project's subfolders."))
             } else if view == nil {
                 ProgressView()
             }
@@ -286,7 +286,7 @@ struct InstructionsView: View {
         }
         let later = view.entries.filter { if case .onDemand = $0.status { true } else { false } }
         if !later.isEmpty {
-            result.append(FileGroup(title: "Loads Later", help: "Read only in some sessions: when the agent works on a matching file", entries: later))
+            result.append(FileGroup(title: "Loads Later", help: "Read only in some sessions: when the agent works on a matching file or in a subfolder", entries: later))
         }
         let skipped = view.entries.filter { if case .skipped = $0.status { true } else { false } }
         if !skipped.isEmpty {
