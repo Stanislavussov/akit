@@ -125,9 +125,10 @@ extension AKitCLI {
                                         (an empty folder, an Obsidian vault or a base already; the old
                                         one stays as it is); --move commits the pending edits, then
                                         moves the base there; --reset goes back to the default folder
-      akit kb new-note AREA NAME [--kind K] [--base PATH|WORLD]
-                                        For a person only. Create areas/AREA/NAME.md (# NAME, and
-                                        kind: K in the frontmatter) and commit it at once
+      akit kb new-note AREA NAME [--group G] [--kind K] [--base PATH|WORLD]
+                                        For a person only. Create areas/AREA/NAME.md (with --group,
+                                        areas/AREA/G/NAME.md; # NAME, and kind: K in the
+                                        frontmatter) and commit it at once
       akit kb add-folder FOLDER --area AREA [--name NAME] [--description T] [--yes] [--json] [--base PATH|WORLD]
                                         For a person only. A note for a folder on this Mac: another
                                         repository (kind service, repo: its origin remote) or a folder
@@ -281,15 +282,15 @@ extension AKitCLI {
                 """ + (KnowledgeBase.syncWarning(folder: base.root, home: env.homeDirectory).map { "\nWarning: \($0)" } ?? ""))
             return 0
         case "new-note":
-            let kind = args.value("--kind")
+            let kind = args.value("--kind"), group = args.value("--group")
             guard let area = args.positional(), let name = args.positional() else {
-                throw Failure(message: "Use: akit kb new-note AREA NAME [--kind K] [--base PATH|WORLD]")
+                throw Failure(message: "Use: akit kb new-note AREA NAME [--group G] [--kind K] [--base PATH|WORLD]")
             }
             try args.finish()
             if json { throw Failure(message: "--json doesn't go with akit kb new-note.") }
             let base = try await writable(chosen)
             let path: String
-            do { path = try await base.newNote(area: area, name: name, kind: kind, env: env) } catch { throw Failure(message: error.message) }
+            do { path = try await base.newNote(area: area, group: group, name: name, kind: kind, env: env) } catch { throw Failure(message: error.message) }
             out("Created \(FileWalk.tilde(base.root.appending(path: path), home: env.homeDirectory)), committed.")
             return 0
         case "add-folder":

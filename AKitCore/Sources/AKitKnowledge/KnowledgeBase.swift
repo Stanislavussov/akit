@@ -237,6 +237,12 @@ public struct KnowledgeBase: Sendable, Hashable {
         public let title: String
         /// The note's badges: `tags:` in its frontmatter (`KnowledgeTag`).
         public let tags: [String]
+        /// The group (K37) the note is in: the first folder under its area
+        /// (`payments/flows/x` → `flows`), nil for a note at the top of its area.
+        public var group: String? {
+            let parts = id.split(separator: "/")
+            return parts.count >= 3 ? String(parts[1]) : nil
+        }
 
         private enum CodingKeys: String, CodingKey { case id, area, path, kind, title, tags }
 
@@ -311,21 +317,50 @@ public struct KnowledgeBase: Sendable, Hashable {
                               maps: files.filter { $0.pathExtension == "excalidraw" }.map { Self.id(of: $0, areas: areasFolder) })
     }
 
-    /// Creates `areas/AREA/NAME.md` (the area too, when new) with a `# NAME` title and, with a kind,
-    /// a `kind:` frontmatter line, and commits it at once: one commit, only that file (P8).
+    /// The groups of an area (K37): its folders, except `maps/` (links there mean maps) and
+    /// hidden ones, sorted by name. An empty folder is a group too, until git loses it.
+    public func groups(area: String) -> [String] {
+        guard let folder = try? areaFolder(area) else { return [] }
+        return FileWalk.children(of: folder).filter(FileWalk.isDirectory).map { Self.nfc($0.lastPathComponent) }
+            .filter { Self.validName($0) && $0.lowercased() != "maps" }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// Creates the group folder `areas/AREA/NAME/` (K37). Nothing to commit, like a new area: its
+    /// first note commits it.
+    public func newGroup(area: String, name: String) throws(Failure) {
+        let folder = try areaFolder(area)
+        let name = Self.nfc(name.trimmingCharacters(in: .whitespaces))
+        guard Self.validName(name) else {
+            throw Failure(message: "“\(name)” can't be used: a group is one folder name, without /, and doesn't start with a dot.")
+        }
+        if name.lowercased() == "maps" { throw Failure(message: "maps is the folder of the area's maps; pick another name.") }
+        let url = folder.appending(path: name, directoryHint: .isDirectory)
+        if FileManager.default.fileExists(atPath: url.path) { throw Failure(message: "The group \(area)/\(name) exists already.") }
+        do { try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false) } catch {
+            throw Failure(message: "Couldn't create areas/\(area)/\(name): \(error.localizedDescription)")
+        }
+    }
+
+    /// Creates `areas/AREA/NAME.md` (or, with a group, `areas/AREA/GROUP/NAME.md`; the area and
+    /// group too, when new) with a `# NAME` title and, with a kind, a `kind:` frontmatter line, and
+    /// commits it at once: one commit, only that file (P8).
     @discardableResult
-    public func newNote(area: String, name: String, kind: String?, env: HarnessEnvironment) async throws(Failure) -> String {
+    public func newNote(area: String, group: String? = nil, name: String, kind: String?, env: HarnessEnvironment) async throws(Failure) -> String {
         let area = Self.nfc(area.trimmingCharacters(in: .whitespaces)), name = Self.nfc(name.trimmingCharacters(in: .whitespaces))
-        for (what, value) in [("An area", area), ("A note name", name)] where !Self.validName(value) {
+        let group = group.map { Self.nfc($0.trimmingCharacters(in: .whitespaces)) }.flatMap { $0.isEmpty ? nil : $0 }
+        for (what, value) in [("An area", area), ("A note name", name), ("A group", group ?? "x")] where !Self.validName(value) {
             throw Failure(message: "“\(value)” can't be used: \(what.lowercased()) is one folder or file name, without /, and doesn't start with a dot.")
         }
+        if group?.lowercased() == "maps" { throw Failure(message: "A note can't go into a maps/ folder: links there mean maps.") }
         if let kind, kind.isEmpty || kind.contains(where: { $0.isWhitespace || $0 == ":" || $0 == "#" }) {
             throw Failure(message: "“\(kind)” can't be a kind: one word, like service, flow or team.")
         }
         let stem = name.hasSuffix(".md") ? String(name.dropLast(3)) : name
-        let path = "areas/\(area)/\(stem).md"
+        let id = [area, group, stem].compactMap(\.self).joined(separator: "/")
+        let path = "areas/\(id).md"
         let file = root.appending(path: path)
-        if FileManager.default.fileExists(atPath: file.path) { throw Failure(message: "The note \(area)/\(stem) exists already.") }
+        if FileManager.default.fileExists(atPath: file.path) { throw Failure(message: "The note \(id) exists already.") }
         let text = (kind.map { "---\nkind: \($0)\n---\n" } ?? "") + "# \(stem)\n"
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -334,7 +369,7 @@ public struct KnowledgeBase: Sendable, Hashable {
             throw Failure(message: "Couldn't write \(path): \(error.localizedDescription)")
         }
         do {
-            try await KnowledgeGit(base: root, env: env).commit(paths: [path], message: "Add note \(area)/\(stem)")
+            try await KnowledgeGit(base: root, env: env).commit(paths: [path], message: "Add note \(id)")
         } catch {
             throw Failure(message: "\(path) was written, but not committed: \(error.message)")
         }
@@ -375,12 +410,17 @@ public struct KnowledgeBase: Sendable, Hashable {
         return path
     }
 
-    /// Moves a note, a map (`.excalidraw`), or with `area` a whole area, to the Trash and commits
-    /// the removal at once: one commit, only that path (P8).
-    public func moveToTrash(note id: String? = nil, area: String? = nil, map: String? = nil, env: HarnessEnvironment,
-                            trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
+    /// Moves a note, a map (`.excalidraw`), a group (`area/group`, K36) with its notes, or with
+    /// `area` a whole area, to the Trash and commits the removal at once: one commit, only that
+    /// path (P8).
+    public func moveToTrash(note id: String? = nil, area: String? = nil, map: String? = nil, group: String? = nil,
+                            env: HarnessEnvironment, trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
         let path: String, label: String
-        if let id {
+        let groupParts = group?.split(separator: "/", omittingEmptySubsequences: false).map(String.init) ?? []
+        if let group {
+            guard groupParts.count == 2, groupParts.allSatisfy(Self.validName) else { throw Failure(message: "“\(group)” is no group: area/group.") }
+            (path, label) = ("areas/\(group)", "group \(group)")
+        } else if let id {
             (path, label) = (notePath(id), "note \(id)")
         } else if let map {
             (path, label) = ("areas/\(map).excalidraw", "map \(map)")

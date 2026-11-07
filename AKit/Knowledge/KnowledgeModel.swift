@@ -37,6 +37,16 @@ final class KnowledgeModel {
     }
     /// The defaults key `expandedAreas` was read from: the base's folder.
     private var expandedKey: String?
+    /// The groups of each space (K37): its folders but `maps/`, read on reload.
+    private(set) var groupsByArea: [String: [String]] = [:]
+    /// The groups folded in the note list (`area/group`), remembered per base. A group is unfolded
+    /// until folded; opening a note in it unfolds it.
+    var collapsedGroups: Set<String> = [] {
+        didSet {
+            guard let expandedKey, DebugSnapshot.options == nil, collapsedGroups != oldValue else { return }
+            UserDefaults.standard.set(collapsedGroups.sorted(), forKey: expandedKey + ".collapsedGroups")
+        }
+    }
     /// The map in view; nil shows the note panel alone.
     private(set) var map: String?
     /// Open map tabs (ids), in the order they were opened. The tab bar shows those of the area
@@ -103,9 +113,14 @@ final class KnowledgeModel {
     /// Create Note… of a broken link: New Note… filled in with its area and name.
     struct NewNoteRequest: Identifiable {
         let area: String
+        var group: String? = nil
         let name: String
-        var id: String { "\(area)/\(name)" }
+        var id: String { [area, group, name].compactMap(\.self).joined(separator: "/") }
     }
+    /// New Group… of a space (K37): the space it goes into.
+    var newGroupRequest: String?
+    /// Delete… of a group: `area/group`.
+    var groupDeleteRequest: String?
     var newNoteRequest: NewNoteRequest?
 
     // Search, index, watch (3.3)
@@ -300,6 +315,10 @@ final class KnowledgeModel {
         let names = Set(areas.map(\.name))
         if !expandedAreas.isSubset(of: names) { expandedAreas.formIntersection(names) }
         allNotes = (try? base.notes()) ?? []
+        groupsByArea = Dictionary(uniqueKeysWithValues: areas.map { area in
+            let found = Set(base.groups(area: area.name)).union(allNotes.filter { $0.area == area.name }.compactMap(\.group))
+            return (area.name, found.sorted { $0.localizedStandardCompare($1) == .orderedAscending })
+        })
         notes = allNotes.filter { $0.area == area }
         targets = base.linkTargets()
         maps = Self.maps(of: area, in: targets)
@@ -338,6 +357,38 @@ final class KnowledgeModel {
 
     /// The maps of one space, for its group in the note list.
     func maps(in area: String) -> [String] { Self.maps(of: area, in: targets) }
+
+    /// The groups of one space (K37), by name.
+    func groups(in area: String) -> [String] { groupsByArea[area] ?? [] }
+
+    /// Folds or unfolds a group in the note list.
+    func toggle(group: String, in area: String) {
+        let key = area + "/" + group
+        if collapsedGroups.contains(key) { collapsedGroups.remove(key) } else { collapsedGroups.insert(key) }
+    }
+
+    /// New Group…: the folder `areas/AREA/NAME/`, unfolded.
+    func newGroup(area: String, name: String) -> Bool {
+        guard let base else { return false }
+        do {
+            try base.newGroup(area: area, name: name)
+            reload()
+            expandedAreas.insert(area)
+            return true
+        } catch {
+            problem = error.message
+            return false
+        }
+    }
+
+    /// A note dropped on a group (or on its space, for the top of the space): a rename to
+    /// `area/group/name`, its links fixed in the same commit.
+    func move(note id: String, toArea area: String, group: String?) async {
+        let stem = id.split(separator: "/").last.map(String.init) ?? id
+        let target = [area, group, stem].compactMap(\.self).joined(separator: "/")
+        guard target != id, allNotes.contains(where: { $0.id == id }) else { return }
+        if await rename(id, to: target), let group { collapsedGroups.remove(area + "/" + group) }
+    }
 
     /// Move Up / Move Down of a space (K31): its place in `.spaces.json`, committed at once.
     func move(space name: String, by offset: Int) async {
@@ -379,6 +430,7 @@ final class KnowledgeModel {
         } else {
             expandedAreas = Set([area].compactMap(\.self))
         }
+        collapsedGroups = DebugSnapshot.options != nil ? [] : Set(UserDefaults.standard.stringArray(forKey: key + ".collapsedGroups") ?? [])
         expandedKey = key
     }
 
@@ -750,6 +802,7 @@ final class KnowledgeModel {
         sectionTarget = nil
         if entry.area != area { choose(area: entry.area) }
         expandedAreas.insert(entry.area)
+        if let group = entry.group { collapsedGroups.remove(entry.area + "/" + group) }
         if !tabs.contains(id) { tabs.append(id) }
         note = id
         readNote()
@@ -913,10 +966,10 @@ final class KnowledgeModel {
         }
     }
 
-    func newNote(area: String, name: String, kind: String?) async -> Bool {
+    func newNote(area: String, group: String? = nil, name: String, kind: String?) async -> Bool {
         guard let base else { return false }
         do {
-            let path = try await base.newNote(area: area, name: name, kind: kind, env: env)
+            let path = try await base.newNote(area: area, group: group, name: name, kind: kind, env: env)
             reload()
             open(String(path.dropFirst("areas/".count).dropLast(".md".count)))
             return true
@@ -1048,12 +1101,12 @@ final class KnowledgeModel {
     }
 
     /// Delete…: the note (or the whole area) goes to the Trash, and its removal is committed.
-    func delete(note id: String? = nil, area: String? = nil) async {
+    func delete(note id: String? = nil, area: String? = nil, group: String? = nil) async {
         guard let base else { return }
         do {
-            try await base.moveToTrash(note: id, area: area, env: env)
+            try await base.moveToTrash(note: id, area: area, group: group, env: env)
             if let id { tabs.removeAll { $0 == id } }
-            if let area { tabs.removeAll { $0.hasPrefix(area + "/") } }
+            if let folder = area ?? group { tabs.removeAll { $0.hasPrefix(folder + "/") } }
             if note.map({ !tabs.contains($0) }) == true { note = nil }
             reload()
             notice = "Moved to the Trash."

@@ -454,7 +454,7 @@ commit per command:
 
 ```
 akit kb init [--world NAME]                        # create a base
-akit kb new-note AREA NAME [--kind K]              # a new note
+akit kb new-note AREA NAME [--group G] [--kind K]  # a new note (--group: in the folder G of the area)
 akit kb new-map AREA NAME                          # a new, empty map areas/AREA/maps/NAME.excalidraw
 akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json]
                                                    # note properties (kind=flow, owner=team-a,
