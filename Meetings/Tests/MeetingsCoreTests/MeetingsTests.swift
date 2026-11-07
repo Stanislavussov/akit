@@ -1056,16 +1056,30 @@ final class Closed: @unchecked Sendable {
         #expect(abs(done.costUSD - 0.07) < 1e-9)  // 0.04 failed + 2 × 0.01 + summary 0.01
     }
 
+    @Test func unreadablePieceIsTriedAgainBeforeTheNextOne() async throws {
+        let store = TempRoot().store
+        let meeting = try ProcessorTests().meetingWithPieces(store, count: 2)
+        let one = chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"ahoj"}]}"#, cost: 0.01)
+        let bad = chat(#"{"segments":[{"text":"x"}}"#, cost: 0.01)
+        let summary = chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)
+        // Both pieces at once: unreadable; piece 1: fine; piece 2: unreadable, then fine.
+        let server = FakeServer([(200, bad), (200, one), (200, bad), (200, one), (200, summary)])
+        let done = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
+        #expect(server.requests.count == 5)
+        #expect(done.state == .done && done.segments.map(\.text) == ["ahoj", "ahoj"])
+    }
+
     @Test func unreadablePaidAnswerStillCosts() async throws {
         let store = TempRoot().store
         let meeting = try ProcessorTests().meetingWithPieces(store, count: 1)
-        let server = FakeServer([(200, chat("not json at all", cost: 0.04))])
-        await #expect(throws: PaidFailure.self) {
-            try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
-        }
-        let back = store.load(meeting.id)
-        #expect(back?.state == .failed && abs((back?.costUSD ?? 0) - 0.04) < 1e-9)
-        #expect(back?.failure?.contains("JSON") == true)
+        // Three unreadable answers: the piece becomes a note line and the meeting still ends.
+        let bad = chat("not json at all", cost: 0.04)
+        let summary = chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)
+        let server = FakeServer([(200, bad), (200, bad), (200, bad), (200, summary)])
+        let back = try await MeetingProcessor(store: store, settings: MeetingsSettings(), client: server.client).run(meeting.id)
+        #expect(server.requests.count == 4)
+        #expect(back.state == .done && abs(back.costUSD - 0.13) < 1e-9)
+        #expect(back.segments.count == 1 && back.segments[0].speaker == "Note" && back.segments[0].text.hasPrefix("[Not transcribed: 0:00"))
         let asked = FakeServer([(200, chat(#"{"x":1}"#, cost: 0.01))])
         do {
             _ = try await MeetingAsk(client: asked.client, settings: MeetingsSettings()).ask("?", context: ("", []))
