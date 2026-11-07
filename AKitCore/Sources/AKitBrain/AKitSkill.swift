@@ -226,6 +226,25 @@ core or the home folder when a project fails. Blocked lines: a project with its 
 first), a claude.ai, plugin or Pi package skill (use `akit skills set` instead). For 3+
 projects suggest a layer instead.
 
+## Port a Claude Code skill to Pi
+
+When the user wants a Claude Code skill (an OMC or other plugin skill too) in Pi:
+
+```sh
+akit skills port SKILL [--to global|project PATH] [--model HARNESS[:MODEL]] [--no-model] [--json] [--yes]
+akit skills port --check-only PATH [--json]
+```
+
+SKILL is a folder or a skill name Claude Code sees. It cuts the frontmatter to Pi's fields,
+rewrites /plugin:x, .claude and .omc paths and tool names, copies OMC role prompts into
+references/, then one model call (the translation model unless `--model`; `--no-model` skips
+it) rewrites subagents, questions, task lists and MCP state, with one more call when leftovers
+remain. It prints the check: pass, warnings (leftovers by file:line, lost numbers or headings)
+or fail (exit 1). With `--to` it shows the SKILL.md diff; show it to the user, and after a yes
+run again with `--yes` (the old folder goes to the Trash; a failed check is never written).
+`--check-only PATH` checks an existing Pi skill folder. `--json` gives
+{name, verdict, report, changes, files, skillMd, target, installed}.
+
 ## MCP servers
 
 When an MCP server doesn't work in Claude Code or Pi, ask the harness itself:

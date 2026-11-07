@@ -16,6 +16,14 @@ public enum SkillPortModel {
         OutputTranslation.agent(settings: settings, env: env)
     }
 
+    /// The account check for `agent`, and whether the policy lets the user's setup go there.
+    public static func gate(agent: LabAgent, env: HarnessEnvironment) async throws -> SendGate {
+        let gate = try await SendGate.open(agent: agent, env: env)
+        let decision = gate.decide(.code(agent.harness))
+        guard decision.allowed else { throw SkillPort.Failure("Not sent: \(decision.reason)") }
+        return gate
+    }
+
     public struct Outcome: Sendable {
         public var draft: SkillPort.Draft
         public var report: SkillPortCheck.Report
