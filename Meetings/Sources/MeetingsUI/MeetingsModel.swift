@@ -638,32 +638,28 @@ public final class MeetingsModel {
     }
 
     /// Save to Knowledge…: the whole summary as a new note, with the meeting's date, people and
-    /// tags on top. No model call.
-    public func saveToKnowledge(area: String, name: String) async -> Bool {
+    /// tags on top; with `transcript` the transcript as a second note, each linking the other.
+    /// No model call.
+    public func saveToKnowledge(area: String, name: String, transcript: Bool = true) async -> Bool {
         guard let saveNote = links.saveNote, var meeting = fresh else { return false }
-        let text = Self.knowledgeNote(meeting, name: name, summary: store.summary(meeting.id))
+        let withTranscript = transcript && !meeting.segments.isEmpty
+        let transcriptName = Transcriber.transcriptTitle(name)
         do {
-            let id = try await saveNote(area, name, text)
+            if withTranscript {
+                _ = try await saveNote(area, transcriptName, Transcriber.knowledgeTranscript(meeting, name: name, summaryNote: "\(area)/\(name)"))
+            }
+            let id = try await saveNote(area, name, Transcriber.knowledgeNote(meeting, name: name, summary: store.summary(meeting.id),
+                                                                               transcriptNote: withTranscript ? "\(area)/\(transcriptName)" : nil))
             meeting = store.load(meeting.id) ?? meeting
             try? store.markExport(&meeting, "knowledge")
             updated(meeting)
-            notice = "Saved to the knowledge base as \(id)."
+            notice = "Saved to the knowledge base as \(id)" + (withTranscript ? ", with its transcript." : ".")
             MeetingsLog.info(.ui, "\(meeting.id): to the knowledge base")
             return true
         } catch {
             problem = "Could not save the meeting to the knowledge base: " + ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
             return false
         }
-    }
-
-    /// The note's text: frontmatter, title, a line with date and people, the summary.
-    nonisolated static func knowledgeNote(_ meeting: Meeting, name: String, summary: String) -> String {
-        let date = meeting.started.formatted(date: .long, time: .shortened)
-        let people = meeting.speakerKeys.map(meeting.speakerName).filter { !$0.isEmpty }
-        var head = ["---", "kind: meeting"]
-        if !meeting.tagList.isEmpty { head.append("tags: [\(meeting.tagList.map { "\"\($0)\"" }.joined(separator: ", "))]") }
-        head += ["---", "# \(name)", "", "*\(date)*" + (people.isEmpty ? "" : " · " + people.joined(separator: ", ")), ""]
-        return head.joined(separator: "\n") + "\n" + summary
     }
 
     /// Propose to Knowledge…: one text call over the summary and the transcript with the base's
