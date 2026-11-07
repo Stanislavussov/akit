@@ -444,6 +444,11 @@ struct MeetingDetail: View {
                 } description: {
                     Text("The summary, decisions and tasks appear here after the transcription. For your own notes now, add a tab with +.")
                 } actions: {
+                    // Each piece's lines are saved as soon as it is transcribed.
+                    if !meeting.segments.isEmpty {
+                        Button("Show Transcript (\(meeting.segments.count) lines so far)") { model.show(tab: MeetingsModel.transcriptTab) }
+                            .buttonStyle(.borderedProminent)
+                    }
                     Button("New Tab…") { model.tabNameRequest = .init(old: nil) }
                 }
             } else if let page = model.page {
@@ -855,9 +860,12 @@ struct ProgressStrip: View {
                     .help("Pieces of 5 minutes done")
             }
             if progress.left(at: Date()) != nil {
-                TimelineView(.periodic(from: .now, by: 30)) { context in
+                TimelineView(.periodic(from: .now, by: 10)) { context in
                     let left = progress.left(at: context.date) ?? 0
-                    Text("\(ProcessingEstimate.text(left)) left, ~\(context.date.addingTimeInterval(left).formatted(date: .omitted, time: .shortened))")
+                    let running = ProcessingEstimate.text(context.date.timeIntervalSince(progress.since ?? context.date))
+                    Text(progress.overEstimate(at: context.date)
+                         ? "Slower than expected, running \(running)"
+                         : "\(ProcessingEstimate.text(left)) left, ~\(context.date.addingTimeInterval(left).formatted(date: .omitted, time: .shortened))")
                         .font(.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
                 }
                 .help("A rough guess: the pieces left times the time one piece takes (in this run, or in earlier runs on this Mac), plus the summary")

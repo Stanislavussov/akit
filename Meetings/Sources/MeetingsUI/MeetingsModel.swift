@@ -1290,6 +1290,12 @@ public struct MeetingProgress: Equatable, Sendable {
     public var summaryStarted: Date?
     public var summaryLeft = true
 
+    /// Whether the pieces take longer than the estimate: the guess ran out with pieces left.
+    public func overEstimate(at date: Date) -> Bool {
+        guard summaryStarted == nil, let clock, !paused, piecesLeft > 0 else { return false }
+        return clock.left(piecesLeft: piecesLeft, perPiece: perPiece, at: date) <= 0
+    }
+
     /// Seconds left at `date`: the pieces left, then the summary.
     public func left(at date: Date) -> TimeInterval? {
         if let summaryStarted { return max(0, ProcessingEstimate.summarySeconds - date.timeIntervalSince(summaryStarted)) }
