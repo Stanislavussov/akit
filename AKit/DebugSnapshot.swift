@@ -25,7 +25,7 @@ import SwiftUI
 /// `--tab duplicates` turns the Duplicates filter on and selects `--select <folder name>`; `--tab resolve` opens its Resolve Duplicate…;
 /// `--tab global` opens Move to Global… for the project skill `--select <folder name>` on the Skills screen;
 /// `--tab remove` opens Remove Everywhere… for `--select <folder name>` on the Skills screen;
-/// `--tab move` opens Move to Project… for the global skill `--select <folder name>` (`move-check`, `move-preview` go on to those pages);
+/// `--tab port` opens Port to Pi… for the Claude Code skill `--select <folder name>` (`port-report` runs it without a model); `--tab move` opens Move to Project… for the global skill `--select <folder name>` (`move-check`, `move-preview` go on to those pages);
 /// `--settings` shows the Settings view in the main window; `--guide <section id>` the guide window's
 /// view, opened at that section (`--query` fills its search field, which searches every guide and screen);
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;

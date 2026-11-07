@@ -700,6 +700,7 @@ AKit запоминает выбор на этом Mac.
 - Имя и описание скилла. Метка **Read-only** с замком значит, что AKit этот скилл не меняет.
 - **Move to Global…**: есть у скилла проекта. Делает его глобальным.
 - **Move to Project…**: есть у глобального скилла. Переносит его в проекты.
+- **Port to Pi…**: есть у скилла Claude Code, и у скилла из плагина тоже. Переписывает скилл для Pi и проверяет результат. В окне выберите, куда ставить (**Global** или **Project**), и модель. Переключатель **Rewrite with a model** выключен: работают только правила, модели ничего не уходит. Нажмите **Run**. Окно покажет проверку: **Check passed**, **Check: warnings** (остатки Claude Code по файлу и строке, потерянные числа или заголовки) или **Check failed** (такой скилл не ставится). Ниже идут список изменений и разница `SKILL.md`. **Install…** ставит скилл после подтверждения; старая папка уходит в Корзину.
 - **Edit in Brain** и **Show in Brain**: есть у скилла, который AKit поставил из brain. **Edit in Brain** есть, только если установлен VS Code.
 - **Open in VS Code**: есть у остальных скиллов, если VS Code установлен.
 - Кнопка с папкой: **Show in Finder**.
@@ -1202,12 +1203,15 @@ akit stats skill ИМЯ
 akit move skill ИМЯ --to ПРОЕКТ[,ПРОЕКТ…]
 akit move skill ИМЯ --to-global [--from ПРОЕКТ[,ПРОЕКТ…]] [--mode auto|manual]
 akit remove skill ИМЯ --everywhere
+akit skills port ИМЯ [--to global|project ПАПКА] [--no-model] [--yes]
+akit skills port --check-only ПАПКА
 ```
 
 - `akit skills state` печатает скиллы и их состояние у агентов. Под строкой скилла идут те же предупреждения, что в карточке, со знаком `!`.
 - `akit stats skill ИМЯ` показывает вызовы скилла по проектам. Это те же числа, что на первом шаге **Move to Project…**.
 - `akit move skill ИМЯ --to …` делает то же, что **Move to Project…**.
 - `akit move skill ИМЯ --to-global` делает то же, что **Move to Global…**. Без `--from` скилл уходит из всех проектов, в ответах которых он есть.
+- `akit skills port ИМЯ` делает то же, что **Port to Pi…**. Без `--yes` он только показывает проверку и разницу. `--check-only ПАПКА` проверяет готовый скилл Pi.
 - `akit remove skill ИМЯ --everywhere` печатает список мест, как **Remove Everywhere…**. `--yes` убирает, `--library` удаляет и `skills/ИМЯ` из brain.
 
 #### Связи с другими экранами

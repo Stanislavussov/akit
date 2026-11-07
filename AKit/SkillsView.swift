@@ -24,6 +24,7 @@ struct SkillsView: View {
     @State private var importing: Skill?
     /// A global skill to move into projects (sheet).
     @State private var moving: Skill?
+    @State private var porting: Skill?
     /// Remove Everywhere… of this skill name (sheet).
     @State private var removing: RemovalRequest?
     /// Move to Global… of a project's skill (sheet).
@@ -60,6 +61,7 @@ struct SkillsView: View {
                     SkillDetailView(skill: skill, link: model.brainLinks[skill.id],
                                     onDelete: { pendingDelete = skill }, onImport: { importing = skill },
                                     onMove: canMove(skill) ? { moving = skill } : nil,
+                                    onPort: canPort(skill) ? { porting = skill } : nil,
                                     onRemoveEverywhere: { removeEverywhere(skill) },
                                     onMoveToGlobal: globalRequest(skill).map { request in { globalizing = request } },
                                     duplicate: duplicate(of: skill),
@@ -164,6 +166,7 @@ struct SkillsView: View {
             // Snapshots: `--tab builtin` opens AKit Skills….
             if DebugSnapshot.options?.tab == "builtin", builtIn != nil, !showingBuiltIn { showingBuiltIn = true }
         }
+        .sheet(item: $porting) { skill in PortToPiSheet(skill: skill) }
         .sheet(item: $moving) { skill in MoveSkillSheet(name: Self.moveName(skill, link: model.brainLinks[skill.id])) }
         .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name, keep: $0.keep) }
         .modifier(DisablePluginAlert(plan: $disabling, problem: $deleteError))
@@ -201,6 +204,13 @@ struct SkillsView: View {
                canMove(skill) {
                 selection = skill.id
                 moving = skill
+                return
+            }
+            // Snapshots: `--tab port` (or port-report) opens Port to Pi… for the Claude Code skill `--select <folder name>`.
+            if let options = DebugSnapshot.options, options.tab?.hasPrefix("port") == true, porting == nil, model.lastScan != nil,
+               let skill = model.skills.first(where: { canPort($0) && $0.folder.lastPathComponent == options.select }) {
+                selection = skill.id
+                porting = skill
                 return
             }
             // Snapshots: `--tab global` opens Move to Global… for the project skill `--select <folder name>`.
@@ -292,6 +302,7 @@ struct SkillsView: View {
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([skill.file]) }
             if canMove(skill) { Button("Move to Project…") { moving = skill } }
             if let request = globalRequest(skill) { Button("Move to Global…") { globalizing = request } }
+            if canPort(skill) { Button("Port to Pi…") { porting = skill } }
             Button("Remove Everywhere…") { removeEverywhere(skill) }
             if let request = resolveRequest(skill) { Button("Resolve Duplicate…") { removing = request } }
             Divider()
@@ -307,6 +318,7 @@ struct SkillsView: View {
             }
             if canMove(skill) { Button("Move to Project…") { moving = skill } }
             if let request = globalRequest(skill) { Button("Move to Global…") { globalizing = request } }
+            if canPort(skill) { Button("Port to Pi…") { porting = skill } }
             Divider()
             SkillSwitchMenu(skill: skill)
             SkillInvocationMenu(skill: skill)
@@ -337,6 +349,11 @@ struct SkillsView: View {
             skill.isReadOnly ? "Read-only" : "",
             "Description: \(skill.description.prefix(300))",
         ]
+    }
+
+    /// A Claude Code skill folder (plugin skills too) that Port to Pi… can rewrite for Pi.
+    private func canPort(_ skill: Skill) -> Bool {
+        skill.visibleTo.contains(.claudeCode) && !skill.isSingleFile
     }
 
     /// A global skill AKit can move into projects (Move to Project…): the brain needed, not a
@@ -595,6 +612,8 @@ private struct SkillDetailView: View {
     let onImport: () -> Void
     /// Move to Project…; nil when the skill can't move (not global, read-only).
     let onMove: (() -> Void)?
+    /// Port to Pi…; nil when the skill isn't a Claude Code skill folder.
+    let onPort: (() -> Void)?
     /// Remove Everywhere…: every place a harness loads a skill of this name from.
     let onRemoveEverywhere: () -> Void
     /// Move to Global…; nil when the skill isn't a project's own or from its answers.
@@ -642,6 +661,10 @@ private struct SkillDetailView: View {
                 if let onMoveToGlobal {
                     Button("Move to Global…", systemImage: "arrow.up.backward.square", action: onMoveToGlobal)
                         .help("Move this project's skill into the core layer, so every session on this Mac gets it, then out of the project")
+                }
+                if let onPort {
+                    Button("Port to Pi…", systemImage: "arrow.triangle.2.circlepath", action: onPort)
+                        .help("Rewrite this Claude Code skill for Pi, check the result, then install it")
                 }
                 if let onMove {
                     Button("Move to Project…", systemImage: "arrow.down.forward.square", action: onMove)
