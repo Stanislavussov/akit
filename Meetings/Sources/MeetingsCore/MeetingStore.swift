@@ -362,7 +362,14 @@ public struct PaidFailure: Error, LocalizedError {
 
     /// Runs `parse`; a failure carries the completion's cost.
     public static func parse<T>(_ completion: Completion, _ parse: () throws -> T) throws -> T {
-        do { return try parse() } catch { throw PaidFailure(cost: completion.cost, underlying: error) }
+        do { return try parse() } catch {
+            // Only sizes and shape, never the answer's text.
+            let text = completion.text
+            let shape = "\(text.count) chars, \(text.filter { $0 == "{" }.count) '{' / \(text.filter { $0 == "}" }.count) '}', starts with JSON: \(text.drop(while: \.isWhitespace).first == "{" || text.hasPrefix("```"))"
+            let cutOff = completion.finishReason == "length" ? " The answer was cut off at the model's output limit." : ""
+            MeetingsLog.error(.openrouter, "answer not readable: \((error as? LocalizedError)?.errorDescription ?? "\(error)"); finish reason \(completion.finishReason ?? "none"), \(completion.completionTokens) output tokens, \(shape).\(cutOff)")
+            throw PaidFailure(cost: completion.cost, underlying: error)
+        }
     }
 
     /// The cost a thrown error carries; 0 for others.

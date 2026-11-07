@@ -1,5 +1,6 @@
 import Foundation
 import os
+import AppKit
 
 /// The Meetings log: each line goes to the macOS log (subsystem `dev.ussov.meetings`, so
 /// `log show --predicate 'subsystem == "dev.ussov.meetings"'` finds it) and to
@@ -26,6 +27,12 @@ public enum MeetingsLog {
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
+
+    /// Opens the log file in the app that shows logs (Console), creating it when it is missing.
+    public static func open() {
+        if !FileManager.default.fileExists(atPath: file.path) { info(.ui, "log opened") }
+        NSWorkspace.shared.open(file)
+    }
 
     public static func info(_ area: Area, _ message: String) { write(area, "info", message) }
     public static func error(_ area: Area, _ message: String) { write(area, "error", message) }
