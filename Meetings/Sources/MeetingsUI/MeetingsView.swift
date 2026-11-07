@@ -1,6 +1,8 @@
 import AppKit
 import MeetingsCore
 import SwiftUI
+import UniformTypeIdentifiers
+import MeetingsAudio
 
 /// The editor of Summary and the own tabs, given by the host app (M17): AKit passes its Crepe
 /// editor, `Meetings.app` the plain one. `save(key, text)` writes a page; the page's key says
@@ -59,6 +61,10 @@ public struct MeetingsView: View {
         .toolbar {
             ToolbarItem { RecordButton(model: model) }
             ToolbarItem {
+                Button("Import Audio…", systemImage: "square.and.arrow.down") { model.showImporter = true }
+                    .help("Transcribe an audio or video file from another app: WAV, MP3, M4A, FLAC, MP4, MOV …; OGG, Opus, WebM, MKV with ffmpeg. You can also drop files here.")
+            }
+            ToolbarItem {
                 Button("Ask…", systemImage: "bubble.left.and.text.bubble.right") { model.openAsk() }
                     .help("Ask a question about your meetings: what was decided, who does what")
             }
@@ -88,6 +94,7 @@ public struct MeetingsView: View {
                             isPresented: Binding(get: { model.removeTabRequest != nil }, set: { if !$0 { model.removeTabRequest = nil } })) {
             Button("Move to Trash", role: .destructive) { if let tab = model.removeTabRequest { model.removeTab(tab) } }
         }
+        .modifier(AudioDrop(model: model))
         .task { await model.load() }
     }
 
@@ -185,7 +192,7 @@ struct MeetingList: View {
                 Section(day.day.formatted(.dateTime.weekday(.wide).day().month(.wide))) {
                     ForEach(day.meetings) { meeting in
                         MeetingRow(meeting: meeting, recording: model.isLive(meeting.id), busy: model.processing.contains(meeting.id),
-                                   hit: model.hit(meeting.id))
+                                   importing: model.importing[meeting.id] != nil, hit: model.hit(meeting.id))
                             .tag(meeting.id)
                             .contextMenu {
                                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.folder(meeting.id)]) }
@@ -199,7 +206,7 @@ struct MeetingList: View {
         .overlay {
             if model.meetings.isEmpty {
                 ContentUnavailableView("No meetings yet", systemImage: "waveform",
-                                       description: Text("Record starts a recording of the microphone and the sound of the Mac."))
+                                       description: Text("Record starts a recording of the microphone and the sound of the Mac. Import Audio…, or a file dropped here, transcribes audio from another app."))
             } else if days.isEmpty {
                 ContentUnavailableView.search(text: model.searchText)
             }
@@ -259,6 +266,7 @@ struct MeetingRow: View {
     let meeting: Meeting
     let recording: Bool
     let busy: Bool
+    var importing = false
     var hit: MeetingSearch.Hit?
 
     var body: some View {
@@ -293,6 +301,7 @@ struct MeetingRow: View {
 
     var stateText: String {
         if recording { return "recording" }
+        if importing { return "importing" }
         if busy { return "transcribing" }
         switch meeting.state {
         case .recording: return "not stopped"
@@ -475,6 +484,7 @@ struct MeetingDetail: View {
     /// What the meeting waits for, when it is not done.
     private func status(_ meeting: Meeting) -> String? {
         if model.isLive(meeting.id) { return "Recording. The summary and the transcript come after Stop." }
+        if let seconds = model.importing[meeting.id] { return "Importing the audio: \(lengthText(seconds)) read… The transcript comes next." }
         if model.processing.contains(meeting.id), let local = model.localStatus[meeting.id] { return Self.localText(local) }
         if model.summarizingAgain.contains(meeting.id) { return "Writing the summary again…" }
         if model.processing.contains(meeting.id) || meeting.state == .transcribing {
@@ -850,5 +860,50 @@ struct ProgressStrip: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.accentColor.opacity(0.08))
+    }
+}
+
+/// M33: Import Audio… and files dropped anywhere on the screen.
+struct AudioDrop: ViewModifier {
+    @Bindable var model: MeetingsModel
+    @State private var targeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .fileImporter(isPresented: $model.showImporter, allowedContentTypes: AudioImport.contentTypes, allowsMultipleSelection: true) { result in
+                if case .success(let urls) = result { model.importAudio(urls) }
+            }
+            .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
+                Task { await drop(providers) }
+                return true
+            }
+            .overlay { if targeted { hint } }
+    }
+
+    private var hint: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [8]))
+            .overlay {
+                Label("Drop to transcribe", systemImage: "waveform.badge.plus")
+                    .font(.title2)
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+            .padding(6)
+            .allowsHitTesting(false)
+    }
+
+    private func drop(_ providers: [NSItemProvider]) async {
+        var urls: [URL] = []
+        for provider in providers {
+            guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier),
+                  let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) else { continue }
+            if AudioImport.extensions.contains(url.pathExtension.lowercased()) { urls.append(url) }
+        }
+        if urls.isEmpty {
+            model.problem = "Drop an audio or video file: " + AudioImport.extensions.joined(separator: ", ") + "."
+        } else {
+            model.importAudio(urls)
+        }
     }
 }
