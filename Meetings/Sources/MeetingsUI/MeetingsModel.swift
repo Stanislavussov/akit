@@ -334,6 +334,73 @@ public final class MeetingsModel {
         }
     }
 
+    // MARK: Import (M33)
+
+    /// Meetings being imported now → seconds read so far (the list shows it).
+    public var importing: [String: TimeInterval] = [:]
+    public var showImporter = false
+
+    /// Each file becomes its own meeting: the title is the file's name, the start is when the
+    /// file was made, and then it is transcribed as a recording.
+    public func importAudio(_ urls: [URL]) {
+        for url in urls {
+            let access = url.startAccessingSecurityScopedResource()
+            let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+            let started = values?.creationDate ?? values?.contentModificationDate ?? Date()
+            let meeting: Meeting
+            do {
+                var created = try store.create(started: started, template: settings.defaultTemplate)
+                created.title = url.deletingPathExtension().lastPathComponent
+                try store.save(created)
+                meeting = created
+            } catch {
+                if access { url.stopAccessingSecurityScopedResource() }
+                problem = "Could not import \(url.lastPathComponent): \(error.localizedDescription)"
+                continue
+            }
+            let id = meeting.id
+            let folder = store.audioFolder(id)
+            importing[id] = 0
+            refresh()
+            select(id)
+            MeetingsLog.info(.mixer, "import \(id): .\(url.pathExtension.lowercased()) file")
+            let report: @Sendable (TimeInterval) -> Void = { [weak self] seconds in
+                Task { @MainActor in if self?.importing[id] != nil { self?.importing[id] = seconds } }
+            }
+            Task { [weak self] in
+                let result: Result<TimeInterval, Error> = await Task.detached {
+                    defer { if access { url.stopAccessingSecurityScopedResource() } }
+                    do { return .success(try AudioImport.importFile(url, into: folder, progress: report)) } catch { return .failure(error) }
+                }.value
+                self?.finishImport(id, result: result)
+            }
+        }
+    }
+
+    private func finishImport(_ id: String, result: Result<TimeInterval, Error>) {
+        importing[id] = nil
+        switch result {
+        case .success(let seconds):
+            if var meeting = store.load(id) {
+                meeting.duration = seconds
+                meeting.state = .waiting
+                try? store.save(meeting)
+            }
+            refresh()
+            if canProcess {
+                process(id)
+            } else {
+                notice = "Imported \(lengthText(seconds)). Add your OpenRouter key in Settings, or choose Local in Settings, to transcribe it."
+            }
+        case .failure(let error):
+            MeetingsLog.info(.mixer, "import \(id) failed: \(error.localizedDescription)")
+            try? store.moveToTrash(id)
+            problem = error.localizedDescription
+            refresh()
+        }
+        if selectedID == id { reloadPage() }
+    }
+
     public func stop() async {
         if recordingID == nil, remoteRecordingID != nil {
             BackgroundControl.send("stop")
