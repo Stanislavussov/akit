@@ -12,7 +12,9 @@ public final class Recorder: @unchecked Sendable {
     let echoCancellation: Bool
     /// A sentence for the screen when a source stops or a piece cannot be written or mixed.
     let problem: @Sendable (String) -> Void
-    private let engine = AVAudioEngine()
+    /// Replaced by a new one when the microphone sends nothing (`MicWatch`); changed only on
+    /// `micQueue` while it records.
+    private var engine = AVAudioEngine()
     private let tap = SystemAudioTap()
     private var mic: PieceWriter?
     private var system: PieceWriter?
@@ -29,6 +31,10 @@ public final class Recorder: @unchecked Sendable {
     public private(set) var startedAt: Date?
     /// The last ~4 s of loudness per source (0…1, newest last), for the screen's live waves.
     private var micLevels: [Float] = []
+    /// M32: how many buffers the microphone sent, and the check that it still sends.
+    private var micBuffers = 0
+    private var micWatch = MicWatch()
+    private var micTimer: DispatchSourceTimer?
     private var sysLevels: [Float] = []
     public static let levelHistory = 48
 
@@ -53,10 +59,14 @@ public final class Recorder: @unchecked Sendable {
     }
 
     public func start() async throws {
-        MeetingsLog.info(.recorder, "microphone permission: \(AVCaptureDevice.authorizationStatus(for: .audio).rawValue) (3 = allowed)")
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        MeetingsLog.info(.recorder, "microphone permission: \(status.rawValue) (3 = allowed)")
         guard await Self.microphoneAllowed() else {
             throw TapError("Microphone access is off. Turn it on in System Settings → Privacy & Security → Microphone.")
         }
+        // M32: an engine made before the access was given can stay silent (2026-11-07: 17 min
+        // with no microphone buffer after the first question), so a new one is made.
+        if status == .notDetermined { engine = AVAudioEngine() }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         if recordingLock == nil {
             guard let held = MeetingLock.take(Self.lockFile(folder)) else {
@@ -87,13 +97,40 @@ public final class Recorder: @unchecked Sendable {
         }
         // H3: AirPods, a call's Bluetooth profile, another input or a wake from sleep stop the
         // engine; it is set up again on the new device and the gap becomes silence.
-        configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
-            guard let self else { return }
-            self.micQueue.async { self.restartMicrophone() }
-        }
-        running = true
+        observeConfiguration()
+        lock.withLock { running = true }
         startedAt = Date()
         MeetingsLog.info(.recorder, "started in \(folder.deletingLastPathComponent().lastPathComponent): mic \(engine.inputNode.outputFormat(forBus: 0)), echo cancellation \(echoCancellation)")
+        startMicWatch()
+    }
+
+    private func observeConfiguration() {
+        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
+        configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+            guard let self else { return }
+            self.micQueue.async { self.restartMicrophone(reason: "audio configuration changed") }
+        }
+    }
+
+    /// M32: every few seconds, checks that the microphone still sends buffers. A voice-processing
+    /// tap sends buffers in silence too, so no buffer means the engine stopped, not a quiet room.
+    private func startMicWatch() {
+        let timer = DispatchSource.makeTimerSource(queue: micQueue)
+        timer.schedule(deadline: .now() + MicWatch.interval, repeating: MicWatch.interval)
+        timer.setEventHandler { [weak self] in self?.checkMicrophone() }
+        micTimer = timer
+        timer.resume()
+    }
+
+    private func checkMicrophone() {
+        let (isRunning, buffers) = lock.withLock { (running, micBuffers) }
+        guard isRunning else { return }
+        switch micWatch.check(buffers: buffers) {
+        case .none: break
+        case .restart: restartMicrophone(reason: "no microphone sound for \(Int(MicWatch.interval)) s (\(buffers) buffer(s) in all)", fresh: true)
+        case .report:
+            report("The microphone sends no sound, so your voice is not recorded. Stop, check the input in System Settings → Sound, and Record again.")
+        }
     }
 
     private func startMicrophone() throws {
@@ -125,13 +162,15 @@ public final class Recorder: @unchecked Sendable {
         engine.stop()
     }
 
-    private func restartMicrophone() {
-        lock.lock()
-        let isRunning = running
-        lock.unlock()
-        guard isRunning else { return }
+    /// On `micQueue`. `fresh`: a new engine, for one that stays silent.
+    private func restartMicrophone(reason: String, fresh: Bool = false) {
+        guard lock.withLock({ running }) else { return }
         stopMicrophone()
-        MeetingsLog.info(.recorder, "audio configuration changed: restarting the microphone")
+        MeetingsLog.info(.recorder, "\(reason): restarting the microphone\(fresh ? " on a new engine" : "")")
+        if fresh {
+            engine = AVAudioEngine()
+            observeConfiguration()
+        }
         for delay in [0.0, 0.3, 0.7, 1.5] {
             if delay > 0 { Thread.sleep(forTimeInterval: delay) }
             if (try? startMicrophone()) != nil {
@@ -146,10 +185,13 @@ public final class Recorder: @unchecked Sendable {
     /// not be mixed.
     public func stop() async -> (seconds: TimeInterval, problems: [String]) {
         lock.withLock { running = false }
-        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
-        configObserver = nil
+        micQueue.sync {
+            micTimer?.cancel()
+            micTimer = nil
+            if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
+            configObserver = nil
+        }
         await tap.stop()
-        micQueue.sync {}
         stopMicrophone()
         mic?.stop()
         system?.stop()
@@ -168,6 +210,7 @@ public final class Recorder: @unchecked Sendable {
     /// H1: a recorder released while it records (its window closed) stops its devices.
     deinit {
         if running {
+            micTimer?.cancel()
             if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
@@ -210,6 +253,7 @@ public final class Recorder: @unchecked Sendable {
         let value = Self.loudness(buffer)
         lock.withLock {
             if source == .mic {
+                micBuffers += 1
                 micLevels.append(value)
                 if micLevels.count > Self.levelHistory { micLevels.removeFirst(micLevels.count - Self.levelHistory) }
             } else {
@@ -251,5 +295,34 @@ public final class Recorder: @unchecked Sendable {
         defer { held.release() }
         let problems = PieceMixer.mixPending(in: folder).problems
         return (recordedSeconds(in: folder), problems)
+    }
+}
+
+/// M32: whether the microphone still sends buffers, checked every `interval`. No new buffer
+/// since the last check → restart (at most `restarts` times in a row); then one problem for the
+/// screen. A buffer again starts over.
+struct MicWatch: Equatable {
+    static let interval: TimeInterval = 3
+    static let restarts = 3
+    private var last = 0
+    private var tries = 0
+    private var reported = false
+
+    enum Action: Equatable { case none, restart, report }
+
+    mutating func check(buffers: Int) -> Action {
+        defer { last = buffers }
+        if buffers != last {
+            tries = 0
+            reported = false
+            return .none
+        }
+        if tries < Self.restarts {
+            tries += 1
+            return .restart
+        }
+        if reported { return .none }
+        reported = true
+        return .report
     }
 }

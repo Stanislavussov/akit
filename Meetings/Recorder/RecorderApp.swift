@@ -1,4 +1,5 @@
 import AppKit
+import MeetingsAudio
 import MeetingsBackground
 import MeetingsCore
 import MeetingsUI
@@ -33,10 +34,18 @@ final class RecorderDelegate: NSObject, NSApplicationDelegate {
         }
         model.isBackgroundHost = true
         model.didRefresh = { BackgroundControl.announceChange() }
+        model.didReportProblem = { [weak self] _ in self?.alarm() }
         hotKey = GlobalHotKey { [weak self] in Task { await self?.perform("toggle") } }
         MeetingsLog.info(.ui, hotKey == nil ? "background: ⌥⌘R is taken by another app" : "background: ⌥⌘R ready")
         observer = BackgroundControl.onControl { [weak self] action in Task { @MainActor in await self?.perform(action) } }
         Task { await model.load() }
+        // M32: macOS asks each app once. The question comes now, when Background is turned on,
+        // not at the first ⌥⌘R in a meeting; the answer stays for later starts and updates.
+        Task { _ = await Recorder.microphoneAllowed() }
+    }
+
+    private func alarm() {
+        NSSound(named: "Basso")?.play()
     }
 
     func perform(_ action: String) async {
@@ -48,7 +57,7 @@ final class RecorderDelegate: NSObject, NSApplicationDelegate {
         if was, !model.isRecording { sound("Pop") }
         if let problem = model.problem {
             MeetingsLog.error(.ui, "background: \(action): \(problem)")
-            NSSound(named: "Basso")?.play()
+            alarm()
         }
         BackgroundControl.announceChange()
     }

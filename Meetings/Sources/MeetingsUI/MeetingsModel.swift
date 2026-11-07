@@ -33,6 +33,9 @@ public final class MeetingsModel {
     public var isBackgroundHost = false
     /// Called after each refresh (the background recorder announces its changes with it).
     @ObservationIgnored public var didRefresh: (@MainActor () -> Void)?
+    /// A problem while it records (the microphone went silent, a piece did not write): the
+    /// background recorder has no window, so it plays a sound.
+    @ObservationIgnored public var didReportProblem: (@MainActor (String) -> Void)?
     @ObservationIgnored private var changeObserver: NSObjectProtocol?
     public private(set) var recordingStarted: Date?
     public private(set) var starting = false
@@ -308,7 +311,10 @@ public final class MeetingsModel {
             // The lock right after the meeting exists, so the other host never takes it for a crash.
             let held = MeetingLock.take(Recorder.lockFile(store.audioFolder(meeting.id)))
             let recorder = Recorder(folder: store.audioFolder(meeting.id), echoCancellation: settings.echoCancellation, lock: held) { [weak self] text in
-                Task { @MainActor in self?.problem = text }
+                Task { @MainActor in
+                    self?.problem = text
+                    self?.didReportProblem?(text)
+                }
             }
             do {
                 try await recorder.start()

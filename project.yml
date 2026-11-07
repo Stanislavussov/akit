@@ -203,6 +203,8 @@ targets:
       - package: Meetings
         product: MeetingsUI
       - package: Meetings
+        product: MeetingsAudio
+      - package: Meetings
         product: MeetingsBackground
     info:
       path: Meetings/Recorder/Info.plist

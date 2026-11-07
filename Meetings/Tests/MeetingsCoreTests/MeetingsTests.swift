@@ -1126,3 +1126,30 @@ final class Closed: @unchecked Sendable {
         #expect(long.count <= 601)
     }
 }
+
+/// M32: a microphone that sends no buffers is restarted, then reported once.
+@Suite struct MicWatchTests {
+    @Test func silentFromTheStartRestartsThenReportsOnce() {
+        var watch = MicWatch()
+        let actions = (0..<6).map { _ in watch.check(buffers: 0) }
+        #expect(actions == [.restart, .restart, .restart, .report, .none, .none])
+    }
+
+    @Test func buffersMeanNoAction() {
+        var watch = MicWatch()
+        #expect([12, 40, 75].map { watch.check(buffers: $0) } == [.none, .none, .none])
+    }
+
+    @Test func aStopMidwayRestartsAndBuffersAgainStartOver() {
+        var watch = MicWatch()
+        #expect(watch.check(buffers: 30) == .none)
+        #expect(watch.check(buffers: 30) == .restart)
+        #expect(watch.check(buffers: 31) == .none)
+        #expect(watch.check(buffers: 31) == .restart)
+        #expect(watch.check(buffers: 31) == .restart)
+        #expect(watch.check(buffers: 31) == .restart)
+        #expect(watch.check(buffers: 31) == .report)
+        #expect(watch.check(buffers: 50) == .none)
+        #expect(watch.check(buffers: 50) == .restart)
+    }
+}
