@@ -123,4 +123,18 @@ import Testing
         #expect(done.segments.map(\.start) == [1, 305])
         #expect(store.summary(meeting.id).contains("S2"))
     }
+
+    /// A raw or bad file of a piece that did not mix keeps its number taken.
+    @Test func nextPieceSkipsUnmixedRawFiles() throws {
+        let store = TempRoot().store
+        let meeting = try store.create()
+        try addPiece(store, meeting.id, 1)
+        let audio = store.audioFolder(meeting.id)
+        try Data("raw".utf8).write(to: audio.appending(path: "raw-mic-002-1.caf"))
+        #expect(store.nextPieceNumber(meeting.id) == 3)
+        try Data("bad".utf8).write(to: audio.appending(path: "bad-sys-004-2.caf"))
+        #expect(store.nextPieceNumber(meeting.id) == 5)
+        try Data("raw".utf8).write(to: audio.appending(path: "raw-sys-1000-1.caf"))
+        #expect(store.nextPieceNumber(meeting.id) == 1001)
+    }
 }

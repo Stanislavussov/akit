@@ -93,6 +93,36 @@ public struct Meeting: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+extension Meeting {
+    /// A key missing in an older or hand-edited file takes its default, so the meeting still
+    /// shows. A key with a wrong type still fails: a default would replace real data on the next save.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        started = try c.decode(Date.self, forKey: .started)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        duration = try c.decodeIfPresent(TimeInterval.self, forKey: .duration) ?? 0
+        state = try c.decodeIfPresent(State.self, forKey: .state) ?? .waiting
+        failure = try c.decodeIfPresent(String.self, forKey: .failure)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        summaryModel = try c.decodeIfPresent(String.self, forKey: .summaryModel)
+        costUSD = try c.decodeIfPresent(Double.self, forKey: .costUSD) ?? 0
+        speakers = try c.decodeIfPresent([String: String].self, forKey: .speakers) ?? [:]
+        segments = try c.decodeIfPresent([Segment].self, forKey: .segments) ?? []
+        transcribedChunks = try c.decodeIfPresent(Int.self, forKey: .transcribedChunks) ?? 0
+        transcribedPieces = try c.decodeIfPresent(Int.self, forKey: .transcribedPieces)
+        summaryHash = try c.decodeIfPresent(String.self, forKey: .summaryHash)
+        warnings = try c.decodeIfPresent([String].self, forKey: .warnings)
+        tabs = try c.decodeIfPresent([String].self, forKey: .tabs) ?? []
+        audioUntil = try c.decodeIfPresent(Date.self, forKey: .audioUntil)
+            ?? Calendar.current.date(byAdding: .day, value: MeetingStore.audioDays, to: started) ?? started
+        audioTrashed = try c.decodeIfPresent(Bool.self, forKey: .audioTrashed) ?? false
+        template = try c.decodeIfPresent(String.self, forKey: .template)
+        tags = try c.decodeIfPresent([String].self, forKey: .tags)
+        exports = try c.decodeIfPresent([String: Date].self, forKey: .exports)
+    }
+}
+
 /// One line of the transcript: when it starts (seconds from the recording's start), who speaks
 /// (`Me`, `S1` …) and what was said.
 public struct Segment: Codable, Equatable, Sendable {

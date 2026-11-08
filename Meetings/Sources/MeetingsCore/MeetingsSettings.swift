@@ -145,7 +145,16 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     /// Missing keys take their defaults, so an older file still loads.
     public static func load(from url: URL = defaultFile) -> MeetingsSettings {
         guard let data = try? Data(contentsOf: url) else { return MeetingsSettings() }
-        return (try? JSONDecoder().decode(MeetingsSettings.self, from: data)) ?? MeetingsSettings()
+        do {
+            return try JSONDecoder().decode(MeetingsSettings.self, from: data)
+        } catch {
+            // Keep the unreadable file: the next save writes the defaults over it.
+            let bad = url.deletingPathExtension().appendingPathExtension("bad.json")
+            try? FileManager.default.removeItem(at: bad)
+            try? FileManager.default.copyItem(at: url, to: bad)
+            MeetingsLog.error(.store, "settings not readable, defaults used, the file kept as \(bad.lastPathComponent): \(error)")
+            return MeetingsSettings()
+        }
     }
 
     public func save(to url: URL = defaultFile) throws {
@@ -158,29 +167,36 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = MeetingsSettings()
-        model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
-        summaryModel = try c.decodeIfPresent(String.self, forKey: .summaryModel)
-        language = try c.decodeIfPresent(String.self, forKey: .language) ?? d.language
-        spokenHint = try c.decodeIfPresent(String.self, forKey: .spokenHint) ?? d.spokenHint
-        monthlyLimitUSD = try c.decodeIfPresent(Double.self, forKey: .monthlyLimitUSD) ?? d.monthlyLimitUSD
-        rootPath = try c.decodeIfPresent(String.self, forKey: .rootPath)
-        echoCancellation = try c.decodeIfPresent(Bool.self, forKey: .echoCancellation) ?? d.echoCancellation
-        tracks = (try? c.decodeIfPresent(TrackMode.self, forKey: .tracks)) ?? d.tracks
-        defaultTemplate = try c.decodeIfPresent(String.self, forKey: .defaultTemplate) ?? d.defaultTemplate
-        customTemplates = (try? c.decodeIfPresent([MeetingTemplate].self, forKey: .customTemplates)) ?? d.customTemplates
-        cleanTranscript = try c.decodeIfPresent(Bool.self, forKey: .cleanTranscript) ?? d.cleanTranscript
-        transcription = (try? c.decodeIfPresent(Engine.self, forKey: .transcription)) ?? d.transcription
-        summarizer = (try? c.decodeIfPresent(Summarizer.self, forKey: .summarizer)) ?? d.summarizer
-        piModel = try c.decodeIfPresent(String.self, forKey: .piModel)
-        piDevOps = try c.decodeIfPresent(Bool.self, forKey: .piDevOps) ?? d.piDevOps
-        piDevOpsServer = try c.decodeIfPresent(String.self, forKey: .piDevOpsServer)
-        piGitLab = try c.decodeIfPresent(Bool.self, forKey: .piGitLab) ?? d.piGitLab
-        piGitLabServer = try c.decodeIfPresent(String.self, forKey: .piGitLabServer)
-        piRepositories = (try? c.decodeIfPresent([String].self, forKey: .piRepositories)) ?? d.piRepositories
-        localLanguage = try c.decodeIfPresent(String.self, forKey: .localLanguage) ?? d.localLanguage
-        localGPU = try c.decodeIfPresent(Bool.self, forKey: .localGPU) ?? d.localGPU
-        vocabulary = (try? c.decodeIfPresent([String].self, forKey: .vocabulary)) ?? d.vocabulary
-        backgroundSounds = try c.decodeIfPresent(Bool.self, forKey: .backgroundSounds) ?? d.backgroundSounds
-        transcribeWhileRecording = try c.decodeIfPresent(Bool.self, forKey: .transcribeWhileRecording) ?? d.transcribeWhileRecording
+        model = c.tolerant(String.self, forKey: .model) ?? d.model
+        summaryModel = c.tolerant(String.self, forKey: .summaryModel)
+        language = c.tolerant(String.self, forKey: .language) ?? d.language
+        spokenHint = c.tolerant(String.self, forKey: .spokenHint) ?? d.spokenHint
+        monthlyLimitUSD = c.tolerant(Double.self, forKey: .monthlyLimitUSD) ?? d.monthlyLimitUSD
+        rootPath = c.tolerant(String.self, forKey: .rootPath)
+        echoCancellation = c.tolerant(Bool.self, forKey: .echoCancellation) ?? d.echoCancellation
+        tracks = (c.tolerant(TrackMode.self, forKey: .tracks)) ?? d.tracks
+        defaultTemplate = c.tolerant(String.self, forKey: .defaultTemplate) ?? d.defaultTemplate
+        customTemplates = (c.tolerant([MeetingTemplate].self, forKey: .customTemplates)) ?? d.customTemplates
+        cleanTranscript = c.tolerant(Bool.self, forKey: .cleanTranscript) ?? d.cleanTranscript
+        transcription = (c.tolerant(Engine.self, forKey: .transcription)) ?? d.transcription
+        summarizer = (c.tolerant(Summarizer.self, forKey: .summarizer)) ?? d.summarizer
+        piModel = c.tolerant(String.self, forKey: .piModel)
+        piDevOps = c.tolerant(Bool.self, forKey: .piDevOps) ?? d.piDevOps
+        piDevOpsServer = c.tolerant(String.self, forKey: .piDevOpsServer)
+        piGitLab = c.tolerant(Bool.self, forKey: .piGitLab) ?? d.piGitLab
+        piGitLabServer = c.tolerant(String.self, forKey: .piGitLabServer)
+        piRepositories = (c.tolerant([String].self, forKey: .piRepositories)) ?? d.piRepositories
+        localLanguage = c.tolerant(String.self, forKey: .localLanguage) ?? d.localLanguage
+        localGPU = c.tolerant(Bool.self, forKey: .localGPU) ?? d.localGPU
+        vocabulary = (c.tolerant([String].self, forKey: .vocabulary)) ?? d.vocabulary
+        backgroundSounds = c.tolerant(Bool.self, forKey: .backgroundSounds) ?? d.backgroundSounds
+        transcribeWhileRecording = c.tolerant(Bool.self, forKey: .transcribeWhileRecording) ?? d.transcribeWhileRecording
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// A missing key or one with a wrong type gives nil, so one bad value never resets the rest.
+    func tolerant<T: Decodable>(_ type: T.Type, forKey key: Key) -> T? {
+        (try? decodeIfPresent(type, forKey: key)) ?? nil
     }
 }

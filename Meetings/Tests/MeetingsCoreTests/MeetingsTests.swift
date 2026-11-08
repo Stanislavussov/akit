@@ -182,6 +182,40 @@ func chat(_ content: String, cost: Double = 0.01) -> String {
         #expect(settings.model == MeetingsSettings.defaultModel)
         #expect(settings.echoCancellation)
     }
+
+    /// One wrong-typed value keeps the other settings.
+    @Test func settingsKeepOtherKeysWhenOneHasAWrongType() throws {
+        let root = TempRoot()
+        let file = root.url.appending(path: "settings.json")
+        try Data(#"{"language":"Russian","monthlyLimitUSD":"ten","rootPath":"/x/meetings"}"#.utf8).write(to: file)
+        let settings = MeetingsSettings.load(from: file)
+        #expect(settings.language == "Russian")
+        #expect(settings.rootPath == "/x/meetings")
+        #expect(settings.monthlyLimitUSD == MeetingsSettings().monthlyLimitUSD)
+    }
+
+    /// A file that is not JSON gives defaults and is kept beside as `settings.bad.json`.
+    @Test func unreadableSettingsFileIsKept() throws {
+        let root = TempRoot()
+        let file = root.url.appending(path: "settings.json")
+        try Data("not json".utf8).write(to: file)
+        _ = MeetingsSettings.load(from: file)
+        let bad = root.url.appending(path: "settings.bad.json")
+        #expect((try? String(contentsOf: bad, encoding: .utf8)) == "not json")
+    }
+
+    /// An older meeting.json without newer keys still loads; a wrong type does not.
+    @Test func olderMeetingFileStillLoads() throws {
+        let store = TempRoot().store
+        let meeting = try store.create()
+        let file = store.folder(meeting.id).appending(path: "meeting.json")
+        try Data(#"{"id":"\#(meeting.id)","started":"2026-11-07T10:00:00Z","title":"Old"}"#.utf8).write(to: file)
+        let old = try #require(store.load(meeting.id))
+        #expect(old.title == "Old")
+        #expect(old.segments.isEmpty && old.tabs.isEmpty && !old.audioTrashed)
+        try Data(#"{"id":"\#(meeting.id)","started":"2026-11-07T10:00:00Z","segments":"x"}"#.utf8).write(to: file)
+        #expect(store.load(meeting.id) == nil)
+    }
 }
 
 @Suite struct CostReportTests {
