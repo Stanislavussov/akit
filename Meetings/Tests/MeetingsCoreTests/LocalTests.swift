@@ -393,6 +393,47 @@ struct LocalFixture {
         #expect(fixture.root.store.summary(meeting.id).contains("Krátce."))
     }
 
+    /// The found tickets go onto the summary's task line; the tab keeps its text without the block.
+    @Test func piPutsFoundLinksOnTheSummaryLines() async throws {
+        let fixture = try LocalFixture()
+        try LocalFixture.script(fixture.bin.appending(path: "pi"), """
+        case "$*" in
+          "mcp list --json") echo '{"servers":[{"name":"azure-devops"}],"errors":[]}' ;;
+          *builtin:mcp*)
+            echo '## Found outside the meeting'; echo '- Login fix is already in [#7](https://dev.azure.com/x/7)'
+            echo '```json'; echo '{"links": [{"line": 11, "items": [{"title": "#7 Login", "url": "https://dev.azure.com/x/7"}, {"title": "bad", "url": "javascript:x"}]}]}'; echo '```' ;;
+          *) echo '{"title": "Plán", "summary": "Krátce.", "decisions": [], "tasks": [{"owner": "Me", "text": "Fix login"}]}' ;;
+        esac
+        """)
+        var settings = fixture.settings
+        settings.piDevOps = true
+        let meeting = try await fixture.processor(LocalEnvironment(tick: .milliseconds(10)), settings: settings).run(fixture.meeting.id)
+        let tab = try String(contentsOf: fixture.root.store.tabFile(meeting.id, PiDevOpsResearch.tabName), encoding: .utf8)
+        #expect(tab.hasPrefix("## Found outside the meeting") && !tab.contains("```"))
+        let summary = fixture.root.store.summary(meeting.id)
+        #expect(summary.contains("- [ ] Me: Fix login — [#7 Login](https://dev.azure.com/x/7)"))
+        #expect(!summary.contains("javascript"))
+        // The linked summary is the model's own: the next summary does not keep it as the user's edit.
+        #expect(store(fixture).load(meeting.id)?.summaryHash == MeetingProcessor.hash(summary))
+    }
+
+    private func store(_ fixture: LocalFixture) -> MeetingStore { fixture.root.store }
+
+    @Test func linkBlockIsSplitAndPutOnListLinesOnly() {
+        let answer = "## Found outside the meeting\n- x\n```json\n{\"links\": [{\"line\": 1, \"items\": [{\"title\": \"a\", \"url\": \"https://a\"}]}, {\"line\": 2, \"items\": [{\"title\": \"[b]\", \"url\": \"https://b\"}]}]}\n```"
+        let (tab, links) = PiDevOpsResearch.split(answer)
+        #expect(tab == "## Found outside the meeting\n- x")
+        let summary = "## Tasks\n- [ ] Me: b"
+        #expect(PiDevOpsResearch.linked(summary, links) == "## Tasks\n- [ ] Me: b — [(b)](https://b)")
+        #expect(PiDevOpsResearch.linked("- has https://b", [1: [PiDevOpsResearch.Link(title: "b", url: "https://b")]]) == "- has https://b")
+        #expect(PiDevOpsResearch.numbered("## T\n- a") == "## T\n2| - a")
+        #expect(PiDevOpsResearch.split("no block").links.isEmpty)
+        let cut = PiDevOpsResearch.split("## Found outside the meeting\n- x\n```json\n{\"links\": [{\"line\": 1, \"ite")
+        #expect(cut.tab == "## Found outside the meeting\n- x" && cut.links.isEmpty)
+        let odd = PiDevOpsResearch.split("```JSON\n{\"links\": [{\"line\": 1, \"items\": [{\"title\": \"a\\nb\", \"url\": \"https://x/(y\"}]}]}\n```").links
+        #expect(odd[1] == [PiDevOpsResearch.Link(title: "a b", url: "https://x/%28y")])
+    }
+
     @Test func failedDevOpsLookupKeepsTheSummary() async throws {
         let fixture = try LocalFixture()
         try LocalFixture.script(fixture.bin.appending(path: "pi"), """
