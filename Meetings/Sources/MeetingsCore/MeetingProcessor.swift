@@ -119,7 +119,7 @@ public struct MeetingProcessor: Sendable {
                     try await transcribeCloud(chunk, into: &meeting, transcriber: transcriber)
                 }
             }
-            try await summarize(&meeting)
+            try await summarizeWithRetry(&meeting)
             MeetingsLog.info(.processor, "\(id): done, \(meeting.segments.count) segments, $\(meeting.costUSD) in all")
             return meeting
         } catch MeetingsError.stopped where local.control.quitting {
@@ -260,6 +260,27 @@ public struct MeetingProcessor: Sendable {
             MeetingsLog.error(.processor, "\(id): summary failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)")
             try save(&meeting)
             throw error
+        }
+    }
+
+    /// The wait before the one more try of a failed summary; none in tests.
+    static let summaryRetryDelay: Duration = MeetingsLog.isTest ? .zero : .seconds(15)
+
+    /// The transcript is already saved, so a summary that fails (a short outage of the model or
+    /// Pi, an unreadable answer) gets one more try before the meeting fails.
+    func summarizeWithRetry(_ meeting: inout Meeting) async throws {
+        do {
+            try await summarize(&meeting)
+        } catch {
+            switch error {
+            // A file error is local: another model call would not help.
+            case MeetingsError.noKey, MeetingsError.monthlyLimit, MeetingsError.stopped, MeetingsError.tooHot, is CancellationError, is CocoaError: throw error
+            default: break
+            }
+            meeting.costUSD += PaidFailure.cost(of: error)
+            MeetingsLog.error(.processor, "\(meeting.id): summary failed, one more try: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
+            try await Task.sleep(for: Self.summaryRetryDelay)
+            try await summarize(&meeting)
         }
     }
 
