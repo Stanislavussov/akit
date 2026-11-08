@@ -8,7 +8,8 @@ import Foundation
 /// entry stamped now (Raycast: a quicklink with an argument).
 /// Meetings (2026-11-06, the user's request: a shortcut as for the notebook): `akit://meetings`
 /// opens the screen; `akit://meetings/record`, `/stop` and `/toggle` start or stop a recording
-/// without showing it.
+/// without showing it; `akit://meetings/open?id=<day>/<time>&tab=transcript` shows one meeting
+/// (the link a summary note in Knowledge has to its transcript).
 struct AppLink: Equatable {
     static let scheme = "akit"
 
@@ -19,6 +20,9 @@ struct AppLink: Equatable {
     var add: String?
     /// Meetings: `record`, `stop` or `toggle`.
     var meetingAction: String?
+    /// Meetings: `akit://meetings/open?id=<day>/<time>&tab=transcript` shows that meeting.
+    var meetingID: String?
+    var meetingTab: String?
 
     init?(_ url: URL) {
         guard url.scheme?.lowercased() == Self.scheme, let host = url.host(percentEncoded: false)?.lowercased(),
@@ -28,6 +32,11 @@ struct AppLink: Equatable {
         self.tab = section == .notebook && !tab.isEmpty ? tab : nil
         if section == .meetings, ["record", "start", "stop", "toggle"].contains(tab.lowercased()) {
             meetingAction = tab.lowercased()
+        }
+        if section == .meetings, tab.lowercased() == "open" {
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            meetingID = items.first { $0.name == "id" }?.value.flatMap { $0.isEmpty ? nil : $0 }
+            meetingTab = items.first { $0.name == "tab" }?.value
         }
         if section == .worklog {
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []

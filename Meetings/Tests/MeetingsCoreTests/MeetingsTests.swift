@@ -814,17 +814,15 @@ final class Closed: @unchecked Sendable {
         #expect(Transcriber.copyText(meeting, speakers: true).components(separatedBy: "\n").count == 3)
     }
 
-    @Test func summaryAndTranscriptNotesLinkEachOther() {
-        var meeting = Meeting(id: "m", started: .now)
+    @Test func summaryNoteLinksToTheTranscriptInMeetings() {
+        var meeting = Meeting(id: "2026-11-07/1854", started: .now)
         meeting.segments = [.init(start: 1, speaker: "me", text: "Ahoj.")]
         meeting.tags = ["release plán"]
-        let note = Transcriber.knowledgeNote(meeting, name: "Plán", summary: "## Summary\n\nS.\n", transcriptNote: "work/Plán – transcript")
+        let note = Transcriber.knowledgeNote(meeting, name: "Plán", summary: "## Summary\n\nS.\n", transcriptLink: true)
         #expect(note.hasPrefix("---\nkind: meeting\ntags: [\"release plán\"]\n---\n# Plán\n"))
-        #expect(note.contains("Transcript: [[work/Plán – transcript|Plán – transcript]]\n\n## Summary"))
+        #expect(note.contains("Transcript: [Open the transcript in Meetings](akit://meetings/open?id=2026-11-07/1854&tab=transcript)\n\n## Summary"))
+        #expect(!note.contains("Ahoj."))
         #expect(!Transcriber.knowledgeNote(meeting, name: "Plán", summary: "S").contains("Transcript:"))
-        let transcript = Transcriber.knowledgeTranscript(meeting, name: "Plán", summaryNote: "work/Plán")
-        #expect(transcript.contains("# Plán – transcript\n"))
-        #expect(transcript.hasSuffix("Summary: [[work/Plán|Plán]]\n\n[00:01] \(meeting.speakerName("me")): Ahoj.\n"))
     }
 
     @Test func unknownTemplateFallsBackAndOldSettingsLoad() throws {

@@ -2,23 +2,24 @@ import Foundation
 
 extension Transcriber {
     /// Save to Knowledge…: the summary note. Frontmatter, title, a line with date and people, a
-    /// link to the transcript note (`transcriptNote` is its `area/name`), the summary.
-    public static func knowledgeNote(_ meeting: Meeting, name: String, summary: String, transcriptNote: String? = nil) -> String {
+    /// link that opens the meeting's transcript in Meetings (`transcriptLink`), the summary. The
+    /// transcript stays in Meetings: no second note.
+    public static func knowledgeNote(_ meeting: Meeting, name: String, summary: String, transcriptLink: Bool = false) -> String {
         var lines = head(meeting, title: name)
-        if let transcriptNote { lines += ["Transcript: [[\(transcriptNote)|\(transcriptTitle(name))]]", ""] }
+        if transcriptLink { lines += ["Transcript: [Open the transcript in Meetings](\(transcriptURL(meeting.id)))", ""] }
         return lines.joined(separator: "\n") + "\n" + summary
     }
 
-    /// The transcript note: the same head, a link back to the summary note (`summaryNote` is its
-    /// `area/name`), every segment with its time and speaker.
-    public static func knowledgeTranscript(_ meeting: Meeting, name: String, summaryNote: String) -> String {
-        var lines = head(meeting, title: transcriptTitle(name))
-        lines += ["Summary: [[\(summaryNote)|\(name)]]", "", plainTranscript(meeting)]
-        return lines.joined(separator: "\n") + "\n"
+    /// `akit://meetings/open?id=2026-11-07/1854&tab=transcript`: AKit shows that meeting on its
+    /// Transcript tab (from the Knowledge screen, Obsidian or a browser).
+    public static func transcriptURL(_ id: String) -> String {
+        var parts = URLComponents()
+        parts.scheme = "akit"
+        parts.host = "meetings"
+        parts.path = "/open"
+        parts.queryItems = [URLQueryItem(name: "id", value: id), URLQueryItem(name: "tab", value: "transcript")]
+        return parts.url?.absoluteString ?? "akit://meetings"
     }
-
-    /// The transcript note's name beside a summary note's name.
-    public static func transcriptTitle(_ name: String) -> String { "\(name) – transcript" }
 
     private static func head(_ meeting: Meeting, title: String) -> [String] {
         let date = meeting.started.formatted(date: .long, time: .shortened)

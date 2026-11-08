@@ -766,17 +766,13 @@ public final class MeetingsModel {
     public func saveToKnowledge(area: String, name: String, transcript: Bool = true) async -> Bool {
         guard let saveNote = links.saveNote, var meeting = fresh else { return false }
         let withTranscript = transcript && !meeting.segments.isEmpty
-        let transcriptName = Transcriber.transcriptTitle(name)
         do {
-            if withTranscript {
-                _ = try await saveNote(area, transcriptName, Transcriber.knowledgeTranscript(meeting, name: name, summaryNote: "\(area)/\(name)"))
-            }
             let id = try await saveNote(area, name, Transcriber.knowledgeNote(meeting, name: name, summary: store.summary(meeting.id),
-                                                                               transcriptNote: withTranscript ? "\(area)/\(transcriptName)" : nil))
+                                                                               transcriptLink: withTranscript))
             meeting = store.load(meeting.id) ?? meeting
             try? store.markExport(&meeting, "knowledge")
             updated(meeting)
-            notice = "Saved to the knowledge base as \(id)" + (withTranscript ? ", with its transcript." : ".")
+            notice = "Saved to the knowledge base as \(id)" + (withTranscript ? ", with a link to its transcript." : ".")
             MeetingsLog.info(.ui, "\(meeting.id): to the knowledge base")
             return true
         } catch {
@@ -1133,6 +1129,18 @@ public final class MeetingsModel {
         selectedID = id
         selectedTab = Self.summaryTab
         reloadPage()
+    }
+
+    /// `akit://meetings/open?id=…&tab=transcript` (a summary note's link in Knowledge): that
+    /// meeting, on the tab asked for.
+    public func open(_ id: String, tab: String?) {
+        refresh()
+        guard meetings.contains(where: { $0.id == id }) else {
+            problem = "The meeting \(id) is not in \(store.root.path): it was moved to the Trash or lives on another Mac."
+            return
+        }
+        select(id)
+        if tab?.lowercased() == "transcript" { show(tab: Self.transcriptTab) }
     }
 
     public func show(tab: String) {

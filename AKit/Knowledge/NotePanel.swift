@@ -377,6 +377,8 @@ struct NoteReadView: View {
     static func link(_ url: URL) -> String? {
         switch url.scheme?.lowercased() {
         case "akit-link": return url.absoluteString.dropFirst("akit-link:".count).removingPercentEncoding.map { "[[\($0)]]" }
+        // `akit://meetings/open?…` is an app link (AppLink), not a note: the system hands it to AKit.
+        case "akit" where url.host(percentEncoded: false) != nil: return nil
         case "akit": return url.absoluteString.removingPercentEncoding ?? url.absoluteString
         default: return nil
         }

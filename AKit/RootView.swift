@@ -237,6 +237,7 @@ struct RootView: View {
                 return
             }
             model.section = link.section
+            if let id = link.meetingID { MeetingsScreen.shared.open(id, tab: link.meetingTab) }
             if let tab = link.tab { notebook.request(tab) }
             if link.section == .worklog { worklog.open(kind: link.kind, add: link.add) }
         }
