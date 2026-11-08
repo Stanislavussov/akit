@@ -1,5 +1,6 @@
 import MeetingsCore
 import MeetingsUI
+import AppKit
 import SwiftUI
 
 extension MeetingsEditor {
@@ -11,8 +12,16 @@ extension MeetingsEditor {
                                imageFile: { MeetingStore.image(in: page.folder, link: $0) },
                                upload: { data, ext in try MeetingStore.saveImage(in: page.folder, data: data, ext: ext) },
                                onMessage: { message in
-                                   if message.type == "save", let key = message.body["key"] as? String, let text = message.body["text"] as? String {
-                                       save(key, text)
+                                   switch message.type {
+                                   case "save":
+                                       if let key = message.body["key"] as? String, let text = message.body["text"] as? String { save(key, text) }
+                                   case "linkOpen":
+                                       // ⌘-click on a link (a ticket Pi put into the summary): web links open in the browser.
+                                       if let link = message.body["link"] as? String, let url = URL(string: link),
+                                          ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+                                           NSWorkspace.shared.open(url)
+                                       }
+                                   default: break
                                    }
                                },
                                onUnsaved: { key, text in save(key, text) })

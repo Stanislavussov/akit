@@ -6,7 +6,7 @@ import SwiftUI
 
 /// Work → Meetings in AKit: the package's screen with the Crepe editor and the Guide button, and
 /// the snapshot states the guide's screenshots need (`--select <HHmm>`, `--tab meetings-transcript`,
-/// `meetings-settings`, `meetings-local-settings`, `meetings-local-run`, `meetings-progress`, `meetings-new-tab`, `meetings-ask`, `meetings-tasks`; `--query` fills the search field).
+/// `meetings-settings`, `meetings-local-settings`, `meetings-local-run`, `meetings-progress`, `meetings-pi-steps`, `meetings-new-tab`, `meetings-ask`, `meetings-tasks`; `--query` fills the search field).
 struct MeetingsScreen: View {
     let model: MeetingsModel
     @Environment(KnowledgeModel.self) private var knowledge
@@ -34,6 +34,13 @@ struct MeetingsScreen: View {
                 case "meetings-progress":
                     // M32: a made-up local run at work on piece 3 of 12; nothing runs.
                     if let id = model.selectedID { model.showMadeUpLocalRun(id, LocalStatus(phase: .transcribing, piece: 3, pieces: 12)) }
+                case "meetings-pi-steps":
+                    // Pi's live steps over the strip while it looks in Azure DevOps; nothing runs.
+                    if let id = model.selectedID {
+                        model.showMadeUpPiSteps(id, ["Thinks", "Looks for tools: work items login",
+                                                     "Calls azure_devops: search_work_items “login”", "Calls azure_devops: wiki_get_page “Definition of done”",
+                                                     "Calls gitlab: search_code “LoginForm”", "Writes the answer"])
+                    }
                 case "meetings-local-run":
                     // M27: a made-up local run on the chosen meeting, paused while the Mac is hot; nothing runs.
                     if let id = model.selectedID { model.showMadeUpLocalRun(id, LocalStatus(phase: .paused(.hot), piece: 3, pieces: 12)) }

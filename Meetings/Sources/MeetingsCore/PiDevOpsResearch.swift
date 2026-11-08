@@ -83,7 +83,7 @@ public struct PiDevOpsResearch: Sendable {
     static func arguments(model: String?, servers: [String], input: URL, system: String) -> [String] {
         let prefixes = servers.map { "mcp__\(normalized($0))__" }
         let excluded = prefixes.flatMap { prefix in writeWords.map { "\(prefix)*\($0)*" } }.joined(separator: ",")
-        var arguments = ["-p", "Find what in Azure DevOps relates to the attached meeting.", "--mode", "text", "--no-session", "--offline",
+        var arguments = ["-p", "Find what in Azure DevOps relates to the attached meeting.", "--mode", "json", "--no-session", "--offline",
                          "--no-skills", "--no-context-files", "--no-prompt-templates", "--no-extensions",
                          "-e", "builtin:mcp", "-e", "builtin:codemode", "-e", "builtin:tool-search",
                          "--tools", "codemode,tool_search," + prefixes.map { $0 + "*" }.joined(separator: ","), "--exclude-tools", excluded,
@@ -160,7 +160,7 @@ public struct PiDevOpsResearch: Sendable {
     }
 
     /// Runs Pi with the server's tools; the Markdown of the tab. Throws when Pi failed.
-    public func research(_ meeting: Meeting, summary: String) async throws -> String {
+    public func research(_ meeting: Meeting, summary: String) async throws -> (text: String, usage: PiEvents.Usage) {
         let variables = if let environment { environment } else { await LoginEnvironment.variables() }
         guard let pi = LoginEnvironment.find("pi", in: variables) else {
             throw MeetingsError.pi("pi is not on your login shell's PATH.")
@@ -186,13 +186,19 @@ public struct PiDevOpsResearch: Sendable {
         let started = Date()
         let result = try await ChildRun.run(pi, Self.arguments(model: settings.piModel, servers: servers, input: input, system: system),
                                             environment: variables, directory: folder, background: true, pausable: false, timeout: 900,
-                                            local: local, resume: LocalStatus(phase: .summarizing))
-        let text = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        MeetingsLog.info(.pi, "azure devops: exit \(result.status), \(text.count) chars in \(Int(Date().timeIntervalSince(started))) s, servers \(servers.joined(separator: ", "))")
+                                            local: local, resume: LocalStatus(phase: .summarizing),
+                                            onLine: PiSummarizer.steps(local))
+        if let failure = PiEvents.failure(result.output) {
+            MeetingsLog.error(.pi, "model error: \(failure)")
+            throw MeetingsError.pi("the model answered with an error: \(PiEvents.short(failure)) (model \(settings.piModel ?? "Pi's default")). Check it in a terminal with pi, or choose another one in Meetings Settings → Pi.")
+        }
+        let text = PiEvents.answer(result.output).trimmingCharacters(in: .whitespacesAndNewlines)
+        let usage = PiEvents.totalUsage(result.output)
+        MeetingsLog.info(.pi, "azure devops: exit \(result.status), \(text.count) chars in \(Int(Date().timeIntervalSince(started))) s, servers \(servers.joined(separator: ", ")), \(usage.text)")
         guard result.status == 0, !text.isEmpty else {
             throw MeetingsError.pi("\(LocalTranscriber.tail(result.errors)) (exit \(result.status), servers \(servers.joined(separator: ", ")))")
         }
-        return text + "\n"
+        return (text + "\n", usage)
     }
 
     /// The names of Pi's MCP servers (`pi mcp list --json`, it connects to each enabled one).

@@ -324,6 +324,11 @@ struct MeetingDetail: View {
                 header(meeting)
                 Divider()
                 if let progress = progress(meeting) {
+                    // Pi's last steps, over the strip, while Pi writes the summary or looks in Azure DevOps.
+                    if let steps = model.piSteps[meeting.id], !steps.isEmpty {
+                        PiStepsBox(steps: steps, usage: model.piRunUsage[meeting.id])
+                        Divider()
+                    }
                     // M32: on every tab, right under the header.
                     ProgressStrip(model: model, meetingID: meeting.id, progress: progress)
                     Divider()
@@ -348,6 +353,10 @@ struct MeetingDetail: View {
                     if meeting.duration > 0 { Text(lengthText(meeting.duration)).fixedSize() }
                     if let model = meeting.model { Text(model).truncationMode(.middle) }
                     if meeting.costUSD > 0 { Text(String(format: "$%.3f", meeting.costUSD)) }
+                    if let usage = meeting.piUsage, !usage.isEmpty {
+                        Text("Pi \(PiEvents.Usage.short(usage.tokens)) tokens").fixedSize()
+                            .help("Pi's summary and lookup: \(usage.text), as Pi recorded them")
+                    }
                 }
                 .lineLimit(1)
                 .font(.caption)
@@ -834,6 +843,35 @@ struct PlainMarkdownEditor: View {
                 pending?.cancel()
                 if text != saved { save(page.key, text) }
             }
+    }
+}
+
+/// What Pi did last (newest at the bottom, the older ones faded), in a field of its own.
+struct PiStepsBox: View {
+    let steps: [String]
+    /// The tokens of this run's finished model calls so far.
+    var usage: PiEvents.Usage?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Label("Pi", systemImage: "terminal").font(.caption.bold())
+                Spacer()
+                if let usage, !usage.isEmpty { Text(usage.text).font(.caption.monospacedDigit()) }
+            }
+            .foregroundStyle(.secondary)
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                Text(step)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(index == steps.count - 1 ? .primary : .secondary)
+                    .lineLimit(1).truncationMode(.tail)
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.quaternary.opacity(0.4))
+        .help("Pi's steps, newest last. The whole list is in the Meetings log.")
     }
 }
 

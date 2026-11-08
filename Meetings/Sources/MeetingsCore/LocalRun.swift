@@ -85,6 +85,10 @@ public struct LocalEnvironment: Sendable {
     public var control: LocalControl
     public var thermal: @Sendable () -> ProcessInfo.ThermalState
     public var status: @Sendable (LocalStatus) -> Void
+    /// What Pi does right now (`PiEvents.step`), for the meeting screen.
+    public var step: @Sendable (String) -> Void
+    /// The tokens of each of Pi's model calls as it ends.
+    public var usage: @Sendable (PiEvents.Usage) -> Void
     /// How often a run checks the control and the heat.
     public var tick: Duration
     /// Whether a recording runs in another app (the other Meetings host).
@@ -93,7 +97,10 @@ public struct LocalEnvironment: Sendable {
     public init(control: LocalControl = LocalControl(),
                 thermal: @escaping @Sendable () -> ProcessInfo.ThermalState = { ProcessInfo.processInfo.thermalState },
                 status: @escaping @Sendable (LocalStatus) -> Void = { _ in }, tick: Duration = .milliseconds(500),
-                recordingElsewhere: @escaping @Sendable () -> Bool = { false }) {
+                recordingElsewhere: @escaping @Sendable () -> Bool = { false }, step: @escaping @Sendable (String) -> Void = { _ in },
+                usage: @escaping @Sendable (PiEvents.Usage) -> Void = { _ in }) {
+        self.step = step
+        self.usage = usage
         self.control = control
         self.recordingElsewhere = recordingElsewhere
         self.thermal = thermal
@@ -168,16 +175,24 @@ public enum ChildRun {
         private var stop = false
         let done = DispatchSemaphore(value: 0)
 
-        init(_ fd: Int32) {
+        /// `line`: each whole line as it comes (Pi's event stream), on this reader's thread.
+        init(_ fd: Int32, line: (@Sendable (String) -> Void)? = nil) {
             Thread.detachNewThread { [self] in
                 var buffer = [UInt8](repeating: 0, count: 65_536)
                 var poller = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                var pending = Data()
                 while !lock.withLock({ stop }) {
                     guard poll(&poller, 1, 100) > 0 else { continue }
                     let count = read(fd, &buffer, buffer.count)
                     if count < 0 && errno == EINTR { continue }
                     if count <= 0 { break }
                     lock.withLock { data.append(buffer, count: count) }
+                    guard let line else { continue }
+                    pending.append(buffer, count: count)
+                    while let end = pending.firstIndex(of: 10) {
+                        line(String(decoding: pending[pending.startIndex..<end], as: UTF8.self))
+                        pending.removeSubrange(pending.startIndex...end)
+                    }
                 }
                 close(fd)
                 lock.withLock { ended = true }
@@ -286,7 +301,8 @@ public enum ChildRun {
     /// gets the group's pid (tests).
     public static func run(_ program: URL, _ arguments: [String], environment: [String: String]? = nil, directory: URL? = nil,
                            background: Bool = true, pausable: Bool = true, timeout: TimeInterval = 3600,
-                           local: LocalEnvironment, resume phase: LocalStatus, onStart: (pid_t) -> Void = { _ in }) async throws -> Result {
+                           local: LocalEnvironment, resume phase: LocalStatus, onStart: (pid_t) -> Void = { _ in },
+                           onLine: (@Sendable (String) -> Void)? = nil) async throws -> Result {
         try local.check()
         let viaPolicy = background && FileManager.default.isExecutableFile(atPath: taskpolicy.path)
         let executable = viaPolicy ? taskpolicy : program
@@ -295,7 +311,7 @@ public enum ChildRun {
         // taskpolicy replaces itself with the program, so the leader's path is the program's.
         remember(pid.pid, program)
         onStart(pid.pid)
-        let output = Reader(pid.out), errors = Reader(pid.err)
+        let output = Reader(pid.out, line: onLine), errors = Reader(pid.err)
         var status: Int32 = 0
         var worked: TimeInterval = 0
         var last = Date()

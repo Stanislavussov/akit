@@ -294,6 +294,7 @@ shot meetings-local-settings $MAIN --section meetings --tab meetings-local-setti
 shot meetings-local-run  $MAIN --section meetings --select 0930 --tab meetings-local-run
 # The progress strip of a made-up local run at work (piece 3 of 12).
 shot meetings-progress   $MAIN --section meetings --select 0930 --tab meetings-progress
+shot meetings-pi-steps   $MAIN --section meetings --select 0930 --tab meetings-pi-steps
 shot knowledge-obsidian-setup 900x600 --section knowledge --select payments/orders-api --tab obsidian-setup
 shot knowledge-tags      $MAIN --section knowledge --select payments/orders-api --click 250,100
 shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties

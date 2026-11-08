@@ -75,6 +75,19 @@ public final class MeetingsModel {
     public private(set) var summaryStarted: [String: Date] = [:]
     /// The meetings whose summary is written again now (Summarize Again, a new template).
     public private(set) var summarizingAgain: Set<String> = []
+    /// What Pi did last while it writes the summary or looks in Azure DevOps (newest last).
+    public private(set) var piSteps: [String: [String]] = [:]
+    /// The tokens of Pi's finished calls in the run under way.
+    public private(set) var piRunUsage: [String: PiEvents.Usage] = [:]
+    static let piStepsShown = 6
+
+    private func notePiStep(_ id: String, _ step: String) {
+        var steps = piSteps[id] ?? []
+        if steps.last == step { return }
+        steps.append(step)
+        if steps.count > Self.piStepsShown { steps.removeFirst(steps.count - Self.piStepsShown) }
+        piSteps[id] = steps
+    }
     /// The meetings whose local run the user paused.
     public private(set) var pausedByUser: Set<String> = []
     public var problem: String?
@@ -560,6 +573,8 @@ public final class MeetingsModel {
         let token = UUID()
         runTokens[id] = token
         localStatus[id] = nil
+        piSteps[id] = nil
+        piRunUsage[id] = nil
         let activeFile = Self.recordingActiveFile(store.root)
         let local = LocalEnvironment(control: control, status: { [weak self] status in
             Task { @MainActor in
@@ -567,7 +582,17 @@ public final class MeetingsModel {
                 self.localStatus[id] = status
                 self.clockFollows(id, status)
             }
-        }, recordingElsewhere: { RecordingSignal.elsewhere(activeFile) })
+        }, recordingElsewhere: { RecordingSignal.elsewhere(activeFile) }, step: { [weak self] step in
+            Task { @MainActor in
+                guard let self, self.runTokens[id] == token else { return }
+                self.notePiStep(id, step)
+            }
+        }, usage: { [weak self] usage in
+            Task { @MainActor in
+                guard let self, self.runTokens[id] == token else { return }
+                self.piRunUsage[id] = (self.piRunUsage[id] ?? PiEvents.Usage()) + usage
+            }
+        })
         let processor = MeetingProcessor(store: store, settings: settings, client: client, local: local) { [weak self] meeting in
             Task { @MainActor in self?.updated(meeting) }
         }
@@ -591,6 +616,8 @@ public final class MeetingsModel {
             controls[id] = nil
             runTokens[id] = nil
             localStatus[id] = nil
+            piSteps[id] = nil
+            piRunUsage[id] = nil
             pausedByUser.remove(id)
             refresh()
             if selectedID == id { reloadPage() }
@@ -619,6 +646,16 @@ public final class MeetingsModel {
                 guard let self, self.runTokens[id] == token else { return }
                 self.localStatus[id] = status
             }
+        }, step: { [weak self] step in
+            Task { @MainActor in
+                guard let self, self.runTokens[id] == token else { return }
+                self.notePiStep(id, step)
+            }
+        }, usage: { [weak self] usage in
+            Task { @MainActor in
+                guard let self, self.runTokens[id] == token else { return }
+                self.piRunUsage[id] = (self.piRunUsage[id] ?? PiEvents.Usage()) + usage
+            }
         })
         let processor = MeetingProcessor(store: store, settings: settings, client: key.map { OpenRouterClient(key: $0, transport: transport) },
                                          local: local) { [weak self] meeting in
@@ -640,6 +677,8 @@ public final class MeetingsModel {
             controls[id] = nil
             runTokens[id] = nil
             localStatus[id] = nil
+            piSteps[id] = nil
+            piRunUsage[id] = nil
             refresh()
             if selectedID == id { reloadPage() }
         }
@@ -973,6 +1012,13 @@ public final class MeetingsModel {
     }
 
     /// For the guide's screenshots: shows a local run's status and buttons without running one.
+    /// A made-up Pi at work for the snapshot (`meetings-pi-steps`): its last steps over the strip.
+    public func showMadeUpPiSteps(_ id: String, _ steps: [String]) {
+        showMadeUpLocalRun(id, LocalStatus(phase: .summarizing, piece: 12, pieces: 12))
+        for step in steps { notePiStep(id, step) }
+        piRunUsage[id] = PiEvents.Usage(input: 18_400, output: 1_250, cacheRead: 6_100, calls: 4)
+    }
+
     public func showMadeUpLocalRun(_ id: String, _ status: LocalStatus) {
         processing.insert(id)
         pieceTotals[id] = status.pieces

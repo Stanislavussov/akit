@@ -293,7 +293,9 @@ public struct MeetingProcessor: Sendable {
         } else if settings.summarizer == .pi {
             // M28: the same prompt and template through Pi; no OpenRouter cost.
             local.status(LocalStatus(phase: .summarizing))
-            let answer = try await PiSummarizer(settings: settings, local: local, environment: piEnvironment).summarize(meeting)
+            let (answer, usage) = try await PiSummarizer(settings: settings, local: local, environment: piEnvironment).summarize(meeting)
+            // A new summary counts Pi's tokens from here (its lookup adds its own).
+            meeting.piUsage = usage
             meeting.summaryModel = "pi" + (settings.piModel.map { ": \($0)" } ?? "")
             if !answer.title.isEmpty { meeting.title = answer.title }
             if meeting.tags == nil, !answer.tags.isEmpty { meeting.tags = answer.tags }
@@ -320,8 +322,9 @@ public struct MeetingProcessor: Sendable {
     /// logged; the summary stays.
     func researchDevOps(_ meeting: inout Meeting, summary: String) async throws {
         let text: String
+        var usage = PiEvents.Usage()
         do {
-            text = try await PiDevOpsResearch(settings: settings, local: local, environment: piEnvironment).research(meeting, summary: summary)
+            (text, usage) = try await PiDevOpsResearch(settings: settings, local: local, environment: piEnvironment).research(meeting, summary: summary)
         } catch MeetingsError.stopped {
             throw MeetingsError.stopped
         } catch is CancellationError {
@@ -336,6 +339,7 @@ public struct MeetingProcessor: Sendable {
         // Tabs are the user's: `save` keeps the file's own, so the new tab goes in the file's copy.
         var disk = store.load(meeting.id) ?? meeting
         if !disk.tabs.contains(PiDevOpsResearch.tabName) { disk.tabs.append(PiDevOpsResearch.tabName) }
+        if !usage.isEmpty { disk.piUsage = (disk.piUsage ?? PiEvents.Usage()) + usage }
         // The found items go into the summary's lines too (a task gets its ticket); the summary
         // was just written by the model, so its hash moves with it and it is not taken for an edit.
         if !answer.links.isEmpty, store.summary(meeting.id) == summary {
@@ -472,6 +476,7 @@ public struct MeetingProcessor: Sendable {
             disk.model = meeting.model
             disk.summaryModel = meeting.summaryModel
             disk.summaryHash = meeting.summaryHash
+            disk.piUsage = meeting.piUsage
             if !meeting.title.isEmpty { disk.title = meeting.title }
             // Proposed tags only while the user has never set any.
             if disk.tags == nil, let tags = meeting.tags { disk.tags = tags }
