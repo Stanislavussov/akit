@@ -364,6 +364,58 @@ struct LocalFixture {
         #expect(log.saw(.summarizing))
     }
 
+    /// M37: after the summary Pi looks in Azure DevOps and GitLab, read only, into its own tab.
+    @Test func piLooksInDevOpsAndGitLabAfterTheSummary() async throws {
+        let fixture = try LocalFixture()
+        let research = fixture.root.url.appending(path: "research-args")
+        try LocalFixture.script(fixture.bin.appending(path: "pi"), """
+        case "$*" in
+          "mcp list --json") echo '{"servers":[{"name":"playwright"},{"name":"azure-devops"},{"name":"gitlab"}],"errors":[]}' ;;
+          *builtin:mcp*) printf '%s\\n' "$@" > "\(research.path)"; echo '## Work items'; echo '- [#123](https://dev.azure.com/x/_workitems/edit/123) budget' ;;
+          *) echo '{"title": "Plán", "summary": "Krátce.", "decisions": [], "tasks": [], "tags": ["rozpočet"]}' ;;
+        esac
+        """)
+        var settings = fixture.settings
+        settings.piDevOps = true
+        settings.piGitLab = true
+        settings.piRepositories = ["col-fe", "shell-fe"]
+        let meeting = try await fixture.processor(LocalEnvironment(tick: .milliseconds(10)), settings: settings).run(fixture.meeting.id)
+        #expect(meeting.tabs == [PiDevOpsResearch.tabName])
+        let tab = try String(contentsOf: fixture.root.store.tabFile(meeting.id, PiDevOpsResearch.tabName), encoding: .utf8)
+        #expect(tab.contains("[#123]"))
+        let args = try String(contentsOf: research, encoding: .utf8)
+        #expect(args.contains("codemode,tool_search,mcp__azure_devops__*,mcp__gitlab__*"))
+        #expect(args.contains("mcp__azure_devops__*create*"))
+        #expect(args.contains("mcp__gitlab__*merge*"))
+        #expect(!args.contains("playwright"))
+        #expect(args.contains("col-fe, shell-fe"))
+        #expect(args.contains("--no-extensions"))
+        #expect(fixture.root.store.summary(meeting.id).contains("Krátce."))
+    }
+
+    @Test func failedDevOpsLookupKeepsTheSummary() async throws {
+        let fixture = try LocalFixture()
+        try LocalFixture.script(fixture.bin.appending(path: "pi"), """
+        case "$*" in
+          "mcp list --json") echo '{"servers":[],"errors":[]}' ;;
+          *) echo '{"title": "Plán", "summary": "Krátce.", "decisions": [], "tasks": []}' ;;
+        esac
+        """)
+        var settings = fixture.settings
+        settings.piDevOps = true
+        let meeting = try await fixture.processor(LocalEnvironment(tick: .milliseconds(10)), settings: settings).run(fixture.meeting.id)
+        #expect(meeting.state == .done)
+        let tab = try String(contentsOf: fixture.root.store.tabFile(meeting.id, PiDevOpsResearch.tabName), encoding: .utf8)
+        #expect(tab.contains("no Azure DevOps MCP server"))
+    }
+
+    @Test func devOpsServerByName() {
+        #expect(PiDevOpsResearch.server(named: nil, among: ["github", "ado"]) == "ado")
+        #expect(PiDevOpsResearch.server(named: "mine", among: ["azure"]) == "mine")
+        #expect(PiDevOpsResearch.server(named: nil, among: ["x", "gitlab-own"], matches: PiDevOpsResearch.isGitLab) == "gitlab-own")
+        #expect(PiDevOpsResearch.parseServers("warn\n{\"servers\":[{\"name\":\"a\"}]}") == ["a"])
+    }
+
     @Test func stopKeepsThePiecesDoneAndFails() async throws {
         let fixture = try LocalFixture(whisperSleeps: 20)
         let control = LocalControl()

@@ -58,6 +58,9 @@ public final class MeetingsModel {
     /// M28: Pi's models (`provider/id`), from `pi --list-models`.
     public private(set) var piModels: [String] = []
     public private(set) var loadingPiModels = false
+    /// M37: Pi's MCP server names, for the Azure DevOps lookup.
+    public private(set) var piServers: [String] = []
+    public private(set) var loadingPiServers = false
     /// The pieces of each meeting being processed, for its progress bar.
     public private(set) var pieceTotals: [String: Int] = [:]
     /// When each meeting's run started, for the elapsed time beside the progress bar.
@@ -1051,6 +1054,13 @@ public final class MeetingsModel {
         loadingPiModels = true
         defer { loadingPiModels = false }
         piModels = await PiSummarizer.models()
+    }
+
+    public func loadPiServers() async {
+        guard !loadingPiServers else { return }
+        loadingPiServers = true
+        defer { loadingPiServers = false }
+        piServers = await PiDevOpsResearch.servers()
     }
 
     private func updated(_ meeting: Meeting) {

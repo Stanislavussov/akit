@@ -292,6 +292,31 @@ public struct MeetingProcessor: Sendable {
         meeting.summaryHash = Self.hash(summary)
         meeting.state = .done
         try save(&meeting)
+        if settings.summarizer == .pi, settings.piDevOps, !meeting.segments.isEmpty { try await researchDevOps(&meeting, summary: summary) }
+    }
+
+    /// M37: Pi's Azure DevOps lookup into its own tab. A failure is written in the tab and
+    /// logged; the summary stays.
+    func researchDevOps(_ meeting: inout Meeting, summary: String) async throws {
+        let text: String
+        do {
+            text = try await PiDevOpsResearch(settings: settings, local: local, environment: piEnvironment).research(meeting, summary: summary)
+        } catch MeetingsError.stopped {
+            throw MeetingsError.stopped
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            MeetingsLog.error(.pi, "\(meeting.id): azure devops failed: \(reason)")
+            text = "Pi could not look in Azure DevOps: \(reason)\n"
+        }
+        try store.writeTab(meeting.id, PiDevOpsResearch.tabName, text)
+        // Tabs are the user's: `save` keeps the file's own, so the new tab goes in the file's copy.
+        var disk = store.load(meeting.id) ?? meeting
+        if !disk.tabs.contains(PiDevOpsResearch.tabName) { disk.tabs.append(PiDevOpsResearch.tabName) }
+        try store.save(disk)
+        meeting = disk
+        progress(meeting)
     }
 
     /// The lock file for one local run at a time; it is in the meetings folder both apps share.
