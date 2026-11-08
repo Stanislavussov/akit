@@ -258,8 +258,13 @@ struct KnowledgeView: View {
     /// The selection of the list: a note id, or `map:` and a map id. A space's own row isn't
     /// selectable: a click folds or unfolds it.
     private var listSelection: Binding<String?> {
-        Binding(get: { model.map.map { "map:" + $0 } ?? model.note }, set: { value in
-            guard let value else { return }
+        // A note or map in a folded space or group is not given to the list: the list then lit
+        // the row it was folded under. It stays open beside the list all the same.
+        Binding(get: { model.map.map { "map:" + $0 }.flatMap { visible($0) ? $0 : nil } ?? model.note.flatMap { visible($0) ? $0 : nil } },
+                set: { value in
+            // Only a note's or a map's row selects; a space or group row is never a selection.
+            guard let value, value.hasPrefix("map:") || model.notes(in: String(value.split(separator: "/").first ?? "")).contains(where: { $0.id == value })
+            else { return }
             if value.hasPrefix("map:") {
                 model.open(map: String(value.dropFirst("map:".count)))
             } else {
@@ -273,6 +278,14 @@ struct KnowledgeView: View {
 
     /// One column (K29): every space is a foldable group with its note count, and in it the
     /// space's maps, then its notes.
+    /// Whether a list row (a note id or `map:<id>`) is shown: its space unfolded, and its group too.
+    private func visible(_ row: String) -> Bool {
+        let id = row.hasPrefix("map:") ? String(row.dropFirst("map:".count)) : row
+        guard let area = id.split(separator: "/").first.map(String.init), model.expandedAreas.contains(area) else { return false }
+        if let group = model.notes(in: area).first(where: { $0.id == id })?.group { return !model.collapsedGroups.contains(area + "/" + group) }
+        return true
+    }
+
     private var noteList: some View {
         List(selection: listSelection) {
             ForEach(model.areas, id: \.name) { area in
@@ -282,7 +295,7 @@ struct KnowledgeView: View {
                 })) {
                     areaRows(area.name)
                 } label: {
-                    spaceRow(area)
+                    spaceRow(area).selectionDisabled()
                 }
             }
         }
@@ -397,7 +410,8 @@ struct KnowledgeView: View {
                         .selectionDisabled()
                 }
             } label: {
-                groupRow(group, in: area, count: inGroup.count)
+                // Its id is no note: the list must not light it as the selection.
+                groupRow(group, in: area, count: inGroup.count).selectionDisabled()
             }
         }
         ForEach(notes.filter { $0.group == nil }, id: \.id) { noteRow($0) }
