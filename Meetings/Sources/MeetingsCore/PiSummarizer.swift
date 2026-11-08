@@ -56,13 +56,13 @@ public struct PiSummarizer: Sendable {
     static let system = "You write short, faithful meeting notes. Answer with one JSON object only, no other text."
 
     static func arguments(model: String?, input: URL) -> [String] {
-        var arguments = ["-p", "Write the meeting notes for the attached transcript.", "--mode", "text", "--no-session", "--offline",
+        var arguments = ["-p", "Write the meeting notes for the attached transcript.", "--mode", "json", "--no-session", "--offline",
                          "--no-tools", "--no-skills", "--no-context-files", "--no-prompt-templates", "--system-prompt", system]
         if let model, !model.isEmpty { arguments += ["--model", model] }
         return arguments + ["@\(input.path)"]
     }
 
-    public func summarize(_ meeting: Meeting) async throws -> Transcriber.Summary {
+    public func summarize(_ meeting: Meeting) async throws -> (summary: Transcriber.Summary, usage: PiEvents.Usage) {
         let variables = if let environment { environment } else { await LoginEnvironment.variables() }
         guard let pi = LoginEnvironment.find("pi", in: variables) else {
             throw MeetingsError.pi("pi is not on your login shell's PATH. Install Pi, or choose OpenRouter for the summary in Settings.")
@@ -78,13 +78,29 @@ public struct PiSummarizer: Sendable {
         // Pi waits on the network, not the CPU: it is not paused, only stopped.
         let result = try await ChildRun.run(pi, Self.arguments(model: settings.piModel, input: input), environment: variables, directory: folder,
                                             background: true, pausable: false, timeout: 900,
-                                            local: local, resume: LocalStatus(phase: .summarizing))
-        let text = String(decoding: result.output, as: UTF8.self)
-        MeetingsLog.info(.pi, "summary: exit \(result.status), \(text.count) chars in \(Int(Date().timeIntervalSince(started))) s, model \(settings.piModel ?? "Pi's default")")
+                                            local: local, resume: LocalStatus(phase: .summarizing),
+                                            onLine: Self.steps(local))
+        if let failure = PiEvents.failure(result.output) {
+            MeetingsLog.error(.pi, "model error: \(failure)")
+            throw MeetingsError.pi("the model answered with an error: \(PiEvents.short(failure)) (model \(settings.piModel ?? "Pi's default")). Check it in a terminal with pi, or choose another one in Meetings Settings → Pi.")
+        }
+        let text = PiEvents.answer(result.output)
+        let usage = PiEvents.totalUsage(result.output)
+        MeetingsLog.info(.pi, "summary: exit \(result.status), \(text.count) chars in \(Int(Date().timeIntervalSince(started))) s, model \(settings.piModel ?? "Pi's default"), \(usage.text)")
         guard result.status == 0 else {
             throw MeetingsError.pi("\(LocalTranscriber.tail(result.errors)) (exit \(result.status), model \(settings.piModel ?? "Pi's default")). Check that model in a terminal with pi, or choose another one in Meetings Settings → Pi.")
         }
-        return try Transcriber.parseSummary(text)
+        return (try Transcriber.parseSummary(text), usage)
+    }
+
+    /// Pi's event lines → steps for the screen and the log.
+    static func steps(_ local: LocalEnvironment) -> @Sendable (String) -> Void {
+        { line in
+            if let usage = PiEvents.usage(line) { local.usage(usage) }
+            guard let step = PiEvents.step(line) else { return }
+            MeetingsLog.info(.pi, "step: \(step)")
+            local.step(step)
+        }
     }
 
     /// `pi --list-models`: a table `provider  model  context …` → `provider/model`.

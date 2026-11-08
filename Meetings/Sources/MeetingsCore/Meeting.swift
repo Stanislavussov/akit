@@ -48,6 +48,8 @@ public struct Meeting: Codable, Equatable, Sendable, Identifiable {
     public var tags: [String]?
     /// M25: where the host app took this meeting and when (`worklog`, `notebook`, `knowledge`).
     public var exports: [String: Date]?
+    /// Pi's tokens for this meeting's summary and lookup, as Pi recorded them (nil without Pi).
+    public var piUsage: PiEvents.Usage?
 
     public init(id: String, started: Date, audioDays: Int = MeetingStore.audioDays) {
         self.id = id
@@ -120,6 +122,7 @@ extension Meeting {
         template = try c.decodeIfPresent(String.self, forKey: .template)
         tags = try c.decodeIfPresent([String].self, forKey: .tags)
         exports = try c.decodeIfPresent([String: Date].self, forKey: .exports)
+        piUsage = try? c.decodeIfPresent(PiEvents.Usage.self, forKey: .piUsage)
     }
 }
 

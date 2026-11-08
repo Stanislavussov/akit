@@ -434,6 +434,42 @@ struct LocalFixture {
         #expect(odd[1] == [PiDevOpsResearch.Link(title: "a b", url: "https://x/%28y")])
     }
 
+    /// Pi in its event stream: the steps reach the screen while it works, the answer is the last
+    /// assistant message.
+    @Test func piStepsComeLiveAndTheAnswerIsTheLastMessage() async throws {
+        let fixture = try LocalFixture()
+        let answer = #"{\"title\": \"Plán\", \"summary\": \"Krátce.\", \"decisions\": [], \"tasks\": []}"#
+        try LocalFixture.script(fixture.bin.appending(path: "pi"), """
+        echo '{"type":"session","version":3}'
+        echo '{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}'
+        echo '{"type":"tool_execution_start","toolCallId":"1","toolName":"tool_search","args":{"query":"work items"}}'
+        echo '{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":10,"errorMessage":"529 overloaded"}'
+        echo '{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":1}}'
+        echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"x"},{"type":"text","text":"\(answer)"}],"usage":{"input":1200,"output":300,"cacheRead":500,"cacheWrite":0,"totalTokens":2000,"cost":{"total":0.004}}}}'
+        echo '{"type":"agent_settled"}'
+        """)
+        let steps = StepLog()
+        let local = LocalEnvironment(tick: .milliseconds(10), step: { steps.add($0) })
+        let meeting = try await fixture.processor(local, settings: fixture.settings).run(fixture.meeting.id)
+        #expect(meeting.title == "Plán")
+        #expect(meeting.piUsage == PiEvents.Usage(input: 1200, output: 300, cacheRead: 500, cost: 0.004, calls: 1))
+        #expect(meeting.piUsage?.text == "1.7k in · 300 out · 1 call · $0.004")
+        #expect(steps.all == ["Thinks", "Looks for tools: work items", "Retry 1 of 3: 529 overloaded", "Writes the answer"])
+    }
+
+    @Test func piEventStepsName() {
+        let call = #"{"type":"tool_execution_start","toolName":"codemode","args":{"code":"const a = await tools.mcp__azure_devops__search_work_items({ query: \"login\" }); await tools.mcp__gitlab__get_file({ path: 'a.ts' })"}}"#
+        #expect(PiEvents.step(call) == "Calls azure_devops: search_work_items “login”, gitlab: get_file “a.ts”")
+        #expect(PiEvents.step(#"{"type":"tool_execution_start","toolName":"mcp__ado__wit_get","args":{}}"#) == "Calls ado: wit_get")
+        #expect(PiEvents.step(#"{"type":"tool_execution_end","toolName":"codemode","isError":true}"#) == "Failed: codemode")
+        #expect(PiEvents.step(#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"secret words"}}"#) == nil)
+        #expect(PiEvents.step("not json") == nil)
+        #expect(PiEvents.answer(Data("plain answer".utf8)) == "plain answer")
+        let expired = Data(#"{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"401: api_key_expired"}}"#.utf8)
+        #expect(PiEvents.failure(expired) == "401: api_key_expired")
+        #expect(PiEvents.step(String(decoding: expired, as: UTF8.self)) == "Model error: 401: api_key_expired")
+    }
+
     @Test func failedDevOpsLookupKeepsTheSummary() async throws {
         let fixture = try LocalFixture()
         try LocalFixture.script(fixture.bin.appending(path: "pi"), """
@@ -602,4 +638,12 @@ struct LocalFixture {
         #expect(ProcessingEstimate.text(390) == "≈ 7 min")
         #expect(ProcessingEstimate.text(4200) == "≈ 1 h 10 min")
     }
+}
+
+/// Steps a run reported, from any thread.
+final class StepLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var steps: [String] = []
+    func add(_ step: String) { lock.withLock { steps.append(step) } }
+    var all: [String] { lock.withLock { steps } }
 }
