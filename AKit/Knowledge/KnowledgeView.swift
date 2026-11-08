@@ -451,10 +451,7 @@ struct KnowledgeView: View {
             Text([note.kind, note.id.split(separator: "/").dropFirst(note.group == nil ? 1 : 2).joined(separator: "/")].compactMap(\.self).joined(separator: " · "))
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             if !note.tags.isEmpty {
-                WrapLayout(spacing: 3) {
-                    ForEach(note.tags, id: \.self) { TagBadge(tag: $0) }
-                }
-                .padding(.top, 1)
+                TagLine(tags: note.tags).padding(.top, 1)
             }
         }
         .padding(.vertical, 2)
