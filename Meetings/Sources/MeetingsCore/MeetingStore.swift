@@ -55,7 +55,12 @@ public struct MeetingStore: Sendable {
 
     public func load(_ id: String) -> Meeting? {
         guard let data = try? Data(contentsOf: file(id, "meeting.json")) else { return nil }
-        return try? Self.decoder.decode(Meeting.self, from: data)
+        do {
+            return try Self.decoder.decode(Meeting.self, from: data)
+        } catch {
+            MeetingsLog.error(.store, "\(id): meeting.json not readable, left out of the list: \(error)")
+            return nil
+        }
     }
 
     /// Writes `meeting.json` and the transcript page made from it.
@@ -236,10 +241,19 @@ public struct MeetingStore: Sendable {
         return count
     }
 
-    /// The number the next recorded piece gets (Record More): one after the highest piece.
+    /// The number the next recorded piece gets (Record More): one after the highest piece, counting
+    /// raw and bad files too, so a piece that did not mix is never written over.
     public func nextPieceNumber(_ id: String) -> Int {
-        let numbers = pieces(id).compactMap { Int($0.deletingPathExtension().lastPathComponent.dropFirst("piece-".count)) }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: audioFolder(id).path)) ?? []
+        let numbers = names.compactMap(Self.pieceNumber)
         return (numbers.max() ?? 0) + 1
+    }
+
+    /// The piece number in `piece-004.aac`, `raw-mic-004-1.caf` or `bad-raw-sys-004-2.caf`.
+    static func pieceNumber(_ name: String) -> Int? {
+        let parts = name.split(separator: ".").first?.split(separator: "-") ?? []
+        guard let kind = parts.first, ["piece", "raw", "bad"].contains(kind) else { return nil }
+        return parts.lazy.compactMap { $0.count >= 3 ? Int($0) : nil }.first
     }
 
     /// A piece's facts written by the mixer: its length and when the microphone carried speech.
@@ -403,6 +417,8 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
     case noTranscript
     case notTranscribed
     case busy
+    /// The recording lock is held: the other Meetings app records this meeting.
+    case recordingBusy
     /// M27: the user clicked Stop on a local run.
     case stopped
     /// M27: the Mac got critically hot during a local run.
@@ -424,6 +440,7 @@ public enum MeetingsError: Error, LocalizedError, Equatable {
         case .noTranscript: "This meeting has no transcript to summarize yet."
         case .notTranscribed: "Part of this meeting is not transcribed yet. Try Again first, then the summary is written from the whole transcript."
         case .busy: "This meeting is being transcribed already (here or in the other Meetings app)."
+        case .recordingBusy: "This meeting is being recorded already (here or in the other Meetings app)."
         case .stopped: "Stopped by you. Try Again goes on from the next piece."
         case .tooHot: "Stopped: the Mac got critically hot. Try Again goes on from the next piece."
         case .local(let detail): "Local transcription failed: \(detail)"

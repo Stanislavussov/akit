@@ -340,19 +340,29 @@ public final class MeetingsModel {
         var before: Meeting?
         do {
             let meeting: Meeting
+            let held: MeetingLock
             if let existing {
                 guard var old = store.load(existing) else { return }
+                // Record More: the lock before any save, so a meeting the other host records is never written.
+                guard let lock = MeetingLock.take(Recorder.lockFile(store.audioFolder(existing))) else {
+                    throw MeetingsError.recordingBusy
+                }
                 before = old
                 old.state = .recording
-                try store.save(old)
+                do { try store.save(old) } catch { lock.release(); throw error }
                 meeting = old
+                held = lock
             } else {
                 meeting = try store.create(template: settings.defaultTemplate)
+                // The lock right after the meeting exists, so the other host never takes it for a crash.
+                guard let lock = MeetingLock.take(Recorder.lockFile(store.audioFolder(meeting.id))) else {
+                    try? store.moveToTrash(meeting.id)
+                    throw MeetingsError.recordingBusy
+                }
+                held = lock
             }
             let id = meeting.id
             let folder = store.audioFolder(id)
-            // The lock right after the meeting exists, so the other host never takes it for a crash.
-            let held = MeetingLock.take(Recorder.lockFile(folder))
             let mixed: @Sendable () -> Void = { [weak self] in
                 Task { @MainActor in self?.transcribeWhileRecording(id) }
             }
@@ -367,7 +377,7 @@ public final class MeetingsModel {
             do {
                 try await recorder.start()
             } catch {
-                held?.release()
+                held.release()
                 if let before { try? store.save(before) } else { try? store.moveToTrash(id) }
                 throw error
             }
@@ -1199,6 +1209,11 @@ public final class MeetingsModel {
 
     public func moveToTrash(_ id: String) {
         guard !isLive(id) else { return }
+        // A run would make the folder again for its next save; this app's or the other host's.
+        guard !processing.contains(id), MeetingLock.isFree(MeetingLock.processing(store, id)) else {
+            problem = "This meeting is being processed. Stop it first, then move it to the Trash."
+            return
+        }
         do {
             try store.moveToTrash(id)
             if selectedID == id { select(nil) }

@@ -9,6 +9,7 @@ M29–M31 (retries + audio kept until transcribed, project vocabulary, backgroun
 M32 (silent microphone restarted and reported, recorder asks for the microphone at launch): built 2026-11-07.
 M33 (import an audio or video file from another app): built 2026-11-07.
 M34–M35 (Record More into a stopped meeting, transcribe pieces while recording): built 2026-11-07.
+Stability wave 1 (see "Stability"): built 2026-11-08; waves 2–4 open.
 M22–M25 (templates, search, Ask, AKit links): built 2026-11-06, released v2026.11.06-3; tests with a fake OpenRouter, the screens checked by snapshot; real model runs of Ask and Propose to Knowledge not yet checked.
 
 Code: `Meetings/` (its own Swift package: `MeetingsCore`, `MeetingsAudio`, `MeetingsUI`,
@@ -118,6 +119,19 @@ Not a meeting bot that joins the call, not live captions, not recording all day.
 | 4 | MeetingsUI: list, open recording, settings, Rename Speakers | `make snapshot` with a made-up `~/Meetings` |
 | 5 | Into AKit (Work → Meetings) and the `Meetings` app target; guide `docs/guides/meetings.ru.md` | snapshot, guide screenshots from a made-up home |
 | 6 | Local mode (M26–M28): whisper.cpp per piece at background priority, pause / stop / heat, Pi summary, Settings → Engine, guide section | tests with fake `afconvert` / `whisper-cli` / `pi`; a real whisper run on Czech speech; snapshots `meetings-local-settings`, `meetings-local-run` |
+
+## Stability
+
+Grooming of 2026-11-08: three read-only audits (recording, processing, storage + UI) and the real
+log. The log's main problem: a meeting of 42 min ran 4 times (≈ $0.62) and one piece was still
+skipped, because the model's transcript JSON broke or hit the output cap.
+
+| Wave | What | Status |
+|---|---|---|
+| 1 | System tap follows the default output device (it read the sound-effects device); Record More numbers count `raw-`/`bad-` files (a piece that did not mix was written over); `meeting.json` with missing keys still loads, a decode failure is logged; one bad settings value keeps the rest, an unreadable file stays as `settings.bad.json`; no Trash while a run works on the meeting; no recording without its lock | built 2026-11-08 |
+| 2 | System tap watchdog (buffers stop after sleep or a lost device → restart, then a problem); one mic restart per burst of configuration changes; restart tap and mic on wake | open |
+| 3 | Transcript JSON that breaks or hits the cap (log); summary call with an output cap, a shorter timeout and a context check; no retry of a client timeout on a paid POST; a failed summary keeps the meeting transcribed with a warning | open |
+| 4 | File writes off the audio threads (writer queue); `list()` and page reads off the main thread, segments out of `meeting.json`; a lock around load-modify-save and cost as a delta; `MeetingsModel` split (one run state per meeting); disk-full back-off | open |
 
 ## Open
 

@@ -27,7 +27,7 @@ final class SystemAudioTap: @unchecked Sendable {
         self.problem = problem
         try controlQueue.sync { try open() }
         // A new default output (headphones plugged in, AirPods) restarts the tap on it.
-        var address = Self.address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+        var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.restart() }
         listener = block
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, controlQueue, block)
@@ -35,7 +35,7 @@ final class SystemAudioTap: @unchecked Sendable {
 
     func stop() async {
         if let listener {
-            var address = Self.address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+            var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
             AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, controlQueue, listener)
         }
         listener = nil
@@ -50,7 +50,7 @@ final class SystemAudioTap: @unchecked Sendable {
 
     deinit {
         if let listener {
-            var address = Self.address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+            var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
             AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, controlQueue, listener)
         }
         close()
@@ -165,7 +165,7 @@ final class SystemAudioTap: @unchecked Sendable {
     static func defaultOutputUID() throws -> String {
         var device = AudioObjectID(kAudioObjectUnknown)
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        var address = address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+        var address = address(kAudioHardwarePropertyDefaultOutputDevice)
         try check(AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device), "find the output device")
         var uid: Unmanaged<CFString>?
         size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
