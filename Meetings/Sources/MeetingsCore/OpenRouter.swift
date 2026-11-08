@@ -26,23 +26,26 @@ public struct OpenRouterClient: Sendable {
     /// Codes worth another try: too many requests, a timeout, the provider down or busy.
     static func isRetryable(_ code: Int) -> Bool { [408, 429, 500, 502, 503, 504, 520, 522, 524, 529].contains(code) }
 
-    static func isRetryable(_ error: Error) -> Bool {
+    /// `paid`: a model call. Its request may have reached the provider before a timeout or a lost
+    /// connection, and the provider bills it anyway, so only errors before sending are retried.
+    static func isRetryable(_ error: Error, paid: Bool = false) -> Bool {
         if let wrapped = error as? RetryAfter { return isRetryable(wrapped.error) }
         if case MeetingsError.http(let code, _) = error { return isRetryable(code) }
         if let error = error as? URLError {
-            return [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost].contains(error.code)
+            let beforeSending: [URLError.Code] = [.notConnectedToInternet, .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost]
+            return (paid ? beforeSending : beforeSending + [.timedOut, .networkConnectionLost]).contains(error.code)
         }
         return false
     }
 
     /// Runs `call`; a retryable failure waits and tries again, at most `retryDelays.count` times.
-    func withRetries<T>(_ what: String, _ call: () async throws -> T) async throws -> T {
+    func withRetries<T>(_ what: String, paid: Bool = false, _ call: () async throws -> T) async throws -> T {
         var attempt = 0
         while true {
             do {
                 return try await call()
             } catch {
-                guard Self.isRetryable(error), attempt < retryDelays.count, !Task.isCancelled else { throw (error as? RetryAfter)?.error ?? error }
+                guard Self.isRetryable(error, paid: paid), attempt < retryDelays.count, !Task.isCancelled else { throw (error as? RetryAfter)?.error ?? error }
                 var delay = retryDelays[attempt]
                 if let after = (error as? RetryAfter)?.seconds { delay = max(delay, .seconds(min(after, 120))) }
                 attempt += 1
@@ -92,7 +95,7 @@ public struct OpenRouterClient: Sendable {
         request.setValue("Meetings", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         // A 200 with an error object (a provider failed mid-way) is retried like the code it names.
-        return try await withRetries("POST /chat/completions") { try Completion.parse(try await send(request)) }
+        return try await withRetries("POST /chat/completions", paid: true) { try Completion.parse(try await send(request)) }
     }
 
     func send(_ request: URLRequest) async throws -> Data {

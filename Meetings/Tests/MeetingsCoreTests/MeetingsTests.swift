@@ -1106,7 +1106,7 @@ final class Closed: @unchecked Sendable {
         let store = TempRoot().store
         let meeting = try ProcessorTests().meetingWithPieces(store, count: 2)
         let one = chat(#"{"segments":[{"start":"00:01","speaker":"Me","text":"ahoj"}]}"#, cost: 0.01)
-        let bad = chat(#"{"segments":[{"text":"x"}}"#, cost: 0.01)
+        let bad = chat(#"{"segments":[{"text":"x"#, cost: 0.01)
         let summary = chat(#"{"title":"T","summary":"S","decisions":[],"tasks":[]}"#)
         // Both pieces at once: unreadable; piece 1: fine; piece 2: unreadable, then fine.
         let server = FakeServer([(200, bad), (200, one), (200, bad), (200, one), (200, summary)])
@@ -1115,7 +1115,7 @@ final class Closed: @unchecked Sendable {
         #expect(done.state == .done && done.segments.map(\.text) == ["ahoj", "ahoj"])
         // The output cap follows the audio length: 2 × 300 s, then 300 s.
         #expect(server.body(0)["max_tokens"] as? Int == 8_000 && server.body(1)["max_tokens"] as? Int == 5_000)
-        #expect(server.body(4)["max_tokens"] == nil)
+        #expect(server.body(4)["max_tokens"] as? Int == 24_000)
     }
 
     @Test func unreadablePaidAnswerStillCosts() async throws {

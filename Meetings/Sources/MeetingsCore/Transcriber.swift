@@ -84,7 +84,9 @@ public struct Transcriber: Sendable {
                                            vocabulary: settings.vocabulary)
         let completion = try await client.complete(model: settings.model, system: Self.system(clean: settings.cleanTranscript), text: prompt, audio: (audio, format),
                                                   maxTokens: Self.outputBudget(length))
-        let segments = try PaidFailure.parse(completion) { try Self.parseSegments(completion.text, offset: offset, length: length) }
+        let segments = try PaidFailure.parse(completion) {
+            try Self.parseSegments(completion.text, offset: offset, length: length, cutOff: completion.finishReason == "length")
+        }
         return (segments, completion)
     }
 
@@ -93,16 +95,68 @@ public struct Transcriber: Sendable {
     /// here instead of at its 65k limit, which billed the whole loop.
     static func outputBudget(_ length: TimeInterval) -> Int { 2_000 + Int(length / 60 * 600) }
 
-    static func parseSegments(_ text: String, offset: TimeInterval, length: TimeInterval) throws -> [Segment] {
-        guard let object = jsonObject(text) else { throw MeetingsError.badAnswer("the transcript is not a JSON object") }
-        guard let items = object["segments"] as? [[String: Any]] else { throw MeetingsError.badAnswer("no \"segments\" list") }
+    /// `cutOff`: the answer stopped at the output cap. A broken or cut answer keeps the whole
+    /// segments it has (a cut one only when they reach near the end of the audio); a model that
+    /// loops gives its lines once.
+    static func parseSegments(_ text: String, offset: TimeInterval, length: TimeInterval, cutOff: Bool = false) throws -> [Segment] {
+        let items: [[String: Any]]
+        var salvaged = false
+        if let object = jsonObject(text) {
+            guard let list = object["segments"] as? [[String: Any]] else { throw MeetingsError.badAnswer("no \"segments\" list") }
+            items = list
+        } else {
+            items = segmentObjects(text)
+            salvaged = true
+        }
         var result: [Segment] = []
         for item in items {
             let words = ((item["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !words.isEmpty else { continue }
             var start = seconds(item["start"]) ?? result.last?.start ?? 0
             start = min(max(0, start), max(0, length))
-            result.append(Segment(start: offset + start, speaker: speakerKey(item["speaker"]), text: words))
+            let segment = Segment(start: offset + start, speaker: speakerKey(item["speaker"]), text: words)
+            if salvaged, isRepeat(segment, of: result) { continue }
+            result.append(segment)
+        }
+        guard salvaged else { return result }
+        // A broken answer that the model ended itself keeps its whole lines. A cut one counts only
+        // when they reach the last minute of the audio; else the rest of the piece is missing.
+        guard let last = result.last, !cutOff || last.start - offset >= max(0, length - 60) else {
+            throw MeetingsError.badAnswer(cutOff ? "the transcript was cut off at the output limit" : "the transcript is not a JSON object")
+        }
+        MeetingsLog.info(.processor, "a broken answer kept \(result.count) whole segment(s) up to \(timestamp(last.start - offset))")
+        return result
+    }
+
+    /// A line the model already wrote among the last few (same speaker, same words): a loop.
+    static func isRepeat(_ segment: Segment, of earlier: [Segment]) -> Bool {
+        segment.text.count >= 12 && earlier.suffix(4).contains { $0.speaker == segment.speaker && $0.text == segment.text }
+    }
+
+    /// Every whole `{…}` object with a `text` key in a broken answer, in order. Strings are read
+    /// with their escapes, so a brace inside the words never counts.
+    static func segmentObjects(_ text: String) -> [[String: Any]] {
+        let chars = Array(text.utf8)
+        var result: [[String: Any]] = []
+        var starts: [Int] = []
+        var inString = false
+        var escaped = false
+        for (i, c) in chars.enumerated() {
+            if inString {
+                if escaped { escaped = false } else if c == UInt8(ascii: "\\") { escaped = true } else if c == UInt8(ascii: "\"") { inString = false }
+                continue
+            }
+            switch c {
+            case UInt8(ascii: "\""): inString = true
+            case UInt8(ascii: "{"): starts.append(i)
+            case UInt8(ascii: "}"):
+                guard let start = starts.popLast() else { continue }
+                let data = Data(chars[start...i])
+                if let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], object["text"] != nil {
+                    result.append(object)
+                }
+            default: break
+            }
         }
         return result
     }
@@ -269,12 +323,18 @@ public struct Transcriber: Sendable {
         return paragraphs.joined(separator: "\n\n")
     }
 
+    /// The summary's caps: detailed notes of a long meeting fit well below; a model that loops
+    /// stops here instead of at its own limit, and a slow one fails after 5 minutes, not 10.
+    static let summaryBudget = 24_000
+    static let summaryTimeout: TimeInterval = 300
+
     public func summarize(_ meeting: Meeting) async throws -> (summary: Summary, completion: Completion) {
         let template = settings.template(meeting.template)
         let completion = try await client.complete(model: settings.summaryModel ?? settings.model,
                                                    system: "You write detailed, well-structured, faithful meeting notes. Answer with one JSON object and nothing else.",
                                                    text: Self.summaryPrompt(language: settings.language, transcript: Self.plainTranscript(meeting), template: template,
-                                                                            vocabulary: settings.vocabulary))
+                                                                            vocabulary: settings.vocabulary),
+                                                   timeout: Self.summaryTimeout, maxTokens: Self.summaryBudget)
         return (try PaidFailure.parse(completion) { try Self.parseSummary(completion.text) }, completion)
     }
 
