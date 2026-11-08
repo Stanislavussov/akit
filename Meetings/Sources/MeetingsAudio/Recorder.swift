@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import AppKit
 import Foundation
 import MeetingsCore
 
@@ -41,6 +42,16 @@ public final class Recorder: @unchecked Sendable {
     private var micWatch = MicWatch()
     private var micTimer: DispatchSourceTimer?
     private var sysLevels: [Float] = []
+    /// The same check for the system sound: its device runs while nothing plays, so no buffer
+    /// means the tap stopped (a lost device, a wake from sleep).
+    private var sysBuffers = 0
+    private var sysWatch = MicWatch()
+    /// One microphone restart for a burst of configuration changes (AirPods post 2–4), and none
+    /// for the change a restart itself posts. On `micQueue`.
+    private var configChanges = 0
+    private var lastRestartEnd = Date.distantPast
+    static let configSettle: TimeInterval = 0.5
+    private var wakeObserver: NSObjectProtocol?
     public static let levelHistory = 48
 
     /// `lock`: the recording lock, when the caller took it already (right after creating the
@@ -106,6 +117,7 @@ public final class Recorder: @unchecked Sendable {
         // H3: AirPods, a call's Bluetooth profile, another input or a wake from sleep stop the
         // engine; it is set up again on the new device and the gap becomes silence.
         observeConfiguration()
+        observeWake()
         lock.withLock { running = true }
         startedAt = Date()
         MeetingsLog.info(.recorder, "started in \(folder.deletingLastPathComponent().lastPathComponent): mic \(engine.inputNode.outputFormat(forBus: 0)), echo cancellation \(echoCancellation)")
@@ -115,8 +127,28 @@ public final class Recorder: @unchecked Sendable {
     private func observeConfiguration() {
         if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
         configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
-            guard let self else { return }
-            self.micQueue.async { self.restartMicrophone(reason: "audio configuration changed") }
+            let at = Date()
+            self?.micQueue.async { [weak self] in
+                guard let self else { return }
+                self.configChanges += 1
+                let change = self.configChanges
+                self.micQueue.asyncAfter(deadline: .now() + Self.configSettle) { [weak self] in
+                    guard let self, change == self.configChanges, at > self.lastRestartEnd else { return }
+                    self.restartMicrophone(reason: "audio configuration changed")
+                }
+            }
+        }
+    }
+
+    /// After sleep the devices can come back without a configuration change: both sources start again.
+    private func observeWake() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.micQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self, self.lock.withLock({ self.running }) else { return }
+                // A configuration change at wake may have restarted it already.
+                if Date().timeIntervalSince(self.lastRestartEnd) > 2 { self.restartMicrophone(reason: "the Mac woke up") }
+                self.tap.restartSoon(reason: "the Mac woke up")
+            }
         }
     }
 
@@ -131,13 +163,21 @@ public final class Recorder: @unchecked Sendable {
     }
 
     private func checkMicrophone() {
-        let (isRunning, buffers) = lock.withLock { (running, micBuffers) }
+        let (isRunning, buffers, sys) = lock.withLock { (running, micBuffers, sysBuffers) }
         guard isRunning else { return }
         switch micWatch.check(buffers: buffers) {
         case .none: break
         case .restart: restartMicrophone(reason: "no microphone sound for \(Int(MicWatch.interval)) s (\(buffers) buffer(s) in all)", fresh: true)
         case .report:
             report("The microphone sends no sound, so your voice is not recorded. Stop, check the input in System Settings → Sound, and Record again.")
+        }
+        // A restart under way has its own tries; the watch counts again after it.
+        if tap.isRestarting { return }
+        switch sysWatch.check(buffers: sys) {
+        case .none: break
+        case .restart: tap.restartSoon(reason: "no system sound for \(Int(MicWatch.interval)) s (\(sys) buffer(s) in all)")
+        case .report:
+            report("The system sound stopped, so the other people are not recorded. Stop, check the output in System Settings → Sound, and Record again.")
         }
     }
 
@@ -183,6 +223,8 @@ public final class Recorder: @unchecked Sendable {
             if delay > 0 { Thread.sleep(forTimeInterval: delay) }
             if (try? startMicrophone()) != nil {
                 MeetingsLog.info(.recorder, "microphone restarted: \(engine.inputNode.outputFormat(forBus: 0))")
+                // The change a restart posts itself can come a moment after it.
+                lastRestartEnd = Date().addingTimeInterval(Self.configSettle)
                 return
             }
         }
@@ -198,6 +240,8 @@ public final class Recorder: @unchecked Sendable {
             micTimer = nil
             if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
             configObserver = nil
+            if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+            wakeObserver = nil
         }
         await tap.stop()
         stopMicrophone()
@@ -220,6 +264,7 @@ public final class Recorder: @unchecked Sendable {
         if running {
             micTimer?.cancel()
             if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
+            if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
             mic?.stop()
@@ -266,6 +311,7 @@ public final class Recorder: @unchecked Sendable {
                 micLevels.append(value)
                 if micLevels.count > Self.levelHistory { micLevels.removeFirst(micLevels.count - Self.levelHistory) }
             } else {
+                sysBuffers += 1
                 sysLevels.append(value)
                 if sysLevels.count > Self.levelHistory { sysLevels.removeFirst(sysLevels.count - Self.levelHistory) }
             }

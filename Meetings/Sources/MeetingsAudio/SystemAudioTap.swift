@@ -20,20 +20,40 @@ final class SystemAudioTap: @unchecked Sendable {
     private let controlQueue = DispatchQueue(label: "meetings.system-tap.control", qos: .userInitiated)
     private var handler: (@Sendable (AVAudioPCMBuffer, UInt64) -> Void)?
     private var problem: (@Sendable (String) -> Void)?
+    /// Set by `stop()` first, so a restart already queued never opens the device again.
+    private let stopFlag = NSLock()
+    private var _stopped = false
+    private var stopped: Bool {
+        get { stopFlag.withLock { _stopped } }
+        set { stopFlag.withLock { _stopped = newValue } }
+    }
+    /// True while a restart closes and opens the device: the watch waits instead of queueing another.
+    private var _restarting = false
+    var isRestarting: Bool {
+        get { stopFlag.withLock { _restarting } }
+        set { stopFlag.withLock { _restarting = newValue } }
+    }
 
     /// `handler` gets each buffer and the host time of its first frame.
     func start(handler: @escaping @Sendable (AVAudioPCMBuffer, UInt64) -> Void, problem: @escaping @Sendable (String) -> Void) throws {
         self.handler = handler
         self.problem = problem
+        stopped = false
         try controlQueue.sync { try open() }
         // A new default output (headphones plugged in, AirPods) restarts the tap on it.
         var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.restart() }
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.restart(reason: "output device changed") }
         listener = block
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, controlQueue, block)
     }
 
+    /// A restart from outside: the watch saw no buffer for a while, or the Mac woke up.
+    func restartSoon(reason: String) {
+        controlQueue.async { [weak self] in self?.restart(reason: reason) }
+    }
+
     func stop() async {
+        stopped = true
         if let listener {
             var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
             AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, controlQueue, listener)
@@ -58,14 +78,18 @@ final class SystemAudioTap: @unchecked Sendable {
 
     /// On `controlQueue`. A new device can take a moment to settle: a few tries, then a sentence
     /// for the screen. The writer fills the gap with silence.
-    private func restart() {
-        MeetingsLog.info(.recorder, "output device changed: restarting the system tap")
+    private func restart(reason: String) {
+        guard !stopped else { return }
+        isRestarting = true
+        defer { isRestarting = false }
+        MeetingsLog.info(.recorder, "\(reason): restarting the system tap")
         close()
         for delay in [0.0, 0.3, 0.7, 1.5] {
             if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+            guard !stopped else { return }
             if (try? open()) != nil { return }
         }
-        problem?("The system sound stopped after the output device changed. Stop and Record again to record the other people.")
+        problem?("The system sound stopped (\(reason)) and did not start again. Stop and Record again to record the other people.")
     }
 
     private func open() throws {
