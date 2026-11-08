@@ -81,7 +81,7 @@ struct SaveNoteSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Save to Knowledge").font(.title3.bold())
-            Text("The whole summary becomes a new note, with the meeting's date, people and tags on top, and with the transcript as a second note that the summary links to. Edit it later on the Knowledge screen.")
+            Text("The whole summary becomes a new note, with the meeting's date, people and tags on top, and with a link that opens its transcript here in Meetings. Edit it later on the Knowledge screen.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Picker("Area", selection: $area) {
@@ -89,8 +89,8 @@ struct SaveNoteSheet: View {
             }
             .disabled(areas.isEmpty)
             TextField("Note name", text: $name)
-            Toggle("Also save the transcript", isOn: $transcript)
-                .help("Save the whole transcript, with times and speakers, as the note “<name> – transcript”; the summary links to it and back")
+            Toggle("Link to the transcript", isOn: $transcript)
+                .help("A line on top of the note, “Open the transcript in Meetings”: a click shows this meeting's Transcript tab")
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
             }
