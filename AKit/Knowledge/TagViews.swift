@@ -33,6 +33,29 @@ struct TagBadge: View {
 }
 
 /// Lays its views out in rows, starting a new row when the next one doesn't fit.
+/// A note row's tags on one line: as many as fit, the rest as "+N". The list keeps a row's
+/// height from before a resize, so a row whose height follows its width (tags wrapping) was drawn
+/// over its neighbours; one line is always the same height.
+struct TagLine: View {
+    let tags: [String]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            ForEach(Array(stride(from: tags.count, through: 0, by: -1)), id: \.self) { shown in
+                HStack(spacing: 3) {
+                    ForEach(tags.prefix(shown), id: \.self) { TagBadge(tag: $0) }
+                    if shown < tags.count {
+                        Text("+\(tags.count - shown)").font(.caption2).foregroundStyle(.secondary).fixedSize()
+                    }
+                }
+                .fixedSize()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(tags.map { "#" + $0 }.joined(separator: " "))
+    }
+}
+
 struct WrapLayout: Layout {
     var spacing: CGFloat = 4
 
