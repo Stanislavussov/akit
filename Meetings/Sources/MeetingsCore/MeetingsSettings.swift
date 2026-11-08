@@ -34,6 +34,18 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     public var summarizer: Summarizer = .openRouter
     /// Pi's model (`provider/id`); nil is Pi's own default.
     public var piModel: String?
+    /// M37: after Pi wrote the summary, Pi looks in Azure DevOps (read only) for related work
+    /// items, rules, wiki pages, history and artifacts, into the tab "Azure DevOps".
+    public var piDevOps: Bool = false
+    /// The Pi MCP server for that; nil is the first whose name says Azure DevOps.
+    public var piDevOpsServer: String?
+    /// M37: the same run also reads GitLab: the repositories' tags and how their code does it.
+    public var piGitLab: Bool = false
+    /// The Pi MCP server for GitLab; nil is the first whose name says GitLab.
+    public var piGitLabServer: String?
+    /// The GitLab repositories to search (`col-fe`, `col-be`, `shell-fe` …); empty = the ones the
+    /// meeting or the work items name.
+    public var piRepositories: [String] = []
     /// whisper's language code, `auto` to detect per piece.
     public var localLanguage: String = "auto"
     /// M27: whisper on the GPU at background priority (fast, little CPU); off is the efficiency
@@ -160,6 +172,11 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
         transcription = (try? c.decodeIfPresent(Engine.self, forKey: .transcription)) ?? d.transcription
         summarizer = (try? c.decodeIfPresent(Summarizer.self, forKey: .summarizer)) ?? d.summarizer
         piModel = try c.decodeIfPresent(String.self, forKey: .piModel)
+        piDevOps = try c.decodeIfPresent(Bool.self, forKey: .piDevOps) ?? d.piDevOps
+        piDevOpsServer = try c.decodeIfPresent(String.self, forKey: .piDevOpsServer)
+        piGitLab = try c.decodeIfPresent(Bool.self, forKey: .piGitLab) ?? d.piGitLab
+        piGitLabServer = try c.decodeIfPresent(String.self, forKey: .piGitLabServer)
+        piRepositories = (try? c.decodeIfPresent([String].self, forKey: .piRepositories)) ?? d.piRepositories
         localLanguage = try c.decodeIfPresent(String.self, forKey: .localLanguage) ?? d.localLanguage
         localGPU = try c.decodeIfPresent(Bool.self, forKey: .localGPU) ?? d.localGPU
         vocabulary = (try? c.decodeIfPresent([String].self, forKey: .vocabulary)) ?? d.vocabulary

@@ -11,6 +11,7 @@ struct MeetingsSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var key = ""
     @State private var limit = 10.0
+    @State private var repositories = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -249,10 +250,49 @@ struct MeetingsSettingsView: View {
             }
             Text("Pi gets the transcript's text and writes the summary, decisions and tasks in the language above, with no tools, skills or saved session.")
                 .font(.caption).foregroundStyle(.secondary)
+            Toggle("Then look in Azure DevOps", isOn: Binding(get: { model.settings.piDevOps }, set: { value in model.update { $0.piDevOps = value } }))
+            if model.settings.piDevOps {
+                HStack {
+                    Picker("Azure DevOps server", selection: Binding(get: { model.settings.piDevOpsServer ?? "" },
+                                                                     set: { value in model.update { $0.piDevOpsServer = value.isEmpty ? nil : value } })) {
+                        Text("Found by name").tag("")
+                        ForEach(rows(model.piServers, chosen: model.settings.piDevOpsServer), id: \.self) { Text($0).tag($0) }
+                    }
+                    if model.loadingPiServers { ProgressView().controlSize(.small) }
+                    Button("Reload") { Task { await model.loadPiServers() } }.disabled(model.loadingPiServers)
+                }
+                Toggle("Also look in GitLab", isOn: Binding(get: { model.settings.piGitLab }, set: { value in model.update { $0.piGitLab = value } }))
+                if model.settings.piGitLab {
+                    HStack {
+                        Picker("GitLab server", selection: Binding(get: { model.settings.piGitLabServer ?? "" },
+                                                                   set: { value in model.update { $0.piGitLabServer = value.isEmpty ? nil : value } })) {
+                            Text("Found by name").tag("")
+                            ForEach(rows(model.piServers, chosen: model.settings.piGitLabServer), id: \.self) { Text($0).tag($0) }
+                        }
+                    }
+                    TextField("Repositories", text: $repositories, prompt: Text("col-fe, col-be, shell-fe"))
+                        .onSubmit { model.update { $0.piRepositories = MeetingsSettings.vocabulary(from: repositories) } }
+                        .onChange(of: repositories) { _, text in model.update { $0.piRepositories = MeetingsSettings.vocabulary(from: text) } }
+                        .onAppear { repositories = model.settings.piRepositories.joined(separator: ", ") }
+                    Text("Pi looks at these repositories' tags and searches their code and merge requests for how the topic is built today. Empty: the repositories the meeting or the work items name.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("After the summary, Pi searches your Azure DevOps MCP server (the meeting's tags too) for related work items and their links, rules, wiki pages, history (pull requests, comments) and artifacts (builds, pipelines). It only reads: tools that create or change something are off. The answer goes to the tab \u{201C}\(PiDevOpsResearch.tabName)\u{201D}; Summarize Again writes it again.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .task(id: model.settings.piDevOps) {
+            if model.settings.piDevOps, model.piServers.isEmpty { await model.loadPiServers() }
         }
     }
 
     /// Pi's models, with the chosen one kept when the list lacks it.
+    /// The servers, with a chosen one Pi no longer lists kept on top.
+    private func rows(_ servers: [String], chosen: String?) -> [String] {
+        guard let chosen, !chosen.isEmpty, !servers.contains(chosen) else { return servers }
+        return [chosen] + servers
+    }
+
     private var piRows: [String] {
         guard let chosen = model.settings.piModel, !chosen.isEmpty, !model.piModels.contains(chosen) else { return model.piModels }
         return [chosen] + model.piModels
