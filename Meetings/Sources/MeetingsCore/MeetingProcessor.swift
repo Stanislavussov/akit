@@ -331,10 +331,19 @@ public struct MeetingProcessor: Sendable {
             MeetingsLog.error(.pi, "\(meeting.id): azure devops failed: \(reason)")
             text = "Pi could not look in Azure DevOps: \(reason)\n"
         }
-        try store.writeTab(meeting.id, PiDevOpsResearch.tabName, text)
+        let answer = PiDevOpsResearch.split(text)
+        try store.writeTab(meeting.id, PiDevOpsResearch.tabName, answer.tab + "\n")
         // Tabs are the user's: `save` keeps the file's own, so the new tab goes in the file's copy.
         var disk = store.load(meeting.id) ?? meeting
         if !disk.tabs.contains(PiDevOpsResearch.tabName) { disk.tabs.append(PiDevOpsResearch.tabName) }
+        // The found items go into the summary's lines too (a task gets its ticket); the summary
+        // was just written by the model, so its hash moves with it and it is not taken for an edit.
+        if !answer.links.isEmpty, store.summary(meeting.id) == summary {
+            let withLinks = PiDevOpsResearch.linked(summary, answer.links)
+            try store.writeSummary(meeting.id, withLinks)
+            disk.summaryHash = Self.hash(withLinks)
+            MeetingsLog.info(.pi, "\(meeting.id): links put on \(answer.links.count) summary line(s)")
+        }
         try store.save(disk)
         meeting = disk
         progress(meeting)

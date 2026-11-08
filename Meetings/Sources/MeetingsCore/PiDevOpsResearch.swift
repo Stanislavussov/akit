@@ -63,11 +63,20 @@ public struct PiDevOpsResearch: Sendable {
         duplicates); rules and agreements (definition of done, policies, wiki pages that set how to work); wiki pages \
         on the topic; history (pull requests, commits, earlier comments and discussions on the same problem); \
         artifacts (builds, pipelines, releases, test runs, attachments).
-        \(gitLabPart)Write in \(language), Markdown only, no preamble. Use these sections and leave out an empty one: \
+        \(gitLabPart)Write in \(language), Markdown only, no preamble. Start with ## Found outside the meeting: 3 to 6 short \
+        bullets on what you found that the meeting did not say: what is already done or released, what contradicts what was \
+        said, what is new (an older decision, a rule, a related bug), and risks; each with its link. Then these sections, \
+        leaving out an empty one: \
         ## Work items, ## Links between them, ## Rules, ## Wiki, ## History, ## Artifacts\(gitLab ? ", ## In the code" : ""), ## Open questions. \
-        Each line: the item's id or name as a Markdown link to its Azure DevOps web address when you have one, then one \
-        short sentence on how it relates to the meeting. Put only what you found in Azure DevOps; never make up an id \
+        Each line: the item's id or name as a Markdown link to its web address when you have one, then one \
+        short sentence on how it relates to the meeting. Put only what you found; never make up an id \
         or a link. When nothing relates, write one line saying so.
+        Last, for the summary's numbered lines (the lines "N| - …" in the input: tasks, decisions, topics), give the items \
+        that a line is about, in one block at the very end and nothing after it:
+        ```json
+        {"links": [{"line": N, "items": [{"title": "#123 short name", "url": "https://…"}]}]}
+        ```
+        Only lines an item is clearly about, at most 3 items a line, only links you found. With none, {"links": []}.
         """
     }
 
@@ -90,12 +99,64 @@ public struct PiDevOpsResearch: Sendable {
 
         Tags: \(meeting.tagList.isEmpty ? "none" : meeting.tagList.joined(separator: ", "))
 
-        \(summary)
+        \(numbered(summary))
 
         # Transcript
 
         \(Transcriber.plainTranscript(meeting))
         """
+    }
+
+    /// The summary with its list lines numbered (`12| - [ ] Me: …`), so Pi can name a line to link.
+    static func numbered(_ summary: String) -> String {
+        summary.components(separatedBy: "\n").enumerated().map { n, line in
+            line.hasPrefix("- ") ? "\(n + 1)| \(line)" : line
+        }.joined(separator: "\n")
+    }
+
+    public struct Link: Equatable, Sendable {
+        public var title: String
+        public var url: String
+    }
+
+    /// Pi's answer split: the tab's Markdown and the links per summary line (from the last
+    /// ```json block with "links"). Only http(s) links are kept.
+    static func split(_ answer: String) -> (tab: String, links: [Int: [Link]]) {
+        guard let open = answer.range(of: "```json", options: [.backwards, .caseInsensitive]) else { return (answer, [:]) }
+        // A block cut off at its end has no closing fence: it goes out of the tab all the same.
+        let close = answer.range(of: "```", range: open.upperBound..<answer.endIndex)
+        let block = answer[open.upperBound..<(close?.lowerBound ?? answer.endIndex)]
+        let tab = (String(answer[..<open.lowerBound]) + (close.map { String(answer[$0.upperBound...]) } ?? ""))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard block.contains("\"links\"") else { return (answer, [:]) }
+        guard let object = (try? JSONSerialization.jsonObject(with: Data(block.utf8))) as? [String: Any],
+              let list = object["links"] as? [[String: Any]] else { return (tab, [:]) }
+        var links: [Int: [Link]] = [:]
+        for entry in list {
+            guard let line = (entry["line"] as? NSNumber)?.intValue, let items = entry["items"] as? [[String: Any]] else { continue }
+            for item in items {
+                guard let url = (item["url"] as? String)?.trimmingCharacters(in: .whitespaces),
+                      url.hasPrefix("https://") || url.hasPrefix("http://"), !url.contains(where: { $0 == ")" || $0.isWhitespace }) else { continue }
+                let raw = ((item["title"] as? String) ?? "").components(separatedBy: .newlines).joined(separator: " ")
+                    .replacingOccurrences(of: "]", with: ")").replacingOccurrences(of: "[", with: "(").trimmingCharacters(in: .whitespaces)
+                let safe = url.replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: "<", with: "%3C").replacingOccurrences(of: ">", with: "%3E")
+                if (links[line]?.count ?? 0) < 3 { links[line, default: []].append(Link(title: raw.isEmpty ? safe : raw, url: safe)) }
+            }
+        }
+        return (tab, links)
+    }
+
+    /// The summary with each named list line ending in its links (`— [#123 …](url)`); a link the
+    /// line has already is not added again, and a line that is not a list line stays as it is.
+    static func linked(_ summary: String, _ links: [Int: [Link]]) -> String {
+        var lines = summary.components(separatedBy: "\n")
+        for (number, items) in links where number >= 1 && number <= lines.count {
+            let line = lines[number - 1]
+            guard line.hasPrefix("- ") else { continue }
+            let new = items.filter { !line.contains($0.url) }.map { "[\($0.title)](\($0.url))" }
+            if !new.isEmpty { lines[number - 1] = line + " — " + new.joined(separator: ", ") }
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Runs Pi with the server's tools; the Markdown of the tab. Throws when Pi failed.
