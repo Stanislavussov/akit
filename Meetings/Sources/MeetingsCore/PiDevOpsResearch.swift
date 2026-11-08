@@ -68,7 +68,9 @@ public struct PiDevOpsResearch: Sendable {
         said, what is new (an older decision, a rule, a related bug), and risks; each with its link. Then these sections, \
         leaving out an empty one: \
         ## Work items, ## Links between them, ## Rules, ## Wiki, ## History, ## Artifacts\(gitLab ? ", ## In the code" : ""), ## Open questions. \
-        Each line: the item's id or name as a Markdown link to its web address when you have one, then one \
+        Each line: the item's id or name as a Markdown link to its web page when you have one (the page a person opens \
+        in the browser, like https://dev.azure.com/<org>/<project>/_workitems/edit/123 or …/_git/<repo>/pullrequest/45; \
+        never a REST API address with _apis), then one \
         short sentence on how it relates to the meeting. Put only what you found; never make up an id \
         or a link. When nothing relates, write one line saying so.
         Last, for the summary's numbered lines (the lines "N| - …" in the input: tasks, decisions, topics), give the items \
@@ -105,6 +107,23 @@ public struct PiDevOpsResearch: Sendable {
 
         \(Transcriber.plainTranscript(meeting))
         """
+    }
+
+    /// Azure DevOps REST addresses (`…/_apis/wit/workItems/123`) made into the pages a person opens
+    /// (`…/_workitems/edit/123`), for any organization, collection and project: the part before
+    /// `_apis` stays. Pull requests and builds too; other links stay as they are.
+    static func webLinks(_ text: String) -> String {
+        let rules: [(String, String)] = [
+            (#"(https?://[^\s)\]"]+?)/_apis/wit/workitems/(\d+)[^\s)\]"]*"#, "$1/_workitems/edit/$2"),
+            (#"(https?://[^\s)\]"]+?)/_apis/git/repositories/([^/\s)\]"]+)/pullrequests/(\d+)[^\s)\]"]*"#, "$1/_git/$2/pullrequest/$3"),
+            (#"(https?://[^\s)\]"]+?)/_apis/build/builds/(\d+)[^\s)\]"]*"#, "$1/_build/results?buildId=$2"),
+        ]
+        var result = text
+        for (pattern, template) in rules {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: template)
+        }
+        return result
     }
 
     /// The summary with its list lines numbered (`12| - [ ] Me: …`), so Pi can name a line to link.
@@ -198,7 +217,7 @@ public struct PiDevOpsResearch: Sendable {
         guard result.status == 0, !text.isEmpty else {
             throw MeetingsError.pi("\(LocalTranscriber.tail(result.errors)) (exit \(result.status), servers \(servers.joined(separator: ", ")))")
         }
-        return (text + "\n", usage)
+        return (Self.webLinks(text) + "\n", usage)
     }
 
     /// The names of Pi's MCP servers (`pi mcp list --json`, it connects to each enabled one).

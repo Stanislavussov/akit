@@ -419,6 +419,24 @@ struct LocalFixture {
 
     private func store(_ fixture: LocalFixture) -> MeetingStore { fixture.root.store }
 
+    /// API addresses become the pages a person opens, in any organization and project.
+    @Test func devOpsApiLinksBecomePages() {
+        let text = """
+        - [#123](https://dev.azure.com/acme/Shop/_apis/wit/workItems/123?api-version=7.1) bug
+        - [!45](https://tfs.acme.cz/tfs/Main/Pay/_apis/git/repositories/col-fe/pullRequests/45) PR
+        - [build](https://dev.azure.com/acme/Shop/_apis/build/Builds/678), [page](https://dev.azure.com/acme/Shop/_workitems/edit/9)
+        ```json
+        {"links": [{"line": 1, "items": [{"title": "#123", "url": "https://dev.azure.com/acme/_apis/wit/workitems/123"}]}]}
+        ```
+        """
+        let pages = PiDevOpsResearch.webLinks(text)
+        #expect(pages.contains("(https://dev.azure.com/acme/Shop/_workitems/edit/123)"))
+        #expect(pages.contains("(https://tfs.acme.cz/tfs/Main/Pay/_git/col-fe/pullrequest/45)"))
+        #expect(pages.contains("(https://dev.azure.com/acme/Shop/_build/results?buildId=678)"))
+        #expect(pages.contains("(https://dev.azure.com/acme/Shop/_workitems/edit/9)"))
+        #expect(PiDevOpsResearch.split(pages).links[1]?.first?.url == "https://dev.azure.com/acme/_workitems/edit/123")
+    }
+
     @Test func linkBlockIsSplitAndPutOnListLinesOnly() {
         let answer = "## Found outside the meeting\n- x\n```json\n{\"links\": [{\"line\": 1, \"items\": [{\"title\": \"a\", \"url\": \"https://a\"}]}, {\"line\": 2, \"items\": [{\"title\": \"[b]\", \"url\": \"https://b\"}]}]}\n```"
         let (tab, links) = PiDevOpsResearch.split(answer)
