@@ -773,12 +773,20 @@ public enum ReviewPasses {
                 let gap = ContextGap(id: "", system: text("system"), needed: SecretFilter.masked(needed), why: SecretFilter.masked(why),
                                      howToGet: text("howToGet"), effect: text("effect"), reportedBy: text("reportedBy"))
                 if codeOnly && isWorkItemGap(gap) { continue }
+                // Missing acceptance criteria are normal: never a gap.
+                if isCriteriaGap(gap) { continue }
                 // The same gap from two passes is one gap.
                 if !gaps.contains(where: { $0.needed.lowercased() == gap.needed.lowercased() }) { gaps.append(gap) }
             }
         }
         for index in gaps.indices { gaps[index].id = "g\(index + 1)" }
         try ReviewJSON.write(gaps, to: folder.appending(path: "gaps.json"))
+    }
+
+    /// A gap that only asks for acceptance criteria (English or Czech).
+    static func isCriteriaGap(_ gap: ContextGap) -> Bool {
+        let text = (gap.needed + " " + gap.why).lowercased()
+        return ["acceptance", "akceptační"].contains { text.contains($0) }
     }
 
     /// A gap that asks for the work item, its acceptance criteria or repro steps (English or Czech).

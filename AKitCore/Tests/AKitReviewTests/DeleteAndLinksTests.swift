@@ -53,8 +53,8 @@ struct DeleteAndLinksTests {
         let catalog = ReviewCatalog.load(home: home.url, brain: root)
         let removal = try ReviewConfigEditor.planDelete(.scenario, id: "dependency-upgrade", level: .brain, catalog: catalog,
                                                         home: home.url, brain: root)
-        #expect(removal.roles == ["upgrade-risk"], "tests, contracts, security and performance serve other scenarios")
-        #expect(Set(removal.kept) == ["tests", "contracts", "security", "performance"])
+        #expect(removal.roles == ["upgrade-risk"], "tests, regressions, contracts, security and performance serve other scenarios")
+        #expect(Set(removal.kept) == ["tests", "regressions", "contracts", "security", "performance"])
         #expect(removal.trash.map(\.lastPathComponent).sorted() == ["dependency-upgrade.yaml", "review-upgrade-risk"])
         #expect(removal.edits.count == 2)
         #expect(ReviewConfigEditor.describe(removal).contains { $0.contains("upgrade-risk") })

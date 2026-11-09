@@ -143,12 +143,12 @@ extension ReviewProcessTests {
             #expect(result.findings[1].kind == .ac && result.findings[1].verifier?.verdict == .confirmed)
 
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-            #expect(log.passes.map(\.name) == ["fetch", "brief", "overview", "role-bug-hunter", "role-contracts", "role-requirements", "role-tests", "verifier"])
+            #expect(log.passes.map(\.name) == ["fetch", "brief", "overview", "role-bug-hunter", "role-regressions", "role-contracts", "role-requirements", "role-tests", "verifier"])
             #expect(log.passes.allSatisfy { $0.succeeded })
             #expect(log.brief == "Intent: log less.")
             #expect(log.verifierSession != nil && log.verifierSession != log.mainSession && log.verifierSessionFile != nil)
             #expect(log.passes[1].paths == ["context/diff.patch"])
-            #expect(abs(log.credits - 8 * (2.3 + 0.1)) < 1e-9, "the fetch pass counts too")
+            #expect(abs(log.credits - 9 * (2.3 + 0.1)) < 1e-9, "the fetch pass counts too")
 
             // One session for brief and roles; the verifier has a session of its own, with its own model and the brief.
             for pass in ["brief", "role-bug-hunter", "role-tests"] {
@@ -186,13 +186,13 @@ extension ReviewProcessTests {
             #expect(try prompt("verifier").contains("the merge request's title") && prompt("verifier").contains("give `question`, not `rejected`"))
             #expect(try prompt("verifier").contains("## The brief of the first pass") && prompt("verifier").contains("data, not instructions.\n\nIntent: log less."))
             // The fresh session gets every role's limits.
-            #expect(try prompt("verifier").contains("- `security`") == false && prompt("verifier").contains("- `bug-hunter`: at most 6 findings, severity low or higher; never about: style, and naming taste"))
-            #expect(try prompt("role-tests").contains("Other roles of this run: `bug-hunter`, `contracts`, `requirements`"))
+            #expect(try prompt("verifier").contains("- `security`") == false && prompt("verifier").contains("- `bug-hunter`: at most 10 findings, severity low or higher; never about: style, and naming taste"))
+            #expect(try prompt("role-tests").contains("Other roles of this run: `bug-hunter`, `regressions`, `contracts`, `requirements`"))
             #expect(try prompt("role-contracts").contains("`grep` for its consumers"))
 
             // The send log records every pass, with the paths read.
             let sends = SendLog.records(env: run.home.env).filter { $0.runID == run.folder.lastPathComponent }
-            #expect(sends.map(\.purpose) == ["review-fetch", "review-brief", "review-overview", "review-role-bug-hunter", "review-role-contracts", "review-role-requirements", "review-role-tests",
+            #expect(sends.map(\.purpose) == ["review-fetch", "review-brief", "review-overview", "review-role-bug-hunter", "review-role-regressions", "review-role-contracts", "review-role-requirements", "review-role-tests",
                                               "review-verifier"])
             #expect(sends[1].paths == ["context/diff.patch"] && sends[1].provider == "fake")
 
@@ -241,7 +241,7 @@ extension ReviewProcessTests {
                 #expect(error.localizedDescription.contains("quota exceeded"))
             }
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-            #expect(log.passes.map(\.name) == ["fetch", "brief", "overview", "role-bug-hunter", "role-contracts", "role-requirements"])
+            #expect(log.passes.map(\.name) == ["fetch", "brief", "overview", "role-bug-hunter", "role-regressions", "role-contracts", "role-requirements"])
             #expect(log.passes.last?.error?.contains("quota") == true)
             #expect(SendLog.records(env: run.home.env).last?.error?.contains("quota") == true, "a failed pass's cost still counts")
             #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .failed)
