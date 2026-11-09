@@ -692,3 +692,20 @@ final class StepLog: @unchecked Sendable {
         ])
     }
 }
+
+@Suite struct WhisperInstalledButNotFoundTests {
+    @Test func linksWhenBrewSaysItIsInstalled() {
+        let output = "Warning: whisper.cpp 1.9.5 is already installed and up-to-date.\nTo reinstall 1.9.5, run:\n  brew reinstall whisper.cpp"
+        #expect(WhisperInstall.repairSteps(after: output) == [
+            ["update"], ["link", "--overwrite", "whisper.cpp"], ["reinstall", "whisper.cpp"],
+        ])
+    }
+
+    @Test func findsTheCLIOnlyOnPath() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "whisper-path-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: "whisper-cli")
+        FileManager.default.createFile(atPath: file.path, contents: Data(), attributes: [.posixPermissions: 0o755])
+        #expect(LocalWhisper.findCLI(path: folder.path) != nil)
+    }
+}
