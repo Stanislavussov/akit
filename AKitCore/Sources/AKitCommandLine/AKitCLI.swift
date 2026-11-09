@@ -42,6 +42,10 @@ public enum AKitCLI {
                                           change; --yes writes it after a backup, only that entry,
                                           and refuses if the file changed meanwhile. --project picks
                                           a project's copy of the skill
+          akit skills port SKILL [--to global|project PATH] [--model HARNESS[:MODEL]] [--no-model] [--json] [--yes]
+                                          Port a Claude Code skill to Pi and check it (pass, warnings,
+                                          fail); --yes installs it. --check-only PATH checks a Pi skill.
+                                          akit skills port --help for details
           akit sync                       Import sessions, publish this Mac's usage summaries, pull the
                                           other Macs' brain commits, push this one's
 
@@ -561,6 +565,13 @@ public enum AKitCLI {
                 _ = args.positional()
                 return try await builtInSkills(&args, json: options.json, yes: options.yes,
                                                brainRoot: brainRoot(options, cwd: cwd, env: env), env: env, out: out)
+            }
+            // Port to Pi: a Claude Code skill rewritten and checked; no brain needed.
+            if command == "skills", args.peek == "port" {
+                try refuseProjectOptions(options, command: "skills port")
+                _ = args.positional()
+                return try await skillPort(&args, json: options.json, yes: options.yes, env: env, cwd: cwd, projectsRoot: projectsRoot,
+                                           out: out, trash: trash)
             }
             // Installed skills, switched per harness: no brain needed.
             if command == "skills", let subcommand = args.peek, subcommand == "state" || subcommand == "set" {

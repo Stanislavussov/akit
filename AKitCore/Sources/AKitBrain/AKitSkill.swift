@@ -229,6 +229,37 @@ core or the home folder when a project fails. Blocked lines: a project with its 
 first), a claude.ai, plugin or Pi package skill (use `akit skills set` instead). For 3+
 projects suggest a layer instead.
 
+## Port a Claude Code skill to Pi
+
+When the user wants a Claude Code skill (an OMC or other plugin skill too) in Pi:
+
+```sh
+akit skills port SKILL [--to global|project PATH] [--model HARNESS[:MODEL]] [--no-model] [--json] [--yes]
+akit skills port --check-only PATH [--json]
+```
+
+SKILL is a folder or a skill name Claude Code sees. It cuts the frontmatter to Pi's fields,
+rewrites /plugin:x, .claude and .omc paths and tool names, copies OMC role prompts into
+references/, then one model call (the translation model unless `--model`; `--no-model` skips
+it) rewrites subagents, questions, task lists and MCP state, with one more call when leftovers
+remain. It prints the check: pass, warnings (leftovers by file:line, lost numbers or headings)
+or fail (exit 1). With `--to` it shows the SKILL.md diff; show it to the user, and after a yes
+run again with `--yes` (the old folder goes to the Trash; a failed check is never written).
+`--check-only PATH` checks an existing Pi skill folder. `--json` gives
+{name, verdict, report, changes, files, skillMd, target, installed, answers, defaulted, rules}.
+
+Before porting, ask the user the skill's questions: `akit skills port SKILL --questions --json`
+gives [{id, family, question, options:[{id, title, rules}], recommended, evidence}]: the
+alternatives catalog's (any family: test framework, package manager, HTTP client, …), the
+Claude Code → Pi ones, and the model's for anything else (`--no-model`: without those). Ask
+each one, then pass `--answer ID=OPTION`, or `--answer ID=other:TEXT` for an answer in the
+user's words; an unanswered one takes its recommended option and shows as "(default)". A
+change of the user's own: `--change "replace axios with fetch"` (the model writes its rules
+and checks). Rules directly: `--rules PRESET|FILE` (`akit skills port presets` lists them, each
+catalog pair is one, e.g. npm-to-pnpm; `presets save NAME FILE` saves one), or `--rule 'FROM => TO'`,
+`--rule 're:PATTERN => TO'`, `--forbid TOKEN`, `--note TEXT` (all repeatable). Their
+leftovers show as `[your …]` hits. `--check-only PATH --rules …` checks a port against them.
+
 ## MCP servers
 
 When an MCP server doesn't work in Claude Code or Pi, ask the harness itself:
