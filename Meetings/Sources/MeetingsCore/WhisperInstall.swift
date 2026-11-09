@@ -12,6 +12,9 @@ public enum WhisperInstall {
     /// `brew link --overwrite X` brew itself suggests.
     public static func repairSteps(after output: String) -> [[String]] {
         var steps: [[String]] = [["update"]]
+        if output.contains("already installed") {
+            steps.append(["link", "--overwrite", formula])
+        }
         if output.contains("pkgconf") || output.contains("pkg-config") {
             steps += [["uninstall", "--ignore-dependencies", "pkg-config"],
                       ["reinstall", "pkgconf"],

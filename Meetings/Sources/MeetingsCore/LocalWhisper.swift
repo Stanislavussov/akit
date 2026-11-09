@@ -40,9 +40,13 @@ public enum LocalWhisper {
         return size >= modelBytes * 9 / 10
     }
 
-    /// `whisper-cli` in Homebrew's folders or on `PATH`.
+    /// `whisper-cli` in Homebrew's folders, in the formula's own folder (when brew did not link
+    /// it into `bin`), or on `PATH`.
     public static func findCLI(path: String? = ProcessInfo.processInfo.environment["PATH"]) -> URL? {
-        let folders = ["/opt/homebrew/bin", "/usr/local/bin"] + (path ?? "").split(separator: ":").map(String.init)
+        let folders = ["/opt/homebrew/bin", "/usr/local/bin",
+                       "/opt/homebrew/opt/whisper.cpp/bin", "/usr/local/opt/whisper.cpp/bin",
+                       "/opt/homebrew/opt/whisper-cpp/bin", "/usr/local/opt/whisper-cpp/bin"]
+            + (path ?? "").split(separator: ":").map(String.init)
         for folder in folders {
             let file = URL(filePath: folder).appending(path: "whisper-cli")
             if FileManager.default.isExecutableFile(atPath: file.path) { return file }
