@@ -108,10 +108,9 @@ struct VersionProbeTests {
     @Test func largeOutputDoesNotHang() async throws {
         // 200 KB of banner before the version — more than the pipe buffer (64 KB).
         let exe = try script("head -c 200000 /dev/zero | tr '\\\\0' 'x'; echo; echo 'v3.0.1'")
-        let start = Date()
-        // A hang would last the whole timeout; the bound leaves room for a busy parallel test run.
+        // A hang hits the timeout and gives nil, so the version check catches it.
+        // No wall-clock bound: a busy parallel test run can be slow to start the script.
         let version = await VersionProbe.version(of: exe, in: env, timeout: Self.busyMachine)
-        #expect(Date().timeIntervalSince(start) < 25)
         #expect(version == "v3.0.1")
     }
 
