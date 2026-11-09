@@ -20,10 +20,10 @@ struct ConfigTests {
         #expect(security?.doNotComment.contains("attacks without a path from an input to a sink") == true)
         #expect(security?.maxFindings == 6 && security?.minSeverity == .low)
         let bugfix = ReviewBuiltIns.scenarios.first { $0.id == "bugfix" }
-        #expect(bugfix?.required == ["bug-hunter", "contracts", "requirements", "tests"])
+        #expect(bugfix?.required == ["bug-hunter", "regressions", "contracts", "requirements", "tests"])
         #expect(bugfix?.optional == ["architecture", "security", "concurrency", "performance", "observability", "history"])
         let feature = ReviewBuiltIns.scenarios.first { $0.id == "feature" }
-        #expect(feature?.required == ["contracts", "architecture", "domain", "bug-hunter", "requirements"],
+        #expect(feature?.required == ["contracts", "architecture", "domain", "bug-hunter", "regressions", "requirements"],
                 "contracts first; architecture checks names, placement and layers")
         #expect(feature?.optional.first == "tests")
         // Every role a scenario names exists.
@@ -78,7 +78,7 @@ struct ConfigTests {
         let (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: FakeMergeRequest.ref,
                                                        id: "r1")
         #expect(spec.scenario == Sourced("bugfix", .project))
-        #expect(spec.roles.map(\.id) == ["bug-hunter", "contracts", "requirements", "tests", "orders-integration", "security"])
+        #expect(spec.roles.map(\.id) == ["bug-hunter", "regressions", "contracts", "requirements", "tests", "orders-integration", "security"])
         #expect(roles.first { $0.id == "security" }?.source == .brain)
         #expect(roles.first { $0.id == "orders-integration" }?.source == .project)
         #expect(spec.roles.first { $0.id == "security" }?.maxFindings == 2)
@@ -129,7 +129,7 @@ struct ConfigTests {
         #expect(ReviewNotes.parseMeta("plain") == nil)
     }
 
-    /// A code-only run drops the passes' gaps about a work item; other gaps stay.
+    /// A code-only run drops the passes' gaps about a work item; missing acceptance criteria are never a gap.
     @Test func aCodeOnlyRunDropsWorkItemGaps() throws {
         let home = TempHome()
         let folder = home.url.appending(path: "run")
@@ -142,7 +142,7 @@ struct ConfigTests {
         try ReviewPasses.mergeGaps(folder: folder, codeOnly: true)
         #expect(ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json"))?.map(\.needed) == ["Testy modulu Orders"])
         try ReviewPasses.mergeGaps(folder: folder)
-        #expect(ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json"))?.count == 4)
+        #expect(ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json"))?.map(\.needed) == ["Úkol", "Testy modulu Orders"])
     }
 
     /// A run made before titles were saved gets its title from the snapshot; without one, the address.

@@ -202,10 +202,9 @@ public enum ReviewGather {
                     : "Check that Pi has a tracker MCP server that can read it in \(spec.tracker!.org)/\(spec.tracker!.project).",
                 effect: "Requirements and acceptance criteria can't be checked.")
         }
+        // Work items often have no criteria: a progress line, not a gap (2026-11-09, the user's call).
         for id in withoutCriteria(workItems, named: ids) {
-            gap(tracker, "Acceptance criteria of #\(id)",
-                "Neither the work item nor its parents or comments say what the change must do.",
-                how: "Ask the author or the product owner.", effect: "The requirements matrix has nothing to check against.")
+            progress("#\(id) has no acceptance criteria: the review checks the code alone for it.")
         }
         try ReviewJSON.write(workItems, to: folder.appending(path: "tracker/work-items.json"))
 

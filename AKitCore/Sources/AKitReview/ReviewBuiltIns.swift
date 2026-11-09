@@ -30,7 +30,7 @@ public enum ReviewBuiltIns {
         id: feature
         title: Feature
         roles:
-          required: [contracts, architecture, domain, bug-hunter, requirements]
+          required: [contracts, architecture, domain, bug-hunter, regressions, requirements]
           optional: [tests, security, performance, concurrency, data-migrations, observability, history]
         checks:
           - "Which contracts does the change add or change, and does every consumer still work?"
@@ -39,7 +39,8 @@ public enum ReviewBuiltIns {
           - "Is business logic kept out of UI code, and UI and I/O out of the domain?"
           - "Do the changes keep the invariants and business rules of the touched components?"
           - "Does the new code behave right on edge cases, errors and concurrent calls?"
-          - "Is each acceptance criterion covered by code and by a test?"
+          - "What did the old code do that the new code no longer does, for every caller?"
+          - "Is each acceptance criterion, when the work item has any, covered by code and by a test?"
         context_required: [wi, full_files]
         detect:            # read by the classifier later; ignored now
           wi_type: [User Story, Feature, Product Backlog Item]
@@ -49,13 +50,14 @@ public enum ReviewBuiltIns {
         id: bugfix
         title: Bugfix
         roles:
-          required: [bug-hunter, contracts, requirements, tests]
+          required: [bug-hunter, regressions, contracts, requirements, tests]
           optional: [architecture, security, concurrency, performance, observability, history]
         checks:
           - "Is the cause fixed, not the symptom (from the repro steps)?"
           - "Does the fix change a contract (behaviour, error, format) that other code relies on?"
           - "Does a regression test reproduce the bug?"
           - "Do nearby code paths have the same defect?"
+          - "Does the fix break a case that worked before (other inputs, other callers of the changed code)?"
         context_required: [wi, full_files]
         detect:
           wi_type: [Bug]
@@ -66,7 +68,7 @@ public enum ReviewBuiltIns {
         title: Security
         roles:
           required: [security, bug-hunter]
-          optional: [contracts, data-migrations, observability, history]
+          optional: [regressions, contracts, data-migrations, observability, history]
         checks:
           - "Which inputs from users, other services or files does the change read, and where do they end up?"
           - "Does every new endpoint, handler or job check who may call it, on the right object?"
@@ -79,7 +81,7 @@ public enum ReviewBuiltIns {
         "dependency-upgrade": """
         id: dependency-upgrade
         title: Dependency upgrade
-        roles: { required: [upgrade-risk, tests], optional: [contracts, security, performance] }
+        roles: { required: [upgrade-risk, regressions, tests], optional: [contracts, security, performance] }
         checks:
           - "Which breaking changes does the new version list, and does the code handle them?"
           - "Which transitive dependencies change with it?"
@@ -152,7 +154,7 @@ public enum ReviewBuiltIns {
                              - `can't check`: you need something the context pack doesn't have; say what.
 
                              Submit the matrix as findings with `kind: "ac"`, one per criterion, `title` = the criterion, `why` = the status and the place. A criterion that is `not found` is also a finding with severity medium or higher, if the change claims to deliver it.
-                             Report a context gap only when neither the work item nor its comments or parents say what the change must do.
+                             Often there are no criteria at all. Then submit nothing and report no gap: a missing criterion is never a finding, a gap or a question. Don't invent criteria from the code.
                              """),
         "tests": role("tests", "Review whether the change is tested: missing tests for new behaviour, regression tests for bugs, weak assertions.",
                       max: 6, needs: ["diff", "full_files", "tests"],
@@ -164,19 +166,38 @@ public enum ReviewBuiltIns {
                       - If the gather step ran the tests, read their output: a failing or skipped test is a finding with high severity.
                       """),
         "bug-hunter": role("bug-hunter", "Hunt for defects the change introduces or leaves: wrong logic, edge cases, null and error paths, concurrency, resource leaks.",
-                           max: 6, needs: ["diff", "full_files", "history"],
-                           doNotComment: ["style, and naming taste", "hypothetical problems without a concrete input that triggers them"], body: """
-                           Look for real defects. For each one give the input or state that triggers it and what happens then.
+                           max: 10, needs: ["diff", "full_files", "history"],
+                           doNotComment: ["style, and naming taste", "pure speculation: nothing in the changed lines points to the problem"], body: """
+                           Look for defects as an attacker of this code would: assume the change has bugs and prove where. For each one give the input or state that triggers it and what happens then; when you can't name the input, submit it with a low confidence instead of dropping it.
 
-                           - Off-by-one, wrong comparison, inverted condition, wrong operator precedence.
-                           - Null or empty values, missing keys, empty collections, time zones, rounding.
-                           - Errors that are swallowed, retried forever, or leave state half-changed.
-                           - Concurrency: shared state without a lock, check-then-act, async calls not awaited.
+                           Go hunk by hunk. For every changed function, open its whole body and its callers, then try these inputs in your head: null or missing, empty (string, list, map), one item, many items, duplicates, zero, negative, the maximum, a very long value, unicode, another time zone or locale, a call twice in a row, a call after an error.
+
+                           - Off-by-one, wrong comparison, inverted condition, wrong operator precedence, `&&`/`||` swapped, a wrong variable of the same type copied from a neighbour line.
+                           - Null or empty values, missing keys, empty collections, optional chaining that silently skips work, default values that hide an error, time zones, rounding, integer overflow, float money.
+                           - Errors that are swallowed, retried forever, turned into a success, or leave state half-changed (a write before a check that can fail).
+                           - Async: a promise or task not awaited, a result used before it arrives, an early return that skips cleanup or a state reset, a stale closure, an effect or subscription without cleanup.
+                           - Concurrency: shared state without a lock, check-then-act, a double submit.
                            - Resources not closed; queries in loops; unbounded growth.
+                           - Copy-paste: a block copied from elsewhere with one name not changed.
+                           - Conditions the change adds: what happens in the branch it doesn't handle (the `else` that is missing, a new enum case not handled in a `switch` elsewhere — grep for it).
                            - For a bugfix: is the cause fixed, or only the symptom? Do nearby paths have the same defect?
 
-                           Quote the exact line as evidence. If you are not sure the input can occur, say so and lower the confidence.
+                           Quote the exact line as evidence.
                            """),
+        "regressions": role("regressions", "Hunt for regressions: behaviour that worked before the change and breaks or changes after it, for every caller and user.",
+                            max: 8, needs: ["diff", "full_files", "history", "tests"],
+                            doNotComment: ["style, and naming taste", "new behaviour the work item or the merge request says is intended"], body: """
+                            Find what used to work and no longer does. Compare the code at the base commit with the code at the reviewed commit (removed lines in diff.patch are the old behaviour; `git show` is not available, so read the `-` lines and history.md).
+
+                            1. For every removed or changed line, write down what the old code did that the new one doesn't: a check, a default, a branch, a side effect (a save, an event, a log, a cache reset), an order of steps, an error it threw or caught, a field it set. Each lost item is a candidate.
+                            2. For every changed function, type, constant, CSS class, route, query or config value, `grep` for all its callers and users in the repository. For each caller ask: does it still get what it expects (the same type, nullability, units, order, error, timing)? Name the caller.
+                            3. Shared code: a change in a helper, a base class, a hook, a shared component, a style or a util changes every place that uses it, not only the one the work item is about. Check the other places.
+                            4. Defaults and fallbacks: a changed default, a removed fallback, a new required parameter, a removed `?? value`, a changed early return.
+                            5. Tests: was a test deleted, loosened, skipped or rewritten to match the new behaviour? That is a sign of a regression; name what the old test checked.
+                            6. history.md: does the change undo an earlier fix, or bring back code that a commit removed on purpose?
+
+                            Every finding names the old behaviour, the new behaviour, and who notices (the caller, the screen, the user flow). A lost behaviour you can't prove is used still goes in, with a lower confidence.
+                            """),
         "upgrade-risk": role("upgrade-risk", "Review a dependency upgrade: breaking changes, deprecated APIs, transitive upgrades, license changes.",
                              max: 6, needs: ["diff", "full_files"],
                              doNotComment: ["version pinning style", "risks the changelog doesn't name and the code doesn't show"], body: """
@@ -266,7 +287,7 @@ public enum ReviewBuiltIns {
     ]
 
     /// Ids in the order a new layer lists them.
-    public static let roleIDs = ["contracts", "architecture", "domain", "requirements", "tests", "bug-hunter", "upgrade-risk", "security",
+    public static let roleIDs = ["contracts", "architecture", "domain", "requirements", "tests", "bug-hunter", "regressions", "upgrade-risk", "security",
                                  "performance", "concurrency", "data-migrations", "observability", "history"]
     public static let scenarioIDs = ["feature", "bugfix", "security", "dependency-upgrade"]
 

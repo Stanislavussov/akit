@@ -6,7 +6,9 @@ public enum ReviewPrompts {
     /// 5 (2026-10-30): recall first, every potential problem with its severity; names,
     /// placement and separation of concerns of each entity the change adds or touches.
     /// 6 (2026-11-06): the overview is a pass of its own; a role doesn't re-open files the session read.
-    public static let version = 6
+    /// 7 (2026-11-09): stricter: a regressions role, a harder bug-hunter, an adversarial check before an empty list;
+    /// missing acceptance criteria are never a gap or a finding.
+    public static let version = 7
 
     /// One confidence scale for the roles and the verifier: the same number means the same.
     static let confidenceScale = """
@@ -135,7 +137,11 @@ public enum ReviewPrompts {
         internals).
         4. Behaviour: defects a user or an operator will hit, with the input that triggers them: edge cases, null and \
         empty values, errors swallowed, state left half-changed, races.
-        Spend your effort there, where it would hurt most.
+        5. Regressions: what the old code (the removed lines) did that the new code no longer does, and every caller of \
+        changed code that now gets something else. A change in shared code (a helper, a base class, a shared component, a \
+        style) touches every place that uses it: grep for them.
+        Spend your effort there, where it would hurt most. Read whole functions and their callers, not only the diff's \
+        lines: most real defects sit just outside the changed lines.
 
         Never comment on (a linter, the compiler, CI or the author's taste settles these, and they make reviews noise):
         - formatting, whitespace, import order, brace style: style a formatter or linter settles. A compile, type or test \
@@ -154,7 +160,10 @@ public enum ReviewPrompts {
         - Recall first: report every potential problem you see, each with its own severity and an honest confidence. Don't \
         drop a finding because you are not sure: give it a low confidence and say what would confirm it. The verifier and \
         AKit's filters decide what goes to the merge request; what you leave out is lost. Report each problem once, at the \
-        place where it starts. An empty list only after you checked every changed entity against the four points above.
+        place where it starts. An empty list only after you checked every changed entity against the five points above \
+        and, before you submit it, wrote down the three likeliest ways this change breaks something and refuted each one \
+        with a line of code. "Looks fine" is not a refutation. A review that finds nothing on a non-trivial change most \
+        likely missed something: look again at the error paths, the empty and null cases and the callers.
         - Every finding states its consequence: what breaks, is misread or gets harder, for whom, and when. No hedging \
         ("you might want to consider"): state the problem, or ask with `kind: "question"` when only the author can settle it \
         (an intent, a rule that isn't written down). A question names a concrete risk; at most one per role. An uncertain \
@@ -204,8 +213,11 @@ public enum ReviewPrompts {
         - Contracts touched: every public API, DTO, event, schema or migration, config key or error code the diff adds, \
         changes or removes, with the file. Write "none" if there are none.
         - Already raised: what people said in the threads.
-        - Acceptance criteria: \(spec.workItems.isEmpty ? "none: there is no work item; write \"none\"" : "the criteria or repro steps the change must meet. When the criteria field is empty, take them from the work items' descriptions, comments and parents, and say where each comes from").
-        - First gaps: what is missing to review it well. Report each with akit_report_context_gap too.
+        - Acceptance criteria: \(spec.workItems.isEmpty ? "none: there is no work item; write \"none\"" : "the criteria or repro steps the change must meet. When the criteria field is empty, take them from the work items' descriptions, comments and parents, and say where each comes from. When there are none anywhere, write \"none\" and move on: that is normal, not a gap").
+        - First gaps: what is missing to review it well. Report each with akit_report_context_gap too. Missing acceptance \
+        criteria are not a gap.
+        - Where it can break: the five likeliest regressions or defects, each with the file and the caller or input; the \
+        role passes start from them.
         - Risk map, for the developer only (never posted): the risky areas the change touches (authentication, payments, \
         migrations and stored data, public APIs, concurrency, deletion); whether the merge request shows proof it was tested \
         (a test that fails without the change, command output, screenshots) or none; and signs of a careless, maybe \
@@ -456,7 +468,8 @@ public enum ReviewPrompts {
           severity it deserves (raise or lower it) and your own confidence. If it was already there at the base commit, add `preExisting: true`: it stays with the developer and \
           never goes to the merge request.
         - rejected: wrong (the code shows it doesn't happen), already raised by a person in threads.md, or against the role's \
-          limits. Not knowing for sure is no reason to reject: lower the confidence instead. A name that misleads, logic in \
+          limits, or only says that acceptance criteria are missing (that is never a finding). Not knowing for sure is no \
+          reason to reject: lower the confidence instead. A name that misleads, logic in \
           the wrong layer or a duplicate concept is a real finding. Also reject what the review never comments on: \
           formatting and style a formatter or linter settles, naming taste, comment \
           wording, the merge request's title, description or commits, advice with no concrete consequence, code silenced on \

@@ -91,7 +91,7 @@ extension ReviewProcessTests {
             let lines = LockedBox<[String]>([])
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env, options: .init(progress: { line in lines.update { $0.append(line) } }))
 
-            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-bug-hunter", "role-contracts", "role-requirements", "role-tests", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-bug-hunter", "role-regressions", "role-contracts", "role-requirements", "role-tests", "verifier"])
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
             let args = run.args("impact")
             #expect(args.contains("--fork") && args.contains(log.mainSession), "a fork of the brief's session")
@@ -219,7 +219,7 @@ extension ReviewProcessTests {
             let lines = LockedBox<[String]>([])
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env, options: .init(progress: { line in lines.update { $0.append(line) } }))
 
-            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
+            #expect(passes(run) == ["fetch", "brief", "impact", "overview", "role-bug-hunter", "role-regressions", "role-requirements", "role-tests", "verifier"])
             #expect(lines.value.contains("Other repositories use the change, but the contracts role is off by the user's choice."))
             #expect(ReviewJSON.read([ReviewConsumer].self, from: run.folder.appending(path: "consumers.json"))?.count == 2)
             #expect(ReviewJSON.read(ReviewRunSpec.self, from: run.folder.appending(path: "run.json"))?.roles.contains { $0.id == "contracts" } == false)

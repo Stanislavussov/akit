@@ -14,7 +14,7 @@ no tool, only 🤖 (marker default `🤖`, no "AKit is an AI reviewer" line, the
 reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and the old
 `akit-review:v1` is still read. The fingerprint drops the title (Findings, below). AC rows
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
-Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
+Feature scenario gets `bug-hunter` as a required role. 2026-11-09 (R67): stricter review: a `regressions` role (required in Feature, Bugfix and Dependency upgrade), a harder `bug-hunter` (10 findings, no drop for a missing triggering input), an adversarial check before an empty list, a "where it can break" list in the brief; missing acceptance criteria are never a gap or a finding. Mermaid diagrams of a run under One run.
 
 Added 2026-11-02 (branch `review-send-publish`): R66, publishing at once, after the user's
 confirmation, when the GitLab MCP server has no draft notes (GitLab's own MCP server); the send
@@ -974,8 +974,8 @@ detect:            # read by the classifier later; ignored in v1
 
 | Scenario | Roles (required / optional) | Checks | Context |
 |---|---|---|---|
-| Feature | contracts, domain, bug-hunter, requirements / architecture, tests, security, performance, concurrency, data-migrations, observability | consumers of changed contracts, boundaries, invariants, business rules, edge cases and errors, AC covered by code and tests | WI with AC |
-| Bugfix | bug-hunter, contracts, requirements, tests / architecture, security, concurrency, performance, observability | cause fixed, contract kept, regression test, nearby paths | repro steps, comments |
+| Feature | contracts, domain, bug-hunter, regressions, requirements / architecture, tests, security, performance, concurrency, data-migrations, observability | consumers of changed contracts, boundaries, invariants, business rules, edge cases and errors, AC covered by code and tests | WI with AC |
+| Bugfix | bug-hunter, regressions, contracts, requirements, tests / architecture, security, concurrency, performance, observability | cause fixed, contract kept, regression test, nearby paths | repro steps, comments |
 | Dependency upgrade | upgrade-risk, tests / contracts, security, performance | breaking changes, transitive upgrades, deprecated APIs, licenses | changelog or migration guide (often a gap) |
 
 ### Project profile (`~/.akit/local/review/projects/<slug>.yaml`)
