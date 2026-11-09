@@ -1,6 +1,6 @@
 import Foundation
 
-/// M26: transcription on this Mac with whisper.cpp (`brew install whisper-cpp`) and the
+/// M26: transcription on this Mac with whisper.cpp (`brew install whisper.cpp`) and the
 /// large-v3-turbo model. Each 5-minute piece goes alone, each source's track on its own: the
 /// microphone is "Me", the system sound is "Others" (whisper does not tell voices apart). Lines
 /// outside the spans in which a source carried speech are dropped: whisper makes up words in

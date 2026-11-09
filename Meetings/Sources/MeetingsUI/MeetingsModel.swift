@@ -55,6 +55,8 @@ public final class MeetingsModel {
     /// The model download's progress (0…1) while it runs.
     public private(set) var modelDownload: Double?
     public private(set) var installingWhisper = false
+    /// What Install whisper.cpp does now when it is past the first try.
+    public private(set) var installStep: String?
     /// M28: Pi's models (`provider/id`), from `pi --list-models`.
     public private(set) var piModels: [String] = []
     public private(set) var loadingPiModels = false
@@ -1035,7 +1037,8 @@ public final class MeetingsModel {
         hasWhisperModel = LocalWhisper.hasModel()
     }
 
-    /// `brew install whisper-cpp` in the login shell.
+    /// `brew install whisper.cpp` in the login shell. When it fails, repairs brew (update, the
+    /// pkgconf clash, links brew suggests) and installs once more. Brew's output goes to the log.
     public func installWhisper() async {
         guard !installingWhisper else { return }
         installingWhisper = true
@@ -1046,13 +1049,28 @@ public final class MeetingsModel {
             problem = "Homebrew is not installed. Install it from brew.sh, then click Install whisper.cpp again."
             return
         }
-        MeetingsLog.info(.local, "brew install whisper-cpp")
-        let result = try? await ChildRun.run(brew, ["install", "whisper-cpp"], environment: variables, background: false, pausable: false,
-                                             timeout: 1800, local: LocalEnvironment(), resume: LocalStatus(phase: .queued))
+        func run(_ arguments: [String]) async -> (ok: Bool, text: String) {
+            MeetingsLog.info(.local, "brew " + arguments.joined(separator: " "))
+            let result = try? await ChildRun.run(brew, arguments, environment: variables, background: false, pausable: false,
+                                                 timeout: 1800, local: LocalEnvironment(), resume: LocalStatus(phase: .queued))
+            let text = result.map { String(decoding: $0.output + $0.errors, as: UTF8.self) } ?? "brew did not finish"
+            let ok = result?.status == 0
+            if !ok { MeetingsLog.info(.local, "brew \(arguments.first ?? "") failed: \(text.suffix(4000))") }
+            return (ok, text)
+        }
+        var attempt = await run(WhisperInstall.install)
         refreshLocalTools()
         if whisperCLI == nil {
-            let detail = result.map { String(decoding: $0.errors + $0.output, as: UTF8.self).suffix(300) } ?? "brew did not finish"
-            problem = "Could not install whisper.cpp: \(detail)"
+            installStep = "Repairing Homebrew…"
+            for step in WhisperInstall.repairSteps(after: attempt.text) { _ = await run(step) }
+            installStep = "Installing again…"
+            attempt = await run(WhisperInstall.install)
+            installStep = nil
+            refreshLocalTools()
+        }
+        if whisperCLI == nil {
+            problem = "Could not install whisper.cpp, even after repairing Homebrew: \(attempt.text.suffix(600)) "
+                + "Full output: ~/Library/Logs/Meetings/meetings.log"
         } else {
             notice = "whisper.cpp is installed."
         }

@@ -209,7 +209,7 @@ struct MeetingsSettingsView: View {
                 } else if model.installingWhisper {
                     HStack {
                         ProgressView().controlSize(.small)
-                        Text("brew install whisper-cpp…").foregroundStyle(.secondary)
+                        Text(model.installStep ?? "brew install whisper.cpp…").foregroundStyle(.secondary)
                     }
                 } else {
                     Button("Install whisper.cpp") { Task { await model.installWhisper() } }

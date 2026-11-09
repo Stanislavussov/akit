@@ -237,7 +237,7 @@
 1. **Settings…** → раздел **Engine**.
 2. **Transcribe with** → **Local: whisper on this Mac (free)**.
 3. **Summary by** → **Pi (your coding agent)**. Можно оставить **OpenRouter**: тогда в облако уходит только текст.
-4. В разделе **On this Mac** нажмите **Install whisper.cpp** (ставит `whisper-cpp` через Homebrew) и **Download Model (570 MB)**.
+4. В разделе **On this Mac** нажмите **Install whisper.cpp** (ставит `whisper.cpp` через Homebrew; если brew падает, AKit сам чинит его — `brew update`, конфликт `pkg-config`/`pkgconf`, советы brew — и ставит ещё раз; полный вывод в `~/Library/Logs/Meetings/meetings.log`) и **Download Model (570 MB)**.
 5. В разделе **Pi** выберите **Model**. **Pi's default** — модель Pi по умолчанию.
 
 ![Окно Meetings Settings в режиме Local: Engine с Transcribe with и Summary by, раздел On this Mac с whisper.cpp, моделью, языком и GPU, раздел Pi с моделью](images/meetings-local-settings.png)
