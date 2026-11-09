@@ -665,3 +665,30 @@ final class StepLog: @unchecked Sendable {
     func add(_ step: String) { lock.withLock { steps.append(step) } }
     var all: [String] { lock.withLock { steps } }
 }
+
+@Suite struct WhisperInstallTests {
+    @Test func installsTheCurrentFormula() {
+        #expect(WhisperInstall.install == ["install", "whisper.cpp"])
+    }
+
+    @Test func alwaysUpdatesFirst() {
+        #expect(WhisperInstall.repairSteps(after: "Error: something else") == [["update"]])
+    }
+
+    @Test func fixesThePkgconfClash() {
+        let output = "Error: The `brew link` step did not complete successfully\nCould not symlink bin/pkg-config\nTarget /opt/homebrew/bin/pkg-config is a symlink belonging to pkg-config. You can unlink it:\n  brew unlink pkg-config\nTo force the link and overwrite all conflicting files:\n  brew link --overwrite pkgconf"
+        #expect(WhisperInstall.repairSteps(after: output) == [
+            ["update"],
+            ["uninstall", "--ignore-dependencies", "pkg-config"],
+            ["reinstall", "pkgconf"],
+            ["link", "--overwrite", "pkgconf"],
+        ])
+    }
+
+    @Test func followsWhatBrewSuggests() {
+        let output = "Error: ggml was installed but is broken. Try: brew reinstall ggml\nthen brew link sdl2-compat"
+        #expect(WhisperInstall.repairSteps(after: output) == [
+            ["update"], ["reinstall", "ggml"], ["link", "--overwrite", "sdl2-compat"],
+        ])
+    }
+}
