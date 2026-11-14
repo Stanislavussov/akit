@@ -55,6 +55,22 @@ struct ToolCostsTests {
         #expect(read.added == 190 && read.reread == 190 && read.cost == nil && read.calls == 1)
     }
 
+    @Test func claudeCostIsEstimatedFromListPrices() {
+        var trace = ToolTrace()
+        let price = ClaudePrice.of(model: "claude-opus-5-5[1m]")
+        trace.response(key: "1", tokens: TokenCounts(input: 0, output: 0), cost: nil, price: price)
+        trace.call(id: "a", tool: "mcp__context7__query-docs")
+        trace.result(id: "a", length: 10)
+        trace.response(key: "2", tokens: TokenCounts(input: 1_000_000), cost: nil, price: price)
+        trace.response(key: "3", tokens: TokenCounts(input: 1_000_000), cost: nil, price: price)
+        let costs = trace.costs
+        // Written once at $5 (1.25 × $4), read once at $0.20.
+        #expect(abs((costs.tools.first?.cost ?? 0) - 5.2) < 0.0001)
+        #expect(costs.estimated)
+        #expect(ClaudePrice.of(model: "claude-opus-4-5-20251101")?.input == 5)
+        #expect(ClaudePrice.of(model: "gpt-5") == nil)
+    }
+
     @Test func shellProgramSkipsCdEnvAndLaunchers() {
         #expect(ToolCosts.program(of: "cd /tmp && FOO=1 npx agent-browser snapshot") == "agent-browser")
         #expect(ToolCosts.program(of: "/usr/bin/git status") == "git")

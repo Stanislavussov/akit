@@ -220,6 +220,7 @@ private struct SessionRow: View {
 enum SessionDetailTab: String, CaseIterable, Identifiable {
     case conversation
     case usage
+    case tools
     case analysis
     case overview
     case prompt
@@ -229,6 +230,7 @@ enum SessionDetailTab: String, CaseIterable, Identifiable {
         switch self {
         case .conversation: "Conversation"
         case .usage: "Usage"
+        case .tools: "Tools"
         case .analysis: "Analysis"
         case .overview: "Overview"
         case .prompt: "System Prompt"
@@ -272,6 +274,8 @@ private struct SessionDetailView: View {
             switch tab {
             case .conversation: content
             case .usage: usage
+            case .tools:
+                if let transcript { SessionToolsView(costs: transcript.usage.toolCosts) } else { usage }
             case .analysis:
                 if session.harness == .claudeCode {
                     SessionAnalysisView(session: session)

@@ -41,10 +41,19 @@ public struct ToolCosts: Sendable, Hashable, Codable {
     public var tools: [Tool] = []
     /// Context of the last request, to show a tool's share of it.
     public var lastContext = 0
+    /// Costs come from list prices, not from the harness (Claude Code).
+    public var estimated = false
 
-    public init(tools: [Tool] = [], lastContext: Int = 0) {
+    public init(tools: [Tool] = [], lastContext: Int = 0, estimated: Bool = false) {
         self.tools = tools
         self.lastContext = lastContext
+        self.estimated = estimated
+    }
+
+    /// All tools' cost; nil when none has one.
+    public var cost: Double? {
+        let known = tools.compactMap(\.cost)
+        return known.isEmpty ? nil : known.reduce(0, +)
     }
 
     /// Per MCP server: its tools added up, most tokens first.
@@ -90,7 +99,7 @@ public struct ToolCosts: Sendable, Hashable, Codable {
 /// The order of responses, tool calls, results and compactions on the active branch, for `ToolCosts`.
 struct ToolTrace {
     private enum Event {
-        case response(key: String, tokens: TokenCounts, cost: Double?)
+        case response(key: String, tokens: TokenCounts, cost: Double?, price: ClaudePrice?)
         case call(id: String, tool: String)
         case result(id: String, length: Int)
         case compaction
@@ -99,13 +108,14 @@ struct ToolTrace {
     private var events: [Event] = []
 
     /// A model response; lines of one response (same key) keep the last numbers.
-    mutating func response(key: String?, tokens: TokenCounts, cost: Double?) {
-        if let key, case .response(let last, _, _)? = events.last(where: { if case .response = $0 { true } else { false } }),
-           last == key, let index = events.lastIndex(where: { if case .response = $0 { true } else { false } }) {
-            events[index] = .response(key: key, tokens: tokens, cost: cost)
+    /// `price`: a list price to estimate cost with when the harness records none.
+    mutating func response(key: String?, tokens: TokenCounts, cost: Double?, price: ClaudePrice? = nil) {
+        let isResponse: (Event) -> Bool = { if case .response = $0 { true } else { false } }
+        if let key, let index = events.lastIndex(where: isResponse), case .response(let last, _, _, _) = events[index], last == key {
+            events[index] = .response(key: key, tokens: tokens, cost: cost, price: price)
             return
         }
-        events.append(.response(key: key ?? "#\(events.count)", tokens: tokens, cost: cost))
+        events.append(.response(key: key ?? "#\(events.count)", tokens: tokens, cost: cost, price: price))
     }
 
     mutating func call(id: String, tool: String) { events.append(.call(id: id, tool: tool)) }
@@ -113,15 +123,18 @@ struct ToolTrace {
     mutating func compaction() { events.append(.compaction) }
 
     var costs: ToolCosts {
-        struct Response { var tokens: TokenCounts; var cost: Double?; var calls: [String] = []; var compactedBefore = false }
+        struct Response {
+            var tokens: TokenCounts; var cost: Double?; var price: ClaudePrice?
+            var calls: [String] = []; var compactedBefore = false
+        }
         var responses: [Response] = []
         var toolOf: [String: String] = [:]
         var length: [String: Int] = [:]
         var compacted = false
         for event in events {
             switch event {
-            case .response(_, let tokens, let cost):
-                responses.append(Response(tokens: tokens, cost: cost, compactedBefore: compacted))
+            case .response(_, let tokens, let cost, let price):
+                responses.append(Response(tokens: tokens, cost: cost, price: price, compactedBefore: compacted))
                 compacted = false
             case .call(let id, let tool):
                 toolOf[id] = tool
@@ -153,12 +166,18 @@ struct ToolTrace {
                     if later > next { tool.reread += added }
                     if let cost = request.cost, request.tokens.context > 0 {
                         tool.cost = (tool.cost ?? 0) + cost * Double(added) / Double(request.tokens.context)
+                    } else if let price = request.price {
+                        // New tokens are written to the cache once, then read from it.
+                        let rate = later == next ? price.cacheWrite : price.cacheRead
+                        tool.cost = (tool.cost ?? 0) + Double(added) * rate / 1_000_000
                     }
                     later += 1
                 }
                 tools[name] = tool
             }
         }
-        return ToolCosts(tools: tools.values.sorted(by: ToolCosts.order), lastContext: responses.last?.tokens.context ?? 0)
+        let estimated = responses.contains { $0.cost == nil && $0.price != nil }
+        return ToolCosts(tools: tools.values.sorted(by: ToolCosts.order), lastContext: responses.last?.tokens.context ?? 0,
+                         estimated: estimated)
     }
 }

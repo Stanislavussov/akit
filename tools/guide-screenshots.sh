@@ -124,6 +124,7 @@ shot mcp-copy            $MAIN --section mcp --tab copy
 shot mcp-tools           $MAIN --section mcp --select docs
 shot sessions            $MAIN --section sessions
 shot sessions-usage      $MAIN --section sessions --tab usage
+shot sessions-tooltab    $MAIN --section sessions --tab tools
 shot sessions-analysis   $MAIN --section sessions --tab analysis
 # Wider and taller: the Overview tab needs the room for the tiles and the whole context map.
 shot sessions-overview   1720x900 --section sessions --tab overview

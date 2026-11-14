@@ -2081,7 +2081,7 @@ akit skills port --check-only ПАПКА
 Пример: задача показалась дорогой, и вы хотите увидеть числа.
 
 1. Откройте сессию и нажмите вкладку **Usage**.
-2. Блок **Tokens** — таблица по моделям. Блок **Activity** — общие числа сессии. Блок **Tools** — сколько контекста, токенов и денег съел каждый инструмент. Блок **MCP servers** — то же по серверам MCP.
+2. Блок **Tokens** — таблица по моделям. Блок **Activity** — общие числа сессии. Блок **Tools** — сколько раз вызван каждый инструмент. Сколько контекста и денег он съел, показывает вкладка **Tools** (ниже).
 
 ![Вкладка Usage сессии Keep the sort order after a restart: таблица Tokens со столбцами Model, Requests, Input, Output, Reasoning, Cache read, Cache write, Total; блок Activity со строками Context, Wall time, Prompts, Tool calls; блок Tools со столбцами Tool, Calls, Added, Largest, Re-read, Tokens, Share и строкой Edit; под ним пояснение столбцов и This harness doesn't record cost](images/sessions-usage.png)
 
@@ -2103,7 +2103,21 @@ akit skills port --check-only ПАПКА
 - **Tool calls**: число вызовов инструментов, в скобках — сколько с ошибкой.
 - **Compactions** и **Subagent runs**: сжатия контекста и запуски субагентов. Строки есть, только если число больше нуля.
 
-Столбцы таблиц **Tools** и **MCP servers**:
+
+#### Просто: какой инструмент съел больше всего
+<!-- section: sessions-tools-tab -->
+
+Пример: вы зовёте `agent-browser` через Bash, Figma и Context7. Вы хотите знать, кто из них съел больше контекста и денег.
+
+1. Откройте сессию и нажмите вкладку **Tools**.
+2. Вверху итоги: **Calls**, **Added to context**, **Tokens** и **Cost**.
+3. **Show**: **Tools** — по инструментам, **MCP servers** — по серверам MCP.
+4. **Sort by** выбирает столбец, **Order** — **Most first** или **Least first**. Щелчок по заголовку столбца тоже сортирует, второй щелчок меняет порядок.
+5. График показывает 15 первых строк по выбранному столбцу.
+
+![Вкладка Tools сессии: плитки Calls, Added to context, Tokens, Cost (estimated); переключатели Show (Tools, MCP servers), Sort by Tokens, Order (Most first, Least first); горизонтальный график инструментов по токенам; таблица со столбцами Tokens, Cost, Added, Re-read, Calls, Largest, Share](images/sessions-tooltab.png)
+
+Столбцы таблицы:
 
 - **Tool**: инструмент. Инструмент MCP показан как «сервер: инструмент», например `figma: get_design_context`. Вызов шелла показан с программой, например `Bash: agent-browser`.
 - **Calls**: число вызовов.
@@ -2112,9 +2126,8 @@ akit skills port --check-only ПАПКА
 - **Re-read**: те же токены, прочитанные снова следующими запросами до сжатия контекста.
 - **Tokens**: **Added** плюс **Re-read**. Строки идут по этому столбцу, самые дорогие сверху.
 - **Share**: доля **Added** в контексте последнего запроса.
-- **Cost**: доля записанной стоимости запросов. Столбец есть, только если агент записал стоимость (Pi). Claude Code её не пишет.
+- **Cost**: деньги. Pi записывает стоимость, и AKit берёт долю инструмента в ней. Claude Code стоимость не пишет, поэтому AKit считает её по прайсу Anthropic: добавленные токены по цене записи в кэш, повторные чтения по цене чтения из кэша. Тогда плитка называется **Cost (estimated)**.
 
-Пример: вы зовёте `agent-browser` через Bash. Строка `Bash: agent-browser` покажет, сколько вызовов было и сколько токенов контекста они съели.
 
 #### Средне: была ли сессия эффективной
 <!-- section: sessions-analysis -->

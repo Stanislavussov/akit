@@ -77,7 +77,8 @@ enum ClaudeSessions {
                 recordUsage(entry, in: &builder.usage)
                 if let usage = message["usage"] as? Object, let model = message["model"] as? String, model != "<synthetic>" {
                     builder.toolTrace.response(key: message["id"] as? String ?? entry["requestId"] as? String,
-                                               tokens: ClaudeLogFormat.tokens(fromClaudeUsage: usage), cost: nil)
+                                               tokens: ClaudeLogFormat.tokens(fromClaudeUsage: usage), cost: nil,
+                                               price: ClaudePrice.of(model: model))
                 }
                 for block in message["content"] as? [Object] ?? [] {
                     switch block["type"] as? String {
