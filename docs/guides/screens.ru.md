@@ -2081,9 +2081,9 @@ akit skills port --check-only ПАПКА
 Пример: задача показалась дорогой, и вы хотите увидеть числа.
 
 1. Откройте сессию и нажмите вкладку **Usage**.
-2. Блок **Tokens** — таблица по моделям. Блок **Activity** — общие числа сессии. Блок **Tools** — сколько раз вызван каждый инструмент.
+2. Блок **Tokens** — таблица по моделям. Блок **Activity** — общие числа сессии. Блок **Tools** — сколько контекста, токенов и денег съел каждый инструмент. Блок **MCP servers** — то же по серверам MCP.
 
-![Вкладка Usage сессии: таблица Tokens со столбцами Model, Requests, Input, Output, Reasoning, Cache read, Cache write, Total; блок Activity со строками Context, Wall time, Prompts, Tool calls; блок Tools со счётчиками Bash, Edit, Grep, Read, Skill, Write, mcp__github__get_issue; под таблицей Tokens строка This harness doesn't record cost](images/sessions-usage.png)
+![Вкладка Usage сессии Keep the sort order after a restart: таблица Tokens со столбцами Model, Requests, Input, Output, Reasoning, Cache read, Cache write, Total; блок Activity со строками Context, Wall time, Prompts, Tool calls; блок Tools со столбцами Tool, Calls, Added, Largest, Re-read, Tokens, Share и строкой Edit; под ним пояснение столбцов и This harness doesn't record cost](images/sessions-usage.png)
 
 Столбцы таблицы **Tokens**:
 
@@ -2102,6 +2102,19 @@ akit skills port --check-only ПАПКА
 - **Prompts**: число ваших реплик.
 - **Tool calls**: число вызовов инструментов, в скобках — сколько с ошибкой.
 - **Compactions** и **Subagent runs**: сжатия контекста и запуски субагентов. Строки есть, только если число больше нуля.
+
+Столбцы таблиц **Tools** и **MCP servers**:
+
+- **Tool**: инструмент. Инструмент MCP показан как «сервер: инструмент», например `figma: get_design_context`. Вызов шелла показан с программой, например `Bash: agent-browser`.
+- **Calls**: число вызовов.
+- **Added**: сколько токенов результаты добавили в контекст. AKit берёт рост записанного контекста до следующего запроса. Если в одном ответе было несколько вызовов, рост делится по длине их результатов.
+- **Largest**: самый большой результат одного вызова.
+- **Re-read**: те же токены, прочитанные снова следующими запросами до сжатия контекста.
+- **Tokens**: **Added** плюс **Re-read**. Строки идут по этому столбцу, самые дорогие сверху.
+- **Share**: доля **Added** в контексте последнего запроса.
+- **Cost**: доля записанной стоимости запросов. Столбец есть, только если агент записал стоимость (Pi). Claude Code её не пишет.
+
+Пример: вы зовёте `agent-browser` через Bash. Строка `Bash: agent-browser` покажет, сколько вызовов было и сколько токенов контекста они съели.
 
 #### Средне: была ли сессия эффективной
 <!-- section: sessions-analysis -->

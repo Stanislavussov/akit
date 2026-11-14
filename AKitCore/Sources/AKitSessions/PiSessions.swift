@@ -132,13 +132,14 @@ public enum PiSessions {
         switch entry["type"] as? String {
         case "message":
             guard let message = entry["message"] as? Object else { return }
-            addMessage(message, at: time, secretCalls: &secretCalls, to: &builder)
+            addMessage(message, key: entry["id"] as? String, at: time, secretCalls: &secretCalls, to: &builder)
         case "model_change":
             let model = [entry["provider"] as? String, entry["modelId"] as? String].compactMap { $0 }.joined(separator: "/")
             builder.add(.event("Model"), model, at: time)
         case "thinking_level_change":
             builder.add(.event("Thinking level"), entry["thinkingLevel"] as? String ?? "", at: time)
         case "compaction":
+            builder.toolTrace.compaction()
             builder.add(.event("Compacted"), entry["summary"] as? String ?? "", at: time)
         case "branch_summary":
             builder.add(.event("Branch summary"), entry["summary"] as? String ?? "", at: time)
@@ -151,13 +152,17 @@ public enum PiSessions {
     }
 
     /// `secretCalls`: ids of tool calls that touched a secrets file; their results are hidden.
-    private static func addMessage(_ message: Object, at time: Date?, secretCalls: inout Set<String>,
+    private static func addMessage(_ message: Object, key: String? = nil, at time: Date?, secretCalls: inout Set<String>,
                                    to builder: inout TranscriptBuilder) {
         switch message["role"] as? String {
         case "user":
             builder.add(.user, JSONLines.text(of: message["content"]), at: time)
         case "assistant":
             builder.noteModel(message["model"] as? String)
+            if let usage = message["usage"] as? Object {
+                builder.toolTrace.response(key: key, tokens: PiLogFormat.tokens(fromPiUsage: usage),
+                                           cost: PiLogFormat.cost(fromPiUsage: usage))
+            }
             for block in message["content"] as? [Object] ?? [] {
                 switch block["type"] as? String {
                 case "text":
@@ -166,6 +171,10 @@ public enum PiSessions {
                     builder.add(.thinking, stripANSI(block["thinking"] as? String ?? ""), at: time)
                 case "toolCall":
                     if let id = block["id"] as? String, SecretFilter.readsSecretFile(block["arguments"]) { secretCalls.insert(id) }
+                    if let id = block["id"] as? String {
+                        builder.toolTrace.call(id: id, tool: ToolCosts.key(tool: block["name"] as? String ?? "tool",
+                                                                           input: block["arguments"]))
+                    }
                     builder.add(.toolCall(name: block["name"] as? String ?? "tool"),
                                 JSONLines.pretty(SecretFilter.redactedInput(block["arguments"])), at: time)
                 default:
@@ -177,6 +186,9 @@ public enum PiSessions {
             }
         case "toolResult":
             let hidden = (message["toolCallId"] as? String).map(secretCalls.contains) ?? false
+            if let id = message["toolCallId"] as? String {
+                builder.toolTrace.result(id: id, length: JSONLines.text(of: message["content"]).count)
+            }
             builder.addToolOutput(.toolResult(name: message["toolName"] as? String, isError: message["isError"] as? Bool == true),
                                   JSONLines.text(of: message["content"]), readSecretFile: hidden, at: time)
         case "bashExecution":

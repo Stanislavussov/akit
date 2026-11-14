@@ -75,6 +75,10 @@ enum ClaudeSessions {
                 guard let message = entry["message"] as? Object else { continue }
                 builder.noteModel((message["model"] as? String).flatMap { $0 == "<synthetic>" ? nil : $0 })
                 recordUsage(entry, in: &builder.usage)
+                if let usage = message["usage"] as? Object, let model = message["model"] as? String, model != "<synthetic>" {
+                    builder.toolTrace.response(key: message["id"] as? String ?? entry["requestId"] as? String,
+                                               tokens: ClaudeLogFormat.tokens(fromClaudeUsage: usage), cost: nil)
+                }
                 for block in message["content"] as? [Object] ?? [] {
                     switch block["type"] as? String {
                     case "text":
@@ -86,6 +90,7 @@ enum ClaudeSessions {
                         let input = JSONLines.pretty(SecretFilter.redactedInput(block["input"]))
                         if let id = block["id"] as? String {
                             tools[id] = ToolCall(name: name, readsSecretFile: SecretFilter.readsSecretFile(block["input"]))
+                            builder.toolTrace.call(id: id, tool: ToolCosts.key(tool: name, input: block["input"]))
                         }
                         builder.add(.toolCall(name: name), input, at: time)
                     default:
@@ -94,7 +99,9 @@ enum ClaudeSessions {
                 }
             case "system":
                 switch entry["subtype"] as? String {
-                case "compact_boundary": builder.add(.event("Compacted"), "Earlier messages were summarized", at: time)
+                case "compact_boundary":
+                    builder.toolTrace.compaction()
+                    builder.add(.event("Compacted"), "Earlier messages were summarized", at: time)
                 case "local_command": builder.add(.event("Command"), stripTags(entry["content"] as? String ?? ""), at: time)
                 case "turn_duration":
                     if let milliseconds = entry["durationMs"] as? NSNumber, let end = time {
@@ -150,6 +157,9 @@ enum ClaudeSessions {
         if let blocks = content as? [Object] {
             for block in blocks where block["type"] as? String == "tool_result" {
                 let call = (block["tool_use_id"] as? String).flatMap { tools[$0] }
+                if let id = block["tool_use_id"] as? String {
+                    builder.toolTrace.result(id: id, length: JSONLines.text(of: block["content"]).count)
+                }
                 builder.addToolOutput(.toolResult(name: call?.name, isError: block["is_error"] as? Bool == true),
                                       JSONLines.text(of: block["content"]),
                                       readSecretFile: call?.readsSecretFile ?? false, at: time)

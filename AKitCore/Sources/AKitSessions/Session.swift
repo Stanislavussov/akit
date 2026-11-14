@@ -159,6 +159,8 @@ struct TranscriptBuilder {
     var usage = UsageCounter()
     var subagentUsage = UsageCounter()
     var subagentRuns = 0
+    /// Responses, tool calls and results of the main conversation, for `ToolCosts`.
+    var toolTrace = ToolTrace()
     private var activeTurns: [DateInterval] = []
 
     /// A turn the harness worked on. Turns can overlap (a prompt queued while another
@@ -209,6 +211,7 @@ struct TranscriptBuilder {
         result.toolCalls = tools.values.reduce(0, +)
         result.tools = tools.map { ToolCount(name: $0.key, calls: $0.value) }
             .sorted { ($0.calls, $1.name) > ($1.calls, $0.name) }
+        result.toolCosts = toolTrace.costs
         return result
     }
 }

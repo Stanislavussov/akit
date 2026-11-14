@@ -46,7 +46,15 @@ struct SessionUsageView: View {
                             .foregroundStyle(.secondary)
                     }
                     section("Activity") { activity }
-                    if !usage.tools.isEmpty {
+                    if !usage.toolCosts.tools.isEmpty {
+                        section("Tools") { costTable(usage.toolCosts.tools, display: \.displayName) }
+                        if !usage.toolCosts.servers.isEmpty {
+                            section("MCP servers") { costTable(usage.toolCosts.servers, display: \.name) }
+                        }
+                        Text(costNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if !usage.tools.isEmpty {
                         section("Tools") { tools }
                     }
                 }
@@ -60,6 +68,52 @@ struct SessionUsageView: View {
         var text = "Input excludes cache reads and writes. Reasoning is part of output."
         if usage.cost == nil { text += " This harness doesn't record cost." }
         return text
+    }
+
+    private var costNote: String {
+        var text = "Added: tokens a tool's results added to the context (the recorded growth of the next request, "
+            + "split by result length). Re-read: the same tokens read again by later requests until a compaction. "
+            + "Share: added, as part of the last request's context."
+        if usage.toolCosts.tools.allSatisfy({ $0.cost == nil }) { text += " This harness doesn't record cost." }
+        return text
+    }
+
+    private func costTable(_ rows: [ToolCosts.Tool], display: @escaping (ToolCosts.Tool) -> String) -> some View {
+        let hasCost = rows.contains { $0.cost != nil }
+        let last = usage.toolCosts.lastContext
+        return Grid(alignment: .trailing, horizontalSpacing: 16, verticalSpacing: 6) {
+            GridRow {
+                Text("Tool").gridColumnAlignment(.leading)
+                Text("Calls")
+                Text("Added")
+                Text("Largest")
+                Text("Re-read")
+                Text("Tokens")
+                Text("Share")
+                if hasCost { Text("Cost") }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            Divider()
+            ForEach(rows) { tool in
+                GridRow {
+                    Text(display(tool)).monospaced().lineLimit(1).truncationMode(.middle)
+                    Text(UsageText.full(tool.calls))
+                    Text(UsageText.short(tool.added))
+                    Text(UsageText.short(tool.largest))
+                    Text(UsageText.short(tool.reread))
+                    Text(UsageText.short(tool.tokens))
+                    Text(last > 0 ? (Double(tool.added) / Double(last)).formatted(.percent.precision(.fractionLength(1))) : "–")
+                    if hasCost { Text(tool.cost.map(UsageText.money) ?? "–") }
+                }
+                .askAKit("Session tool cost: \(display(tool))", facts: [
+                    "Calls: \(tool.calls)", "Added to context: \(tool.added) tokens",
+                    "Re-read by later requests: \(tool.reread) tokens",
+                ] + (tool.cost.map { ["Cost share: \(UsageText.money($0))"] } ?? []))
+            }
+        }
+        .monospacedDigit()
+        .textSelection(.enabled)
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

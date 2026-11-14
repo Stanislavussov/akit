@@ -48,6 +48,8 @@ public struct SessionUsage: Sendable, Hashable {
     public var compactions = 0
     /// Most used first.
     public var tools: [ToolCount] = []
+    /// Context, tokens and cost of each tool's results.
+    public var toolCosts = ToolCosts()
 
     public init() {}
 
