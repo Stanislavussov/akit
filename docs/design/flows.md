@@ -1,7 +1,7 @@
 # Flows: agent orchestration for Pi
 
 Status: 2026-11-16, proposal, not built. Written from a web search, the Pi docs (context7,
-`earendil-works/pi`), the Pi 1.5.2 package and PurpleFlow (MIT). Decisions F1–F13 below are
+`earendil-works/pi`), the Pi 1.5.2 package and PurpleFlow (MIT). Decisions F1–F18 below are
 proposals until the user accepts them.
 
 ## Goal
@@ -61,7 +61,7 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
   tools, skills and prompt, in the run's worktree, as Pi's own subagent example does. The
   order, back-arrows and loop limit are kept by the extension's code, not by the model. It
   needs only Pi's extension API, so it works with any subagent plugin or none, on any 1.x
-  version. Inside a step Pi may still use its own subagents.
+  version. Inside a step Pi may still use its own subagents. What the code guarantees is in F15.
 - **F2 Simple diagram.** A flow is a column of steps. Each step is a card: agent, model,
   skills, "goes back to" on failure, gate on or off. No free canvas. Parallel steps are one
   card with several agents side by side.
@@ -84,8 +84,7 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
   Pi's JSON events), the handoffs, a summary. In Pi a widget above the editor
   (`ctx.ui.setWidget`) shows the column of steps with state, model and tokens. AKit's Runs
   screen reads the same record and draws the same diagram (read-only), and adds runs to
-  Sessions and Insights. Child steps run with `--no-session`, so this record is the only
-  place their tokens are seen.
+  Sessions and Insights. Child steps keep their session files (F17).
 - **F8 Isolation.** Each run works in its own worktree and branch `akit-flow/<run>`.
   Merge or MR stays the user's choice.
 - **F9 Resume.** The run record is the state: `/flow resume` continues from the last
@@ -104,17 +103,64 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
   a step's tools are a subset of the flow's, and a step does not start nested flows. A
   durable runner for Pi p2/p3 is a later step.
 
+- **F14 Setup by clicks only.** Every setting on the Flows screen is a picker, a toggle or a
+  drag: add a step from a list of agents, drag to reorder, model from `PiModelPicker`,
+  skills and tools as check boxes, "goes back to" as a picker of earlier steps, gate as a
+  switch, checks from the project's known commands. The YAML is never edited by hand; AKit
+  writes it.
+- **F15 What is guaranteed, and how.** The user's rule: Pi must follow the flow, and the
+  order is always kept. A model can't be forced to think a certain way, so every rule is
+  either enforced by code or checked by code after the step; none is left to the prompt.
+
+  | Rule | How | Guarantee |
+  |---|---|---|
+  | Order of steps, back-arrows, loop limit | the extension's runner; the model never picks the next step | enforced |
+  | Model of a step | `--model` on the child | enforced |
+  | Tools of a step | `--tools` on the child, plus the guard (below) blocks any other call | enforced |
+  | Skills of a step | only the named skills are given (`--skill` / no discovery), Q1 | enforced |
+  | Files a step may change (e.g. Review: none; Bug step 1: tests only) | the guard blocks `edit` / `write` / `bash` writes outside the step's paths | enforced |
+  | Checks (tests, lint) | run by the extension, not by the model | enforced |
+  | Handoff has its headings | checked after the step; missing → the step reruns once, then the run stops | checked |
+  | Step rules such as "test fails before the fix" | a check the extension runs at the step's end (run tests, compare) | checked |
+  | Quality of the work | review step and gates | the user decides |
+
+  The guard is a second small extension, `akit-flow-guard.ts`, that the runner loads into
+  each child with `-e`. It reads the step's rules and answers Pi's `tool_call` event with
+  `{ block: true, reason }`. The model sees the reason and can go on within the rules.
+- **F16 Deviation log.** Every blocked call, failed check, rerun handoff and gate Send Back
+  is a line in the run's `deviations.jsonl`: step, rule, what the model tried, what
+  happened (blocked, rerun, stopped). The widget in Pi shows a count; AKit's Runs screen
+  lists them per step, with the quote, next to the error modes of error-analysis.md.
+- **F17 Every step can be evaluated.** Children run with `--session-dir` in the run record
+  instead of `--no-session`, so each step is a normal Pi session file. AKit's Sessions
+  index reads them tagged with flow, run and step; Lab (review, numbers), error analysis,
+  Corrections and tool costs work on a step as on any session. At least: open a step and see
+  what it read, ran and changed, with its tokens.
+- **F18 Buttons in Pi.** Like Claude Code's subagent row, without changing Pi's own
+  functions:
+  - a widget **below the editor** (Pi's widget placement) shows one row of steps:
+    `1 Plan ✓  2 Code ● 12k  3 Checks ○  4 Review ○   ⚠ 1`;
+  - shortcuts open a step: an overlay (`ctx.ui.custom`) with the child's live transcript
+    (tool calls, output, handoff); Esc closes it; `/flow show <n>` does the same;
+  - Pi's normal mode leaves the mouse to the terminal, so the "buttons" are shortcuts shown
+    in the row; mouse clicks work only in Pi's fullscreen mode;
+  - shortcuts are picked so they don't clash with Pi's built-in keybindings (checked in
+    step 0 against `keybindings.md` of the installed version); a clash means no shortcut,
+    the `/flow show` command still works.
+
 ## Steps
 
 | # | Step | Built |
 |---|---|---|
-| 0 | On the work Mac: `pi --version`, does `pi --mode json -p` take `--model` / `--tools` / `--skill`, extension API | — |
+| 0 | On the work Mac: `pi --version`, does `pi --mode json -p` take `--model` / `--tools` / `--skill` / `--session-dir` / `-e`, `tool_call` block, widget below the editor, free shortcuts | — |
 | 1 | `AKitFlows`: flow file format, check, run-record reader; tests on a fake home | — |
 | 2 | Pi extension `akit-flow.ts`: one step, events → run record; tested with a fake `pi` (pty recipe) | — |
-| 3 | Order, back-arrows, max loops, handoff check, gates, widget, resume | — |
+| 3 | Order, back-arrows, max loops, handoff check, gates, resume | — |
+| 3a | Guard `akit-flow-guard.ts` (F15), deviation log (F16), step sessions (F17) | — |
+| 3b | Row below the editor, shortcuts, step overlay (F18) | — |
 | 4 | Flows screen: column of cards, pickers, templates, check | — |
 | 5 | Brain and layers: `brain/flows`, Apply renders flows and the extension, work machines | — |
-| 6 | Runs screen; runs in Sessions and Insights; `akit flow` and the `/akit` skill; guide | — |
+| 6 | Runs screen with deviations; step sessions in Sessions, Lab, error analysis; `akit flow` and the `/akit` skill; guide | — |
 | 7 | durable runner (Pi p2/p3) | later |
 
 ## Open questions
