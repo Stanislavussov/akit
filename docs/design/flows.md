@@ -2,7 +2,8 @@
 
 Status: 2026-11-16, proposal, not built. Written from a web search, the Pi docs (context7,
 `earendil-works/pi`), the Pi 1.5.2 package and PurpleFlow (MIT). Decisions F1–F19 below are
-proposals until the user accepts them.
+proposals until the user accepts them; D24–D28 (2026-11-16) are decided, and the reviewed
+plan with the spec audit (A1–A22) is `.omc/plans/flows-plan.md` (local).
 
 ## Goal
 
@@ -61,7 +62,7 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
   tools, skills and prompt, in the run's worktree, as Pi's own subagent example does. The
   order, back-arrows and loop limit are kept by the extension's code, not by the model. It
   needs only Pi's extension API, so it works with any subagent plugin or none, on any 1.x
-  version. Inside a step Pi may still use its own subagents. What the code guarantees is in F15.
+  version. A step may not start its own subagents (D28): another agent is another step. What the code guarantees is in F15.
 - **F2 Simple diagram.** A flow is a column of steps. Each step is a card: agent, model,
   skills, "goes back to" on failure, gate on or off. No free canvas. Parallel steps are one
   card with several agents side by side.

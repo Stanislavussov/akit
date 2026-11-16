@@ -186,6 +186,11 @@ Each one removes work or removes a conflict. None adds a feature.
 | D21 | `akit mcp exec` in a project whose `.mcp.json` git tracks. Decided 2026-10-15: only in local-only files and the home folder; a committed file keeps `${VAR}` and the plan warns | `layers.md`, MCP |
 | D22 | Global instructions: where does the one global text live — the core layer in the brain (proposal), or only on this Mac? Decided 2026-10-30 by the user: the core layer | `global-instructions.md` |
 | D23 | Analysis of the global text: which parts — size and repeats, a model's review, the recorded sessions? Decided 2026-10-30 by the user: all three | `global-instructions.md` |
+| D24 | Flows: what does "guaranteed" mean? Decided 2026-11-16 by the user (U1): code guarantees the order of steps, each step's model, its tool allow-list, and that every deviation is logged; skills only if step 0 confirms `-ns --skill` on the work Mac; a step with `bash` is logged-only for those parts; a check guarantees that it ran and what it returned, not that the tests are complete; the quality of the work is caught by the review step and the gates | `flows.md` F15 |
+| D25 | Flows: buttons in Pi to view a step. Decided 2026-11-16 by the user (U2): shortcuts shown in the row below the editor plus `/flow show <n>`; mouse clicks later, only in Pi's fullscreen mode | `flows.md` F18 |
+| D26 | Flows: parallel agents in one card. Decided 2026-11-16: not in v1, later (U3) | `flows.md` F2 |
+| D27 | Flows: step sessions and Insights. Decided 2026-11-16 by the user (U4): as D19, step sessions stay out of the existing Insights views; Runs shows them, Sessions lists them behind a `flow` filter, Lab and Corrections open them | `flows.md` F17 |
+| D28 | Flows: may a step start its own subagents ("grandchildren") that are not on the diagram? Decided 2026-11-16 by the user (U5): no, one level as in Claude Code; another agent is another step on the diagram | `flows.md` F1, F15 |
 
 ## Parked
 
