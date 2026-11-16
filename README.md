@@ -492,12 +492,17 @@ where they are.
 ## Build from source
 
 Needs Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+`make test` also needs Node.js 22.18 or newer: the Flows runner tests install the pinned
+TypeScript and `@types/node` from `tools/flows/package.json` into `tools/flows/node_modules`
+(`npm ci`, no global install).
 
 ```sh
 git clone https://github.com/Stanislavussov/akit && cd akit
 ./install.sh            # build and install, then akit setup
 make run                # debug build and launch
-make test               # core tests (Swift Testing, in a temporary fake home)
+make test               # core tests (Swift Testing, in a temporary fake home), then make test-flows
+make test-flows         # Flows Pi runner: tsc + node --test with a fake pi (needs Node 22.18+)
+make check-pi           # the installed Pi against the runner's minPi / testedPi
 make install            # release build into ~/Applications and ~/.local/bin
 make install-cli        # only the akit command
 make snapshot OUT=/tmp/akit.png SECTION=skills   # a window snapshot, no screen recording

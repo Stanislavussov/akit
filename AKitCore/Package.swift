@@ -50,7 +50,9 @@ let package = Package(
         .target(name: "AKitBrain", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "Yams"]),
         .target(name: "AKitInsights", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain"]),
         // The rulesync seam: sees only the brain's ProjectBundle and RenderResult.
-        .target(name: "AKitRender", dependencies: ["AKitFoundation", "AKitBrain"]),
+        // Resources/flows/*.ts are the Pi runner templates (flows.md F1, F20); Apply renders them in
+        // step 4. Tested by `make test-flows` (node --test, tsc), not read as bundle resources yet.
+        .target(name: "AKitRender", dependencies: ["AKitFoundation", "AKitBrain"], exclude: ["Resources"]),
         // Lab: session metrics, runs in a terminal, replay tasks (docs/design/lab.md).
         // Lab → Brain for one thing: whether this Mac is a work Mac (the sending policy).
         // Lab → Knowledge: the knowledge base's check model call (KnowledgeChecker), for the CLI and the app.

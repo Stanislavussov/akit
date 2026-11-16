@@ -1,0 +1,10 @@
+{
+  "name": "akit-flows-tests",
+  "private": true,
+  "description": "Type check and tests of the Flows Pi runner (make test-flows). Pinned tools only.",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "typescript": "5.9.3"
+  }
+}
