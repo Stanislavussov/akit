@@ -21,7 +21,7 @@ The diagram is as simple as PurpleFlow's; setting a step up is a few pickers, no
 
 | Finding | Source | What AKit does with it |
 |---|---|---|
-| Run the order in code, not by asking the model: an explicit state object drives retries and handoffs | Medium "Best practices…", Augment guide | F1: AKit runs the steps; the model never chooses to skip one |
+| Run the order in code, not by asking the model: an explicit state object drives retries and handoffs | Medium "Best practices…", Augment guide | F1: the Pi extension runs the steps in code; the model never chooses to skip one |
 | Handoffs as typed data with a fixed schema, not free text | mer.vin (blog), arXiv 2606.02875 "Handoff debt" | F4: a handoff file with fixed fields |
 | A check gate at every handoff | Augment guide, PurpleFlow | F5: checks and the two user gates |
 | The writer never accepts its own work; the reviewer runs on another model | PurpleFlow, Anthropic guidance | F6: a flow with the same model on write and review gets a warning |
@@ -42,93 +42,84 @@ The diagram is as simple as PurpleFlow's; setting a step up is a few pickers, no
 
 ## Decisions (proposals)
 
-- **F1 AKit runs the flow.** The runner lives in a new module `AKitFlows`. Each step starts
-  `pi --mode json -p` with the step's model, tools, skills and prompt, in the run's worktree.
-  It needs only the `pi` command, so it works the same with any subagent plugin or none, on
-  any 1.x version. Inside a step Pi may still use its own subagents.
+Split of roles (the user's rule, 2026-11-16): **AKit only models the behavior; Pi runs it.**
+AKit edits, checks and renders the flow files and shows recorded runs. It starts nothing.
+
+```
+ AKit (model)                         Pi (runs)
+ Flows screen ──▶ brain/flows/*.yaml   /flow feature "add export"
+       │ Apply                               │
+       ▼                                     ▼
+ .pi/flows/*.yaml, ~/.pi/agent/flows/ ──▶ akit-flow.ts (Pi extension, rendered by Apply)
+ akit-flow.ts                                │ each step: pi --mode json -p --model … --tools …
+                                             ▼
+ Runs screen ◀──── reads ───── run record ~/.akit/local/flows/runs/<id>/
+```
+
+- **F1 Pi runs the flow, in code.** The runner is the Pi extension `akit-flow.ts`. It
+  reads the flow file and starts each step as `pi --mode json -p` with the step's model,
+  tools, skills and prompt, in the run's worktree, as Pi's own subagent example does. The
+  order, back-arrows and loop limit are kept by the extension's code, not by the model. It
+  needs only Pi's extension API, so it works with any subagent plugin or none, on any 1.x
+  version. Inside a step Pi may still use its own subagents.
 - **F2 Simple diagram.** A flow is a column of steps. Each step is a card: agent, model,
-  "goes back to" on failure, gate on or off. No free canvas. Parallel steps are one card
-  with several agents side by side.
+  skills, "goes back to" on failure, gate on or off. No free canvas. Parallel steps are one
+  card with several agents side by side.
 - **F3 A flow is a brain file.** `brain/flows/<name>.yaml` (steps, agents, models, skills,
-  gates, max loops). A layer can include flows, so a project gets its flows with Apply
-  (layers.md). On a work machine, flows of work projects stay in the local store, as layers do.
+  gates, max loops). A layer can include flows; Apply renders them to the project's
+  `.pi/flows/` or the home `~/.pi/agent/flows/`. On a work machine, flows of work projects
+  stay in the local store, as layers do. AKit checks a flow before Apply: agents, models and
+  skills exist, every back-arrow points to an earlier step.
 - **F4 Handoff.** Each step writes `handoff.md` with fixed headings: Goal, Done, Files,
-  Open questions, Next step. The runner checks the headings, saves the file in the run
-  folder, and passes it, not the whole output, to the next step.
-- **F5 Gates and checks.** A check step runs the project's test and lint commands (the
-  review setup commands, review.md). Red goes back to the step the card names. A gate stops
-  the run and shows the plan or the diff with Approve / Send Back (with a note) buttons.
-  Max loops per flow (default 3), then the run stops and asks.
-- **F6 Model rules.** Models come from `PiModelPicker`. A warning when the reviewer's model
-  equals the implementer's.
-- **F7 Run tracking.** A run's screen shows the same diagram with each step's state
-  (waiting, running, done, failed, sent back), time, tokens and cost from Pi's JSON
-  events, the handoff of each step, and Stop. Runs are stored in
-  `~/.akit/local/flows/runs/<id>/` (events, handoffs, a summary) and shown in Sessions and
-  Insights next to normal sessions.
-- **F8 Isolation.** Each run works in its own worktree and branch `akit-flow/<run>`, as
-  review runs do (review-own-clone). Merge or MR stays the user's choice.
-- **F9 Resume.** The run folder is the state: after a restart the run continues from the
-  last finished step.
+  Open questions, Next step. The extension checks the headings, saves the file in the run
+  record, and passes it, not the whole output, to the next step.
+- **F5 Gates and checks.** A check step runs the project's test and lint commands, set in
+  the flow. Red goes back to the step the card names. At a gate the extension stops and asks
+  in Pi (`ctx.ui.confirm` / `ctx.ui.editor`): Approve, or Send Back with a note. Max loops
+  per flow (default 3), then it stops and asks.
+- **F6 Model rules.** Models come from `PiModelPicker`. A warning in AKit when the
+  reviewer's model equals the implementer's.
+- **F7 Run record and tracking.** The extension writes each run to
+  `~/.akit/local/flows/runs/<id>/`: `events.jsonl` (step, state, time, tokens and cost from
+  Pi's JSON events), the handoffs, a summary. In Pi a widget above the editor
+  (`ctx.ui.setWidget`) shows the column of steps with state, model and tokens. AKit's Runs
+  screen reads the same record and draws the same diagram (read-only), and adds runs to
+  Sessions and Insights. Child steps run with `--no-session`, so this record is the only
+  place their tokens are seen.
+- **F8 Isolation.** Each run works in its own worktree and branch `akit-flow/<run>`.
+  Merge or MR stays the user's choice.
+- **F9 Resume.** The run record is the state: `/flow resume` continues from the last
+  finished step.
 - **F10 Templates.** Built-in flows to copy into the brain: Quick fix; Bug (failing test
   first); Feature (PurpleFlow's order, the diagram above); Refactor (tests green before and
   after). Step prompts adapted from PurpleFlow's `core/prompts`, MIT, with the source noted.
-- **F11 Terminal.** `akit flow list|show|run|status|stop` with `--json` and `--yes`; the
-  commands go into the `/akit` skill (setting up) and `akit flow status` into
-  `/akit-context`; `/flow` itself is described in the extension, not in a skill.
-- **F12 durable later.** The model (flow, step, agent, handoff, run) keeps durable's rules:
+- **F11 Start from Pi.** `/flow [name] <task>`; without a name, the project's default flow.
+  A tool `akit_flow` lets the model start one when the user asks in words ("do it by the
+  Feature flow"). Settings come from `.pi/flows/` first, then `~/.pi/agent/flows/`: change a
+  flow in AKit, Apply, and the next `/flow` uses it. On start the extension checks
+  `pi --version` and says what is missing on an old Pi.
+- **F12 Terminal for modeling.** `akit flow list|show|check` with `--json` (no `run`: Pi
+  runs); they go into the `/akit` skill. `/flow` is described in the extension.
+- **F13 durable later.** The model (flow, step, agent, handoff, run) keeps durable's rules:
   a step's tools are a subset of the flow's, and a step does not start nested flows. A
-  durable adapter for Pi p2/p3 is a later step.
-
-- **F13 Start from Pi.** The user starts a task in Pi, and Pi takes the flow settings by
-  itself. AKit renders a thin Pi extension `akit-flow.ts` into `~/.pi/agent/extensions/`
-  with Apply, as it does `akit-record.ts`:
-  - `/flow [name] <task>` starts a run; without a name, the project's default flow. A tool
-    `akit_flow` lets the model start one when the user asks in words ("do it by the
-    Feature flow").
-  - The extension does not run steps. It calls `akit flow run --json --cwd <project>`
-    and reads its events, so the runner stays in one place (Swift, tested) and the order is
-    kept by code.
-  - Settings come from the files Apply put down: the project's `.pi/flows/<name>.yaml`
-    first, then `~/.pi/agent/flows/` (from the brain, F3). Change a flow in AKit, Apply,
-    and the next `/flow` uses it.
-  - In Pi: a widget above the editor (`ctx.ui.setWidget`) shows the column of steps with
-    state, model and tokens; at a gate `ctx.ui.confirm` / `ctx.ui.editor` asks Approve or
-    Send Back with a note; the answer goes to `akit flow answer <run>`. The end result
-    (summary, branch, final handoff) comes back into the Pi conversation.
-  - The same run is live in AKit's run screen; a gate answered in one place closes in the
-    other.
-  - `pi --version` and the extension API are checked on start; on an old Pi the command
-    says what is missing.
-
-```
- Pi:  /flow feature "add export"            AKit app
-        │                                     ▲ same run, live
-        ▼                                     │
- akit-flow.ts ──▶ akit flow run --json ──▶ run folder ~/.akit/local/flows/runs/<id>
-   widget ◀── events (step, state, tokens)    │
-   gate   ──▶ akit flow answer                ▼
-                         each step: pi --mode json -p --model … --tools … (worktree)
-```
+  durable runner for Pi p2/p3 is a later step.
 
 ## Steps
 
 | # | Step | Built |
 |---|---|---|
-| 0 | On the work Mac: `pi --version`, plugins, does `pi --mode json -p` with `--model` / `--tools` / `--skill` work | — |
-| 1 | `AKitFlows`: flow file, runner for one step, JSON events → state and tokens, tests with a fake `pi` | — |
-| 2 | Order, back-arrows, max loops, handoff check, resume | — |
-| 3 | Flows screen: column of cards, pickers, templates | — |
-| 4 | Run screen: live states, tokens, handoffs, gates, Stop | — |
-| 5 | Brain and layers: `brain/flows`, Apply, work machines | — |
-| 6 | Runs in Sessions and Insights; `akit flow` commands and skills; guide | — |
-| 6a | Pi extension `akit-flow.ts` (F13): `/flow`, `akit_flow` tool, widget, gates; rendered by Apply | — |
-| 7 | durable adapter (Pi p2/p3) | later |
+| 0 | On the work Mac: `pi --version`, does `pi --mode json -p` take `--model` / `--tools` / `--skill`, extension API | — |
+| 1 | `AKitFlows`: flow file format, check, run-record reader; tests on a fake home | — |
+| 2 | Pi extension `akit-flow.ts`: one step, events → run record; tested with a fake `pi` (pty recipe) | — |
+| 3 | Order, back-arrows, max loops, handoff check, gates, widget, resume | — |
+| 4 | Flows screen: column of cards, pickers, templates, check | — |
+| 5 | Brain and layers: `brain/flows`, Apply renders flows and the extension, work machines | — |
+| 6 | Runs screen; runs in Sessions and Insights; `akit flow` and the `/akit` skill; guide | — |
+| 7 | durable runner (Pi p2/p3) | later |
 
 ## Open questions
 
 - Q1: Does a step get the project's skills, or only the ones the card names?
-- Q2: Should a run start from the Notebook or a ticket (Work → Notebook, Digest)?
 - Q3: Step 0 facts on the work Mac.
 
 ## Sources
