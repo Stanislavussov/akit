@@ -53,7 +53,7 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
  .pi/flows/*.yaml, ~/.pi/agent/flows/ ──▶ akit-flow.ts (Pi extension, rendered by Apply)
  akit-flow.ts                                │ each step: pi --mode json -p --model … --tools …
                                              ▼
- Runs screen ◀──── reads ───── run record ~/.akit/local/flows/runs/<id>/
+ Runs screen ◀──── reads ───── run record <project>/.pi/akit-flow/runs/<run-id>/
 ```
 
 - **F1 Pi runs the flow, in code.** The runner is the Pi extension `akit-flow.ts`. It
@@ -70,9 +70,51 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
   `.pi/flows/` or the home `~/.pi/agent/flows/`. On a work machine, flows of work projects
   stay in the local store, as layers do. AKit checks a flow before Apply: agents, models and
   skills exist, every back-arrow points to an earlier step.
-- **F4 Handoff.** Each step writes `handoff.md` with fixed headings: Goal, Done, Files,
-  Open questions, Next step. The extension checks the headings, saves the file in the run
-  record, and passes it, not the whole output, to the next step.
+- **F4 Handoff as JSON, OMC style, in `.pi`.** Like OMC's `.omc/handoffs/<sessionId>-<stage>.json`
+  plus its chain ledger, but per run so several runs can go at once:
+
+  ```
+  <project>/.pi/akit-flow/
+    runs/<run-id>/                  run-id = 20261116-1432-a3f9 (date, time, 4 hex)
+      run.json                      ledger: flow, task, branch, state, current step, visits per step
+      handoffs/02-implement-a1-<pi-session-id>.json   step number, step id, attempt, session
+      sessions/                     the steps' Pi session files (F17)
+      events.jsonl                  states, times, tokens
+      deviations.jsonl              F16
+    index.json                      the runs of this project, newest first
+  ```
+
+  A handoff file:
+
+  ```json
+  {
+    "schema": "akit-flow-handoff/1",
+    "run": "20261116-1432-a3f9",
+    "flow": "feature",
+    "step": { "index": 2, "id": "implement", "attempt": 1 },
+    "session": "<pi session id>",
+    "from": { "outcome": "done", "reason": "" },
+    "next": { "step": "checks" },
+    "goal": "Add CSV export",
+    "done": ["Export button", "CSV writer with tests"],
+    "files": [{ "path": "src/export.ts", "change": "added" }],
+    "open_questions": [],
+    "notes": "",
+    "tokens": { "input": 0, "output": 0, "cache_read": 0, "cost": 0 },
+    "deviations": 0
+  }
+  ```
+
+  The model does not write the file. The guard gives each step a tool `flow_handoff` whose
+  parameters are the model's part (`goal`, `done`, `files`, `open_questions`, `notes`,
+  `outcome`, `reason`); Pi checks them against the tool's schema. The runner adds `run`,
+  `step`, `session`, `next`, `tokens`, `deviations` itself and writes the file. A step that
+  ends without `flow_handoff` reruns once, then the run stops (a deviation). `outcome` is one
+  of `done`, `failed`, `blocked`; the runner, not the model, turns it into the next step.
+  The next step gets the previous handoff as its input, not the whole output.
+  `.pi/akit-flow/` is local: AKit adds it to `info/exclude` (layers.md, local-only files).
+  In a worktree the run lives in the main checkout's `.pi/akit-flow/`, so it outlives the
+  worktree (OMC's lesson: state inside a worktree dies with it).
 - **F5 Gates and checks.** A check step runs the project's test and lint commands, set in
   the flow. Red goes back to the step the card names. At a gate the extension stops and asks
   in Pi (`ctx.ui.confirm` / `ctx.ui.editor`): Approve, or Send Back with a note. Max loops
@@ -80,7 +122,7 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
 - **F6 Model rules.** Models come from `PiModelPicker`. A warning in AKit when the
   reviewer's model equals the implementer's.
 - **F7 Run record and tracking.** The extension writes each run to
-  `~/.akit/local/flows/runs/<id>/`: `events.jsonl` (step, state, time, tokens and cost from
+  `<project>/.pi/akit-flow/runs/<run-id>/` (F4): `events.jsonl` (step, state, time, tokens and cost from
   Pi's JSON events), the handoffs, a summary. In Pi a widget above the editor
   (`ctx.ui.setWidget`) shows the column of steps with state, model and tokens. AKit's Runs
   screen reads the same record and draws the same diagram (read-only), and adds runs to
@@ -131,7 +173,7 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
   is a line in the run's `deviations.jsonl`: step, rule, what the model tried, what
   happened (blocked, rerun, stopped). The widget in Pi shows a count; AKit's Runs screen
   lists them per step, with the quote, next to the error modes of error-analysis.md.
-- **F17 Every step can be evaluated.** Children run with `--session-dir` in the run record
+- **F17 Every step can be evaluated.** Children run with `--session-dir <run>/sessions`
   instead of `--no-session`, so each step is a normal Pi session file. AKit's Sessions
   index reads them tagged with flow, run and step; Lab (review, numbers), error analysis,
   Corrections and tool costs work on a step as on any session. At least: open a step and see
