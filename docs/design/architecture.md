@@ -88,6 +88,13 @@ Instructions through `GlobalInstructions`, a project's file through `Instruction
 `CorrectionStats`, is in `AKitInsights` next to `LoopStats`: it needs the index's scope query.
 Corrections sits above ErrorAnalysis and ProjectSetup and below CommandLine, so the arrows still point down.
 
+2026-11-17 (flows, `flows.md` step 1): new module `AKitFlows` (21 library targets now), on Foundation,
+Harnesses and Yams: the flow file and its YAML codec, `FlowRouting.next` (golden vectors in the
+top-level `fixtures/flow-vectors/`, which the Pi runner's `node --test` reads later), `FlowCheck`,
+the run-record reader of `.pi/akit-flow/runs/` and the generated `flow.schema.json`.
+`AKitCommandLine → AKitFlows` (`akit flow`). `AKitRender` must not import it: Apply's render of
+flows (step 4) gets plain data, so the rulesync seam stays as it is. The app does not import it yet.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -138,6 +145,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitHelp` | Ask AKit (added 2026-10-14, `ask-akit.md`): the guide sections, prompt and answer of a question about a screen. Pure; the app makes the call. | new |
 | `AKitKnowledge` | Knowledge base (added 2026-10-24, `knowledge.md`): a base folder per world (by default `~/.akit/local/knowledge/<world>`, or the one set in `bases.json`; git without a remote), its areas and Markdown notes (frontmatter, `##` sections, byte-preserving edits), the `[[link]]` resolver, the base choice, the one commit function under the base's git lock, `obsidian://open` links. No UI, no model calls. | new |
 | `AKitReview` | AKit Review (added 2026-10-15, `review.md`): project profiles and the three config levels, Gather from GitLab and Azure DevOps REST into a context pack, the review passes in Pi, the requests and the drafts AKit writes after approval. | new |
+| `AKitFlows` | Flows (added 2026-11-17, `flows.md`): the flow file Pi runs (steps, models, skills, tools, routes), its YAML codec and generated JSON Schema, `FlowRouting.next`, `FlowCheck`, and the tolerant reader of a run's record (`events.jsonl`, handoffs). Writes nothing. | new |
 | `AKitCommandLine` | The logic behind the `akit` command, including the `akit setup` wizard. | `CLI/AKitCLI.swift`; `CLI/Onboarding.swift` (used only by the CLI; moved from `Brain/` in step 11) |
 | `akit` (executable) | Unchanged. It now imports `AKitCommandLine`, `AKitInsights` (`RecordSession`), `AKitHarnesses`, `AKitBrain` and `AKitFoundation`. | `Sources/akit/main.swift` |
 | `AKit` (app) | SwiftUI shell. | `AKit/*` |
@@ -196,7 +204,8 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
 | `AKitReview` | Foundation, Model, Harnesses (Pi's packages, for Pi steps), Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Knowledge (the knowledge card of Gather), Yams |
 | `AKitKnowledge` | Foundation, Model, Brain (this Mac's kind, the brain's root, project ids), Yams (note frontmatter) |
-| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review, Knowledge |
+| `AKitFlows` | Foundation, Harnesses (Pi's skill folders, for the check), Yams (flow files) |
+| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review, Knowledge, Corrections, Flows |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 
 Rules:

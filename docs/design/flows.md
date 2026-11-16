@@ -1,7 +1,7 @@
 # Flows: agent orchestration for Pi
 
 Status: 2026-11-16, spec revised after the ralplan review (plan in `.omc/plans/flows-plan.md`,
-local); D24–D28 decided; not built. Written from a web search, the Pi docs (context7,
+local); D24–D28 decided; step 1 built 2026-11-17 (`AKitFlows`, `akit flow`), the runner and screens not yet. Written from a web search, the Pi docs (context7,
 `earendil-works/pi`), the Pi 1.5.2 package, Pi 1.0.4 `--help` and PurpleFlow (MIT). F1–F19
 are the design; the spec audit A1–A22 is closed in the decisions below.
 
@@ -308,7 +308,7 @@ at the end.
 | # | Step | Built |
 |---|---|---|
 | 0 | Facts and spec: `tools/pi-flow-probe.sh` (version, flags, `tool_call` block, `belowEditor`, free shortcuts, extension names only; no env, tokens or config); the user runs it on the work Mac; this doc revised and D24–D28 decided | spec done; probe built and run on this Mac (Pi 1.0.4: all flags and API calls present; `tool_call` block and widget placement left to the e2e test); work Mac pending |
-| 1 | `AKitFlows` (deps: AKitFoundation, AKitHarnesses; AKitRender must not import it; edges in `architecture.md`, `project.yml`): flow model, YAML codec, check, run-record reader, `FlowRouting.next`, generated `flow.schema.json` with a drift test, golden vectors; `akit flow list\|show\|check\|schema`; `/akit` skill | — |
+| 1 | `AKitFlows` (deps: AKitFoundation, AKitHarnesses; AKitRender must not import it; edges in `architecture.md`, `project.yml`): flow model, YAML codec, check, run-record reader, `FlowRouting.next`, generated `flow.schema.json` with a drift test, golden vectors; `akit flow list\|show\|check\|schema`; `/akit` skill | built 2026-11-17: `AKitFlows` on Foundation, Harnesses and Yams (no `project.yml` change: the app does not import it yet); 10 golden vectors in `fixtures/flow-vectors/`; the check takes known models, skills and Pi features as input (`akit flow check` knows Pi's skills, reads `~/.akit/local/pi-capabilities.json` when there, and warns that models are not checked until the app's `PiModelPicker` list is used); a failed/blocked route must go to the same or an earlier step; F6's pair is the agents `implementer` and `reviewer`. UI gap: `akit flow check` has no button until the Flows screen's Check (step 4) |
 | 2a | Runner core: `flow-core.ts`, `akit-flow.ts`, template in AKitRender, vendored spawn code, atomic `run.json`, `events.jsonl`, lock; `make test-flows` (`tsc --noEmit` against vendored min-version Pi types, `node --test` on the vectors, fake `pi`); Node and TypeScript versions in the `Makefile`; a missing Node fails `make test` with a clear message; `make check-pi`; `pi-adapter.ts`, format number, `minPi`/`testedPi`, feature checks with fallbacks, tolerant event reader (F20) | — |
 | 2b | `flow_handoff` tool, rerun once, evidence files, handoff ↔ session link | — |
 | 2c | Worktree outside the tree, per-step commits with trailers, resume from events, gate edits first, `STOP`, kill the process group | — |

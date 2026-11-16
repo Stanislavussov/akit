@@ -1,0 +1,83 @@
+{
+  "about": "Red checks go back to implement",
+  "expect": {
+    "next": "implement",
+    "visits": {
+      "checks": 1,
+      "implement": 2,
+      "plan": 1
+    }
+  },
+  "flow": {
+    "akit-flow-format": 1,
+    "minPi": "1.0.4",
+    "name": "feature",
+    "steps": [
+      {
+        "agent": "planner",
+        "bash": true,
+        "gate": false,
+        "id": "plan",
+        "maxLoops": 3,
+        "model": "m/a"
+      },
+      {
+        "agent": "implementer",
+        "bash": true,
+        "gate": false,
+        "id": "implement",
+        "maxLoops": 2,
+        "model": "m/a",
+        "routes": {
+          "failed:*": "plan"
+        }
+      },
+      {
+        "agent": "checker",
+        "bash": true,
+        "gate": false,
+        "id": "checks",
+        "maxLoops": 3,
+        "model": "m/a",
+        "routes": {
+          "blocked:*": "plan",
+          "failed:*": "implement"
+        }
+      },
+      {
+        "agent": "reviewer",
+        "bash": true,
+        "gate": false,
+        "id": "review",
+        "maxLoops": 3,
+        "model": "m/b",
+        "routes": {
+          "done:*": "commit",
+          "failed:*": "plan",
+          "failed:notes": "implement"
+        }
+      },
+      {
+        "agent": "committer",
+        "bash": true,
+        "gate": false,
+        "id": "commit",
+        "maxLoops": 3,
+        "model": "m/a",
+        "routes": {
+          "done:*": "end"
+        }
+      }
+    ]
+  },
+  "outcome": "failed",
+  "reason": "tests",
+  "state": {
+    "step": "checks",
+    "visits": {
+      "checks": 1,
+      "implement": 1,
+      "plan": 1
+    }
+  }
+}

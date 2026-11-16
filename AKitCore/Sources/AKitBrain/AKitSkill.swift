@@ -290,6 +290,20 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
   (also `direct`, `codemode` = Pi's default, `hidden`; shows the change; `--yes` writes).
   `akit doctor pi` suggests it for a direct server Pi rarely calls.
 
+## Flows (multi-step runs for Pi)
+
+A flow is a column of Pi steps (agent, model, skills, tools, routes on done/failed/blocked,
+gate, max loops). Pi runs it with `/flow [name] <task>`; akit only reads and checks the files
+(the project's `.pi/flows/*.yaml`, then `~/.pi/agent/flows/`). There is no `akit flow run`.
+
+- `akit flow list [--project PATH] [--json]`: the flows and their steps, or why a file can't be read.
+- `akit flow show NAME [--json]`: a flow's steps, models, skills, tools and routes.
+- `akit flow check [NAME] [--json]`: run before Apply or when the user asks why a flow fails;
+  exit 1 on an error (unknown or malformed route, a failed/blocked route to a later step, step
+  tools outside the flow's, unsafe check commands, missing skills, the reviewer on the
+  implementer's model, a Pi feature this Mac lacks). Fix the flow in AKit's Flows screen, not by hand.
+- `akit flow schema`: the JSON Schema of a flow file.
+
 ## Merge request review
 
 `akit review post RUN [--yes] [--publish] [--json]` prints a run's requests; with `--yes` it sends
