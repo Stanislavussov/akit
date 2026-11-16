@@ -1,7 +1,7 @@
 # Flows: agent orchestration for Pi
 
 Status: 2026-11-16, proposal, not built. Written from a web search, the Pi docs (context7,
-`earendil-works/pi`), the Pi 1.5.2 package and PurpleFlow (MIT). Decisions F1–F18 below are
+`earendil-works/pi`), the Pi 1.5.2 package and PurpleFlow (MIT). Decisions F1–F19 below are
 proposals until the user accepts them.
 
 ## Goal
@@ -190,6 +190,21 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
     step 0 against `keybindings.md` of the installed version); a clash means no shortcut,
     the `/flow show` command still works.
 
+- **F19 Taken from OMC's chain (oh-my-claudecode 5.8.0, `hooks/session-end`).** OMC runs a
+  chain of headless sessions with code-side routing; Flows takes the same parts:
+
+  | OMC | Flows |
+  |---|---|
+  | Route table `outcome:reason` → next stage, `outcome:*` as fallback (`decideNextStage`) | Each card's "on done / failed / blocked go to" pickers become this table in the flow file; the runner looks the next step up, the model never names it |
+  | A malformed table halts silently as `no-route` | AKit's check refuses a flow with a missing or bad route before Apply; the runner stops loudly on no route (a deviation) |
+  | `visits` per stage in the chain ledger, capped | `run.json` counts visits per step; the card's max loops caps it |
+  | Ledger written before the next link starts | `run.json` is written before each step starts, so a crash resumes at the right step (F9) |
+  | Check evidence `state/runs/evidence/<sessionId>-checks.json`; a "checks passed" flag is trusted only with it | The runner writes `<run>/evidence/<step>-checks.json` (command, exit code, last lines of output); a check counts as green only with this file, never because the model says so |
+  | Human gates kept for irreversible or outside-visible acts, precedent and value calls; review sign-off only with the diff attached, not the reviewed side's summary | Gates are fixed before merge, push, MR and any outside call; the Accept gate always shows the diff, the handoff is only next to it |
+  | Verify commands are a trust boundary: plain pattern, ≤ 10 commands, ≤ 120 chars | Check commands in a flow file pass the same rules in AKit's check and again in the runner |
+  | Stop marker and a daily chain limit (`guardrails`) | A `STOP` file in the run folder halts the run at the next step (AKit's Stop button writes it); a per-day run limit in the flow settings |
+  | Headless links run with a fixed tool profile and chosen setting sources | Each step runs with its tool list and the guard; whether the user's other Pi extensions load is a switch on the flow (default: only the guard and `akit-record`) |
+
 ## Steps
 
 | # | Step | Built |
@@ -197,7 +212,7 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
 | 0 | On the work Mac: `pi --version`, does `pi --mode json -p` take `--model` / `--tools` / `--skill` / `--session-dir` / `-e`, `tool_call` block, widget below the editor, free shortcuts | — |
 | 1 | `AKitFlows`: flow file format, check, run-record reader; tests on a fake home | — |
 | 2 | Pi extension `akit-flow.ts`: one step, events → run record; tested with a fake `pi` (pty recipe) | — |
-| 3 | Order, back-arrows, max loops, handoff check, gates, resume | — |
+| 3 | Route table, visits, ledger first, evidence files, STOP, handoff check, gates, resume (F19) | — |
 | 3a | Guard `akit-flow-guard.ts` (F15), deviation log (F16), step sessions (F17) | — |
 | 3b | Row below the editor, shortcuts, step overlay (F18) | — |
 | 4 | Flows screen: column of cards, pickers, templates, check | — |
@@ -220,4 +235,5 @@ AKit edits, checks and renders the flow files and shows recorded runs. It starts
 - https://dev.to/_46ea277e677b888e0cd13/cc-workflow-studio-visual-workflow-editor-for-claude-code-ai-agents-41bo
 - https://agentsroom.dev/features/teams
 - https://github.com/PurpleSchool/purpleflow
+- oh-my-claudecode 5.8.0: `dist/hooks/session-end/` (spawn-next, routing, check-evidence, guardrails)
 - https://github.com/earendil-works/pi (examples/extensions/subagent, packages/durable)
