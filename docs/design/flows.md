@@ -1,7 +1,7 @@
 # Flows: agent orchestration for Pi
 
 Status: 2026-11-16, proposal, not built. Written from a web search, the Pi docs (context7,
-`earendil-works/pi`), the Pi 1.5.2 package and PurpleFlow (MIT). Decisions F1–F12 below are
+`earendil-works/pi`), the Pi 1.5.2 package and PurpleFlow (MIT). Decisions F1–F13 below are
 proposals until the user accepts them.
 
 ## Goal
@@ -75,10 +75,41 @@ The diagram is as simple as PurpleFlow's; setting a step up is a few pickers, no
   after). Step prompts adapted from PurpleFlow's `core/prompts`, MIT, with the source noted.
 - **F11 Terminal.** `akit flow list|show|run|status|stop` with `--json` and `--yes`; the
   commands go into the `/akit` skill (setting up) and `akit flow status` into
-  `/akit-context`.
+  `/akit-context`; `/flow` itself is described in the extension, not in a skill.
 - **F12 durable later.** The model (flow, step, agent, handoff, run) keeps durable's rules:
   a step's tools are a subset of the flow's, and a step does not start nested flows. A
   durable adapter for Pi p2/p3 is a later step.
+
+- **F13 Start from Pi.** The user starts a task in Pi, and Pi takes the flow settings by
+  itself. AKit renders a thin Pi extension `akit-flow.ts` into `~/.pi/agent/extensions/`
+  with Apply, as it does `akit-record.ts`:
+  - `/flow [name] <task>` starts a run; without a name, the project's default flow. A tool
+    `akit_flow` lets the model start one when the user asks in words ("do it by the
+    Feature flow").
+  - The extension does not run steps. It calls `akit flow run --json --cwd <project>`
+    and reads its events, so the runner stays in one place (Swift, tested) and the order is
+    kept by code.
+  - Settings come from the files Apply put down: the project's `.pi/flows/<name>.yaml`
+    first, then `~/.pi/agent/flows/` (from the brain, F3). Change a flow in AKit, Apply,
+    and the next `/flow` uses it.
+  - In Pi: a widget above the editor (`ctx.ui.setWidget`) shows the column of steps with
+    state, model and tokens; at a gate `ctx.ui.confirm` / `ctx.ui.editor` asks Approve or
+    Send Back with a note; the answer goes to `akit flow answer <run>`. The end result
+    (summary, branch, final handoff) comes back into the Pi conversation.
+  - The same run is live in AKit's run screen; a gate answered in one place closes in the
+    other.
+  - `pi --version` and the extension API are checked on start; on an old Pi the command
+    says what is missing.
+
+```
+ Pi:  /flow feature "add export"            AKit app
+        │                                     ▲ same run, live
+        ▼                                     │
+ akit-flow.ts ──▶ akit flow run --json ──▶ run folder ~/.akit/local/flows/runs/<id>
+   widget ◀── events (step, state, tokens)    │
+   gate   ──▶ akit flow answer                ▼
+                         each step: pi --mode json -p --model … --tools … (worktree)
+```
 
 ## Steps
 
@@ -91,6 +122,7 @@ The diagram is as simple as PurpleFlow's; setting a step up is a few pickers, no
 | 4 | Run screen: live states, tokens, handoffs, gates, Stop | — |
 | 5 | Brain and layers: `brain/flows`, Apply, work machines | — |
 | 6 | Runs in Sessions and Insights; `akit flow` commands and skills; guide | — |
+| 6a | Pi extension `akit-flow.ts` (F13): `/flow`, `akit_flow` tool, widget, gates; rendered by Apply | — |
 | 7 | durable adapter (Pi p2/p3) | later |
 
 ## Open questions
