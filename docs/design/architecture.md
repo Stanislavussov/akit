@@ -93,7 +93,10 @@ Harnesses and Yams: the flow file and its YAML codec, `FlowRouting.next` (golden
 top-level `fixtures/flow-vectors/`, which the Pi runner's `node --test` reads later), `FlowCheck`,
 the run-record reader of `.pi/akit-flow/runs/` and the generated `flow.schema.json`.
 `AKitCommandLine → AKitFlows` (`akit flow`). `AKitRender` must not import it: Apply's render of
-flows (step 4) gets plain data, so the rulesync seam stays as it is. The app does not import it yet.
+flows (step 4) gets plain data, so the rulesync seam stays as it is. Step 4 (2026-11-17): Apply
+renders a layer's flows from `ProjectBundle.flows` (JSON text from `AKitBrain`) and the runner
+templates embedded in `AKitRender`; `AKitRender` still doesn't import `AKitFlows`. The app imports it
+for the Flows screen (`project.yml`): `App → AKitFlows`.
 
 ## Goal
 

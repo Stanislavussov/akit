@@ -36,7 +36,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
     var sections: [SidebarSection] {
         switch self {
         case .installed: [.overview, .skills, .skillsSh, .mcp, .instructions]
-        case .setup: [.brain]
+        case .setup: [.brain, .flows]
         case .activity: [.sessions, .usage]
         case .improve: [.insights, .lab, .analysis]
         case .work: [.review, .knowledge, .notebook, .worklog, .meetings]
@@ -57,6 +57,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case lab
     case analysis
     case brain
+    case flows
     case review
     case knowledge
     case notebook
@@ -77,6 +78,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .lab: "Lab"
         case .analysis: "Error Analysis"
         case .brain: "Brain"
+        case .flows: "Flows"
         case .review: "Review"
         case .knowledge: "Knowledge"
         case .notebook: "Notebook"
@@ -99,6 +101,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .lab: "The queue of runs that start an agent or a model: reviews, replays, analysis batches, control cells; Sends logs what went out"
         case .analysis: "Recurring failure modes across many sessions, their frequencies, and whether a fix helped; its batches run in Lab"
         case .brain: "Your git repo of skills and layers; Set Up Project… renders them into a project"
+        case .flows: "Multi-agent runs for Pi as a column of steps: agent, model, skills, tools, routes, gates; a layer includes a flow and Apply renders it"
         case .review: "AI review of GitLab merge requests: Pi proposes comments, you approve each, AKit adds them as your drafts"
         case .knowledge: "Notes about your services, flows and teams by space, in a local git repo that agents read; edits are committed by AKit"
         case .notebook: "Short notes, plans, to-dos and what you did today, one tab per Markdown file in the knowledge base; check boxes, images, links"
@@ -120,6 +123,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .lab: "flask"
         case .analysis: "stethoscope"
         case .brain: "brain"
+        case .flows: "arrow.triangle.branch"
         case .review: "checklist"
         case .knowledge: "books.vertical"
         case .notebook: "note.text"
@@ -206,6 +210,7 @@ struct RootView: View {
             case .lab: LabView()
             case .analysis: ErrorAnalysisView()
             case .brain: BrainView()
+            case .flows: FlowsView()
             case .review: ReviewView()
             case .knowledge: KnowledgeView()
             case .notebook: NotebookView()

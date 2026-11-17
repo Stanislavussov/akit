@@ -304,6 +304,13 @@ gate, max loops). Pi runs it with `/flow [name] <task>`; akit only reads and che
   implementer's model, a Pi feature this Mac lacks). Fix the flow in AKit's Flows screen, not by hand.
 - `akit flow schema`: the JSON Schema of a flow file.
 
+Flows are made in AKit's Flows screen (Setup → Flows): New from Template → Feature, the step
+cards by clicks, Check, Save (writes `brain/flows/<name>.yaml` and commits), Layers (adds the flow
+to a layer's `flows:`). Apply (`akit plan` / `akit apply`, or Apply… on the screen) renders a
+layer's flows to `.pi/flows/<name>.yaml` (home layer: `~/.pi/agent/flows/`) and the runner to
+`.pi/extensions/akit-flow/`, with a backup and a diff; a flow or runner file edited by hand is
+shown with its diff and left alone, so undo the edit or delete the file, then apply again.
+
 ## Merge request review
 
 `akit review post RUN [--yes] [--publish] [--json]` prints a run's requests; with `--yes` it sends
