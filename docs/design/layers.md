@@ -159,7 +159,21 @@ files:
   - template: REVIEW.md
     to: REVIEW.md
     when: reviewer_readme == true
+
+flows:                    # from brain/flows/<name>.yaml (flows.md F3)
+  - feature
 ```
+
+`flows:` (built 2026-11-17, flows.md step 4): names of flows in `brain/flows/`. When Pi is a
+target, Apply writes each as `.pi/flows/<name>.yaml` (the home layer: `~/.pi/agent/flows/`) and
+the runner extension as the folder `.pi/extensions/akit-flow/` (home: `~/.pi/agent/extensions/
+akit-flow/`; Pi loads only its `index.ts`). These are AKit's files, never the project's own: the
+lock keeps their hash, and one edited by hand is shown with its diff and left alone ("edited by
+hand"), on every Apply until the edit is undone or the file deleted. The first layer that names a
+flow brings it; a missing flow is an error; without Pi as a target the flows are a warning and
+not rendered. In a git project Apply also keeps `/.pi/akit-flow` (the run records) out of git
+with its own block in `<git common dir>/info/exclude` (`# >>> akit flows`), local only or not;
+Forget takes it out.
 
 Proposed, not built: `model_notes:`, short texts that reach the agent only for a matching
 model, delivered by AKit's hook and Pi extension (`model-guidance.md`, "Model notes").

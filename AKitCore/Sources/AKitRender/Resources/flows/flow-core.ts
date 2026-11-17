@@ -20,6 +20,8 @@ export interface FlowStep {
 	agent: string;
 	model: string;
 	thinking?: string;
+	/** What the step does, in the model's words (the Feature template's come from PurpleFlow). */
+	prompt?: string;
 	skills?: string[];
 	tools?: string[];
 	paths?: string[];

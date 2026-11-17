@@ -437,6 +437,8 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 		`You are the ${agent} step "${stepId}" of the AKit flow "${run.flow.name}" (run ${run.id}).`,
 		`Task: ${run.task}`,
 	];
+	const own = run.flow.steps.find((s) => s.id === stepId)?.prompt;
+	if (own) lines.push("", own);
 	if (previous) {
 		lines.push("", `Handoff from the step "${previous.step}" (${previous.outcome}${previous.reason ? `:${previous.reason}` : ""}):`,
 			JSON.stringify(previous.handoff, null, 2));

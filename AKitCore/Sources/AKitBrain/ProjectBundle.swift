@@ -1,6 +1,7 @@
 import AKitFoundation
 import AKitModel
 import Foundation
+import Yams
 
 /// Chosen layers and field values for one project.
 public struct ProjectAnswers: Codable, Hashable, Sendable {
@@ -122,6 +123,38 @@ public struct ProjectBundle: Sendable {
     public let files: [File]
     /// The skills in order (`off` ones left out).
     public let skills: [Skill]
+    /// The layers' flows (flows.md F3), each as JSON text: Pi's extension can't load a YAML
+    /// package (Pi 1.0.4 aliases only its own packages and typebox), and JSON is YAML.
+    public var flows: [Flow] = []
+
+    public struct Flow: Hashable, Sendable {
+        public let name: String
+        public let layer: String
+        public let data: Data
+    }
+
+    /// `brain/flows/<name>.yaml`.
+    public static let flowsFolder = "flows"
+
+    /// A flow name is a file name: letters, digits, `_` and `-`, not starting with `-`.
+    public static func isFlowName(_ name: String) -> Bool {
+        !name.isEmpty && !name.hasPrefix("-") && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
+    }
+
+    /// A flow file's YAML as JSON with sorted keys; nil when it is not a YAML map.
+    public static func flowJSON(yaml text: String) -> Data? {
+        func plain(_ value: Any) -> Any {
+            if let map = value as? [AnyHashable: Any] {
+                return Dictionary(map.map { ("\($0.key.base)", plain($0.value)) }, uniquingKeysWith: { first, _ in first })
+            }
+            if let list = value as? [Any] { return list.map(plain) }
+            return value
+        }
+        guard let loaded = try? Yams.load(yaml: text), let map = plain(loaded as Any) as? [String: Any],
+              let data = try? JSONSerialization.data(withJSONObject: map, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        else { return nil }
+        return data + Data("\n".utf8)
+    }
     /// Things that stop the render (missing required field, unknown layer, clash, …).
     public let errors: [String]
     /// Things worth a look that don't stop it (unknown `{{field}}` in a template).
@@ -286,8 +319,31 @@ public struct ProjectBundle: Sendable {
             }
         }
 
-        return ProjectBundle(projectName: projectName, targets: answers.targets, layers: order, files: files,
-                             skills: resolved, errors: errors, warnings: warnings)
+        // 5. Flows, each once (the first layer that brings it).
+        var flows: [Flow] = []
+        for layer in layers {
+            for name in layer.flows where !flows.contains(where: { $0.name == name }) {
+                let url = brain.root.appending(path: "\(flowsFolder)/\(name).yaml")
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                    errors.append("Flow “\(name)” (layer \(layer.name)) is not in the brain's flows/.")
+                    continue
+                }
+                guard let data = flowJSON(yaml: text) else {
+                    errors.append("flows/\(name).yaml (layer \(layer.name)) is not a YAML map.")
+                    continue
+                }
+                flows.append(Flow(name: name, layer: layer.name, data: data))
+            }
+        }
+        if !flows.isEmpty, !answers.targets.contains("pi") {
+            warnings.append("Flows (\(flows.map(\.name).joined(separator: ", "))) run in Pi, which is not a target; they are not rendered.")
+            flows = []
+        }
+
+        var bundle = ProjectBundle(projectName: projectName, targets: answers.targets, layers: order, files: files,
+                                   skills: resolved, errors: errors, warnings: warnings)
+        bundle.flows = flows
+        return bundle
     }
 
     /// The answers without an `off` for a skill no picked layer brings: it takes nothing out,

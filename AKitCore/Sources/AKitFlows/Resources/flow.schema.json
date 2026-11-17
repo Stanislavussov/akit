@@ -65,6 +65,10 @@
             },
             "type" : "array"
           },
+          "prompt" : {
+            "description" : "What the step does; the runner puts it after the task.",
+            "type" : "string"
+          },
           "routes" : {
             "additionalProperties" : {
               "type" : "string"

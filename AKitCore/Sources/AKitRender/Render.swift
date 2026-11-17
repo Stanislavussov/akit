@@ -74,6 +74,9 @@ public enum Render {
             }
         }
 
+        // Flows and their Pi extension (flows.md F3).
+        outputs += FlowRender.outputs(bundle, forHome: forHome)
+
         // 5. Claude reads CLAUDE.md and .claude/skills; point them at the shared files.
         let paths = Set(outputs.map(\.path))
         if bundle.targets.contains("claude") {

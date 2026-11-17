@@ -15,6 +15,7 @@ public enum FlowSchema {
                 "agent": ["type": "string", "description": "From the agent list; implementer and reviewer must use different models."],
                 "model": ["type": "string"],
                 "thinking": ["type": "string"],
+                "prompt": ["type": "string", "description": "What the step does; the runner puts it after the task."],
                 "skills": strings,
                 "tools": strings.merging(["description": "A subset of the flow's tools."]) { $1 },
                 "paths": strings.merging(["description": "Paths the step may write; empty means anywhere in the worktree."]) { $1 },

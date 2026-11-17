@@ -84,6 +84,8 @@ public struct FlowStep: Codable, Equatable, Sendable {
     public var agent: String
     public var model: String
     public var thinking: String?
+    /// What the step does, in the model's words; the runner puts it after the task.
+    public var prompt: String?
     public var skills: [String]
     public var tools: [String]
     /// Paths the step may write (`edit` / `write`); empty means anywhere in the worktree.
@@ -99,13 +101,14 @@ public struct FlowStep: Codable, Equatable, Sendable {
     /// `outcome:reason` → next step id or `end`; `outcome:*` is the fallback (F19).
     public var routes: [String: String]
 
-    public init(id: String, agent: String, model: String, thinking: String? = nil, skills: [String] = [], tools: [String] = [],
+    public init(id: String, agent: String, model: String, thinking: String? = nil, prompt: String? = nil, skills: [String] = [], tools: [String] = [],
                 paths: [String] = [], bash: Bool? = nil, extensions: [String] = [], gate: Bool = false, checks: [String] = [],
                 maxLoops: Int = FlowStep.defaultMaxLoops, routes: [String: String] = [:]) {
         self.id = id
         self.agent = agent
         self.model = model
         self.thinking = thinking
+        self.prompt = prompt
         self.skills = skills
         self.tools = tools
         self.paths = paths
@@ -118,7 +121,7 @@ public struct FlowStep: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, agent, model, thinking, skills, tools, paths, bash, extensions, gate, checks, maxLoops, routes
+        case id, agent, model, thinking, prompt, skills, tools, paths, bash, extensions, gate, checks, maxLoops, routes
     }
 
     public init(from decoder: Decoder) throws {
@@ -127,6 +130,7 @@ public struct FlowStep: Codable, Equatable, Sendable {
         agent = try c.decode(String.self, forKey: .agent)
         model = try c.decode(String.self, forKey: .model)
         thinking = try c.decodeIfPresent(String.self, forKey: .thinking)
+        prompt = try c.decodeIfPresent(String.self, forKey: .prompt)
         skills = try c.decodeIfPresent([String].self, forKey: .skills) ?? []
         tools = try c.decodeIfPresent([String].self, forKey: .tools) ?? []
         paths = try c.decodeIfPresent([String].self, forKey: .paths) ?? []
@@ -145,6 +149,7 @@ public struct FlowStep: Codable, Equatable, Sendable {
         try c.encode(agent, forKey: .agent)
         try c.encode(model, forKey: .model)
         try c.encodeIfPresent(thinking, forKey: .thinking)
+        try c.encodeIfPresent(prompt, forKey: .prompt)
         for (list, key) in [(skills, CodingKeys.skills), (tools, .tools), (paths, .paths), (extensions, .extensions), (checks, .checks)]
         where !list.isEmpty {
             try c.encode(list, forKey: key)
