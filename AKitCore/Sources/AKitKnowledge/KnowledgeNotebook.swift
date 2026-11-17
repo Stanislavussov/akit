@@ -420,7 +420,7 @@ public struct KnowledgeNotebook: Sendable {
             let rest = line.dropFirst(indent.count)
             guard rest.count > 6, "-*+".contains(rest.first!), rest.dropFirst().hasPrefix(" [ ] "),
                   rest.dropFirst(6).lowercased().contains(match) else { continue }
-            let ticked = indent + String(rest.first!) + " [x] " + rest.dropFirst(6)
+            let ticked = String(indent) + String(rest.first!) + " [x] " + rest.dropFirst(6)
             lines[index] = ticked
             return (lines.joined(separator: "\n"), ticked.trimmingCharacters(in: .whitespaces))
         }

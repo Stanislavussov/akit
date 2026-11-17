@@ -25,12 +25,19 @@ public enum ReviewLanguage {
     public static func isCzech(_ text: String, marker: String) -> Bool {
         let prose = self.prose(text, marker: marker)
         guard prose.contains(where: \.isLetter) else { return true }
-        let recognizer = NLLanguageRecognizer()
-        recognizer.processString(prose)
-        guard let top = recognizer.languageHypotheses(withMaximum: 3).max(by: { $0.value < $1.value })?.key else { return false }
-        if top == .czech { return true }
+        guard let top = topLanguage(prose) else { return false }
         // Short Czech often reads as Slovak: letters only Czech has settle it.
-        return top == .slovak && prose.contains { "ěřůĚŘŮ".contains($0) }
+        guard top == .czech || top == .slovak && prose.contains(where: { "ěřůĚŘŮ".contains($0) }) else { return false }
+        // macOS 27's recognizer weighs Czech letters heavily, so a Czech line on top would carry
+        // an English body: each line of a few words must read as Czech (or Slovak, as short Czech does).
+        let lines = prose.split(whereSeparator: \.isNewline).filter { $0.split(separator: " ").filter { $0.contains(where: \.isLetter) }.count >= 3 }
+        return lines.allSatisfy { topLanguage(String($0)).map { $0 == .czech || $0 == .slovak } ?? false }
+    }
+
+    private static func topLanguage(_ text: String) -> NLLanguage? {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(text)
+        return recognizer.languageHypotheses(withMaximum: 3).max(by: { $0.value < $1.value })?.key
     }
 
     /// The words of a text without code blocks, inline code, links, HTML tags, table rules,

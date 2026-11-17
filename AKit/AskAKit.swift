@@ -246,8 +246,9 @@ final class AskAKitModel {
         let element = question.element
         let about = question.element?.title
         let inSettingsLanguage = question.inSettingsLanguage
-        var context = context(for: question.screen)
-        context.element = question.element
+        var screen = context(for: question.screen)
+        screen.element = question.element
+        let context = screen
         let question = question.question
         // Screen data is setup data only: no session titles (first prompts), no mode names or
         // definitions. The views send ids and numbers; this catches what a fact still quotes.

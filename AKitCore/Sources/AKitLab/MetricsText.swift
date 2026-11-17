@@ -48,6 +48,6 @@ public enum MetricsText {
     public static func percent(_ share: Double) -> String { "\(Int((share * 100).rounded()))%" }
 
     public static func duration(_ seconds: Int) -> String {
-        Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated).locale(Locale(identifier: "en_US")))
     }
 }

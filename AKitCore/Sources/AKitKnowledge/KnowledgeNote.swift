@@ -26,7 +26,7 @@ public struct KnowledgeNote: Sendable, Equatable {
 
     /// nil when the file can't be read or isn't UTF-8 (a note is never rewritten from lossy text).
     public static func load(_ url: URL) -> KnowledgeNote? {
-        guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else { return nil }
+        guard let data = try? Data(contentsOf: url), let text = String(validating: data, as: UTF8.self) else { return nil }
         return KnowledgeNote(text: text)
     }
 
