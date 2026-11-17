@@ -12,7 +12,8 @@ export const END = "end";
 export const DEFAULT_MAX_LOOPS = 3;
 
 export type Outcome = "done" | "failed" | "blocked";
-export type Stop = "done" | "visit-cap" | "no-route" | "unknown-step";
+/** Why a run ended. `no-handoff` and `check-refused` come from the runner, never from `nextStep`. */
+export type Stop = "done" | "visit-cap" | "no-route" | "unknown-step" | "no-handoff" | "check-refused";
 
 export interface FlowStep {
 	id: string;
@@ -115,14 +116,21 @@ export function runId(now: Date, hex: string): string {
 	return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}-${hex.slice(0, 4)}`;
 }
 
-/** Reads the step's outcome from the child's last answer: a line `outcome: failed[:reason]`.
- * Without such a line, exit 0 is `done` and anything else `failed`. Phase 2b replaces this with the
- * `flow_handoff` tool. */
-export function parseOutcome(text: string, exitCode: number | null): { outcome: Outcome; reason: string } {
-	const lines = text.split("\n").reverse();
-	for (const line of lines) {
+/** The fallback when a step ended without `flow_handoff` (a deviation): the outcome from a last
+ * line `outcome: failed[:reason]` of the child's answer, or undefined without one. */
+export function parseOutcome(text: string): { outcome: Outcome; reason: string } | undefined {
+	for (const line of text.split("\n").reverse()) {
 		const m = /^\s*outcome:\s*(done|failed|blocked)(?::\s*([\w.-]+))?\s*$/i.exec(line);
 		if (m) return { outcome: m[1].toLowerCase() as Outcome, reason: m[2] ?? "" };
 	}
-	return exitCode === 0 ? { outcome: "done", reason: "" } : { outcome: "failed", reason: "exit" };
+	return undefined;
+}
+
+/** OMC's verify-command rules, as AKit's check (FlowCheck.isSafeCommand): at most 10 commands,
+ * each a plain command of at most 120 characters. The runner checks them again (F19). */
+export const MAX_CHECK_COMMANDS = 10;
+export const MAX_CHECK_LENGTH = 120;
+
+export function isSafeCommand(command: string): boolean {
+	return command.length <= MAX_CHECK_LENGTH && /^[A-Za-z][A-Za-z0-9 _.:/=%@-]*$/.test(command);
 }

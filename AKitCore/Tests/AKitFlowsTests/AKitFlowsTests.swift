@@ -232,6 +232,35 @@ struct FlowRunRecordTests {
         #expect(run.problems.contains { $0.contains("update AKit") })
     }
 
+    /// `fixtures/flow-runs/sample` is written by the TS runner (`tools/flows/test/akit-flow.test.ts`
+    /// fails when it drifts): this reader must read what the runner writes.
+    @Test func readsTheRunnersSampleRun() throws {
+        let sample = repoRoot.appending(path: "fixtures/flow-runs/sample")
+        let run = FlowRun.read(sample)
+        #expect(run.problems.isEmpty, "\(run.problems)")
+        #expect(run.flow == "feature" && run.piVersion == "1.0.4" && !run.readOnly)
+        #expect(run.finished)
+        #expect(run.unknownEvents.isEmpty && run.badLines == 0)
+        #expect(run.state?.visits == ["plan": 1, "implement": 2, "checks": 2])
+        #expect(run.events.filter { $0.kind == .deviation }.map { $0.raw.member("rule")?.string } == ["check-failed"])
+        let ends = run.events.filter { $0.kind == .stepEnd && $0.step == "checks" }
+        #expect(ends.map(\.outcome) == [.failed, .done] && ends.first?.reason == "checks")
+        #expect(run.tokens == FlowTokens(input: 500, output: 100, cacheRead: 25, cost: 0.05))
+        #expect(run.handoffs.map(\.fileName) == ["01-plan-a1-sess-plan-1.json", "02-implement-a1-sess-implement-1.json",
+                                                 "02-implement-a2-sess-implement-2.json", "03-checks-a1-sess-checks-1.json",
+                                                 "03-checks-a2-sess-checks-2.json"])
+        for handoff in run.handoffs {
+            #expect(handoff.run == "20261117-1200-0000" && handoff.flow == "feature")
+            let file = try #require(handoff.sessionFile)
+            #expect(FileManager.default.fileExists(atPath: sample.appending(path: file).path), "\(file)")
+            #expect(file.contains(try #require(handoff.session)))
+        }
+        let red = try #require(run.handoffs.first { $0.stepID == "checks" && $0.attempt == 1 })
+        #expect(red.outcome == .failed && red.reason == "checks" && red.next == "implement")
+        #expect(red.evidence == "evidence/03-checks-checks.json")
+        #expect(red.done == ["did checks"] && red.files == [.init(path: "src/checks.ts", change: "added")])
+    }
+
     @Test func runsAreNewestFirst() throws {
         let older = folder.deletingLastPathComponent().appending(path: "20261115-0900-0001")
         try FileManager.default.createDirectory(at: older, withIntermediateDirectories: true)

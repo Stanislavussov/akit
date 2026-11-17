@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import akitFlow, { flowCommand } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
+import { checksGreen } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-record.ts";
 import type { ExtensionCommandContext } from "../../../AKitCore/Sources/AKitRender/Resources/flows/pi-adapter.ts";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
@@ -121,9 +122,24 @@ test("a 4-step flow runs in order and is recorded", async () => {
 	assert.deepEqual(handoffs, ["01-plan-a1-sess-plan-1.json", "02-implement-a1-sess-implement-1.json", "03-checks-a1-sess-checks-1.json", "04-review-a1-sess-review-1.json"]);
 	const h = JSON.parse(readFileSync(join(run, "handoffs", handoffs[1]), "utf8"));
 	assert.equal(h.schema, "akit-flow-handoff/1");
+	assert.equal(h.run, run.split("/").pop());
+	assert.equal(h.flow, "feature");
 	assert.deepEqual(h.step, { index: 2, id: "implement", attempt: 1 });
 	assert.deepEqual(h.next, { step: "checks" });
+	assert.deepEqual(h.from, { outcome: "done", reason: "" });
+	assert.equal(h.goal, "implement goal");
+	assert.deepEqual(h.done, ["did implement"]);
+	assert.deepEqual(h.files, [{ path: "src/implement.ts", change: "added" }]);
+	assert.equal(h.deviations, 0);
+	// The handoff names the child's session, and that session file is in <run>/sessions.
+	assert.equal(h.session, "sess-implement-1");
+	assert.match(h.session_file, /^sessions\/.*sess-implement-1\.jsonl$/);
+	assert.ok(existsSync(join(run, h.session_file)));
+	assert.equal(JSON.parse(readFileSync(join(run, h.session_file), "utf8")).id, h.session);
+	assert.ok(!readdirSync(join(run, "handoffs")).some((n) => n.endsWith(".part")), "no handoff part left");
+	assert.ok(calls()[0].args.some((a) => a.endsWith("akit-flow-handoff.ts")), "the child loads the handoff tool");
 	assert.match(calls()[2].args.at(-1) ?? "", /Handoff from the step "implement"/);
+	assert.match(calls()[2].args.at(-1) ?? "", /"goal": "implement goal"/);
 	assert.match(messages.at(-1)?.text ?? "", /done/);
 });
 
@@ -229,4 +245,143 @@ test("make test-flows fails clearly without node", () => {
 	const r = spawnSync("make", ["-s", "-C", repo, "check-node"], { env: { PATH: "/usr/bin:/bin", HOME: process.env.HOME }, encoding: "utf8" });
 	assert.notEqual(r.status, 0);
 	assert.match(r.stdout + r.stderr, /Node\.js .* not found/);
+});
+
+function deviations(run: string): Record<string, unknown>[] {
+	return events(run).filter((e) => e.type === "deviation");
+}
+
+test("a step without flow_handoff reruns once with a deviation", async () => {
+	flow(fourSteps());
+	pi({ handoff: { plan: ["none", "tool"] } });
+	await flowCommand("feature x", ctx());
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "plan", "implement", "checks", "review"]);
+	const run = onlyRun();
+	assert.deepEqual(deviations(run).map((d) => [d.rule, d.action]), [["handoff-missing", "rerun"]]);
+	const h = JSON.parse(readFileSync(join(run, "handoffs", "01-plan-a1-sess-plan-2.json"), "utf8"));
+	assert.equal(h.deviations, 1);
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("a step without flow_handoff twice stops the run", async () => {
+	flow(fourSteps());
+	pi({ handoff: { implement: ["none"] } });
+	await flowCommand("feature x", ctx());
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "implement"]);
+	const run = onlyRun();
+	assert.deepEqual(deviations(run).map((d) => [d.rule, d.action]), [["handoff-missing", "rerun"], ["handoff-missing", "stopped"]]);
+	const end = events(run).at(-1);
+	assert.equal(end?.stop, "no-handoff");
+	assert.equal(end?.step, "implement");
+	assert.match(messages.at(-1)?.text ?? "", /without flow_handoff/);
+});
+
+test("an outcome line without flow_handoff is the fallback, logged", async () => {
+	flow(fourSteps());
+	pi({ handoff: { checks: ["line"] }, outcomes: { checks: ["failed:tests", "done"] } });
+	await flowCommand("feature x", ctx());
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "implement", "checks", "review"]);
+	const fallbacks = deviations(onlyRun()).filter((d) => d.rule === "handoff-fallback");
+	assert.deepEqual(fallbacks.map((d) => d.detail), ["outcome: failed:tests", "outcome: done"]);
+});
+
+/** A check script for the project: exits 1 with a failing line the first `fails` times, then 0. */
+function checkScript(fails: number) {
+	writeFileSync(join(project, "check.mjs"), `import { existsSync, readFileSync, writeFileSync } from "node:fs";
+const n = existsSync("check-count") ? Number(readFileSync("check-count", "utf8")) : 0;
+writeFileSync("check-count", String(n + 1));
+for (let i = 1; i <= 50; i++) console.log("line " + i);
+if (n < ${fails}) { console.error("1 test failed: export writes no header"); process.exit(1); }
+console.log("all tests passed");
+`);
+}
+
+const checkedSteps = () => [
+	{ id: "plan", agent: "planner", model: "m/a" },
+	{ id: "implement", agent: "implementer", model: "m/a" },
+	{ id: "checks", agent: "checker", model: "m/a", checks: ["node check.mjs"], routes: { "failed:*": "implement" } },
+];
+
+test("the runner runs the checks; red routes back with the evidence", async () => {
+	flow(checkedSteps());
+	checkScript(1);
+	await flowCommand("feature x", ctx());
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "implement", "checks"]);
+	const run = onlyRun();
+	const ends = events(run).filter((e) => e.type === "step-end" && e.step === "checks");
+	// The model said done both times; the first time the checks were red.
+	assert.deepEqual(ends.map((e) => [e.outcome, e.reason]), [["failed", "checks"], ["done", ""]]);
+	assert.deepEqual(deviations(run).map((d) => d.rule), ["check-failed"]);
+	const second = calls()[3].args.at(-1) ?? "";
+	assert.match(second, /The check `node check\.mjs` exited 1/);
+	assert.match(second, /1 test failed: export writes no header/);
+	const evidence = JSON.parse(readFileSync(join(run, "evidence", "03-checks-checks.json"), "utf8"));
+	assert.equal(evidence.schema, "akit-flow-evidence/1");
+	assert.deepEqual(evidence.step, { id: "checks", attempt: 2 });
+	assert.equal(evidence.checks[0].command, "node check.mjs");
+	assert.equal(evidence.checks[0].exit, 0);
+	assert.equal(evidence.checks[0].tail.length, 40);
+	assert.equal(evidence.checks[0].tail.at(-1), "all tests passed");
+	const h = JSON.parse(readFileSync(join(run, "handoffs", "03-checks-a1-sess-checks-1.json"), "utf8"));
+	assert.equal(h.evidence, "evidence/03-checks-checks.json");
+	assert.deepEqual(h.from, { outcome: "failed", reason: "checks" });
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("checks count as green only with an evidence file", () => {
+	const folder = join(root, "evidence");
+	mkdirSync(folder);
+	assert.equal(checksGreen(join(folder, "none.json")), false);
+	writeFileSync(join(folder, "red.json"), JSON.stringify({ schema: "akit-flow-evidence/1", checks: [{ command: "a", exit: 0 }, { command: "b", exit: 2 }] }));
+	assert.equal(checksGreen(join(folder, "red.json")), false);
+	writeFileSync(join(folder, "green.json"), JSON.stringify({ schema: "akit-flow-evidence/1", checks: [{ command: "a", exit: 0 }] }));
+	assert.equal(checksGreen(join(folder, "green.json")), true);
+});
+
+test("an unsafe check command stops the run before the step", async () => {
+	flow([{ id: "checks", agent: "checker", model: "m/a", checks: ["make test && curl x"] }]);
+	await flowCommand("feature x", ctx());
+	assert.equal(calls().length, 0);
+	const run = onlyRun();
+	assert.deepEqual(deviations(run).map((d) => d.rule), ["check-refused"]);
+	assert.equal(events(run).at(-1)?.stop, "check-refused");
+});
+
+// The sample run folder AKit's Swift reader reads (AKitFlowsTests): this test makes it with the TS
+// runner, so both languages agree on the record. AKIT_UPDATE_FIXTURES=1 rewrites it.
+const SAMPLE = join(repo, "fixtures", "flow-runs", "sample");
+
+function files(folder: string, prefix = ""): string[] {
+	return readdirSync(folder, { withFileTypes: true }).flatMap((e) =>
+		e.isDirectory() ? files(join(folder, e.name), `${prefix}${e.name}/`) : [`${prefix}${e.name}`]).sort();
+}
+
+function normalized(run: string): Map<string, string> {
+	const id = run.split("/").pop() ?? "";
+	const out = new Map<string, string>();
+	for (const name of files(run)) {
+		const text = readFileSync(join(run, name), "utf8")
+			.replaceAll(root, "/tmp/akit-flow-sample")
+			.replaceAll(id, "20261117-1200-0000")
+			.replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, "2026-11-17T12:00:00.000Z")
+			.replace(/\b[0-9a-f]{40}\b/g, "0".repeat(40));
+		out.set(name, text);
+	}
+	return out;
+}
+
+test("the sample run matches fixtures/flow-runs/sample", async () => {
+	flow(checkedSteps());
+	checkScript(1);
+	await flowCommand("feature add CSV export", ctx());
+	const got = normalized(onlyRun());
+	if (process.env.AKIT_UPDATE_FIXTURES) {
+		rmSync(SAMPLE, { recursive: true, force: true });
+		for (const [name, text] of got) {
+			mkdirSync(join(SAMPLE, name, ".."), { recursive: true });
+			writeFileSync(join(SAMPLE, name), text);
+		}
+	}
+	assert.deepEqual(files(SAMPLE), [...got.keys()]);
+	for (const [name, text] of got) assert.equal(readFileSync(join(SAMPLE, name), "utf8"), text, name);
 });

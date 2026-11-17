@@ -55,6 +55,8 @@ public struct FlowHandoff: Equatable, Sendable {
     public var stepID: String?
     public var attempt: Int?
     public var session: String?
+    /// The child's session file, relative to the run folder (`sessions/<file>.jsonl`).
+    public var sessionFile: String?
     public var outcome: FlowOutcome?
     public var reason: String?
     public var next: String?
@@ -65,6 +67,8 @@ public struct FlowHandoff: Equatable, Sendable {
     public var notes: String?
     public var tokens: FlowTokens
     public var deviations: Int?
+    /// The step's check evidence, relative to the run folder (`evidence/NN-<step>-checks.json`).
+    public var evidence: String?
 }
 
 /// One run folder `<project>/.pi/akit-flow/runs/<id>/`, read tolerantly. `events.jsonl` is the
@@ -190,12 +194,13 @@ public struct FlowRun: Sendable {
         return FlowHandoff(fileName: fileName, schemaVersion: version, run: value.member("run")?.string,
                            flow: value.member("flow")?.string, stepIndex: step?.member("index")?.int,
                            stepID: step?.member("id")?.string, attempt: step?.member("attempt")?.int,
-                           session: value.member("session")?.string,
+                           session: value.member("session")?.string, sessionFile: value.member("session_file")?.string,
                            outcome: from?.member("outcome")?.string.flatMap(FlowOutcome.init(rawValue:)),
                            reason: from?.member("reason")?.string, next: value.member("next")?.member("step")?.string,
                            goal: value.member("goal")?.string, done: value.member("done")?.strings ?? [], files: files,
                            openQuestions: value.member("open_questions")?.strings ?? [], notes: value.member("notes")?.string,
-                           tokens: FlowTokens(value.member("tokens")), deviations: value.member("deviations")?.int)
+                           tokens: FlowTokens(value.member("tokens")), deviations: value.member("deviations")?.int,
+                           evidence: value.member("evidence")?.string)
     }
 
     /// The runs of a project, newest first (run ids start with the date and time).

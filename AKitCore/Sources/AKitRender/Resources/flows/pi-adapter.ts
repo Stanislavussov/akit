@@ -7,6 +7,7 @@
 // stdin /dev/null, own process group killed as a group, unknown fields kept as unknown.
 
 import { execFile, spawn } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -86,6 +87,8 @@ export interface ChildOptions {
 	extensions: string[];
 	prompt: string;
 	info: PiInfo;
+	/** Added to the child's environment (AKIT_FLOW_HANDOFF). */
+	env?: Record<string, string>;
 	signal?: AbortSignal;
 }
 
@@ -196,7 +199,9 @@ export function runChild(o: ChildOptions): Promise<ChildResult> {
 			o.signal?.removeEventListener("abort", abort);
 			resolve(result);
 		};
-		const proc = spawn(PI, childArgs(o), { cwd: o.cwd, shell: false, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+		const proc = spawn(PI, childArgs(o), {
+			cwd: o.cwd, shell: false, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...o.env },
+		});
 		result.pid = proc.pid;
 		const killGroup = (sig: NodeJS.Signals) => {
 			if (proc.pid === undefined) return;
@@ -236,6 +241,12 @@ export function runChild(o: ChildOptions): Promise<ChildResult> {
 			else o.signal.addEventListener("abort", abort, { once: true });
 		}
 	});
+}
+
+/** The child's session file in its --session-dir: Pi names it `<time>_<session id>.jsonl`. */
+export function sessionFile(sessionDir: string, session: string | undefined): string | undefined {
+	if (!session || !existsSync(sessionDir)) return undefined;
+	return readdirSync(sessionDir).find((name) => name.endsWith(".jsonl") && name.includes(session));
 }
 
 /** Extension API calls the runner makes. */

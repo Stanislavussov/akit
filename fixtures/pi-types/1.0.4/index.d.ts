@@ -55,9 +55,27 @@ declare module "@earendil-works/pi-coding-agent" {
     }
     /** Handler function type for events */
     export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContext) => Promise<R | void> | R | void;
+    /** Tool definition for registerTool(). Excerpt: TypeBox's TSchema/Static are `object`/`any`, the
+     * result is AgentToolResult's two required fields, render and loadout members left out. */
+    export interface ToolDefinition {
+        /** Tool name (used in LLM tool calls) */
+        name: string;
+        /** Human-readable label for UI */
+        label: string;
+        /** Description for LLM */
+        description: string;
+        /** Parameter schema (TypeBox) */
+        parameters: object;
+        /** Execute the tool. */
+        execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, ctx: ExtensionContext): Promise<{
+            content: { type: "text"; text: string }[];
+            details: unknown;
+        }>;
+    }
     export interface ExtensionAPI {
         on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
         /** Register a custom command. */
         registerCommand(name: string, options: Omit<RegisteredCommand, "name">): void;
+        registerTool(tool: ToolDefinition): void;
     }
 }

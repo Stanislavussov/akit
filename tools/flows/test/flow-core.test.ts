@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { compareVersions, type Flow, formatProblem, nextStep, type Outcome, parseOutcome, runId } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-core.ts";
+import { compareVersions, type Flow, formatProblem, isSafeCommand, nextStep, type Outcome, parseOutcome, runId } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-core.ts";
 
 const vectors = join(import.meta.dirname, "..", "..", "..", "fixtures", "flow-vectors");
 const files = readdirSync(vectors).filter((f) => f.endsWith(".json")).sort();
@@ -36,8 +36,15 @@ test("run id is YYYYMMDD-HHMM-xxxx", () => {
 	assert.equal(runId(new Date(2026, 10, 16, 14, 32), "a3f9ff"), "20261116-1432-a3f9");
 });
 
-test("outcome comes from the last outcome line, else from the exit code", () => {
-	assert.deepEqual(parseOutcome("x\noutcome: failed:notes", 0), { outcome: "failed", reason: "notes" });
-	assert.deepEqual(parseOutcome("no line", 0), { outcome: "done", reason: "" });
-	assert.deepEqual(parseOutcome("no line", 1), { outcome: "failed", reason: "exit" });
+test("the fallback outcome comes from the last outcome line, else none", () => {
+	assert.deepEqual(parseOutcome("x\noutcome: done\noutcome: failed:notes"), { outcome: "failed", reason: "notes" });
+	assert.equal(parseOutcome("no line"), undefined);
+});
+
+test("check commands follow AKit's rule", () => {
+	assert.ok(isSafeCommand("make test"));
+	assert.ok(isSafeCommand("npm run lint --silent"));
+	assert.ok(!isSafeCommand("make test && rm -rf /"));
+	assert.ok(!isSafeCommand("echo $HOME"));
+	assert.ok(!isSafeCommand(`make ${"x".repeat(120)}`));
 });

@@ -1,25 +1,25 @@
 // akit-flow.ts: written by AKit (docs/design/flows.md F1, F11). The Pi extension that runs a flow:
 // `/flow [name] <task>` and `/flow resume [run-id]`. Thin: routing is in flow-core.ts, every Pi
-// call in pi-adapter.ts, the record in flow-record.ts. Flows come from <project>/.pi/flows, then
+// call in pi-adapter.ts, the record in flow-record.ts; each child gets akit-flow-handoff.ts. Flows come from <project>/.pi/flows, then
 // ~/.pi/agent/flows.
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-	compareVersions, type Decision, firstStep, type Flow, formatProblem, nextStep, type Outcome, parseOutcome,
-	requiredPi, runId, TESTED_PI, type Visits,
+	compareVersions, type Decision, firstStep, type Flow, formatProblem, isOutcome, isSafeCommand, MAX_CHECK_COMMANDS, nextStep,
+	type Outcome, parseOutcome, requiredPi, runId, TESTED_PI, type Visits,
 } from "./flow-core.ts";
 import {
-	appendEvent, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, recordTokens, releaseLock,
-	RUN_SCHEMA, takeLock, visitsFrom, writeAtomic,
+	appendEvent, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, recordTokens, releaseLock,
+	RUN_SCHEMA, runChecks, stepKey, takeLock, visitsFrom, writeAtomic,
 } from "./flow-record.ts";
 import {
-	detectPi, type ExtensionAPI, type ExtensionCommandContext, missingFlags, onShutdown, type PiInfo, readFlowFile,
-	registerFlowCommand, runChild, say, status,
+	type ChildResult, detectPi, type ExtensionAPI, type ExtensionCommandContext, missingFlags, onShutdown, type PiInfo, readFlowFile,
+	registerFlowCommand, runChild, say, sessionFile, status,
 } from "./pi-adapter.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -228,20 +228,56 @@ function resolveSkill(project: string, name: string): string | undefined {
 		join(home, ".agents", "skills", name)].find((p) => existsSync(p));
 }
 
-/** -e list of a child: the guard when present (Phase 3a), then the step's own extensions. */
+/** -e list of a child: the guard when present (Phase 3a), the handoff tool, then the step's own extensions. */
 function childExtensions(project: string, own: string[]): string[] {
 	const list: string[] = [];
 	const guard = join(here, "akit-flow-guard.ts");
 	if (existsSync(guard)) list.push(guard);
+	list.push(join(here, "akit-flow-handoff.ts"));
 	for (const ext of own) list.push(isAbsolute(ext) ? ext : join(project, ".pi", "extensions", ext));
 	return list;
+}
+
+/** The model's part of a handoff, as `flow_handoff` wrote it (F4). */
+interface HandoffPart {
+	goal: string;
+	done: string[];
+	files: { path: string; change: string }[];
+	open_questions: string[];
+	notes: string;
+	outcome: Outcome;
+	reason: string;
+}
+
+const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []);
+
+/** The file `flow_handoff` wrote, or undefined when there is none or it has no valid outcome. */
+function readPart(path: string): HandoffPart | undefined {
+	if (!existsSync(path)) return undefined;
+	try {
+		const v = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+		if (!isOutcome(v.outcome)) return undefined;
+		const files = Array.isArray(v.files) ? v.files.filter((f): f is { path: string; change: string } => typeof f?.path === "string")
+			.map((f) => ({ path: f.path, change: typeof f.change === "string" ? f.change : "" })) : [];
+		return {
+			goal: typeof v.goal === "string" ? v.goal : "", done: strings(v.done), files, open_questions: strings(v.open_questions),
+			notes: typeof v.notes === "string" ? v.notes : "", outcome: v.outcome, reason: typeof v.reason === "string" ? v.reason : "",
+		};
+	} catch {
+		return undefined;
+	} finally {
+		rmSync(path, { force: true });
+	}
 }
 
 interface Previous {
 	step: string;
 	outcome: Outcome;
 	reason: string;
-	text: string;
+	/** The previous step's handoff file, as written. */
+	handoff: Record<string, unknown>;
+	/** Failed checks of the previous step: command, exit code, last lines. */
+	failedChecks?: { command: string; exit: number | null; tail: string[] }[];
 }
 
 function prompt(run: Run, stepId: string, agent: string, previous: Previous | undefined): string {
@@ -249,8 +285,14 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 		`You are the ${agent} step "${stepId}" of the AKit flow "${run.flow.name}" (run ${run.id}).`,
 		`Task: ${run.task}`,
 	];
-	if (previous) lines.push("", `Handoff from the step "${previous.step}" (${previous.outcome}${previous.reason ? `:${previous.reason}` : ""}):`, previous.text);
-	lines.push("", "End your answer with one line: outcome: done, outcome: failed[:reason] or outcome: blocked[:reason].");
+	if (previous) {
+		lines.push("", `Handoff from the step "${previous.step}" (${previous.outcome}${previous.reason ? `:${previous.reason}` : ""}):`,
+			JSON.stringify(previous.handoff, null, 2));
+		for (const check of previous.failedChecks ?? []) {
+			lines.push("", `The check \`${check.command}\` exited ${check.exit}. Its last lines:`, ...check.tail);
+		}
+	}
+	lines.push("", "When the step is finished, call the tool flow_handoff once with what you did and the outcome: done, failed or blocked (with a reason).");
 	return lines.join("\n");
 }
 
@@ -264,10 +306,18 @@ async function loop(ctx: ExtensionCommandContext, run: Run, first: Decision, pre
 			const step = run.flow.steps[index];
 			visits = decision.visits;
 			const attempt = visits[step.id] ?? 1;
+			const key = stepKey(index, step.id);
 			// The state is in events.jsonl before the step starts (F19), so a crash resumes here.
 			appendEvent(run.folder, "step-start", { step: step.id, attempt });
 			writeRunJson(run, { status: "running", state: { step: step.id, visits } });
 			status(ctx, `flow ${run.flow.name}: ${index + 1}/${run.flow.steps.length} ${step.id}`);
+			const checks = step.checks ?? [];
+			const unsafe = checks.find((c) => !isSafeCommand(c));
+			if (unsafe !== undefined || checks.length > MAX_CHECK_COMMANDS) {
+				appendEvent(run.folder, "deviation", { step: step.id, rule: "check-refused", detail: unsafe ?? `${checks.length} commands` });
+				return finish(ctx, run, { stop: "check-refused", step: step.id, visits },
+					`Step ${step.id} has a check the runner refuses (${unsafe ?? `more than ${MAX_CHECK_COMMANDS} commands`}); fix it in AKit and Apply.`);
+			}
 			const skills: string[] = [];
 			for (const name of step.skills ?? []) {
 				const path = resolveSkill(run.project, name);
@@ -277,31 +327,76 @@ async function loop(ctx: ExtensionCommandContext, run: Run, first: Decision, pre
 				}
 				skills.push(path);
 			}
-			const result = await runChild({
-				cwd: ctx.cwd, sessionDir: join(run.folder, "sessions"), model: step.model, thinking: step.thinking, skills,
-				tools: step.tools ?? [], extensions: childExtensions(run.project, step.extensions ?? []),
-				prompt: prompt(run, step.id, step.agent, previous), info: run.info, signal,
-			});
-			if (result.aborted || result.spawnError) {
-				appendEvent(run.folder, "step-end", { step: step.id, attempt, outcome: "failed", reason: result.aborted ? "aborted" : "spawn", tokens: recordTokens(result.tokens), exit: result.code });
-				writeRunJson(run, { status: "stopped", state: { step: step.id, visits } });
-				say(ctx, result.aborted ? `Flow ${run.flow.name} aborted in step ${step.id}; /flow resume continues.` : `Can't start pi: ${result.spawnError}`, "error");
-				return;
+			const sessionDir = join(run.folder, "sessions");
+			const partPath = join(run.folder, "handoffs", `${key}-a${attempt}.part`);
+			let result: ChildResult | undefined;
+			let part: HandoffPart | undefined;
+			let deviations = 0;
+			// No valid flow_handoff: the step reruns once, then the run stops (F4).
+			for (let round = 1; round <= 2 && !part; round++) {
+				rmSync(partPath, { force: true });
+				result = await runChild({
+					cwd: ctx.cwd, sessionDir, model: step.model, thinking: step.thinking, skills,
+					tools: step.tools ?? [], extensions: childExtensions(run.project, step.extensions ?? []),
+					prompt: prompt(run, step.id, step.agent, previous), info: run.info, env: { AKIT_FLOW_HANDOFF: partPath }, signal,
+				});
+				if (result.aborted || result.spawnError) {
+					appendEvent(run.folder, "step-end", { step: step.id, attempt, outcome: "failed", reason: result.aborted ? "aborted" : "spawn", tokens: recordTokens(result.tokens), exit: result.code });
+					writeRunJson(run, { status: "stopped", state: { step: step.id, visits } });
+					say(ctx, result.aborted ? `Flow ${run.flow.name} aborted in step ${step.id}; /flow resume continues.` : `Can't start pi: ${result.spawnError}`, "error");
+					return;
+				}
+				part = readPart(partPath);
+				if (part) break;
+				const line = parseOutcome(result.text);
+				deviations++;
+				if (line) {
+					appendEvent(run.folder, "deviation", { step: step.id, attempt, rule: "handoff-fallback", detail: `outcome: ${line.outcome}${line.reason ? `:${line.reason}` : ""}`, session: result.session ?? null });
+					part = { goal: run.task, done: [], files: [], open_questions: [], notes: result.text, ...line };
+					break;
+				}
+				appendEvent(run.folder, "deviation", { step: step.id, attempt, rule: "handoff-missing", action: round === 1 ? "rerun" : "stopped", session: result.session ?? null });
 			}
-			const { outcome, reason } = parseOutcome(result.text, result.code);
+			if (!result || !part) {
+				appendEvent(run.folder, "step-end", { step: step.id, attempt, outcome: "failed", reason: "no-handoff", tokens: recordTokens(result?.tokens ?? {}), exit: result?.code ?? null });
+				return finish(ctx, run, { stop: "no-handoff", step: step.id, visits }, `Flow ${run.flow.name} stopped: step ${step.id} ended twice without flow_handoff.`);
+			}
+			let { outcome, reason } = part;
+			let evidence: string | undefined;
+			let failedChecks: Previous["failedChecks"];
+			if (checks.length > 0) {
+				// The runner runs the checks; they count as green only with the evidence file (F19).
+				evidence = await runChecks(run.folder, key, run.id, { id: step.id, attempt }, checks, ctx.cwd, signal);
+				if (!checksGreen(evidence)) {
+					try {
+						failedChecks = (JSON.parse(readFileSync(evidence, "utf8")).checks as NonNullable<Previous["failedChecks"]>).filter((c) => c.exit !== 0);
+					} catch {
+						failedChecks = [];
+					}
+					deviations++;
+					appendEvent(run.folder, "deviation", { step: step.id, attempt, rule: "check-failed", detail: failedChecks.map((c) => `${c.command} → ${c.exit}`).join("; ") });
+					if (outcome === "done") {
+						outcome = "failed";
+						reason = "checks";
+					}
+				}
+			}
 			decision = nextStep(run.flow, { step: step.id, visits }, outcome, reason);
 			const next = "next" in decision ? decision.next : undefined;
-			// The handoff of Phase 2a: the runner's part only; the model's part comes with flow_handoff (2b).
-			writeFileSync(join(run.folder, "handoffs", handoffName(index, step.id, attempt, result.session)), `${JSON.stringify({
+			const file = sessionFile(sessionDir, result.session);
+			const handoff = {
 				schema: HANDOFF_SCHEMA, run: run.id, flow: run.flow.name, step: { index: index + 1, id: step.id, attempt },
-				session: result.session ?? null, from: { outcome, reason }, next: next ? { step: next } : null, goal: run.task,
-				done: [], files: [], open_questions: [], notes: result.text, tokens: recordTokens(result.tokens), deviations: 0,
-			}, null, 2)}\n`);
+				session: result.session ?? null, session_file: file ? `sessions/${file}` : null, from: { outcome, reason },
+				next: next ? { step: next } : null, goal: part.goal || run.task, done: part.done, files: part.files,
+				open_questions: part.open_questions, notes: part.notes, tokens: recordTokens(result.tokens), deviations,
+				evidence: evidence ? `evidence/${basename(evidence)}` : null,
+			};
+			writeAtomic(join(run.folder, "handoffs", handoffName(index, step.id, attempt, result.session)), handoff);
 			appendEvent(run.folder, "step-end", {
 				step: step.id, attempt, outcome, reason, tokens: recordTokens(result.tokens), exit: result.code,
 				...(result.unknownEvents ? { unknownEvents: result.unknownEvents } : {}),
 			});
-			previous = { step: step.id, outcome, reason, text: result.text };
+			previous = { step: step.id, outcome, reason, handoff, failedChecks };
 		}
 		finish(ctx, run, decision);
 	} finally {

@@ -7,6 +7,8 @@ licence MIT (Copyright (c) Mario Zechner and contributors).
 Only the members the Flows runner (`AKitCore/Sources/AKitRender/Resources/flows/*.ts`) uses
 are kept, copied as they are. Left out: members that need types from other Pi packages
 (`pi-tui`, `pi-ai`, `typebox`), and `sourceInfo` of `RegisteredCommand` (the API omits it in
-`registerCommand` anyway). `make test-flows` type-checks the runner against this file, so a
+`registerCommand` anyway). `ToolDefinition` is cut down: TypeBox's `TSchema` is `object`, `Static`
+is `any`, the result keeps `AgentToolResult`'s two required fields, and the render, loadout and
+exposure members are left out (Pi also takes plain JSON Schema as `parameters`). `make test-flows` type-checks the runner against this file, so a
 call to an API the minimum Pi lacks fails the build. When `minPi` rises, replace this folder
 with the new version's excerpt (flows.md F20).
