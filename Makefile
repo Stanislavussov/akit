@@ -36,6 +36,9 @@ check-node:   ## fail clearly when Node.js is missing or too old for the Flows t
 	@command -v node >/dev/null 2>&1 || { echo "Node.js $(NODE_MIN) or newer not found on PATH: make test-flows needs it (tested on $(NODE_TESTED))." >&2; exit 1; }
 	@node -e 'const [a,b]=process.versions.node.split(".").map(Number),[x,y]="$(NODE_MIN)".split(".").map(Number);process.exit(a>x||(a===x&&b>=y)?0:1)' || { echo "Node.js $(NODE_MIN) or newer needed for make test-flows; this one is older (tested on $(NODE_TESTED))." >&2; exit 1; }
 
+flow-templates:   ## regenerate AKitRender/FlowTemplateSources.swift from Resources/flows/*.ts (after editing a template)
+	tools/gen-flow-templates.sh
+
 test-flows: check-node   ## Flows runner: tsc --noEmit against the minimum Pi's types, node --test with the vectors and a fake pi
 	@$(FLOWS)/node_modules/.bin/tsc --version 2>/dev/null | grep -qx "Version $(TYPESCRIPT_VERSION)" || npm ci --prefix $(FLOWS) --no-audit --no-fund --silent
 	$(FLOWS)/node_modules/.bin/tsc --noEmit -p $(FLOWS)/tsconfig.json

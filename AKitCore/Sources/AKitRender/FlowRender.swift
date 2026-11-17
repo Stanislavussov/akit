@@ -17,14 +17,14 @@ public enum FlowRender {
             export { default } from "./akit-flow.ts";
 
             """.utf8)),
-        ("akit-flow.ts", Data(PackageResources.akit_flow_ts)),
-        ("akit-flow-guard.ts", Data(PackageResources.akit_flow_guard_ts)),
-        ("akit-flow-handoff.ts", Data(PackageResources.akit_flow_handoff_ts)),
-        ("flow-core.ts", Data(PackageResources.flow_core_ts)),
-        ("flow-git.ts", Data(PackageResources.flow_git_ts)),
-        ("flow-record.ts", Data(PackageResources.flow_record_ts)),
-        ("flow-view.ts", Data(PackageResources.flow_view_ts)),
-        ("pi-adapter.ts", Data(PackageResources.pi_adapter_ts)),
+        ("akit-flow.ts", Data(FlowTemplateSources.akit_flow_ts.utf8)),
+        ("akit-flow-guard.ts", Data(FlowTemplateSources.akit_flow_guard_ts.utf8)),
+        ("akit-flow-handoff.ts", Data(FlowTemplateSources.akit_flow_handoff_ts.utf8)),
+        ("flow-core.ts", Data(FlowTemplateSources.flow_core_ts.utf8)),
+        ("flow-git.ts", Data(FlowTemplateSources.flow_git_ts.utf8)),
+        ("flow-record.ts", Data(FlowTemplateSources.flow_record_ts.utf8)),
+        ("flow-view.ts", Data(FlowTemplateSources.flow_view_ts.utf8)),
+        ("pi-adapter.ts", Data(FlowTemplateSources.pi_adapter_ts.utf8)),
     ]
 
     /// Pi's folder relative to the rendered root: the project's `.pi`, the home's `.pi/agent`.
