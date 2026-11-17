@@ -62,6 +62,42 @@ struct FlowCompatibilityTests {
         #expect(fm.fileExists(atPath: root.appending(path: "20261116-0900-fresh/worktree/.git").path))
     }
 
+    /// A relative `gitdir:` (worktree.useRelativePaths) still finds the project; a fresh index keeps an old-looking worktree.
+    @Test func relativeGitdirAndFreshIndex() throws {
+        let fm = FileManager.default
+        let home = URL(filePath: FileWalk.realPath(fm.temporaryDirectory) ?? fm.temporaryDirectory.path).appending(path: "akit-flow-rel-\(UUID().uuidString)")
+        let project = home.appending(path: "Projects/app")
+        let env = HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path, "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@example.com",
+                                                                     "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"])
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        func git(_ args: String..., in folder: URL = project) throws {
+            let result = try #require(FlowWorktreeCleanup.git(args, in: folder, env: env))
+            #expect(result.succeeded, "git \(args): \(result.output)")
+        }
+        try git("init", "-q", "-b", "main")
+        try git("commit", "-q", "--allow-empty", "-m", "init")
+        let run = "20261001-0900-rel"
+        let tree = FlowWorktreeCleanup.root(env: env).appending(path: "\(run)/worktree")
+        try fm.createDirectory(at: tree.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try git("worktree", "add", "-q", "-b", "akit-flow/\(run)", tree.path)
+        // Rewrite the pointer as a relative path.
+        let relative = try #require(try? fm.contentsOfDirectory(atPath: project.appending(path: ".git/worktrees").path).first)
+        let target = project.appending(path: ".git/worktrees/\(relative)")
+        let up = String(repeating: "../", count: tree.pathComponents.count - 1)
+        try Data("gitdir: \(up)\(target.path.dropFirst())\n".utf8).write(to: tree.appending(path: ".git"))
+        #expect(FlowWorktreeCleanup.mainCheckout(of: tree)?.standardizedFileURL.path == project.standardizedFileURL.path)
+
+        let now = Date.now.addingTimeInterval(15 * 86_400)
+        let oldDate = Date.now.addingTimeInterval(-30 * 86_400)
+        for file in [tree, target.appending(path: "HEAD"), target.appending(path: "index")] where fm.fileExists(atPath: file.path) {
+            try fm.setAttributes([.modificationDate: oldDate], ofItemAtPath: file.path)
+        }
+        #expect(FlowWorktreeCleanup.old(env: env, now: now).map(\.run) == [run])
+        // The index was touched 1 day before `now`: the worktree is in use.
+        try fm.setAttributes([.modificationDate: now.addingTimeInterval(-86_400)], ofItemAtPath: target.appending(path: "index").path)
+        #expect(FlowWorktreeCleanup.old(env: env, now: now).isEmpty)
+    }
+
     @Test func aLiveLockKeepsTheWorktree() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "akit-flow-lock-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

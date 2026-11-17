@@ -61,6 +61,11 @@ public struct FlowRunSummary: Sendable {
 
     public static let stopFile = "STOP"
 
+    public enum StopError: LocalizedError {
+        case notStoppable
+        public var errorDescription: String? { "This run is read-only or finished; there is nothing to stop." }
+    }
+
     public init(_ run: FlowRun, flow: Flow?) {
         self.run = run
         self.flow = flow
@@ -158,7 +163,9 @@ public struct FlowRunSummary: Sendable {
     }
 
     /// Writes `STOP` into the run folder: the runner halts before its next step (F19).
+    /// Refused for a read-only or finished run.
     public func requestStop() throws {
+        guard !run.readOnly, !run.finished, status != .done, status != .stopped else { throw StopError.notStoppable }
         try Data("STOP\n".utf8).write(to: run.folder.appending(path: Self.stopFile))
     }
 

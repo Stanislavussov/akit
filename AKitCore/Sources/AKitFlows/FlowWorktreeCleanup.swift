@@ -31,7 +31,10 @@ public enum FlowWorktreeCleanup {
             guard FileManager.default.fileExists(atPath: tree.appending(path: ".git").path) else { return nil }
             let project = mainCheckout(of: tree)
             let record = project?.appending(path: ".pi/akit-flow/runs/\(run.lastPathComponent)")
-            let used = [record.flatMap { modified($0.appending(path: "events.jsonl")) }, modified(tree)].compactMap { $0 }.max() ?? .distantPast
+            let gitDir = GitCheckout.at(tree)?.gitDir
+            let used = [record.flatMap { modified($0.appending(path: "events.jsonl")) }, modified(tree),
+                        gitDir.flatMap { modified($0.appending(path: "HEAD")) }, gitDir.flatMap { modified($0.appending(path: "index")) }]
+                .compactMap { $0 }.max() ?? .distantPast
             guard used < limit else { return nil }
             return Worktree(run: run.lastPathComponent, folder: tree, project: project, lastUsed: used,
                             dirty: isDirty(tree, env: env), locked: record.map(FlowRunSummary.lockAlive) ?? false)
@@ -48,13 +51,9 @@ public enum FlowWorktreeCleanup {
         }
     }
 
-    /// `gitdir: <project>/.git/worktrees/<name>` → `<project>`.
+    /// The project's main checkout, read from the worktree's `.git` file (absolute or relative `gitdir:`).
     static func mainCheckout(of tree: URL) -> URL? {
-        guard let text = try? String(contentsOf: tree.appending(path: ".git"), encoding: .utf8),
-              let line = text.split(whereSeparator: \.isNewline).first, line.hasPrefix("gitdir: ") else { return nil }
-        var url = URL(filePath: String(line.dropFirst("gitdir: ".count)).trimmingCharacters(in: .whitespaces))
-        while url.lastPathComponent != ".git", url.pathComponents.count > 1 { url.deleteLastPathComponent() }
-        return url.lastPathComponent == ".git" ? url.deletingLastPathComponent() : nil
+        GitCheckout.at(tree)?.mainFolder
     }
 
     /// Changed or untracked files; an unreadable worktree counts as dirty, so it is kept.

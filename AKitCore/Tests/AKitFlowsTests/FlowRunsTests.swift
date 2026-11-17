@@ -88,10 +88,32 @@ struct FlowRunSummaryTests {
 
     @Test func stopWritesTheStopFile() throws {
         let (project, folder) = try sampleRunCopy()
+        // A running run: the sample's run-end line is dropped.
+        let events = try String(contentsOf: folder.appending(path: "events.jsonl"), encoding: .utf8)
+            .split(separator: "\n").filter { !$0.contains(#""type":"run-end""#) }.joined(separator: "\n")
+        try Data((events + "\n").utf8).write(to: folder.appending(path: "events.jsonl"))
         let summary = try #require(FlowRunSummary.all(projects: [project], env: HarnessEnvironment(homeDirectory: project)).first)
         #expect(!summary.stopRequested)
         try summary.requestStop()
         #expect(FileManager.default.fileExists(atPath: folder.appending(path: "STOP").path))
         #expect(FlowRunSummary(FlowRun.read(folder), flow: nil).stopRequested)
+    }
+
+    @Test func stopIsRefusedForAFinishedRun() throws {
+        let (project, folder) = try sampleRunCopy()
+        let summary = try #require(FlowRunSummary.all(projects: [project], env: HarnessEnvironment(homeDirectory: project)).first)
+        #expect(summary.run.finished)
+        #expect(throws: FlowRunSummary.StopError.self) { try summary.requestStop() }
+        #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "STOP").path))
+    }
+
+    @Test func stopIsRefusedForAReadOnlyRun() throws {
+        let (project, folder) = try sampleRunCopy()
+        var summary = try #require(FlowRunSummary.all(projects: [project], env: HarnessEnvironment(homeDirectory: project)).first)
+        summary.run.readOnly = true
+        summary.run.events.removeAll { $0.kind == .runEnd }
+        summary.status = .running
+        #expect(throws: FlowRunSummary.StopError.self) { try summary.requestStop() }
+        #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "STOP").path))
     }
 }

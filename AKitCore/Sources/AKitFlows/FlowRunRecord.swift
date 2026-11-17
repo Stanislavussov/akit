@@ -78,6 +78,8 @@ public struct FlowHandoff: Equatable, Sendable {
     public var deviations: Int?
     /// The step's check evidence, relative to the run folder (`evidence/NN-<step>-aN-checks.json`).
     public var evidence: String?
+    /// The runner wrote this handoff from the model's text: the step never called `flow_handoff`.
+    public var fallback: Bool = false
 }
 
 /// One run folder `<project>/.pi/akit-flow/runs/<id>/`, read tolerantly. `events.jsonl` is the
@@ -221,7 +223,7 @@ public struct FlowRun: Sendable {
                            goal: value.member("goal")?.string, done: value.member("done")?.strings ?? [], files: files,
                            openQuestions: value.member("open_questions")?.strings ?? [], notes: value.member("notes")?.string,
                            tokens: FlowTokens(value.member("tokens")), deviations: value.member("deviations")?.int,
-                           evidence: value.member("evidence")?.string)
+                           evidence: value.member("evidence")?.string, fallback: value.member("fallback") == .bool(true))
     }
 
     /// The runs of a project, newest first (run ids start with the date and time).

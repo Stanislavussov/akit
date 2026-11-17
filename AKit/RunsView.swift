@@ -289,7 +289,10 @@ struct RunsView: View {
 
     private func handoffView(_ handoff: FlowHandoff) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("Handoff").font(.caption.bold()).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text("Handoff").font(.caption.bold()).foregroundStyle(.secondary)
+                if handoff.fallback { Text("fallback (no flow_handoff)").font(.caption2).foregroundStyle(.orange) }
+            }
             if let goal = handoff.goal { Text("Goal: \(goal)").font(.callout) }
             ForEach(handoff.done, id: \.self) { Text("✓ \($0)").font(.callout) }
             ForEach(handoff.files, id: \.path) { Text("\($0.change) \($0.path)").font(.callout.monospaced()) }

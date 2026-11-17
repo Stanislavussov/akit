@@ -223,6 +223,14 @@ struct FlowRunRecordTests {
         #expect(handoff.tokens.cost == nil)
     }
 
+    @Test func readsTheFallbackFlag() throws {
+        try write("events.jsonl", #"{"type": "run-start", "flow": "feature"}"# + "\n")
+        try write("handoffs/01-a.json", Self.handoff.replacingOccurrences(of: #""deviations": 0}"#, with: #""deviations": 0, "fallback": true}"#))
+        try write("handoffs/02-b.json", Self.handoff)
+        let run = FlowRun.read(folder)
+        #expect(run.handoffs.map(\.fallback) == [true, false])
+    }
+
     @Test func newerSchemaIsReadOnly() throws {
         try write("events.jsonl", #"{"type": "run-start", "flow": "feature"}"# + "\n")
         try write("handoffs/01-plan-a1-s.json", Self.handoff.replacingOccurrences(of: "akit-flow-handoff/1", with: "akit-flow-handoff/2"))
