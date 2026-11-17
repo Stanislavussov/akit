@@ -507,7 +507,8 @@ NAME --everywhere`) finds every place and takes the skill out of each. Core: `Sk
   so in a note (it loads nothing, so it is not in "still loads in"). Known limit: dotfiles kept as a
   bare repository (`git --git-dir=~/.dotfiles --work-tree=~`) leave no `.git` to find, so AKit can't
   tell such a copy is tracked; it goes to the Trash like any own copy (recoverable from there). A copy AKit rendered → it leaves with the Apply of its
-  brain entry. A layer → its `layer.yaml` without the entry (diff, one commit each). A project's
+  brain entry; a render left over from an entry already gone from the brain (an earlier removal
+  whose Apply never ran on this Mac) gets that Apply too. A layer → its `layer.yaml` without the entry (diff, one commit each). A project's
   answers → without the entry; on this Mac the project's Apply saves them (a local-only project's
   worktree links go with the existing sync); a project on another Mac gets only its answers
   (the brain's, or a work Mac's local record; a personal project's brain answers from a work Mac

@@ -108,6 +108,24 @@ struct SkillRemovalTests {
         #expect(move.trashed().count >= 4)
     }
 
+    @Test func aRenderLeftOverFromAnEntryAlreadyGoneFromTheBrainLeavesWithItsApply() async throws {
+        try move.harnesses()
+        let brain = try await move.renderedInCore()
+        // An earlier removal took deploy out of the core layer, but the home folder's Apply never ran.
+        try await BrainRemove.removeSkill("deploy", fromLayer: "core", in: brain, env: f.env)
+        #expect(!move.coreSkills().contains("deploy") && exists(".agents/skills/deploy/SKILL.md"))
+
+        let current = try #require(Brain.load(from: f.brainRoot))
+        let plan = SkillRemoval.plan(name: "deploy", brain: current, context: context([:]))
+        let copy = try #require(plan.places.first { $0.action == .rendered })
+        #expect(copy.selected && plan.canApply, "\(plan.blockers)")
+        #expect(plan.projects == [move.homeID] && plan.summary == "After this, deploy loads in: nowhere.", "\(plan.summary)")
+
+        _ = try await SkillRemoval.apply(plan, brain: current, env: f.env, trash: f.trash)
+        #expect(!exists(".agents/skills/deploy"))
+        #expect(ProjectRecords.savedLock(id: move.homeID, in: f.store)?.files.keys.contains { $0.hasPrefix(".agents/skills/deploy/") } == false)
+    }
+
     @Test func disablePluginIsItsOwnStepAndNamesWhatElseGoes() throws {
         try move.harnesses()
         try plugin()

@@ -406,10 +406,13 @@ public enum SkillRemoval {
                     }
                     continue
                 }
-                guard layers.isEmpty == false || answered.contains(id) else { continue }
                 let setup = ProjectSetup.plan(project: folder, id: id, answers: answers, brain: edited, store: store, forHome: isHome,
                                               piAgentDirSetting: context.piAgentDirSetting, rememberPiAgentDir: context.rememberPiAgentDir, env: env)
                 let ours = setup.changes.filter { $0.path.hasPrefix(prefix(name)) }
+                // A render left over from an entry already gone from the brain (an earlier removal
+                // whose Apply never ran here) leaves with this Apply too.
+                let leftOver = ours.contains { $0.kind == .remove || $0.kind == .keepEdited }
+                guard layers.isEmpty == false || answered.contains(id) || leftOver else { continue }
                 let handEdited = ours.filter { $0.kind == .keepEdited }
                 let root = isHome ? "~/" : shown(folder) + "/"
                 if !handEdited.isEmpty {
