@@ -286,6 +286,7 @@ shot worklog-fill        $MAIN --section worklog --tab worklog-fill --query 2026
 shot flows-empty         $MAIN --section flows
 shot flows-feature       1180x900 --section flows --tab feature
 shot flows-check         1180x900 --section flows --tab check
+shot flows-card          1180x900 --section flows --tab feature --query plan --add
 shot meetings            $MAIN --section meetings --select 0930
 shot meetings-transcript $MAIN --section meetings --select 0930 --tab meetings-transcript
 shot meetings-tab        $MAIN --section meetings --select 0930 --tab meetings-tab

@@ -18,6 +18,10 @@ struct FlowsView: View {
     @State private var problem: String?
     @State private var saving = false
     @State private var applying: ApplyTarget?
+    /// The one open card.
+    @State private var expanded: String?
+    @State private var choosingSkills: String?
+    @State private var capabilities: PiCapabilities?
 
     struct ApplyTarget: Identifiable {
         let id = UUID()
@@ -49,7 +53,10 @@ struct FlowsView: View {
             // The made-up home's Pi has no credentials: its demo models stay.
             if !found.isEmpty || DebugSnapshot.options?.demo != true { piModels = found }
         }
-        .onAppear(perform: snapshotSetup)
+        .onAppear {
+            capabilities = FlowFile.capabilities(env: env)
+            snapshotSetup()
+        }
         .sheet(item: $applying) { ProjectSetupSheet(initialProject: $0.project, forHome: $0.project == nil) }
     }
 
@@ -221,117 +228,114 @@ struct FlowsView: View {
     // MARK: - Column of cards
 
     private func column(_ flow: Flow) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(flow.steps.enumerated()), id: \.element.id) { index, step in
-                card(step, index: index, flow: flow)
-                    .anchorPreference(key: CardFrames.self, value: .bounds) { [step.id: $0] }
-                    .dropDestination(for: String.self) { ids, _ in
-                        guard let moved = ids.first else { return false }
-                        move(moved, before: step.id)
-                        return true
-                    }
-            }
-        }
-        .padding(.leading, 34)
-        .overlayPreferenceValue(CardFrames.self) { anchors in
-            GeometryReader { proxy in backArrows(flow, frames: anchors.mapValues { proxy[$0] }) }
-        }
-    }
-
-    /// Routes to the same or an earlier step, drawn as arrows in the left gutter (F2).
-    private func backArrows(_ flow: Flow, frames: [String: CGRect]) -> some View {
-        var arrows: [(from: CGRect, to: CGRect, outcome: String)] = []
-        for (index, step) in flow.steps.enumerated() {
-            for (key, target) in step.routes.sorted(by: { $0.key < $1.key }) {
-                guard let targetIndex = flow.index(of: target), targetIndex <= index,
-                      let from = frames[step.id], let to = frames[target] else { continue }
-                arrows.append((from, to, String(key.prefix { $0 != ":" })))
-            }
-        }
-        return ZStack {
-            ForEach(Array(arrows.enumerated()), id: \.offset) { number, arrow in
-                let x = 28 - CGFloat(number % 4) * 7
-                let start = CGPoint(x: arrow.from.minX, y: arrow.from.midY + CGFloat(number % 3) * 6)
-                let end = CGPoint(x: arrow.to.minX, y: arrow.to.minY + 18)
-                Path { path in
-                    path.move(to: start)
-                    path.addLine(to: CGPoint(x: x, y: start.y))
-                    path.addLine(to: CGPoint(x: x, y: end.y))
-                    path.addLine(to: end)
-                    path.move(to: CGPoint(x: end.x - 6, y: end.y - 4))
-                    path.addLine(to: end)
-                    path.addLine(to: CGPoint(x: end.x - 6, y: end.y + 4))
+        FlowColumn(flow: flow) { index, step in
+            card(step, index: index, flow: flow)
+                .dropDestination(for: String.self) { ids, _ in
+                    guard let moved = ids.first else { return false }
+                    move(moved, before: step.id)
+                    return true
                 }
-                .stroke(arrow.outcome == "blocked" ? Color.purple : arrow.outcome == "failed" ? .orange : .accentColor,
-                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                .help("On \(arrow.outcome): back")
-            }
         }
     }
 
+    /// A card is one line; a click opens it, one card at a time.
     private func card(_ step: FlowStep, index: Int, flow: Flow) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                Picker(selection: stepBinding(index, \.agent)) {
-                    ForEach(Array(Set(FlowTemplates.agents + [step.agent])).sorted(), id: \.self) { Text($0).tag($0) }
-                } label: { RequiredLabel("Agent") }
-                    .help("The role of the step; implementer and reviewer must use different models (F6)")
-                PiModelPicker(selection: stepBinding(index, \.model), models: piModels, empty: "Choose a model",
-                              help: "Models Pi has credentials for (pi --list-models)", allowsOther: false) {
-                    RequiredLabel("Model")
-                }
-                LabeledContent("Skills") {
-                    if skills.isEmpty && step.skills.isEmpty {
-                        Text("No Pi skills found").foregroundStyle(.secondary)
-                    } else {
-                        checkboxes(Array(Set(skills + step.skills)).sorted(), selected: step.skills) { skill, on in
-                            updateStep(index) { $0.skills = on ? $0.skills + [skill] : $0.skills.filter { $0 != skill } }
-                        }
-                    }
-                }
-                .help("Only these skills reach the step (Pi runs it with -ns --skill)")
-                LabeledContent("Tools") {
-                    checkboxes(flow.tools, selected: step.tools) { tool, on in
-                        updateStep(index) { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }
-                    }
-                }
-                .help("The step's tool allow-list; the guard blocks every other tool. None checked: the flow's tools")
-                HStack(spacing: 12) {
-                    routePicker("On done", outcome: "done", index: index, flow: flow)
-                    routePicker("On failed", outcome: "failed", index: index, flow: flow)
-                    routePicker("On blocked", outcome: "blocked", index: index, flow: flow)
-                }
-                HStack(spacing: 18) {
-                    Toggle("Gate", isOn: stepBinding(index, \.gate)).toggleStyle(.switch)
-                        .help("After the step Pi stops and asks: Approve, or Send Back with a note")
-                    Stepper("Max loops: \(step.maxLoops)", value: stepBinding(index, \.maxLoops), in: 1...9)
-                        .help("How often the run may come back to this step before it stops")
-                }
-                LabeledContent("Checks") {
-                    let offered = Array(Set(commands + step.checks)).sorted()
-                    if offered.isEmpty {
-                        Text(project == nil ? "Pick a project for its commands" : "No test or lint commands found").foregroundStyle(.secondary)
-                    } else {
-                        checkboxes(offered, selected: step.checks) { command, on in
-                            updateStep(index) { $0.checks = on ? $0.checks + [command] : $0.checks.filter { $0 != command } }
-                        }
-                    }
-                }
-                .help("Commands the runner runs at the step's end, without a shell; red turns done into failed")
-            }
-        } label: {
-            HStack {
+        let open = expanded == step.id
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "line.3.horizontal").foregroundStyle(.secondary)
                     .help("Drag onto another card to move this step before it")
-                Text("\(index + 1). \(step.id)").font(.headline)
-                if step.gate { Image(systemName: "diamond.fill").foregroundStyle(.orange).help("Gate after this step") }
+                Image(systemName: open ? "chevron.down" : "chevron.right").foregroundStyle(.secondary).frame(width: 10)
+                FlowStepLine(step: step, index: index, flow: flow)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { expanded = open ? nil : step.id }
+            .draggable(step.id)
+            .help(open ? "Click to close the card" : "Click to open the card")
+            if open { details(step, index: index, flow: flow) }
+        }
+        .padding(8)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(open ? Color.accentColor : .secondary.opacity(0.25)))
+    }
+
+    private func details(_ step: FlowStep, index: Int, flow: Flow) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Picker(selection: stepBinding(index, \.agent)) {
+                ForEach(Array(Set(FlowTemplates.agents + [step.agent])).sorted(), id: \.self) { Text($0).tag($0) }
+            } label: { RequiredLabel("Agent") }
+                .help("The role of the step; implementer and reviewer must use different models (F6)")
+            PiModelPicker(selection: stepBinding(index, \.model), models: piModels, empty: "Choose a model",
+                          help: "Models Pi has credentials for (pi --list-models)", allowsOther: false) {
+                RequiredLabel("Model")
+            }
+            LabeledContent("Skills") {
+                HStack {
+                    Text("\(step.skills.count) chosen").foregroundStyle(.secondary)
+                    Button("Choose…") { choosingSkills = step.id }
+                        .disabled(skills.isEmpty && step.skills.isEmpty)
+                        .popover(isPresented: Binding(get: { choosingSkills == step.id }, set: { if !$0 { choosingSkills = nil } })) {
+                            SkillChooser(all: Array(Set(skills + step.skills)), selected: step.skills) { skill, on in
+                                updateStep(index) { $0.skills = on ? $0.skills + [skill] : $0.skills.filter { $0 != skill } }
+                            }
+                        }
+                    if skills.isEmpty && step.skills.isEmpty { Text("No Pi skills found").foregroundStyle(.secondary) }
+                    if let reason = missing(.skill), !step.skills.isEmpty {
+                        Label(reason, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
+                    }
+                }
+            }
+            .help("Only these skills reach the step (Pi runs it with -ns --skill)")
+            LabeledContent("Tools") {
+                checkboxes(flow.tools, selected: step.tools) { tool, on in
+                    updateStep(index) { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }
+                }
+            }
+            .help("The step's tool allow-list; the guard blocks every other tool. None checked: the flow's tools")
+            DisclosureGroup("Prompt") {
+                TextEditor(text: Binding(get: { step.prompt ?? "" }, set: { text in
+                    updateStep(index) { $0.prompt = text.isEmpty ? nil : text }
+                }))
+                .font(.callout)
+                .frame(minHeight: 90, maxHeight: 200)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(.secondary.opacity(0.3)))
+            }
+            .help("What the step does, in the model's words; the runner puts it after the task")
+            HStack(spacing: 12) {
+                routePicker("On done", outcome: "done", index: index, flow: flow)
+                routePicker("On failed", outcome: "failed", index: index, flow: flow)
+                routePicker("On blocked", outcome: "blocked", index: index, flow: flow)
+            }
+            HStack(spacing: 18) {
+                Toggle("Gate", isOn: stepBinding(index, \.gate)).toggleStyle(.switch)
+                    .disabled(missing(.uiConfirm) != nil && !step.gate)
+                    .help(missing(.uiConfirm).map { "Can't: \($0)" } ?? "After the step Pi stops and asks: Approve, or Send Back with a note")
+                Stepper("Max loops: \(step.maxLoops)", value: stepBinding(index, \.maxLoops), in: 1...9)
+                    .help("How often the run may come back to this step before it stops")
                 Spacer()
                 Button("Move Up", systemImage: "chevron.up") { swap(index, index - 1) }.labelStyle(.iconOnly).disabled(index == 0)
                 Button("Move Down", systemImage: "chevron.down") { swap(index, index + 1) }.labelStyle(.iconOnly).disabled(index == flow.steps.count - 1)
                 Button("Remove Step", systemImage: "trash") { remove(step.id) }.labelStyle(.iconOnly)
             }
-            .draggable(step.id)
+            LabeledContent("Checks") {
+                let offered = Array(Set(commands + step.checks)).sorted()
+                if offered.isEmpty {
+                    Text(project == nil ? "Pick a project for its commands" : "No test or lint commands found").foregroundStyle(.secondary)
+                } else {
+                    checkboxes(offered, selected: step.checks) { command, on in
+                        updateStep(index) { $0.checks = on ? $0.checks + [command] : $0.checks.filter { $0 != command } }
+                    }
+                }
+            }
+            .help("Commands the runner runs at the step's end, without a shell; red turns done into failed")
         }
+    }
+
+    /// Why this Mac's Pi can't do `feature` (from `pi-capabilities.json`), or nil when it can or nothing is known.
+    private func missing(_ feature: FlowPiFeature) -> String? {
+        guard let pi = capabilities, !pi.features.contains(feature.rawValue) else { return nil }
+        return "this Mac's Pi \(pi.version ?? "") has no \(feature.rawValue) (akit doctor)"
     }
 
     /// The three route pickers (F2): next step by default on done, stop on failed or blocked.
@@ -465,12 +469,33 @@ struct FlowsView: View {
         if let name = options.select { open(name) }
         if options.tab == "feature" || options.tab == "check", draft == nil { newFromTemplate() }
         if options.tab == "check", let draft { check(draft) }
+        // `--query <step id>` opens that card; `--add` opens its skill chooser too.
+        if let step = options.query, draft?.step(step) != nil {
+            expanded = step
+            if options.add { choosingSkills = step }
+        }
     }
 }
 
-private struct CardFrames: PreferenceKey {
-    static let defaultValue: [String: Anchor<CGRect>] = [:]
-    static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
-        value.merge(nextValue()) { $1 }
+/// The searchable skill list of a card: chosen skills first, then the rest by name.
+private struct SkillChooser: View {
+    let all: [String]
+    let selected: [String]
+    let set: (String, Bool) -> Void
+    @State private var search = ""
+
+    var body: some View {
+        let shown = all.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }
+            .sorted { (selected.contains($0) ? 0 : 1, $0) < (selected.contains($1) ? 0 : 1, $1) }
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Search skills", text: $search).textFieldStyle(.roundedBorder)
+            Text("\(selected.count) chosen of \(all.count)").font(.caption).foregroundStyle(.secondary)
+            List(shown, id: \.self) { skill in
+                Toggle(skill, isOn: Binding(get: { selected.contains(skill) }, set: { set(skill, $0) })).toggleStyle(.checkbox)
+            }
+            .listStyle(.plain)
+        }
+        .padding(10)
+        .frame(width: 300, height: 380)
     }
 }
