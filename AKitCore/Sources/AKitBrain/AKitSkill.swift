@@ -302,7 +302,16 @@ gate, max loops). Pi runs it with `/flow [name] <task>`; akit only reads and che
   exit 1 on an error (unknown or malformed route, a failed/blocked route to a later step, step
   tools outside the flow's, unsafe check commands, missing skills, the reviewer on the
   implementer's model, a Pi feature this Mac lacks). Fix the flow in AKit's Flows screen, not by hand.
+- `akit flow runs [--project PATH] [--json]`: the project's runs (`.pi/akit-flow/runs`), newest
+  first: status, each step attempt's state, time, tokens, deviations (with the quote), evidence,
+  session file, and a step the routes forbid (`forbiddenNext`). Use it when the user asks how a
+  run went or why it stopped. Read only; stopping a run is the Runs screen's Stop… (it writes
+  `STOP`; `/flow resume` in Pi goes on).
 - `akit flow schema`: the JSON Schema of a flow file.
+- `akit doctor` probes this Mac's Pi (`pi --version`, `pi --help`; no secrets) into
+  `~/.akit/local/pi-capabilities.json`, which `akit flow check` and the Flows screen read; it also
+  says whether each project with flows keeps `/.pi/akit-flow` out of git and names run worktrees
+  over 14 days old that were kept for uncommitted changes.
 
 Flows are made in AKit's Flows screen (Setup → Flows): New from Template → Feature, the step
 cards by clicks, Check, Save (writes `brain/flows/<name>.yaml` and commits), Layers (adds the flow
@@ -310,6 +319,12 @@ to a layer's `flows:`). Apply (`akit plan` / `akit apply`, or Apply… on the sc
 layer's flows to `.pi/flows/<name>.yaml` (home layer: `~/.pi/agent/flows/`) and the runner to
 `.pi/extensions/akit-flow/`, with a backup and a diff; a flow or runner file edited by hand is
 shown with its diff and left alone, so undo the edit or delete the file, then apply again.
+
+Runs are watched in AKit's Activity → Runs: each step's state, time, tokens, deviations,
+handoff and check evidence; a step opens in Lab (Open in Lab…), Corrections, or Sessions (the
+Flow Steps filter; step sessions stay out of Insights). Run worktrees
+(`~/.akit/local/flows/runs/<run>/worktree`) unused for 14 days are removed when the run's lock is
+dead and the worktree is clean; a dirty one is kept and flagged there.
 
 ## Merge request review
 
