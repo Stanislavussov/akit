@@ -125,6 +125,8 @@ struct FlowsView: View {
         }
         var flow = template.make(piModels.first ?? "", piModels.dropFirst().first ?? "",
                                  commands.filter { $0.contains("test") })
+        flow = FlowTemplates.withDefaultModels(flow, doer: piModels.first { $0.hasSuffix("/gpt-6-luna") },
+                                               thinker: piModels.first { $0.hasSuffix("/gpt-6.1-terra") })
         flow.name = name
         draft = flow
         saved = nil
@@ -274,6 +276,12 @@ struct FlowsView: View {
                           help: "Models Pi has credentials for (pi --list-models)", allowsOther: false) {
                 RequiredLabel("Model")
             }
+            Picker("Thinking", selection: stepBinding(index, \.thinking)) {
+                Text("Model default").tag(String?.none)
+                ForEach(FlowTemplates.thinkingLevels, id: \.self) { Text($0).tag(String?.some($0)) }
+                if let other = step.thinking, !FlowTemplates.thinkingLevels.contains(other) { Text(other).tag(String?.some(other)) }
+            }
+            .help("How much the model thinks in this step (pi --thinking); Model default leaves it to Pi")
             LabeledContent("Skills") {
                 HStack {
                     Text("\(step.skills.count) chosen").foregroundStyle(.secondary)

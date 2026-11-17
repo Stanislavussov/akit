@@ -80,6 +80,25 @@ public enum FlowTemplates {
                  ]) }),
     ]
 
+    /// Pi's thinking levels, lowest first (`pi --thinking`).
+    public static let thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+    /// Agents that do the work in code; the others think (plan, judge, explain).
+    public static let doers: Set<String> = ["implementer", "tester", "debugger", "cleaner", "checker", "committer"]
+
+    /// The user's defaults (2026-11-17): doers on `doer` (gpt-6 Luna), thinkers on `thinker`
+    /// (gpt-6.1 Terra). A judge of the plan (critic, architect) gets `doer` when the planner is on
+    /// `thinker`, so it never shares the planner's model (F6). Empty models keep the template's.
+    public static func withDefaultModels(_ flow: Flow, doer: String?, thinker: String?) -> Flow {
+        var flow = flow
+        for index in flow.steps.indices {
+            let agent = flow.steps[index].agent
+            let pick = doers.contains(agent) || judgedMakers[agent] == ["planner"] ? doer : thinker
+            if let pick, !pick.isEmpty { flow.steps[index].model = pick }
+        }
+        return flow
+    }
+
     public static func template(named name: String) -> Template? { all.first { $0.name == name } }
 
     /// Each judge and the makers whose work it checks; its model must differ from theirs (F6).

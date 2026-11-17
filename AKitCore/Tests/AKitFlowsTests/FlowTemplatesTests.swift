@@ -52,3 +52,16 @@ struct FlowJudgeRuleTests {
         #expect(!FlowCheck.check(flow, knownModels: ["m/a", "m/b"], knownSkills: [], pi: nil).contains { $0.code == .reviewerSameModel })
     }
 }
+
+struct FlowDefaultModelTests {
+    @Test(arguments: FlowTemplates.all.map(\.name))
+    func lunaForCodeTerraForThinkingPassesTheCheck(_ name: String) throws {
+        let base = try #require(FlowTemplates.template(named: name)).make("x/a", "x/b", ["make test"])
+        let flow = FlowTemplates.withDefaultModels(base, doer: "p/gpt-6-luna", thinker: "p/gpt-6.1-terra")
+        let issues = FlowCheck.check(flow, knownModels: ["p/gpt-6-luna", "p/gpt-6.1-terra"], knownSkills: [], pi: nil)
+            .filter { $0.severity == .error }
+        #expect(issues.isEmpty, "\(issues)")
+        for step in flow.steps where step.agent == "implementer" { #expect(step.model == "p/gpt-6-luna") }
+        for step in flow.steps where ["planner", "reviewer"].contains(step.agent) { #expect(step.model == "p/gpt-6.1-terra") }
+    }
+}
