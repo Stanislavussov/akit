@@ -100,7 +100,8 @@ export function childArgs(o: ChildOptions): string[] {
 	for (const ext of o.extensions) args.push("-e", ext);
 	if (o.thinking && o.info.features["--thinking"]) args.push("--model", o.model, "--thinking", o.thinking);
 	else args.push("--model", o.thinking ? `${o.model}:${o.thinking}` : o.model);
-	if (o.tools.length > 0 && o.info.features["--tools"]) args.push("-t", o.tools.join(","));
+	// `-t` is a hint (the guard enforces); it would also hide the runner's own flow_handoff.
+	if (o.tools.length > 0 && o.info.features["--tools"]) args.push("-t", [...o.tools, "flow_handoff"].join(","));
 	args.push("--", o.prompt);
 	return args;
 }

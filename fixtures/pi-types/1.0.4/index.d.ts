@@ -72,8 +72,32 @@ declare module "@earendil-works/pi-coding-agent" {
             details: unknown;
         }>;
     }
+    /** Excerpt: only CustomToolCallEvent of the union; the built-in tools' typed inputs are
+     * structurally the same `toolName` + `input` record. */
+    interface ToolCallEventBase {
+        type: "tool_call";
+        toolCallId: string;
+        /** Set when another tool (for example a codemode script) issued this call. */
+        parentToolCallId?: string;
+    }
+    export interface CustomToolCallEvent extends ToolCallEventBase {
+        toolName: string;
+        input: Record<string, unknown>;
+    }
+    export type ToolCallEvent = CustomToolCallEvent;
+    export interface ToolCallEventResult {
+        /** Block tool execution. To modify arguments, mutate `event.input` in place instead. */
+        block?: boolean;
+        reason?: string;
+        /**
+         * Hint that the agent should stop after the current tool batch when this call is blocked.
+         * Early termination only happens when every finalized tool result in the batch sets this to true.
+         */
+        terminate?: boolean;
+    }
     export interface ExtensionAPI {
         on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
+        on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): () => void;
         /** Register a custom command. */
         registerCommand(name: string, options: Omit<RegisteredCommand, "name">): void;
         registerTool(tool: ToolDefinition): void;

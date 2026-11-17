@@ -134,3 +134,12 @@ export const MAX_CHECK_LENGTH = 120;
 export function isSafeCommand(command: string): boolean {
 	return command.length <= MAX_CHECK_LENGTH && /^[A-Za-z][A-Za-z0-9 _.:/=%@-]*$/.test(command);
 }
+
+/** Hides env-like secrets in text shown or logged (A21): `NAME=value` where the name says token,
+ * key, secret, password or auth; `Authorization:` / `Bearer` values; long token-like strings. */
+export function redact(text: string): string {
+	return text
+		.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/g, "$1 ***")
+		.replace(/\b([A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIALS?)[A-Za-z0-9_]*)\s*([=:])\s*("[^"]*"|'[^']*'|\S+)/gi, "$1$2***")
+		.replace(/\b(?:sk|pk|ghp|gho|glpat|xox[abps])[-_][A-Za-z0-9_-]{12,}\b/g, "***");
+}

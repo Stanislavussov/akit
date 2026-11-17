@@ -5,14 +5,15 @@
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	compareVersions, type Decision, DEFAULT_MAX_LOOPS, firstStep, type Flow, formatProblem, isOutcome, isSafeCommand, MAX_CHECK_COMMANDS, nextStep,
-	type Outcome, parseOutcome, requiredPi, runId, TESTED_PI, type Visits,
+	type FlowStep, type Outcome, parseOutcome, requiredPi, runId, TESTED_PI, type Visits,
 } from "./flow-core.ts";
+import { DEFAULT_TOOLS, type GuardRules } from "./akit-flow-guard.ts";
 import { changes, commit, createWorktree, diffFromBase, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
 import {
 	appendEvent, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, type RecordedEvent, recordTokens, releaseLock,
@@ -334,6 +335,22 @@ function childExtensions(project: string, own: string[]): string[] {
 	return list;
 }
 
+/** The guard's rules for one step attempt (F15), in `<run>/guard/NN-<step>-a<attempt>.json`: the
+ * step's tools, else the flow's, else Pi's built-ins; `bash` defaults to "yes unless paths is set",
+ * as Swift's FlowStep. Returns the file's path for AKIT_FLOW_GUARD. */
+function writeGuardRules(run: Run, step: FlowStep, key: string, attempt: number): string {
+	const paths = step.paths ?? [];
+	const tools = step.tools?.length ? step.tools : run.flow.tools?.length ? run.flow.tools : DEFAULT_TOOLS;
+	const rules: GuardRules = {
+		run: run.id, step: step.id, attempt, tools, paths, bash: step.bash ?? paths.length === 0,
+		root: run.worktree.path, events: join(run.folder, "events.jsonl"),
+	};
+	mkdirSync(join(run.folder, "guard"), { recursive: true });
+	const path = join(run.folder, "guard", `${key}-a${attempt}.json`);
+	writeAtomic(path, rules);
+	return path;
+}
+
 /** The model's part of a handoff, as `flow_handoff` wrote it (F4). */
 interface HandoffPart {
 	goal: string;
@@ -441,6 +458,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			}
 			const sessionDir = join(run.folder, "sessions");
 			const partPath = join(run.folder, "handoffs", `${key}-a${attempt}.part`);
+			const guardPath = writeGuardRules(run, step, key, attempt);
 			let result: ChildResult | undefined;
 			let part: HandoffPart | undefined;
 			let deviations = 0;
@@ -450,7 +468,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 				result = await runChild({
 					cwd: run.worktree.path, sessionDir, model: step.model, thinking: step.thinking, skills,
 					tools: step.tools ?? [], extensions: childExtensions(run.project, step.extensions ?? []),
-					prompt: prompt(run, step.id, step.agent, previous), info: run.info, env: { AKIT_FLOW_HANDOFF: partPath }, signal,
+					prompt: prompt(run, step.id, step.agent, previous), info: run.info, env: { AKIT_FLOW_HANDOFF: partPath, AKIT_FLOW_GUARD: guardPath }, signal,
 				});
 				if (result.aborted || result.spawnError) {
 					appendEvent(run.folder, "step-end", { step: step.id, attempt, outcome: "failed", reason: result.aborted ? "aborted" : "spawn", tokens: recordTokens(result.tokens), exit: result.code });

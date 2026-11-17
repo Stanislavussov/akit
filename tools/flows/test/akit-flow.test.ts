@@ -111,7 +111,7 @@ test("a 4-step flow runs in order and is recorded", async () => {
 	const impl = calls()[1].args;
 	assert.equal(impl[impl.indexOf("--thinking") + 1], "high");
 	const chk = calls()[2].args;
-	assert.equal(chk[chk.indexOf("-t") + 1], "read,bash");
+	assert.equal(chk[chk.indexOf("-t") + 1], "read,bash,flow_handoff");
 	const ev = events(run);
 	assert.ok(ev.every((e) => e.schema === "akit-flow-event/1"));
 	assert.deepEqual(ev.map((e) => e.type), ["run-start", "step-start", "step-end", "step-start", "step-end", "step-start", "step-end", "step-start", "step-end", "run-end"]);
@@ -672,4 +672,25 @@ test("akit_flow with a yes runs the flow", async () => {
 	assert.match(text, new RegExp(`Flow run ${run.split("/").pop()} has ended`));
 	assert.deepEqual(calls().map((x) => x.step), ["plan", "implement", "review"]);
 	assert.match(calls()[0].args.at(-1) ?? "", /Task: add CSV export/);
+});
+
+test("a child loads only the guard, the handoff tool and the step's named extensions, with its rules", async () => {
+	flow([
+		{ id: "plan", agent: "planner", model: "m/a", extensions: ["gitlab.ts"] },
+		{ id: "review", agent: "reviewer", model: "m/b", paths: ["docs/**"] },
+	], { tools: ["read", "edit"] });
+	await flowCommand("feature add CSV export", ctx());
+	const flows = join(repo, "AKitCore", "Sources", "AKitRender", "Resources", "flows");
+	const ext = (args: string[]) => args.flatMap((a, i) => (args[i - 1] === "-e" ? [a] : []));
+	const [plan, review] = calls().map((c) => c.args);
+	assert.ok(plan.indexOf("-ne") < plan.indexOf("-e"), "-ne comes before the -e list");
+	assert.deepEqual(ext(plan), [join(flows, "akit-flow-guard.ts"), join(flows, "akit-flow-handoff.ts"), join(project, ".pi", "extensions", "gitlab.ts")]);
+	assert.deepEqual(ext(review), [join(flows, "akit-flow-guard.ts"), join(flows, "akit-flow-handoff.ts")]);
+	const run = onlyRun();
+	const rules = JSON.parse(readFileSync(join(run, "guard", "02-review-a1.json"), "utf8"));
+	assert.deepEqual(rules.tools, ["read", "edit"], "a step without tools gets the flow's");
+	assert.deepEqual(rules.paths, ["docs/**"]);
+	assert.equal(rules.bash, false, "a write-restricted step has no bash by default");
+	assert.equal(rules.events, join(run, "events.jsonl"));
+	assert.equal(JSON.parse(readFileSync(join(run, "guard", "01-plan-a1.json"), "utf8")).bash, true);
 });
