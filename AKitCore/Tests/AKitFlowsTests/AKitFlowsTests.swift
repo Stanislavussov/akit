@@ -154,8 +154,8 @@ struct FlowCheckTests {
         var flow = sample()
         flow.steps[3].model = flow.steps[1].model
         let issues = FlowCheck.check(flow, knownModels: allModels, knownSkills: ["planning"], pi: allPi)
-        // The planner and the implementer both use that model: one issue per maker.
-        #expect(issues.map(\.code) == [.reviewerSameModel, .reviewerSameModel])
+        // The planner shares that model too, but a reviewer checks code, not the plan: one issue.
+        #expect(issues.map(\.code) == [.reviewerSameModel])
         #expect(issues.first?.severity == .error && issues.first?.step == "review")
     }
 

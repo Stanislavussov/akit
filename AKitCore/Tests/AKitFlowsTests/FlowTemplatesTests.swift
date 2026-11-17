@@ -44,3 +44,11 @@ struct FlowPresetTests {
         }
     }
 }
+
+struct FlowJudgeRuleTests {
+    @Test func reviewerMayShareThePlannersModel() {
+        var flow = FlowTemplates.feature(model: "m/a", reviewModel: "m/b")
+        flow.steps[1].model = "m/b" // plan on the reviewer's model
+        #expect(!FlowCheck.check(flow, knownModels: ["m/a", "m/b"], knownSkills: [], pi: nil).contains { $0.code == .reviewerSameModel })
+    }
+}

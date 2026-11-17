@@ -116,8 +116,9 @@ public enum FlowCheck {
         }
         if knownModels == nil { issues.append(.init(.warning, .modelsNotChecked, "Models not checked: the list of Pi's models is unknown here.")) }
         if knownSkills == nil { issues.append(.init(.warning, .skillsNotChecked, "Skills not checked: the list of Pi's skills is unknown here.")) }
-        let implementers = flow.steps.filter { FlowTemplates.makers.contains($0.agent) }
-        for reviewer in flow.steps where FlowTemplates.judges.contains(reviewer.agent) {
+        for reviewer in flow.steps {
+            guard let judged = FlowTemplates.judgedMakers[reviewer.agent] else { continue }
+            let implementers = flow.steps.filter { judged.contains($0.agent) }
             for implementer in implementers where implementer.model == reviewer.model {
                 issues.append(.init(.error, .reviewerSameModel, step: reviewer.id,
                                     "Step \(reviewer.id) reviews with \(reviewer.model), the model of \(implementer.id); pick another model."))

@@ -195,8 +195,9 @@ reads run records and writes a `STOP` file.
   row, then a verdict), **blast-radius**, **fix-ci**, **fix-merge-conflicts**, **hillclimb**
   (baseline, then change → checks → measure; a round that doesn't win is undone), **sharpen**,
   **how**, **why**, **deepinit**. A preset step may carry its own prompt instead of its agent's. Judges (reviewer, verifier, critic,
-  architect) get the second model; F6 now compares every judge with every maker (implementer,
-  planner, tester, debugger, cleaner). No OMC `team` or `arena`: parallel steps are D26.
+  architect) get the second model; F6 compares each judge with the makers whose work it checks:
+  reviewer and verifier with implementer, tester, debugger and cleaner; critic and architect with
+  planner (a reviewer may share the planner's model). No OMC `team` or `arena`: parallel steps are D26.
 - **F11 Start from Pi.** `/flow [name] <task>`; without a name, the project's default flow.
   A tool `akit_flow` lets the model start one when the user asks in words ("do it by the
   Feature flow"); it first asks `ctx.ui.confirm`, and starts nothing without a yes. Settings

@@ -82,10 +82,14 @@ public enum FlowTemplates {
 
     public static func template(named name: String) -> Template? { all.first { $0.name == name } }
 
-    /// Agents that judge another step's work; their model must differ from the makers' (F6).
-    public static let judges: Set<String> = ["reviewer", "verifier", "critic", "architect"]
-    /// Agents whose work a judge checks.
-    public static let makers: Set<String> = ["implementer", "planner", "tester", "debugger", "cleaner"]
+    /// Each judge and the makers whose work it checks; its model must differ from theirs (F6).
+    /// Code judges check the code, plan judges the plan: a reviewer may share the planner's model.
+    public static let judgedMakers: [String: Set<String>] = [
+        "reviewer": codeMakers, "verifier": codeMakers, "critic": ["planner"], "architect": ["planner"],
+    ]
+    static let codeMakers: Set<String> = ["implementer", "tester", "debugger", "cleaner"]
+    public static var judges: Set<String> { Set(judgedMakers.keys) }
+    public static var makers: Set<String> { judgedMakers.values.reduce(into: []) { $0.formUnion($1) } }
 
     /// A new step's id: the agent's verb (`implementer` → `implement`), `-2`, `-3` … when taken.
     public static func stepID(for agent: String, taken: Set<String>) -> String {
