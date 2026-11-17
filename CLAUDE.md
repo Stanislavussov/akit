@@ -15,8 +15,8 @@ Pi and other harnesses read this file too.
   feature does:
   `git tag -a v2026.09.27 -m "Session insights: stats and recommendations"`.
 - Then, as the last step of a finished feature (the user's standing request, 2026-10-28):
-  `make install`, then release it: on master at the tag with a clean tree, `make release`,
-  `git push origin master <tag>`, and
+  release it: on master at the tag with a clean tree, `make release`, then `make install-dist`
+  (installs that build, no second one), `git push origin master <tag>`, and
   `gh release create <tag> dist/AKit.zip --generate-notes --title "<tag>: <what it does>"`.
   The in-app Update button and `install.sh` read these releases. A fix or step that isn't
   merged into master gets no release.

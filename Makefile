@@ -68,6 +68,19 @@ install: generate   ## release build: AKit.app into ~/Applications, the akit com
 	rm -rf $(HOME)/Applications/AKit.app
 	cp -R $(DERIVED)/release/Build/Products/Release/AKit.app $(HOME)/Applications/
 	$(MAKE) install-cli
+	@$(MAKE) --no-print-directory installed-version
+
+install-dist:   ## after make release: install AKit.app and akit from dist/AKit.zip (no second build)
+	@[ -f dist/AKit.zip ] || { echo "make install-dist: run make release first" >&2; exit 1; }
+	rm -rf dist/unpacked && mkdir -p dist/unpacked && ditto -x -k dist/AKit.zip dist/unpacked
+	mkdir -p $(HOME)/Applications $(HOME)/.local/bin
+	rm -rf $(HOME)/Applications/AKit.app
+	cp -R dist/unpacked/AKit/AKit.app $(HOME)/Applications/
+	install -m 755 dist/unpacked/AKit/akit $(HOME)/.local/bin/akit
+	rm -rf dist/unpacked
+	@$(MAKE) --no-print-directory installed-version
+
+installed-version:
 	@# Which version is installed now: the same text as at the bottom of the app's sidebar.
 	@plist="$(HOME)/Applications/AKit.app/Contents/Resources/BuildInfo.plist"; \
 	  v() { /usr/libexec/PlistBuddy -c "Print :$$1" "$$plist" 2>/dev/null; }; \
@@ -92,10 +105,12 @@ release: generate   ## dist/AKit.zip: universal AKit.app + akit, for GitHub Rele
 	  [ -n "$$tag" ] || { echo "make release: tag this commit first (git tag -a vYYYY.MM.DD -m ...)" >&2; exit 1; }; \
 	  [ -z "$$(git status --porcelain --untracked-files=no)" ] || { echo "make release: commit or stash the changes first" >&2; exit 1; }
 	rm -rf dist && mkdir -p dist/AKit
+	@# The app and the akit command build side by side: separate build folders, nothing shared.
 	xcodebuild -project AKit.xcodeproj -scheme AKit -configuration Release \
-	  -derivedDataPath $(DERIVED)/universal ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO AKIT_DIST=1 -quiet build
+	  -derivedDataPath $(DERIVED)/universal ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO AKIT_DIST=1 -quiet build & app=$$!; \
+	  (cd AKitCore && swift build -c release --product akit --arch arm64 --arch x86_64) || { kill $$app; exit 1; }; \
+	  wait $$app
 	cp -R $(DERIVED)/universal/Build/Products/Release/AKit.app dist/AKit/
-	cd AKitCore && swift build -c release --product akit --arch arm64 --arch x86_64
 	cp "$$(cd AKitCore && swift build -c release --product akit --arch arm64 --arch x86_64 --show-bin-path)/akit" dist/AKit/
 	cd dist && ditto -c -k --norsrc --noextattr --keepParent AKit AKit.zip && rm -rf AKit
 	@echo "Built dist/AKit.zip. Publish: gh release create $$(git describe --exact-match --tags --match 'v[0-9]*') dist/AKit.zip --generate-notes"
@@ -115,4 +130,4 @@ hooks:   ## turn on the git hooks in .githooks: gitleaks secret check before com
 secrets:   ## scan the whole git history for secrets (gitleaks, settings in .gitleaks.toml)
 	gitleaks git --redact --no-banner --config .gitleaks.toml .
 
-.PHONY: hooks secrets generate open build run restart test snapshot install install-cli icon release screenshots guide-screenshots banner
+.PHONY: hooks secrets generate open build run restart test snapshot install install-cli install-dist installed-version icon release screenshots guide-screenshots banner
