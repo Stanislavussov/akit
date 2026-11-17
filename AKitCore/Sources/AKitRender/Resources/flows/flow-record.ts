@@ -3,7 +3,7 @@
 // (a cache, written atomically), handoffs/, evidence/, sessions/, lock. AKit's FlowRun reader reads it.
 
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Outcome, Visits } from "./flow-core.ts";
 import type { Tokens } from "./pi-adapter.ts";
@@ -79,15 +79,35 @@ function alive(pid: number): boolean {
 	}
 }
 
-/** Takes the run's lock; refuses (returns the holder's pid) when another live process holds it. */
+/** Takes the run's lock atomically (create-exclusive); refuses (returns the holder's pid) when
+ * another live process holds it. A stale lock (dead holder, or no pid) is removed and taken again. */
 export function takeLock(folder: string): number | undefined {
 	const path = join(folder, "lock");
-	if (existsSync(path)) {
-		const pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-		if (Number.isFinite(pid) && pid !== process.pid && alive(pid)) return pid;
+	for (let round = 0; round < 3; round++) {
+		try {
+			const fd = openSync(path, "wx");
+			try {
+				writeSync(fd, `${process.pid}\n`);
+			} finally {
+				closeSync(fd);
+			}
+			return undefined;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+		let pid = Number.NaN;
+		try {
+			pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
+		} catch {
+			// Removed between our open and read: try again.
+			continue;
+		}
+		if (pid === process.pid) return undefined;
+		if (Number.isFinite(pid) && alive(pid)) return pid;
+		rmSync(path, { force: true });
 	}
-	writeFileSync(path, `${process.pid}\n`);
-	return undefined;
+	const pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
+	return Number.isFinite(pid) ? pid : -1;
 }
 
 export function releaseLock(folder: string): void {

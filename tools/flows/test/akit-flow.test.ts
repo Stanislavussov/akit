@@ -5,8 +5,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import akitFlow, { flowCommand, startTool } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
-import { checksGreen } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-record.ts";
+import akitFlow, { fallbackNotes, flowCommand, startTool } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
+import { checksGreen, releaseLock, takeLock } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-record.ts";
 import type { ExtensionCommandContext } from "../../../AKitCore/Sources/AKitRender/Resources/flows/pi-adapter.ts";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
@@ -296,6 +296,21 @@ test("an outcome line without flow_handoff is the fallback, logged", async () =>
 	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "implement", "checks", "review"]);
 	const fallbacks = deviations(onlyRun()).filter((d) => d.rule === "handoff-fallback");
 	assert.deepEqual(fallbacks.map((d) => d.detail), ["outcome: failed:tests", "outcome: done"]);
+	const checks = readdirSync(join(onlyRun(), "handoffs")).filter((f) => f.includes("checks") && f.endsWith(".json"));
+	assert.ok(checks.length >= 1);
+	for (const f of checks) {
+		const h = JSON.parse(readFileSync(join(onlyRun(), "handoffs", f), "utf8"));
+		assert.equal(h.fallback, true, "a fallback handoff says so");
+		assert.match(h.notes, /outcome:/);
+	}
+});
+
+test("fallback notes are redacted and keep only the last 2 KB", () => {
+	assert.equal(fallbackNotes("API_KEY=abc\noutcome: done"), "API_KEY=***\noutcome: done");
+	const long = `${"x".repeat(5000)}\noutcome: done`;
+	const notes = fallbackNotes(long);
+	assert.ok(Buffer.byteLength(notes) <= 2048);
+	assert.ok(notes.endsWith("outcome: done"));
 });
 
 /** A check script for the project: exits 1 with a failing line the first `fails` times, then 0. */
@@ -496,6 +511,46 @@ test("killed mid-step: resume resets to the last step commit and reruns the step
 	assert.deepEqual(cache.state.visits, { plan: 1, implement: 2, review: 1 });
 	// The rerun step got the last finished step's handoff.
 	assert.match(calls()[2].args.at(-1) ?? "", /Handoff from the step "plan"/);
+});
+
+test("resume stops with a message when the worktree can't be reset", async () => {
+	flow(twoSteps());
+	pi({ outcomes: { implement: ["blocked"] } });
+	await flowCommand("feature x", ctx());
+	const run = onlyRun();
+	const tree = worktreeOf(run);
+	git(tree, "reset", "-q", "--hard", "HEAD~1");
+	cutEvents(run, events(run).findIndex((e) => e.type === "step-start" && e.step === "implement"));
+	const gitDir = git(tree, "rev-parse", "--absolute-git-dir").trim();
+	writeFileSync(join(gitDir, "index.lock"), "");
+	const before = calls().length;
+	messages = [];
+	try {
+		await flowCommand("resume", ctx());
+	} finally {
+		rmSync(join(gitDir, "index.lock"), { force: true });
+	}
+	assert.match(messages.at(-1)?.text ?? "", /Resume stopped: can't reset/);
+	assert.equal(calls().length, before, "no child started");
+});
+
+test("the lock is taken once; a stale lock is taken over; EPERM counts as alive", () => {
+	const folder = mkdtempSync(join(tmpdir(), "akit-flow-lock-"));
+	try {
+		assert.equal(takeLock(folder), undefined);
+		assert.equal(takeLock(folder), undefined, "the holder may take it again");
+		releaseLock(folder);
+		assert.ok(!existsSync(join(folder, "lock")));
+		writeFileSync(join(folder, "lock"), "999999999\n");
+		assert.equal(takeLock(folder), undefined, "a dead holder's lock is stale");
+		assert.equal(readFileSync(join(folder, "lock"), "utf8").trim(), String(process.pid));
+		writeFileSync(join(folder, "lock"), "garbage\n");
+		assert.equal(takeLock(folder), undefined, "a lock without a pid is stale");
+		writeFileSync(join(folder, "lock"), "1\n");
+		assert.equal(takeLock(folder), 1, "pid 1 (launchd) answers EPERM: alive");
+	} finally {
+		rmSync(folder, { recursive: true, force: true });
+	}
 });
 
 test("killed after the step commit, before step-end: resume does not rerun the step", async () => {

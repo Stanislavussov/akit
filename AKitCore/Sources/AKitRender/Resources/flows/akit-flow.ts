@@ -11,7 +11,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	compareVersions, type Decision, DEFAULT_MAX_LOOPS, firstStep, type Flow, formatProblem, isOutcome, isSafeCommand, MAX_CHECK_COMMANDS, nextStep,
-	type FlowStep, type Outcome, parseOutcome, requiredPi, runId, TESTED_PI, type Visits,
+	type FlowStep, type Outcome, parseOutcome, redact, requiredPi, runId, TESTED_PI, type Visits,
 } from "./flow-core.ts";
 import { DEFAULT_TOOLS, type GuardRules } from "./akit-flow-guard.ts";
 import { changes, commit, createWorktree, diffFromBase, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
@@ -325,7 +325,10 @@ async function resumeLocked(ctx: ExtensionContext, project: string, folder: stri
 					return;
 				}
 			}
-			resetTo(worktree.path, target);
+			if (!resetTo(worktree.path, target)) {
+				say(ctx, `Resume stopped: can't reset ${worktree.path} to ${target.slice(0, 10)}. Check the worktree with git status, then /flow resume.`, "error");
+				return;
+			}
 			previous = commits[0] ? previousFrom(folder, flow, commits[0].trailers["Flow-Step"] ?? "", Number(commits[0].trailers["Flow-Attempt"])) : undefined;
 			const step = flow.steps.find((s) => s.id === last.step);
 			const count = (visits[last.step] ?? 0) + 1;
@@ -381,7 +384,7 @@ function writeGuardRules(run: Run, step: FlowStep, key: string, attempt: number)
 	const tools = step.tools?.length ? step.tools : run.flow.tools?.length ? run.flow.tools : DEFAULT_TOOLS;
 	const rules: GuardRules = {
 		run: run.id, step: step.id, attempt, tools, paths, bash: step.bash ?? paths.length === 0,
-		root: run.worktree.path, events: join(run.folder, "events.jsonl"),
+		root: run.worktree.path, events: join(run.folder, "events.jsonl"), records: dirname(dirname(run.folder)),
 	};
 	mkdirSync(join(run.folder, "guard"), { recursive: true });
 	const path = join(run.folder, "guard", `${key}-a${attempt}.json`);
@@ -398,6 +401,16 @@ interface HandoffPart {
 	notes: string;
 	outcome: Outcome;
 	reason: string;
+	/** Set when the runner made the part from the answer's `outcome:` line, not `flow_handoff`. */
+	fallback?: boolean;
+}
+
+/** Most of a fallback handoff's notes: the child's answer, redacted, its last 2 KB. */
+export const FALLBACK_NOTES_BYTES = 2048;
+export function fallbackNotes(text: string): string {
+	const clean = redact(text);
+	const bytes = Buffer.from(clean, "utf8");
+	return bytes.length <= FALLBACK_NOTES_BYTES ? clean : bytes.subarray(bytes.length - FALLBACK_NOTES_BYTES).toString("utf8").replace(/^\uFFFD+/, "");
 }
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []);
@@ -534,7 +547,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 				deviations++;
 				if (line) {
 					appendEvent(run.folder, "deviation", { step: step.id, attempt, rule: "handoff-fallback", detail: `outcome: ${line.outcome}${line.reason ? `:${line.reason}` : ""}`, session: result.session ?? null });
-					part = { goal: run.task, done: [], files: [], open_questions: [], notes: result.text, ...line };
+					part = { goal: run.task, done: [], files: [], open_questions: [], notes: fallbackNotes(result.text), fallback: true, ...line };
 					break;
 				}
 				appendEvent(run.folder, "deviation", { step: step.id, attempt, rule: "handoff-missing", action: round === 1 ? "rerun" : "stopped", session: result.session ?? null });
@@ -571,7 +584,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 				schema: HANDOFF_SCHEMA, run: run.id, flow: run.flow.name, step: { index: index + 1, id: step.id, attempt },
 				session: result.session ?? null, session_file: file ? `sessions/${file}` : null, from: { outcome, reason },
 				next: next ? { step: next } : null, goal: part.goal || run.task, done: part.done, files: part.files,
-				open_questions: part.open_questions, notes: part.notes, tokens: recordTokens(result.tokens), deviations,
+				open_questions: part.open_questions, notes: part.notes, ...(part.fallback ? { fallback: true } : {}), tokens: recordTokens(result.tokens), deviations,
 				evidence: evidence ? `evidence/${basename(evidence)}` : null,
 			};
 			writeAtomic(join(run.folder, "handoffs", handoffName(index, step.id, attempt, result.session)), handoff);

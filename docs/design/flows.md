@@ -221,6 +221,7 @@ reads run records and writes a `STOP` file.
   | Step rules such as "test fails before the fix" | a check the extension runs at the step's end (run tests, compare) | checked |
   | Subagents inside a step | the guard blocks subagent tools (D28); a per-step switch allows them | enforced when off, logged-only when on |
   | A step that allows `bash`, or loads extra `-e` extensions | what they do inside the step | logged-only |
+  | Run records (`<project>/.pi/akit-flow`) are the runner's | the guard blocks `edit` / `write` there; a `bash` step can still rewrite them (known limit), so resume and Runs trust the step commits' trailers over the records | enforced for edit/write, logged-only for bash |
   | How the model works inside a step; quality of the work | review step and gates | the user decides |
 
   Code guarantees the order of steps, each step's model, its tool allow-list, and that every

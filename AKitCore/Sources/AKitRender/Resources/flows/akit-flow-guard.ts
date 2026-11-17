@@ -3,8 +3,8 @@
 // step's rules forbid, and appends a deviation line to the run's events.jsonl. The rules come from
 // the JSON file named in AKIT_FLOW_GUARD, written by the runner (akit-flow.ts) for this attempt.
 
-import { appendFileSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { appendFileSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { redact } from "./flow-core.ts";
 
@@ -22,6 +22,8 @@ export interface GuardRules {
 	root: string;
 	/** The run's events.jsonl, where blocked calls go as deviations (F16). */
 	events: string;
+	/** The run records folder (`<main checkout>/.pi/akit-flow`): `edit` / `write` there is always blocked. */
+	records?: string;
 }
 
 /** Pi's built-in tools: a step without a tool list may use these, and nothing else. */
@@ -47,20 +49,64 @@ function matches(pattern: string, path: string): boolean {
 	return new RegExp(`^${source}$`).test(path);
 }
 
-/** The worktree-relative path of a write, or undefined when it leaves the worktree. */
-function inside(root: string, target: string): string | undefined {
-	const roots = [root];
+/** `rel` (from path.relative) stays below its base. */
+function below(rel: string): boolean {
+	return rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.startsWith("../") && !isAbsolute(rel);
+}
+
+/** The real path of `target`'s nearest existing parent joined with the rest, or undefined when the
+ * target itself is a symlink (a write through it could leave the worktree). */
+function realTarget(target: string): string | undefined {
 	try {
-		roots.push(realpathSync(root));
+		if (lstatSync(target).isSymbolicLink()) return undefined;
+	} catch {
+		// Not there yet: a new file.
+	}
+	let parent = target;
+	const rest: string[] = [];
+	for (;;) {
+		try {
+			return resolve(realpathSync(parent), ...rest.reverse());
+		} catch {
+			const up = dirname(parent);
+			if (up === parent) return target;
+			rest.push(parent.slice(up.length).replace(/^[\\/]+/, ""));
+			parent = up;
+		}
+	}
+}
+
+/** The worktree-relative path of a write, or undefined when it leaves the worktree, lexically or
+ * through a symlink. */
+function inside(root: string, target: string): string | undefined {
+	const lexical = resolve(root, target);
+	const rel = relative(root, lexical);
+	if (rel === "") return ".";
+	if (!below(rel)) return undefined;
+	let realRoot = root;
+	try {
+		realRoot = realpathSync(root);
 	} catch {
 		// The root is gone; the lexical path still counts.
+		return rel.split("\\").join("/");
 	}
-	for (const r of roots) {
-		const rel = relative(r, resolve(r, target));
-		if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return rel.split("\\").join("/");
-		if (rel === "") return ".";
+	const real = realTarget(lexical);
+	if (real === undefined) return undefined;
+	const realRel = relative(realRoot, real);
+	if (realRel !== "" && !below(realRel)) return undefined;
+	return rel.split("\\").join("/");
+}
+
+/** `target` is in the run records folder. */
+function inRecords(records: string, root: string, target: string): boolean {
+	const abs = resolve(root, target);
+	for (const base of [records, (() => { try { return realpathSync(records); } catch { return records; } })()]) {
+		for (const t of [abs, realTarget(abs) ?? abs]) {
+			const rel = relative(base, t);
+			if (rel === "" || below(rel)) return true;
+		}
 	}
-	return undefined;
+	return false;
 }
 
 function filePath(input: Record<string, unknown>): string {
@@ -82,6 +128,8 @@ export function forbidden(rules: GuardRules, tool: string, input: Record<string,
 	if (!rules.tools.includes(tool)) return { rule: "tool-not-allowed", reason: `The tool ${tool} is not in step ${rules.step}'s tools (${rules.tools.join(", ") || "none"}).` };
 	if (tool === "bash" && !rules.bash) return { rule: "bash", reason: `Step ${rules.step} may not run bash: its writes are limited to ${rules.paths.join(", ")}.` };
 	if (WRITE_TOOLS.has(tool)) {
+		if (rules.records && inRecords(rules.records, rules.root, filePath(input)))
+			return { rule: "path", reason: `${filePath(input)} is in the flow's run records; only the runner writes there.` };
 		const rel = inside(rules.root, filePath(input));
 		if (rel === undefined) return { rule: "path", reason: `${filePath(input) || "(no path)"} is outside the flow's worktree.` };
 		if (rules.paths.length > 0 && !rules.paths.some((p) => matches(p, rel)))
@@ -115,7 +163,14 @@ export function guardHandler(rules: GuardRules) {
 
 export default function akitFlowGuard(pi: ExtensionAPI): void {
 	const path = process.env.AKIT_FLOW_GUARD;
-	if (!path) return;
+	if (!path) {
+		// A flow step child (it has a handoff file) without rules fails closed; plain Pi is untouched.
+		if (process.env.AKIT_FLOW_HANDOFF) {
+			const reason = "Blocked by the AKit flow guard: the step's rules are missing (AKIT_FLOW_GUARD is not set).";
+			pi.on("tool_call", (event) => (event.toolName === HANDOFF_TOOL ? undefined : { block: true, reason }));
+		}
+		return;
+	}
 	let handler: ReturnType<typeof guardHandler>;
 	try {
 		handler = guardHandler(readRules(path));

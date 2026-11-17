@@ -138,10 +138,15 @@ export function isSafeCommand(command: string): boolean {
 }
 
 /** Hides env-like secrets in text shown or logged (A21): `NAME=value` where the name says token,
- * key, secret, password or auth; `Authorization:` / `Bearer` values; long token-like strings. */
+ * key, secret, password or auth; `Authorization:` / `Bearer` values; long token-like strings
+ * (GitHub, GitLab, Slack, AWS key ids); `user:pass@` in URLs; `--password X` / `-p X`. */
 export function redact(text: string): string {
 	return text
+		.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1***@")
+		.replace(/(^|\s)(--password|-p)(\s+|=)("[^"]*"|'[^']*'|\S+)/g, "$1$2$3***")
+		.replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "***")
+		.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, "***")
 		.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/g, "$1 ***")
 		.replace(/\b([A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIALS?)[A-Za-z0-9_]*)\s*([=:])\s*("[^"]*"|'[^']*'|\S+)/gi, "$1$2***")
-		.replace(/\b(?:sk|pk|ghp|gho|glpat|xox[abps])[-_][A-Za-z0-9_-]{12,}\b/g, "***");
+		.replace(/\b(?:sk|pk|ghp|gho|ghs|ghu|glpat|xox[abps])[-_][A-Za-z0-9_-]{12,}\b/g, "***");
 }
