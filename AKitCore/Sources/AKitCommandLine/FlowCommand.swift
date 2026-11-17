@@ -24,6 +24,14 @@ extension AKitCLI {
                                         reviewer and implementer models differ, this Mac's Pi has
                                         the features. Exit 1 on an error.
                                         --json: [{name, path, issues: [{severity, code, step, message}]}]
+      akit flow runs [--project PATH] [--json]
+                                        The project's runs (.pi/akit-flow/runs), newest first: status,
+                                        steps with state, time, tokens, deviations, and steps the
+                                        routes forbid. Read only (Stop is a button on the Runs screen).
+                                        --json: [{id, flow, task, project, status, stopReason,
+                                        stopRequested, pi, tokens, deviations, attempts: [{step,
+                                        attempt, state, reason, seconds, tokens, deviations, evidence,
+                                        session, forbiddenNext}], problems}]
       akit flow schema                  Print flow.schema.json, the JSON Schema of a flow file.
 
     --project: the project folder (default: the current folder).
@@ -43,6 +51,19 @@ extension AKitCLI {
         case "schema":
             try args.finish()
             out(FlowSchema.text.trimmingCharacters(in: .newlines))
+            return 0
+        case "runs":
+            try args.finish()
+            let runs = FlowRunSummary.all(projects: [project], env: env)
+            if json {
+                out(encode(runs.map(FlowRunReport.init)))
+                return 0
+            }
+            if runs.isEmpty {
+                out("No flow runs in \(tilde(project.appending(path: ".pi/akit-flow/runs"))).")
+                return 0
+            }
+            out(runs.map(runText).joined(separator: "\n"))
             return 0
         case "list":
             try args.finish()
@@ -101,8 +122,23 @@ extension AKitCLI {
             }
             return failed ? 1 : 0
         default:
-            throw Failure(message: "Use: akit flow list|show NAME|check [NAME]|schema [--project PATH] [--json]. akit flow --help for more.")
+            throw Failure(message: "Use: akit flow list|show NAME|check [NAME]|runs|schema [--project PATH] [--json]. akit flow --help for more.")
         }
+    }
+
+    static func runText(_ summary: FlowRunSummary) -> String {
+        let report = FlowRunReport(summary)
+        var lines = ["\(report.id) \(report.flow ?? "?"): \(report.status.rawValue)\(report.stopReason.map { " (\($0))" } ?? "")"
+                     + "\(report.stopRequested ? ", STOP requested" : "")\(report.task.map { " · \($0)" } ?? "")"
+                     + " · \(count(report.deviations, "deviation"))"]
+        for attempt in report.attempts {
+            let tokens = attempt.tokens.map { "\(($0.input ?? 0) + ($0.output ?? 0)) tokens" } ?? "tokens unknown"
+            lines.append("  \(attempt.step) #\(attempt.attempt): \(attempt.state.rawValue)\(attempt.reason.flatMap { $0.isEmpty ? nil : ":\($0)" } ?? ""), \(tokens)"
+                         + (attempt.forbiddenNext.map { ", then \($0): the routes forbid it" } ?? ""))
+            lines += attempt.deviations.map { "    ⚠ \($0)" }
+        }
+        lines += report.problems.map { "  problem: \($0)" }
+        return lines.joined(separator: "\n")
     }
 
     private static func flowFile(_ name: String, project: URL, env: HarnessEnvironment) throws -> FlowFile {

@@ -147,7 +147,7 @@ struct GuideDocumentTests {
         let document = GuideDocument.parse(try String(contentsOf: file, encoding: .utf8))
         #expect(!document.title.isEmpty)
         let screens = ["installed": ["overview", "skills", "skillsSh", "mcp"], "setup": ["brain", "flows"],
-                       "activity": ["sessions", "usage"], "improve": ["insights", "lab", "analysis"], "work": ["review", "knowledge", "notebook", "worklog", "meetings"]]
+                       "activity": ["sessions", "usage", "runs"], "improve": ["insights", "lab", "analysis"], "work": ["review", "knowledge", "notebook", "worklog", "meetings"]]
         for (group, ids) in screens {
             #expect(document.path(to: group) == [group], "no section \(group)")
             for id in ids { #expect(document.path(to: id) == [group, id], "no section \(id) in \(group)") }

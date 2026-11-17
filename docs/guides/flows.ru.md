@@ -125,6 +125,40 @@
 
 > **Важно:** если вы поправили файл flow или расширения руками, Apply его не перепишет. В предпросмотре он помечен как изменённый вручную, с диффом. Удалите файл или верните правку и нажмите **Apply…** снова.
 
+## Посмотреть run
+<!-- section: runs -->
+
+**Что это:** экран **Runs** (группа Activity) показывает runs, которые Pi сделал по flow в ваших проектах. AKit читает папки `.pi/akit-flow/runs/` и ничего в них не меняет, кроме кнопки **Stop…**. Копировать или выгружать отсюда нельзя: в выводе шагов могут быть секреты.
+
+**Как пользоваться:**
+
+1. Откройте **Runs**. Слева список runs: flow, задача, проект, число отклонений ⚠.
+2. Щёлкните run. Справа та же схема, что на экране Flows: свёрнутые карточки шагов. У карточки — значок состояния (✓ done, ✗ failed, ⏸ blocked, ◌ идёт), число попыток, время, токены и цена.
+3. Щёлкните карточку. Под ней — каждая попытка: отклонения с цитатой, итог шага (handoff: цель, что сделано, файлы, вопросы) и вывод проверок (команда, код выхода, последние строки).
+4. Кнопки попытки: **Open in Lab…** (Lab разбирает сессию шага), **Corrections** (сколько раз вы поправляли агента в этом шаге), **Show in Sessions** (сессия шага на экране Sessions, там же вкладка Tools).
+
+**Пример.** Run `feature` «add CSV export» в `notes-mac`: шаг **checks** сначала ✗ — тесты красные, отклонение «check-failed: node check.mjs → 1». Run вернулся к **implement** (попытка 2), потом **checks** ✓. У **implement** ещё одно отклонение: guard заблокировал `bash rm -rf build`.
+
+![Экран Runs: слева run feature «add CSV export» проекта notes-mac с меткой ⚠ 2; справа заголовок feature Done (done), строка «5 step runs · 600 tokens · $0.05 · 2 deviations · Pi 1.0.4 · notes-mac», кнопка Stop… и три карточки plan, implement, checks с попытками, временем и токенами; слева стрелка назад от checks к implement](images/runs.png)
+
+![Открытая карточка checks на экране Runs: попытка 1 failed (checks) с отклонением check-failed и цитатой «check-failed: node check.mjs → 1», handoff с целью и файлами, блок Check evidence с командой node check.mjs и кодом выхода; кнопки Open in Lab…, Corrections, Show in Sessions](images/runs-step.png)
+
+**Метки:**
+
+- **Off the routes** (красная) — после шага run пошёл туда, куда пути шага не ведут. AKit сверяет каждый переход с путями flow. Обычно это значит, что flow изменили после run.
+- **STOP requested** — кнопка **Stop…** уже записала `STOP`; Pi остановит run перед следующим шагом.
+- **Worktree kept: uncommitted changes** — рабочей копии run больше 14 дней, но в ней есть незакоммиченные правки. AKit её не удаляет. Чистые старые копии (`~/.akit/local/flows/runs/<run>/worktree`) AKit удаляет сам, если run не идёт; ветка `akit-flow/<run>` и запись run остаются.
+
+## Остановить run
+<!-- section: stop -->
+
+**Что это:** **Stop…** пишет файл `STOP` в папку run. Шаг, который идёт сейчас, доработает; перед следующим шагом Pi остановится (событие `halted`). Продолжить: `/flow resume` в Pi.
+
+1. Выберите run, нажмите **Stop…**.
+2. Подтвердите: **Stop Before the Next Step**.
+
+> **Важно:** у законченного run кнопка серая.
+
 ## Тонкости и редкие случаи
 <!-- section: details -->
 
@@ -132,10 +166,13 @@
 - **Pi не в целях проекта.** Flows не ставятся, в предпросмотре предупреждение.
 - **Flow с тем же именем в двух слоях.** Ставится один раз, из первого слоя.
 - **Список моделей пуст.** Pi не нашёл ключей. Проверьте Pi на экране **Overview**.
+- **Версия Pi.** Под заголовком flow строка «This Mac's Pi 1.0.4 · tested on Pi 1.0.4». Если Pi новее проверенной версии, строка оранжевая: flow работает, но с предупреждением. Если Pi старше 1.0.4 — красная: flow не запустится. Данные пишет `akit doctor` (в Терминале) в `~/.akit/local/pi-capabilities.json`. Он же проверяет, что `/.pi/akit-flow` спрятан от git в каждом проекте с flows.
 
 ## Связи с другими экранами
 <!-- section: links -->
 
 - **[Brain](screens#brain)** — слои, в которые входит flow, и окно Set Up Project.
 - **Overview** — версия Pi и его настройки.
-- Терминал: `akit flow list`, `akit flow show <имя>`, `akit flow check`, `akit flow schema`.
+- **Runs** (Activity) — runs по flow, см. [Посмотреть run](#runs).
+- **Sessions** — фильтр **Flow Steps** показывает сессии шагов; в Insights они не входят.
+- Терминал: `akit flow list`, `akit flow show <имя>`, `akit flow check`, `akit flow runs [--json]`, `akit flow schema`.

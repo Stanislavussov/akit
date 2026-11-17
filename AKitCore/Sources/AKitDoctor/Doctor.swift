@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitFlows
 import AKitFoundation
 import AKitHarnesses
 import AKitKnowledge
@@ -11,7 +12,8 @@ import Foundation
 /// of what AKit sees on this Mac and what is wrong. A line starting with `!` is a problem, with
 /// what to do. Never a secret: no auth files, tokens, MCP env or header values, or
 /// `settings.local.json` are read, a remote shows only as its `host/owner/repo`, and the whole
-/// text goes through `SecretFilter.masked` last.
+/// text goes through `SecretFilter.masked` last. It writes one file: this Mac's Pi features,
+/// `~/.akit/local/pi-capabilities.json` (flows.md F20), from `pi --version` and `pi --help`.
 public enum Doctor {
     public struct Input: Sendable {
         public var env: HarnessEnvironment
@@ -167,6 +169,10 @@ public enum Doctor {
             }
         }
 
+        // Flows
+        lines += ["", "Flows"]
+        lines += await flowLines(installations.first { $0.id == .pi }?.executableURL, projects: found, env: env, tilde: tilde)
+
         // Logs
         lines += ["", "Logs"]
         let reports = crashReports(in: home.appending(path: "Library/Logs/DiagnosticReports"))
@@ -314,6 +320,44 @@ public enum Doctor {
     }
 
     /// AKit's crash reports (`AKit-…`, `akit-…`), newest first.
+    /// F20: probe this Mac's Pi and store its features; check that run records stay out of git in
+    /// every project with flows; name old run worktrees the cleanup keeps (uncommitted changes).
+    static func flowLines(_ pi: URL?, projects: [URL], env: HarnessEnvironment, tilde: (URL) -> String) async -> [String] {
+        var lines: [String] = []
+        if let pi {
+            if let found = await FlowPiProbe.probe(pi: pi, env: env) {
+                do {
+                    try FlowPiProbe.write(found, env: env)
+                    let missing = FlowPiFeature.allCases.filter { !found.features.contains($0.rawValue) }.map(\.rawValue)
+                    lines.append("  Pi \(found.version ?? "?") features written to \(tilde(FlowPiProbe.file(env: env)))"
+                                 + (missing.isEmpty ? "" : "; missing: \(missing.joined(separator: ", "))"))
+                    if let version = found.version, FlowCheck.compare(version, Flow.defaultMinPi) == .orderedAscending {
+                        lines.append("! Pi \(version) is older than \(Flow.defaultMinPi), the lowest Pi flows run on; update Pi.")
+                    }
+                } catch {
+                    lines.append("! couldn't write \(tilde(FlowPiProbe.file(env: env))): \(error.localizedDescription)")
+                }
+            } else {
+                lines.append("! Pi didn't answer --version / --help; flows can't be checked against it.")
+            }
+        } else {
+            lines.append("  no Pi: flows run in Pi only")
+        }
+        let withFlows = projects.filter { FileWalk.isDirectory($0.appending(path: ".pi/flows")) }
+        for project in withFlows {
+            switch LocalOnly.flowRunsExcluded(project) {
+            case true?: lines.append("  \(tilde(project)): run records kept out of git")
+            case false?: lines.append("! \(tilde(project)): /\(LocalOnly.flowRuns) is not in .git/info/exclude; run Apply… for the project (akit apply) so run records stay out of git.")
+            case nil: continue
+            }
+        }
+        for tree in FlowWorktreeCleanup.old(env: env) where tree.dirty {
+            lines.append("! run worktree \(tilde(tree.folder)) is over \(FlowWorktreeCleanup.defaultDays) days old with uncommitted changes; kept. Commit or discard them there, then it is removed.")
+        }
+        if withFlows.isEmpty && pi != nil { lines.append("  no project with flows") }
+        return lines
+    }
+
     static func crashReports(in folder: URL) -> [CrashReport] {
         FileWalk.children(of: folder).compactMap { url -> CrashReport? in
             let name = url.lastPathComponent

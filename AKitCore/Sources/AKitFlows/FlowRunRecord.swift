@@ -28,6 +28,12 @@ public struct FlowTokens: Codable, Equatable, Sendable {
 public struct FlowEvent: Equatable, Sendable {
     public enum Kind: String, CaseIterable, Sendable {
         case runStart = "run-start", stepStart = "step-start", stepEnd = "step-end", gate, deviation, runEnd = "run-end"
+        /// `STOP` or an unanswered gate stopped the run before a step; `/flow resume` goes on.
+        case halted
+        /// Edits made between steps (at a gate) were committed before the next step.
+        case gateEdits = "gate-edits"
+        /// `/flow resume` picked the run up again (and removed `STOP`).
+        case resume
     }
 
     public var kind: Kind
@@ -38,6 +44,9 @@ public struct FlowEvent: Equatable, Sendable {
     public var reason: String?
     public var tokens: FlowTokens?
     public var raw: JSONValue
+
+    /// A string field of the line (`rule`, `detail`, `tool`, `input`, `action`, `stop` …).
+    public func text(_ key: String) -> String? { raw.member(key)?.string }
 }
 
 /// A handoff file (F4, `akit-flow-handoff/1`).
@@ -81,7 +90,12 @@ public struct FlowRun: Sendable {
     public static let supportedVersion = 1
 
     public var id: String
+    public var folder: URL
     public var flow: String?
+    public var task: String?
+    /// The project's main checkout and the run's worktree, from `run.json` or the run-start event.
+    public var project: String?
+    public var worktree: String?
     public var piVersion: String?
     public var events: [FlowEvent]
     /// Lines with a type this AKit does not know, kept as they were.
@@ -118,12 +132,15 @@ public struct FlowRun: Sendable {
     }
 
     public static func read(_ folder: URL) -> FlowRun {
-        var run = FlowRun(id: folder.lastPathComponent, flow: nil, piVersion: nil, events: [], unknownEvents: [], badLines: 0,
+        var run = FlowRun(id: folder.lastPathComponent, folder: folder, flow: nil, task: nil, project: nil, worktree: nil, piVersion: nil, events: [], unknownEvents: [], badLines: 0,
                           handoffs: [], readOnly: false, problems: [])
         if let data = try? Data(contentsOf: folder.appending(path: "run.json")) {
             if let cache = try? JSONValue.parse(data) {
                 run.check(cache.member("schema")?.string, kind: runSchema, in: "run.json")
                 run.flow = cache.member("flow")?.string
+                run.task = cache.member("task")?.string
+                run.project = cache.member("project")?.string
+                run.worktree = cache.member("worktree")?.string
                 run.piVersion = cache.member("pi")?.string ?? cache.member("piVersion")?.string
             } else {
                 run.problems.append("run.json is not JSON (a cache; the events are read instead).")
@@ -145,7 +162,11 @@ public struct FlowRun: Sendable {
                                       outcome: value.member("outcome")?.string.flatMap(FlowOutcome.init(rawValue:)),
                                       reason: value.member("reason")?.string,
                                       tokens: value.member("tokens").map { FlowTokens($0) }, raw: value)
-                if kind == .runStart, let flow = event.raw.member("flow")?.string { run.flow = flow }
+                if kind == .runStart {
+                    run.flow = event.text("flow") ?? run.flow
+                    run.task = event.text("task") ?? run.task
+                    run.worktree = event.text("worktree") ?? run.worktree
+                }
                 run.events.append(event)
             }
         } else {

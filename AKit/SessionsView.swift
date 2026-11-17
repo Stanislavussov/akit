@@ -16,6 +16,9 @@ struct SessionsView: View {
     /// nil = all harnesses.
     @State private var harness: HarnessID? = DebugSnapshot.options?.harness.map { HarnessID($0, displayName: $0) }
     @State private var project = SessionProjectFilter.all
+    /// The `flow` filter: flow step sessions (Runs) instead of the harnesses' own (D27).
+    @State private var flowSteps = DebugSnapshot.options?.section == .sessions && DebugSnapshot.options?.tab == "flow"
+    private var source: [SessionSummary] { flowSteps ? model.flowSessions : model.sessions }
 
     var body: some View {
         let names = SessionProjects.names(of: model.sessionProjects.values)
@@ -23,7 +26,7 @@ struct SessionsView: View {
             list(names)
                 .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
             Group {
-                if let session = model.sessions.first(where: { $0.id == selection }) {
+                if let session = source.first(where: { $0.id == selection }) {
                     SessionDetailView(session: session, projectID: projectID(of: session))
                 } else {
                     ContentUnavailableView("Select a session", systemImage: "bubble.left.and.bubble.right")
@@ -49,6 +52,10 @@ struct SessionsView: View {
                 .help("Show sessions of one project: its main folder and all its worktrees")
             }
             ToolbarItem {
+                Toggle("Flow Steps", systemImage: "point.3.connected.trianglepath.dotted", isOn: $flowSteps)
+                    .help("Show the sessions of flow steps (Activity → Runs) instead of your own; they stay out of Insights")
+            }
+            ToolbarItem {
                 Picker("Harness", selection: $harness) {
                     Text("All harnesses").tag(HarnessID?.none)
                     ForEach(harnesses, id: \.self) { id in
@@ -66,13 +73,21 @@ struct SessionsView: View {
         .onAppear { selection = selection ?? filtered.first?.id }
         // Insights → Stuck Loops → Show: every filter off, so the session is listed, then select it.
         .onChange(of: model.revealSession, initial: true) {
-            guard let reveal = model.revealSession, model.sessions.contains(where: { $0.file.path == reveal.path }) else { return }
+            guard let reveal = model.revealSession else { return }
+            if model.flowSessions.contains(where: { $0.file.path == reveal.path }) {
+                flowSteps = true
+            } else if model.sessions.contains(where: { $0.file.path == reveal.path }) {
+                flowSteps = false
+            } else {
+                return
+            }
             query = ""
             harness = nil
             project = .all
             selection = reveal.path
         }
-        .onChange(of: model.sessions) { if selection.flatMap({ id in model.sessions.first { $0.id == id } }) == nil { selection = filtered.first?.id } }
+        .onChange(of: model.sessions) { if selection.flatMap({ id in source.first { $0.id == id } }) == nil { selection = filtered.first?.id } }
+        .onChange(of: flowSteps) { keepSelectionListed() }
         .onChange(of: project) { keepSelectionListed() }
         .onChange(of: harness) { keepSelectionListed() }
         .onChange(of: model.sessionProjects, initial: true) {
@@ -148,12 +163,12 @@ struct SessionsView: View {
     }
 
     private var subtitle: String {
-        filtered.count == model.sessions.count ? "\(model.sessions.count) sessions" : "\(filtered.count) of \(model.sessions.count)"
+        (flowSteps ? "Flow steps: " : "") + (filtered.count == source.count ? "\(source.count) sessions" : "\(filtered.count) of \(source.count)")
     }
 
     private var filtered: [SessionSummary] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        return model.sessions.filter { session in
+        return source.filter { session in
             let id = projectID(of: session)
             return (harness == nil || session.harness == harness)
                 && project.matches(id)

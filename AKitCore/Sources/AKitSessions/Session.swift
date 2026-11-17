@@ -20,6 +20,12 @@ public struct SessionSummary: Identifiable, Hashable, Sendable {
     public let size: Int
     /// Harness version that wrote the session, if recorded (Claude Code does).
     public let harnessVersion: String?
+    /// Where the session came from when it is not a harness's own: `flow` for a flow step's child
+    /// session (`<project>/.pi/akit-flow/runs/<run>/sessions`, D27). Such sessions are listed in
+    /// Sessions behind a filter and never enter the Insights index.
+    public var origin: String?
+
+    public static let flowOrigin = "flow"
 
     public init(harness: HarnessID, file: URL, title: String, project: URL?, started: Date?, modified: Date,
                 size: Int, harnessVersion: String? = nil) {
@@ -222,6 +228,28 @@ public enum SessionScanner {
     public static func scan(installations: [HarnessInstallation], in env: HarnessEnvironment) -> [SessionSummary] {
         installations.flatMap { sessions(of: $0, in: env) }
             .sorted { $0.modified > $1.modified }
+    }
+
+    /// Flow step sessions of the projects (`.pi/akit-flow/runs/*/sessions/*.jsonl`), tagged `flow`,
+    /// newest first. Kept apart from `scan`, so nothing that reads harness sessions counts them (D27).
+    public static func flowSessions(projects: [URL]) -> [SessionSummary] {
+        projects.flatMap { project -> [SessionSummary] in
+            FileWalk.children(of: project.appending(path: ".pi/akit-flow/runs")).flatMap { run -> [SessionSummary] in
+                PiSessions.list(folder: run.appending(path: "sessions")).map { session in
+                    var session = session
+                    session.origin = SessionSummary.flowOrigin
+                    return session
+                }
+            }
+        }
+        .sorted { $0.modified > $1.modified }
+    }
+
+    /// One flow step's session file as a session tagged `flow` (Runs → a step's Open in Lab, Corrections).
+    public static func flowSession(_ file: URL) -> SessionSummary? {
+        guard var session = PiSessions.summary(of: file) else { return nil }
+        session.origin = SessionSummary.flowOrigin
+        return session
     }
 
     /// Saved conversations of one harness (any order).

@@ -724,6 +724,13 @@ Friction («трение») — места, где агент спотыкалс
 - **Agent**, **Model**, **Skills**, **Tools**, **Gate**, **Max loops**, **Checks** (карточка шага). Подробнее: [Карточка шага](flows#card)
 - **On done** / **On failed** / **On blocked** (карточка шага): куда идти после шага; **Next step**, **Stop and ask**, шаг или **End**. Подробнее: [Куда идти](flows#routes)
 - **Add Step** (Flows): новая карточка с выбранным агентом. Подробнее: [Карточка шага](flows#card)
+- **Choose…** (карточка шага, Skills): список скиллов с поиском и флажками. Подробнее: [Карточка шага](flows#card)
+- **Prompt** (карточка шага): текст задания шага, можно править. Подробнее: [Карточка шага](flows#card)
+- **Runs** (боковое меню, группа Activity): runs по flow в проектах. Подробнее: [Посмотреть run](flows#runs)
+- **Stop…** (Runs): пишет `STOP`; run встанет перед следующим шагом. Подробнее: [Остановить run](flows#stop)
+- **Off the routes** (Runs): run пошёл туда, куда пути шага не ведут. Подробнее: [Посмотреть run](flows#runs)
+- **Open in Lab…**, **Corrections**, **Show in Sessions** (Runs, попытка шага): сессия шага в Lab, поправки в ней, сессия на экране Sessions. Подробнее: [Посмотреть run](flows#runs)
+- **Flow Steps** (Sessions): фильтр сессий шагов flow; в Insights они не входят. Подробнее: [Посмотреть run](flows#runs)
 
 ## Insights
 <!-- section: terms-insights -->

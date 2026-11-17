@@ -27,6 +27,13 @@ public enum LocalOnly {
     /// Where Pi's flow runner keeps its run records in a project; never in git.
     public static let flowRuns = ".pi/akit-flow"
 
+    /// Whether the project's exclude file keeps the run records out of git (`akit doctor`); nil when
+    /// the folder is not a repository's main checkout.
+    public static func flowRunsExcluded(_ project: URL) -> Bool? {
+        guard let file = excludeFile(of: project) else { return nil }
+        return blockUnits(in: file, markers: .flows)?.contains(flowRuns) ?? false
+    }
+
     /// The flows block's units for a lock: the run records' folder while AKit wrote a project flow.
     static func flowUnits(of lock: ProjectRecords.Lock) -> [String] {
         lock.files.keys.contains { $0.hasPrefix(".pi/flows/") } ? [flowRuns] : []

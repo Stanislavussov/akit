@@ -119,7 +119,11 @@ class Model(http.server.BaseHTTPRequestHandler):
         else:
             chunk({"role": "assistant", "content": name})
             chunk({}, "stop")
-        chunk({}, usage={"prompt_tokens": 1200, "completion_tokens": 30, "total_tokens": 1230})
+        # The parent's own prompt gets other numbers than the children's, so the A7 fixture can
+        # tell whose tokens a session file holds.
+        parent = any("hello e2e" in text_of(m) for m in body.get("messages", []))
+        chunk({}, usage={"prompt_tokens": 777 if parent else 1200, "completion_tokens": 7 if parent else 30,
+                         "total_tokens": 784 if parent else 1230})
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
@@ -283,6 +287,18 @@ def main():
         term.send("\x04", 0.5)
         check(term.exited(15), "ctrl+d (built-in exit) still quits Pi")
         term = None
+        # AKIT_FLOW_E2E_KEEP=<folder>: keep the parent's session file and the run's child sessions
+        # (the A7 fixture, fixtures/flow-runs/a7/). Only session files: no keys or config.
+        keep = os.environ.get("AKIT_FLOW_E2E_KEEP")
+        if keep and not failures:
+            parents = [os.path.join(d, n) for d, _, names in os.walk(os.path.join(agent, "sessions")) for n in names if n.endswith(".jsonl")]
+            shutil.rmtree(keep, ignore_errors=True)
+            os.makedirs(os.path.join(keep, "children"))
+            for path in parents:
+                shutil.copy(path, os.path.join(keep, "parent.jsonl"))
+            for name in sessions:
+                if name.endswith(".jsonl"):
+                    shutil.copy(os.path.join(folder, "sessions", name), os.path.join(keep, "children", name))
     finally:
         if term is not None:
             try:

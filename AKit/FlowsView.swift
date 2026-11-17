@@ -173,6 +173,7 @@ struct FlowsView: View {
             }
             Text("\(flow.steps.count) step\(flow.steps.count == 1 ? "" : "s") · Pi \(flow.minPi) or newer · a flow runs in Pi with /flow \(flow.name) <task>")
                 .font(.caption).foregroundStyle(.secondary)
+            piVersionLine.font(.caption)
         }
     }
 
@@ -330,6 +331,18 @@ struct FlowsView: View {
             }
             .help("Commands the runner runs at the step's end, without a shell; red turns done into failed")
         }
+    }
+
+    /// This Mac's Pi (from `akit doctor`) next to the newest Pi the runner was tested on (F20).
+    private var piVersionLine: some View {
+        let installed = capabilities?.version
+        let newer = installed.map { FlowCheck.compare($0, Flow.testedPi) == .orderedDescending } ?? false
+        let older = installed.map { FlowCheck.compare($0, Flow.defaultMinPi) == .orderedAscending } ?? false
+        return Label(installed.map { "This Mac's Pi \($0) · tested on Pi \(Flow.testedPi)" + (newer ? ": newer than tested, flows run with a warning" : older ? ": too old, flows refuse to run" : "") }
+                     ?? "This Mac's Pi: not checked yet (akit doctor writes it) · tested on Pi \(Flow.testedPi)",
+                     systemImage: newer || older ? "exclamationmark.triangle" : "info.circle")
+            .foregroundStyle(older ? .red : newer ? .orange : .secondary)
+            .help("akit doctor stores this Mac's Pi features in ~/.akit/local/pi-capabilities.json; options it lacks are grey")
     }
 
     /// Why this Mac's Pi can't do `feature` (from `pi-capabilities.json`), or nil when it can or nothing is known.

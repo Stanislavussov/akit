@@ -96,7 +96,7 @@ the run-record reader of `.pi/akit-flow/runs/` and the generated `flow.schema.js
 flows (step 4) gets plain data, so the rulesync seam stays as it is. Step 4 (2026-11-17): Apply
 renders a layer's flows from `ProjectBundle.flows` (JSON text from `AKitBrain`) and the runner
 templates embedded in `AKitRender`; `AKitRender` still doesn't import `AKitFlows`. The app imports it
-for the Flows screen (`project.yml`): `App → AKitFlows`.
+for the Flows screen (`project.yml`): `App → AKitFlows`. 2026-11-17 (step 5): `AKitDoctor → AKitFlows` (`akit doctor` writes `pi-capabilities.json`, checks the run-records exclude, names kept run worktrees).
 
 ## Goal
 
@@ -148,7 +148,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitHelp` | Ask AKit (added 2026-10-14, `ask-akit.md`): the guide sections, prompt and answer of a question about a screen. Pure; the app makes the call. | new |
 | `AKitKnowledge` | Knowledge base (added 2026-10-24, `knowledge.md`): a base folder per world (by default `~/.akit/local/knowledge/<world>`, or the one set in `bases.json`; git without a remote), its areas and Markdown notes (frontmatter, `##` sections, byte-preserving edits), the `[[link]]` resolver, the base choice, the one commit function under the base's git lock, `obsidian://open` links. No UI, no model calls. | new |
 | `AKitReview` | AKit Review (added 2026-10-15, `review.md`): project profiles and the three config levels, Gather from GitLab and Azure DevOps REST into a context pack, the review passes in Pi, the requests and the drafts AKit writes after approval. | new |
-| `AKitFlows` | Flows (added 2026-11-17, `flows.md`): the flow file Pi runs (steps, models, skills, tools, routes), its YAML codec and generated JSON Schema, `FlowRouting.next`, `FlowCheck`, and the tolerant reader of a run's record (`events.jsonl`, handoffs). Writes nothing. | new |
+| `AKitFlows` | Flows (added 2026-11-17, `flows.md`): the flow file Pi runs (steps, models, skills, tools, routes), its YAML codec and generated JSON Schema, `FlowRouting.next`, `FlowCheck`, and the tolerant reader of a run's record (`events.jsonl`, handoffs); the Runs model (`FlowRunSummary`), Stop's `STOP` file, `pi-capabilities.json` (`FlowPiProbe`) and the 14-day removal of clean run worktrees (`FlowWorktreeCleanup`). | new |
 | `AKitCommandLine` | The logic behind the `akit` command, including the `akit setup` wizard. | `CLI/AKitCLI.swift`; `CLI/Onboarding.swift` (used only by the CLI; moved from `Brain/` in step 11) |
 | `akit` (executable) | Unchanged. It now imports `AKitCommandLine`, `AKitInsights` (`RecordSession`), `AKitHarnesses`, `AKitBrain` and `AKitFoundation`. | `Sources/akit/main.swift` |
 | `AKit` (app) | SwiftUI shell. | `AKit/*` |
@@ -203,7 +203,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Instructions (the core block markers), Brain, Render, Insights, MCP (MCP switches' project files) |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac), Knowledge (`KnowledgeChecker`: the check model's call on a proposal, shared by `akit kb check` and the app's Inbox, 2026-10-25; `KnowledgeMapDrawer`: Draw Map with Pi…, 5.4; `KnowledgeAsk`: Ask Pi about a note, K30), Skills (`SkillPortModel`: Port to Pi's model pass on `SkillPort`'s draft and `SkillPortCheck`, 2026-11-07, `skill-port.md`) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer), Instructions (Analyze… of the global instructions, 2026-10-30) |
-| `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup, Knowledge (the knowledge base line) |
+| `AKitDoctor` | Flows (the Pi probe, run worktrees), Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup, Knowledge (the knowledge base line) |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
 | `AKitReview` | Foundation, Model, Harnesses (Pi's packages, for Pi steps), Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Knowledge (the knowledge card of Gather), Yams |
 | `AKitKnowledge` | Foundation, Model, Brain (this Mac's kind, the brain's root, project ids), Yams (note frontmatter) |

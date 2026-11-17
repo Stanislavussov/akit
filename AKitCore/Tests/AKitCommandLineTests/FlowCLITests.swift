@@ -73,6 +73,21 @@ struct FlowCLITests {
         #expect(check.out.contains("reviewer-same-model") && check.out.contains("unsafe-check-command"))
     }
 
+    @Test func runsListsTheProjectsRuns() async throws {
+        let empty = await akit("flow", "runs")
+        #expect(empty.code == 0 && empty.out.contains("No flow runs"))
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        try fm.createDirectory(at: project.appending(path: ".pi/akit-flow/runs"), withIntermediateDirectories: true)
+        try fm.copyItem(at: root.appending(path: "fixtures/flow-runs/sample"), to: project.appending(path: ".pi/akit-flow/runs/20261117-1200-0000"))
+        let text = await akit("flow", "runs")
+        #expect(text.code == 0 && text.out.contains("20261117-1200-0000 feature: done") && text.out.contains("checks #1: failed:checks"))
+        #expect(text.out.contains("⚠ check-failed: node check.mjs → 1"))
+        let json = await akit("flow", "runs", "--json")
+        let value = try JSONSerialization.jsonObject(with: Data(json.out.utf8)) as? [[String: Any]]
+        #expect(value?.first?["status"] as? String == "done")
+        #expect((value?.first?["attempts"] as? [Any])?.count == 5)
+    }
+
     @Test func schemaPrintsTheJSONSchema() async {
         let schema = await akit("flow", "schema")
         #expect(schema.code == 0 && schema.out.contains("\"$schema\""))

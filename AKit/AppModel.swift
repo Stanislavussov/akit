@@ -44,6 +44,9 @@ final class AppModel {
     var globalInvocationRequest: GlobalInvocationRequest?
     /// Saved conversations of all installed harnesses, newest first.
     private(set) var sessions: [SessionSummary] = []
+    /// Flow step sessions of the projects (tag `flow`): listed in Sessions behind the Flow Steps
+    /// filter only, never in `sessions`, so nothing else counts them (D27).
+    private(set) var flowSessions: [SessionSummary] = []
     /// The person's ratings of runs (`akit rate`, Pi's ⌥G / ⌥X / ⌥R), by session log path.
     private(set) var ratings: [String: [Ratings.Rating]] = [:]
     /// Session folder (`SessionSummary.project` path) → project id, worktrees under their
@@ -1304,6 +1307,7 @@ final class AppModel {
         }
         followLocalOnlyWorktrees()
         self.sessions = sessions
+        flowSessions = await Task.detached { SessionScanner.flowSessions(projects: projects) }.value
         self.sessionProjects = sessionProjects
         self.ratings = ratings
         mcpServers = mcp.servers

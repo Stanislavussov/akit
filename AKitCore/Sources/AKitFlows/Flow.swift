@@ -8,6 +8,9 @@ public struct Flow: Codable, Equatable, Sendable {
     public static let currentFormat = 1
     /// The lowest Pi the runner supports (flows.md, "Pi facts").
     public static let defaultMinPi = "1.0.4"
+    /// The highest Pi the runner's tests passed on: `TESTED_PI` of `flow-core.ts` (a test keeps
+    /// them equal; `make check-pi` raises both).
+    public static let testedPi = "1.0.4"
 
     public var format: Int
     public var name: String
