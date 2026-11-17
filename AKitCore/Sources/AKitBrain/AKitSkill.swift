@@ -313,7 +313,8 @@ gate, max loops). Pi runs it with `/flow [name] <task>`; akit only reads and che
   says whether each project with flows keeps `/.pi/akit-flow` out of git and names run worktrees
   over 14 days old that were kept for uncommitted changes.
 
-Flows are made in AKit's Flows screen (Setup → Flows): New from Template → Feature, the step
+Flows are made in AKit's Flows screen (Setup → Flows): New from Template → Feature or an
+OMC-like preset (autopilot, ralplan, ralph, deep-interview, tdd, debug, review, interrogate, …), the step
 cards by clicks, Check, Save (writes `brain/flows/<name>.yaml` and commits), Layers (adds the flow
 to a layer's `flows:`). Apply (`akit plan` / `akit apply`, or Apply… on the screen) renders a
 layer's flows to `.pi/flows/<name>.yaml` (home layer: `~/.pi/agent/flows/`) and the runner to

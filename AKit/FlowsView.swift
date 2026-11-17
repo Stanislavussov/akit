@@ -71,7 +71,10 @@ struct FlowsView: View {
             .help("The project whose commands the checks offer, whose rendered flows are listed below and that Apply… renders into")
             Menu("New from Template", systemImage: "plus") {
                 ForEach(FlowTemplates.all) { template in
-                    Button(template.name.capitalized) { newFromTemplate() }.help(template.summary)
+                    Button(template.like.map { "\(template.name.capitalized)  (like OMC \($0))" } ?? template.name.capitalized) {
+                        newFromTemplate(template)
+                    }
+                    .help(template.summary)
                 }
             }
             .help("Copy a built-in flow into a new draft; Save writes it into the brain")
@@ -113,15 +116,15 @@ struct FlowsView: View {
         }
     }
 
-    private func newFromTemplate() {
-        var name = "feature"
+    private func newFromTemplate(_ template: FlowTemplates.Template) {
+        var name = template.name
         var number = 2
         while brainNames.contains(name) {
-            name = "feature-\(number)"
+            name = "\(template.name)-\(number)"
             number += 1
         }
-        var flow = FlowTemplates.feature(model: piModels.first ?? "", reviewModel: piModels.dropFirst().first ?? "",
-                                         checks: commands.filter { $0.contains("test") })
+        var flow = template.make(piModels.first ?? "", piModels.dropFirst().first ?? "",
+                                 commands.filter { $0.contains("test") })
         flow.name = name
         draft = flow
         saved = nil
@@ -211,11 +214,11 @@ struct FlowsView: View {
 
     /// F6: the reviewer's model next to the implementer's.
     private func modelEquality(_ flow: Flow) -> String {
-        let implementers = flow.steps.filter { $0.agent == FlowCheck.implementerAgent }.map(\.model)
-        let reviewers = flow.steps.filter { $0.agent == FlowCheck.reviewerAgent }.map(\.model)
-        guard !implementers.isEmpty, !reviewers.isEmpty else { return "Models: no implementer and reviewer pair to compare." }
+        let implementers = Array(Set(flow.steps.filter { FlowTemplates.makers.contains($0.agent) }.map(\.model))).sorted()
+        let reviewers = Array(Set(flow.steps.filter { FlowTemplates.judges.contains($0.agent) }.map(\.model))).sorted()
+        guard !implementers.isEmpty, !reviewers.isEmpty else { return "Models: no maker and reviewer pair to compare." }
         let same = !Set(implementers).isDisjoint(with: reviewers)
-        return "Implementer \(implementers.joined(separator: ", ")) · reviewer \(reviewers.joined(separator: ", ")): \(same ? "the same model, pick another for the review" : "different models")"
+        return "Makers \(implementers.joined(separator: ", ")) · reviewers \(reviewers.joined(separator: ", ")): \(same ? "the same model, pick another for the review" : "different models")"
     }
 
     private func toolsBox(_ flow: Flow) -> some View {
@@ -480,7 +483,7 @@ struct FlowsView: View {
         if options.demo, piModels.isEmpty { piModels = ["demo/coder-large", "demo/reviewer-pro"] }
         if let name = options.project { project = model.projects.first { $0.lastPathComponent == name } }
         if let name = options.select { open(name) }
-        if options.tab == "feature" || options.tab == "check", draft == nil { newFromTemplate() }
+        if options.tab == "feature" || options.tab == "check", draft == nil { newFromTemplate(FlowTemplates.all[0]) }
         if options.tab == "check", let draft { check(draft) }
         // `--query <step id>` opens that card; `--add` opens its skill chooser too.
         if let step = options.query, draft?.step(step) != nil {

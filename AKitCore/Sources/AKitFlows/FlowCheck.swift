@@ -75,8 +75,6 @@ public struct FlowIssue: Codable, Equatable, Sendable {
 /// The checks before Apply (F3, F6, F13, F19, F20). Pure: the known models, skills and Pi
 /// features come in as parameters; `nil` means unknown, which is a warning, not a pass.
 public enum FlowCheck {
-    public static let implementerAgent = "implementer"
-    public static let reviewerAgent = "reviewer"
     /// OMC's verify-command rules (oh-my-claudecode 5.8.0 guardrails).
     public static let maxCheckCommands = 10
     public static let maxCheckLength = 120
@@ -118,8 +116,8 @@ public enum FlowCheck {
         }
         if knownModels == nil { issues.append(.init(.warning, .modelsNotChecked, "Models not checked: the list of Pi's models is unknown here.")) }
         if knownSkills == nil { issues.append(.init(.warning, .skillsNotChecked, "Skills not checked: the list of Pi's skills is unknown here.")) }
-        let implementers = flow.steps.filter { $0.agent == implementerAgent }
-        for reviewer in flow.steps where reviewer.agent == reviewerAgent {
+        let implementers = flow.steps.filter { FlowTemplates.makers.contains($0.agent) }
+        for reviewer in flow.steps where FlowTemplates.judges.contains(reviewer.agent) {
             for implementer in implementers where implementer.model == reviewer.model {
                 issues.append(.init(.error, .reviewerSameModel, step: reviewer.id,
                                     "Step \(reviewer.id) reviews with \(reviewer.model), the model of \(implementer.id); pick another model."))

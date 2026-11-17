@@ -10,11 +10,11 @@ private let repoRoot = URL(filePath: #filePath).deletingLastPathComponent().dele
 private func sample() -> Flow {
     Flow(name: "feature", tools: ["read", "edit", "write", "bash"], steps: [
         FlowStep(id: "plan", agent: "planner", model: "anthropic/claude-a", thinking: "high", skills: ["planning"], tools: ["read"]),
-        FlowStep(id: "implement", agent: FlowCheck.implementerAgent, model: "anthropic/claude-a", tools: ["read", "edit", "write", "bash"],
+        FlowStep(id: "implement", agent: "implementer", model: "anthropic/claude-a", tools: ["read", "edit", "write", "bash"],
                  extensions: ["work-auth.ts"], maxLoops: 2, routes: ["failed:*": "plan"]),
         FlowStep(id: "checks", agent: "checker", model: "anthropic/claude-a", checks: ["make test", "npm run lint"],
                  routes: ["failed:*": "implement", "blocked:*": "plan"]),
-        FlowStep(id: "review", agent: FlowCheck.reviewerAgent, model: "openai/gpt-b", tools: ["read"], paths: ["docs/"], gate: true,
+        FlowStep(id: "review", agent: "reviewer", model: "openai/gpt-b", tools: ["read"], paths: ["docs/"], gate: true,
                  routes: ["done:*": "end", "failed:notes": "implement"]),
     ])
 }
@@ -154,7 +154,8 @@ struct FlowCheckTests {
         var flow = sample()
         flow.steps[3].model = flow.steps[1].model
         let issues = FlowCheck.check(flow, knownModels: allModels, knownSkills: ["planning"], pi: allPi)
-        #expect(issues.map(\.code) == [.reviewerSameModel])
+        // The planner and the implementer both use that model: one issue per maker.
+        #expect(issues.map(\.code) == [.reviewerSameModel, .reviewerSameModel])
         #expect(issues.first?.severity == .error && issues.first?.step == "review")
     }
 

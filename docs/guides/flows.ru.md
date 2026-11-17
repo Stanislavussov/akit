@@ -23,7 +23,7 @@
 **Что это:** слева — список flows, справа — открытый flow столбиком карточек.
 
 - **Project** — проект. Из него берутся команды проверок, для него показан список «Rendered for Pi», в него ставит **Apply…**.
-- **New from Template** — новый flow из готового. Пока есть один: **Feature**.
+- **New from Template** — новый flow из готового: **Feature** и 21 пресет, как в OMC (см. ниже).
 - **Brain** — flows из вашего brain, файлы `flows/<имя>.yaml`.
 - **Rendered for Pi** — flows, которые уже лежат у Pi: `.pi/flows/` проекта и `~/.pi/agent/flows/`. Их не правят здесь, только смотрят.
 
@@ -47,6 +47,36 @@
 ![Новый flow feature из шаблона: поле Name, кнопки Check, Save, Layers, Apply…; блок Tools of the flow с флажками; шесть свёрнутых карточек 1. clarify … 6. commit, по одной строке: агент, короткое имя модели, ромб gate и три метки путей ✓ ✗ ⏸; слева цветные стрелки назад](images/flows-feature.png)
 
 > **Совет:** **Save** серая, пока у какого-то шага нет модели или имя пустое.
+
+**Пресеты как в OMC.** В меню **New from Template** рядом с именем написано, на какой процесс OMC похож пресет. Первая модель из списка Pi идёт на шаги, которые делают работу, вторая — на шаги, которые её проверяют (review, verify, critique, architect).
+
+| Пресет | Как в OMC | Шаги |
+|---|---|---|
+| **Ralplan** | ralplan | plan → architect → critique (стоп для одобрения); только чтение |
+| **Ralph** | ralph | implement → checks → verify, до 5 кругов → commit |
+| **Tdd** | tdd | test (падающий тест) → implement → checks → review → commit |
+| **Debug** | debug / trace | trace (причина) → fix → checks → verify → commit |
+| **Review** | code-review | review; только чтение |
+| **Deslop** | ai-slop-cleaner | clean → checks → review → commit |
+| **Research** | research | research → report; только чтение |
+| **Deep-Interview** | deep-interview | clarify → plan, оба со стопом; только чтение |
+| **Autopilot** | autopilot | clarify → plan → architect → critique → implement → checks → verify → commit |
+| **Plan** | plan | plan со стопом; только чтение |
+| **Verify** | verify | checks → verify; только чтение |
+| **Security-Review** | security-review | один шаг проверки безопасности; только чтение |
+| **Interrogate** | interrogate | correctness → security → edge-cases → verdict; только чтение |
+| **Blast-Radius** | blast-radius | map (что может сломаться) → checks; только чтение |
+| **Fix-Ci** | fix-ci | fix → checks, до 5 кругов → review → commit |
+| **Fix-Merge-Conflicts** | fix-merge-conflicts | fix → checks → review → commit |
+| **Hillclimb** | hillclimb | baseline → change → checks → measure, до 5 кругов → commit |
+| **Sharpen** | sharpen | один шаг: цель, проверка, что вне задачи; только чтение |
+| **How** | how | explore → explain; только чтение |
+| **Why** | why | один шаг: история git и решения; только чтение |
+| **Deepinit** | deepinit | document (AGENTS.md) → review → commit |
+
+Нет **team** и **arena**: им нужны параллельные шаги, а в этой версии шаги идут строго по одному.
+
+**Пример.** **New from Template** → **Ralph (like OMC ralph)**, **Save**, **Apply…**, потом в Pi: `/flow ralph почини падающий тест экспорта`.
 
 ## Карточка шага
 <!-- section: card -->
