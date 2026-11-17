@@ -257,7 +257,7 @@ struct FlowRunRecordTests {
         }
         let red = try #require(run.handoffs.first { $0.stepID == "checks" && $0.attempt == 1 })
         #expect(red.outcome == .failed && red.reason == "checks" && red.next == "implement")
-        #expect(red.evidence == "evidence/03-checks-checks.json")
+        #expect(red.evidence == "evidence/03-checks-a1-checks.json")
         #expect(red.done == ["did checks"] && red.files == [.init(path: "src/checks.ts", change: "added")])
     }
 

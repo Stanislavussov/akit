@@ -94,7 +94,7 @@ public struct FlowRunSummary: Sendable {
             attempts[index].evidence = handoff.evidence
             attempts[index].sessionFile = handoff.sessionFile
         }
-        // Evidence without a handoff link: `evidence/NN-<step>-checks.json` names its step and attempt inside.
+        // Evidence without a handoff link: `evidence/NN-<step>-aN-checks.json` names its step and attempt inside (older runs: one file per step).
         for (index, attempt) in attempts.enumerated() where attempt.evidence == nil {
             attempts[index].evidence = Self.evidenceFile(run.folder, step: attempt.step, attempt: attempt.attempt)
         }
@@ -231,7 +231,7 @@ public struct FlowRunReport: Codable, Sendable {
     }
 }
 
-/// A step's check evidence (`evidence/NN-<step>-checks.json`, `akit-flow-evidence/1`).
+/// A step's check evidence (`evidence/NN-<step>-aN-checks.json`, `akit-flow-evidence/1`).
 public struct FlowEvidence: Equatable, Sendable {
     public var command: String
     public var exit: Int?

@@ -76,7 +76,7 @@ public struct FlowHandoff: Equatable, Sendable {
     public var notes: String?
     public var tokens: FlowTokens
     public var deviations: Int?
-    /// The step's check evidence, relative to the run folder (`evidence/NN-<step>-checks.json`).
+    /// The step's check evidence, relative to the run folder (`evidence/NN-<step>-aN-checks.json`).
     public var evidence: String?
 }
 

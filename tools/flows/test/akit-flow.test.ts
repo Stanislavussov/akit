@@ -330,7 +330,11 @@ test("the runner runs the checks; red routes back with the evidence", async () =
 	const second = calls()[3].args.at(-1) ?? "";
 	assert.match(second, /The check `node check\.mjs` exited 1/);
 	assert.match(second, /1 test failed: export writes no header/);
-	const evidence = JSON.parse(readFileSync(join(run, "evidence", "03-checks-checks.json"), "utf8"));
+	// One evidence file per attempt: the rerun does not overwrite attempt 1.
+	const first = JSON.parse(readFileSync(join(run, "evidence", "03-checks-a1-checks.json"), "utf8"));
+	assert.deepEqual(first.step, { id: "checks", attempt: 1 });
+	assert.notEqual(first.checks[0].exit, 0);
+	const evidence = JSON.parse(readFileSync(join(run, "evidence", "03-checks-a2-checks.json"), "utf8"));
 	assert.equal(evidence.schema, "akit-flow-evidence/1");
 	assert.deepEqual(evidence.step, { id: "checks", attempt: 2 });
 	assert.equal(evidence.checks[0].command, "node check.mjs");
@@ -338,7 +342,9 @@ test("the runner runs the checks; red routes back with the evidence", async () =
 	assert.equal(evidence.checks[0].tail.length, 40);
 	assert.equal(evidence.checks[0].tail.at(-1), "all tests passed");
 	const h = JSON.parse(readFileSync(join(run, "handoffs", "03-checks-a1-sess-checks-1.json"), "utf8"));
-	assert.equal(h.evidence, "evidence/03-checks-checks.json");
+	assert.equal(h.evidence, "evidence/03-checks-a1-checks.json");
+	const h2 = JSON.parse(readFileSync(join(run, "handoffs", "03-checks-a2-sess-checks-2.json"), "utf8"));
+	assert.equal(h2.evidence, "evidence/03-checks-a2-checks.json");
 	assert.deepEqual(h.from, { outcome: "failed", reason: "checks" });
 	assert.equal(events(run).at(-1)?.stop, "done");
 });

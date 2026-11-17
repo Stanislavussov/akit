@@ -149,12 +149,12 @@ function runCheck(command: string, cwd: string, signal?: AbortSignal): Promise<C
 	});
 }
 
-/** Runs a step's checks in `cwd` and writes `evidence/NN-<step>-checks.json` (F19). */
+/** Runs a step's checks in `cwd` and writes `evidence/NN-<step>-aN-checks.json`, one file per attempt (F19). */
 export async function runChecks(folder: string, key: string, run: string, step: { id: string; attempt: number }, commands: string[],
 	cwd: string, signal?: AbortSignal): Promise<string> {
 	const checks: CheckResult[] = [];
 	for (const command of commands) checks.push(await runCheck(command, cwd, signal));
-	const path = join(folder, "evidence", `${key}-checks.json`);
+	const path = join(folder, "evidence", `${key}-a${step.attempt}-checks.json`);
 	writeAtomic(path, { schema: EVIDENCE_SCHEMA, run, step, time: new Date().toISOString(), checks });
 	return path;
 }

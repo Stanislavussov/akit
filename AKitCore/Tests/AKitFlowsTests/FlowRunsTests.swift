@@ -40,9 +40,19 @@ struct FlowRunSummaryTests {
         #expect(summary.attempts(of: "implement").first?.deviations.first.map(FlowRunReport.describe) == "tool-not-allowed: bash rm -rf build")
         #expect(summary.attempts(of: "checks").first?.deviations.first.map(FlowRunReport.describe) == "check-failed: node check.mjs → 1")
         #expect(summary.attempts.allSatisfy { $0.handoff != nil && $0.sessionFile != nil })
-        #expect(summary.attempts.last?.evidence == "evidence/03-checks-checks.json")
+        #expect(summary.attempts.last?.evidence == "evidence/03-checks-a2-checks.json")
+        #expect(summary.attempts(of: "checks").first?.evidence == "evidence/03-checks-a1-checks.json")
         #expect(summary.attempts.allSatisfy { $0.forbiddenNext == nil }, "the sample follows its routes")
         #expect(summary.attempts.first?.seconds == 0)
+    }
+
+    @Test func eachAttemptReadsItsOwnEvidence() throws {
+        let (_, folder) = try sampleRunCopy()
+        let summary = FlowRunSummary(FlowRun.read(folder), flow: sampleFlow)
+        let checks = summary.attempts(of: "checks")
+        let first = FlowEvidence.read(folder.appending(path: try #require(checks.first?.evidence)))
+        let last = FlowEvidence.read(folder.appending(path: try #require(checks.last?.evidence)))
+        #expect(first.map(\.exit) == [1] && last.map(\.exit) == [0])
     }
 
     @Test func aPathTheRoutesForbidIsFlagged() throws {
