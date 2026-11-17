@@ -1,0 +1,41 @@
+{
+  "schema": "akit-flow-run/1",
+  "id": "20261117-1200-0000",
+  "flow": "feature",
+  "task": "add CSV export",
+  "project": "/tmp/akit-flow-sample/project",
+  "worktree": "/tmp/akit-flow-sample/home/.akit/local/flows/runs/20261117-1200-0000/worktree",
+  "branch": "akit-flow/20261117-1200-0000",
+  "base": "0000000000000000000000000000000000000000",
+  "pi": "1.0.4",
+  "piFeatures": {
+    "--mode": true,
+    "--session-dir": true,
+    "--no-skills": true,
+    "--skill": true,
+    "--no-extensions": true,
+    "--extension": true,
+    "--model": true,
+    "--thinking": true,
+    "--tools": true
+  },
+  "piApi": {
+    "setWidget": true,
+    "setStatus": true,
+    "confirm": true,
+    "editor": true,
+    "custom": false
+  },
+  "started": "2026-11-17T12:00:00.000Z",
+  "updated": "2026-11-17T12:00:00.000Z",
+  "status": "done",
+  "stop": "done",
+  "state": {
+    "step": null,
+    "visits": {
+      "plan": 1,
+      "implement": 2,
+      "checks": 2
+    }
+  }
+}

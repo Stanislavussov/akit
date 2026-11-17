@@ -27,6 +27,7 @@ let package = Package(
         .library(name: "AKitReview", targets: ["AKitReview"]),
         .library(name: "AKitKnowledge", targets: ["AKitKnowledge"]),
         .library(name: "AKitCorrections", targets: ["AKitCorrections"]),
+        .library(name: "AKitFlows", targets: ["AKitFlows"]),
         // `akit` command for agents and terminals (install: make install-cli).
         .executable(name: "akit", targets: ["akit"]),
     ],
@@ -49,7 +50,11 @@ let package = Package(
         .target(name: "AKitBrain", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "Yams"]),
         .target(name: "AKitInsights", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain"]),
         // The rulesync seam: sees only the brain's ProjectBundle and RenderResult.
-        .target(name: "AKitRender", dependencies: ["AKitFoundation", "AKitBrain"]),
+        // Resources/flows/*.ts are the Pi runner templates (flows.md F1, F20), embedded in the code
+        // (no bundle to lose next to the `akit` binary); Apply renders them. Tested by `make test-flows`.
+        .target(name: "AKitRender", dependencies: ["AKitFoundation", "AKitBrain"],
+                resources: ["akit-flow", "akit-flow-guard", "akit-flow-handoff", "flow-core", "flow-git", "flow-record", "flow-view", "pi-adapter"]
+                    .map { .embedInCode("Resources/flows/\($0).ts") }),
         // Lab: session metrics, runs in a terminal, replay tasks (docs/design/lab.md).
         // Lab → Brain for one thing: whether this Mac is a work Mac (the sending policy).
         // Lab → Knowledge: the knowledge base's check model call (KnowledgeChecker), for the CLI and the app.
@@ -63,7 +68,7 @@ let package = Package(
         // akit doctor and Help → Copy Diagnostics: a read-only report of this Mac (docs/design/machine-setup.md);
         // akit doctor pi / Check Pi…: Pi's setup (→ Instructions: the global AGENTS.md Pi loads);
         // → Knowledge: the knowledge base line (a remote is a problem).
-        .target(name: "AKitDoctor", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitKnowledge"]),
+        .target(name: "AKitDoctor", dependencies: ["AKitFlows", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitKnowledge"]),
         // Ask AKit: questions about a screen, answered from the in-app guides (docs/design/ask-akit.md).
         .target(name: "AKitHelp", dependencies: ["AKitFoundation"]),
         // AI review of GitLab merge requests: AKit gathers, Pi reads, AKit posts drafts after approval (docs/design/review.md).
@@ -74,7 +79,10 @@ let package = Package(
         // Corrections: the user's repeated corrections turned into rules, with proof (docs/design/corrections.md).
         // → ErrorAnalysis: the reactions and the signals scan; → ProjectSetup: Global Instructions and project files.
         .target(name: "AKitCorrections", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights", "AKitLab", "AKitErrorAnalysis", "AKitBrain", "AKitProjectSetup"]),
-        .target(name: "AKitCommandLine", dependencies: ["AKitCorrections", "AKitReview", "AKitKnowledge", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
+        // Flows: flow files, routing, check and run records for Pi's multi-step runs (docs/design/flows.md).
+        // Resources/flow.schema.json is read by path in a drift test, not as a bundle resource.
+        .target(name: "AKitFlows", dependencies: ["AKitFoundation", "AKitHarnesses", "Yams"], exclude: ["Resources"]),
+        .target(name: "AKitCommandLine", dependencies: ["AKitFlows", "AKitCorrections", "AKitReview", "AKitKnowledge", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
         .executableTarget(name: "akit", dependencies: ["AKitCommandLine", "AKitInsights", "AKitHarnesses", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
         .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitModel", "AKitSkills"]),
@@ -91,13 +99,14 @@ let package = Package(
         .testTarget(name: "AKitProjectSetupTests", dependencies: ["AKitProjectSetup", "AKitFoundation", "AKitBrain", "AKitRender", "AKitMCP", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions"]),
         .testTarget(name: "AKitLabTests", dependencies: ["AKitLab", "AKitFoundation", "AKitModel", "AKitBrain", "AKitKnowledge", "AKitSkills"]),
         .testTarget(name: "AKitErrorAnalysisTests", dependencies: ["AKitErrorAnalysis", "AKitHelp", "AKitLab", "AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights", "AKitBrain", "AKitRender"]),
-        .testTarget(name: "AKitDoctorTests", dependencies: ["AKitDoctor", "AKitKnowledge", "AKitInsights", "AKitMCP", "AKitFoundation", "AKitBrain", "AKitProjectSetup"]),
+        .testTarget(name: "AKitDoctorTests", dependencies: ["AKitDoctor", "AKitFlows", "AKitKnowledge", "AKitInsights", "AKitMCP", "AKitFoundation", "AKitBrain", "AKitProjectSetup"]),
         .testTarget(name: "AKitReviewTests", dependencies: ["AKitReview", "AKitFoundation", "AKitLab", "AKitBrain", "AKitKnowledge"]),
         .testTarget(name: "AKitHelpTests", dependencies: ["AKitHelp", "AKitFoundation"]),
         .testTarget(name: "AKitKnowledgeTests", dependencies: ["AKitKnowledge", "AKitFoundation", "AKitBrain"],
                     // Read by path (#filePath): a base layout with Excalidraw 0.17.6 maps, not bundle resources.
                     exclude: ["Fixtures"]),
-        .testTarget(name: "AKitCorrectionsTests", dependencies: ["AKitCorrections", "AKitFoundation", "AKitInsights", "AKitErrorAnalysis", "AKitSessions", "AKitBrain", "AKitProjectSetup"]),
-        .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCorrections", "AKitCommandLine", "AKitKnowledge", "AKitDoctor", "AKitReview", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),
+        .testTarget(name: "AKitCorrectionsTests", dependencies: ["AKitCorrections", "AKitLab", "AKitFoundation", "AKitInsights", "AKitErrorAnalysis", "AKitSessions", "AKitBrain", "AKitProjectSetup"]),
+        .testTarget(name: "AKitFlowsTests", dependencies: ["AKitFlows", "AKitFoundation"]),
+        .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitFlows", "AKitCorrections", "AKitCommandLine", "AKitKnowledge", "AKitDoctor", "AKitReview", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),
     ]
 )

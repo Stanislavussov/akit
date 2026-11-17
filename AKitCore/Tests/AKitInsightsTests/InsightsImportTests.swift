@@ -517,6 +517,18 @@ struct InsightsImportTests {
         ])
     }
 
+    /// D27: a flow step's session (`<project>/.pi/akit-flow/runs/<run>/sessions`) never enters the
+    /// index, so every Insights view keeps its totals; Sessions lists it behind the `flow` filter.
+    @Test func flowStepSessionsStayOutOfTheIndex() throws {
+        try write(piFile("own"), lines: [Self.piHeader("own")])
+        try write("work/app/.pi/akit-flow/runs/20261117-1200-0000/sessions/2026-11-17T12-00-00-000Z_step.jsonl",
+                  lines: [Self.piHeader("step", cwd: home.appending(path: "work/app").path)])
+        let found = SessionImporter(env: env).discover().map(\.url.lastPathComponent)
+        #expect(found == ["2026-09-20T10-00-00-000Z_own.jsonl"])
+        let flow = SessionScanner.flowSessions(projects: [home.appending(path: "work/app")])
+        #expect(flow.map(\.origin) == ["flow"] && flow.first?.file.lastPathComponent == "2026-11-17T12-00-00-000Z_step.jsonl")
+    }
+
     static func piHeader(_ id: String, cwd: String = "/work/app", at time: String = "2026-09-20T10:00:00.000Z") -> [String: Any] {
         ["type": "session", "version": 3, "id": id, "timestamp": time, "cwd": cwd]
     }

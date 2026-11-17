@@ -1,0 +1,19 @@
+{
+  "run": "20261117-1200-0000",
+  "step": "checks",
+  "attempt": 2,
+  "tools": [
+    "read",
+    "bash",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls"
+  ],
+  "paths": [],
+  "bash": true,
+  "root": "/tmp/akit-flow-sample/home/.akit/local/flows/runs/20261117-1200-0000/worktree",
+  "events": "/tmp/akit-flow-sample/project/.pi/akit-flow/runs/20261117-1200-0000/events.jsonl",
+  "records": "/tmp/akit-flow-sample/project/.pi/akit-flow"
+}

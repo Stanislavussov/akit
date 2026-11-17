@@ -708,6 +708,30 @@ Friction («трение») — места, где агент спотыкалс
 - **Set: N tasks**: сколько задач в наборе слоя. Если задач 0, блок пишет «The … set has no tasks yet», и **Evaluate…** серая. Добавьте задачи в Error Analysis → Evals кнопкой **Add to Layer Set…**. Подробнее: [Наборы слоя](error-analysis#evals-layer-sets)
 - **No layer set yet: …**: у слоя нет набора задач. Нажмите **Create Layer Set**. Подробнее: [Проверить, помогает ли слой](screens#brain-evals)
 
+## Flows
+<!-- section: terms-flows -->
+
+- **Flows** (боковое меню, группа Setup): flows для Pi — шаги столбиком карточек. Файл brain `flows/<имя>.yaml`. Подробнее: [Flows](flows#overview)
+- **Project** (Flows): проект для команд проверок, списка Rendered for Pi и Apply…. Подробнее: [Что на экране](flows#overview)
+- **New from Template** → **Feature** (Flows): новый flow из шаблона Feature. Подробнее: [Первый flow](flows#template)
+- **Brain** / **Rendered for Pi** (Flows, список): flows в brain / файлы, которые уже у Pi. Подробнее: [Что на экране](flows#overview)
+- **Name** (Flows): имя файла и имя для `/flow`. Подробнее: [Первый flow](flows#template)
+- **Check** (Flows): проверка flow, как `akit flow check`. Подробнее: [Проверить flow](flows#check)
+- **Save** (Flows): пишет `flows/<имя>.yaml` в brain и коммитит. Подробнее: [Первый flow](flows#template)
+- **Layers** (Flows): флажки слоёв, в которые входит flow. Подробнее: [Отправить flow в Pi](flows#apply)
+- **Apply…** (Flows): окно Set Up Project для проекта или домашней папки. Подробнее: [Отправить flow в Pi](flows#apply)
+- **Tools of the flow** (Flows): инструменты flow; у шага — только из них. Подробнее: [Карточка шага](flows#card)
+- **Agent**, **Model**, **Skills**, **Tools**, **Gate**, **Max loops**, **Checks** (карточка шага). Подробнее: [Карточка шага](flows#card)
+- **On done** / **On failed** / **On blocked** (карточка шага): куда идти после шага; **Next step**, **Stop and ask**, шаг или **End**. Подробнее: [Куда идти](flows#routes)
+- **Add Step** (Flows): новая карточка с выбранным агентом. Подробнее: [Карточка шага](flows#card)
+- **Choose…** (карточка шага, Skills): список скиллов с поиском и флажками. Подробнее: [Карточка шага](flows#card)
+- **Prompt** (карточка шага): текст задания шага, можно править. Подробнее: [Карточка шага](flows#card)
+- **Runs** (боковое меню, группа Activity): runs по flow в проектах. Подробнее: [Посмотреть run](flows#runs)
+- **Stop…** (Runs): пишет `STOP`; run встанет перед следующим шагом. Подробнее: [Остановить run](flows#stop)
+- **Off the routes** (Runs): run пошёл туда, куда пути шага не ведут. Подробнее: [Посмотреть run](flows#runs)
+- **Open in Lab…**, **Corrections**, **Show in Sessions** (Runs, попытка шага): сессия шага в Lab, поправки в ней, сессия на экране Sessions. Подробнее: [Посмотреть run](flows#runs)
+- **Flow Steps** (Sessions): фильтр сессий шагов flow; в Insights они не входят. Подробнее: [Посмотреть run](flows#runs)
+
 ## Insights
 <!-- section: terms-insights -->
 

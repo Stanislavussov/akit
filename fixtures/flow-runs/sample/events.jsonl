@@ -1,0 +1,13 @@
+{"schema":"akit-flow-event/1","type":"run-start","time":"2026-11-17T12:00:00.000Z","run":"20261117-1200-0000","flow":"feature","task":"add CSV export","pi":"1.0.4","worktree":"/tmp/akit-flow-sample/home/.akit/local/flows/runs/20261117-1200-0000/worktree","branch":"akit-flow/20261117-1200-0000","base":"0000000000000000000000000000000000000000"}
+{"schema":"akit-flow-event/1","type":"step-start","time":"2026-11-17T12:00:00.000Z","step":"plan","attempt":1}
+{"schema":"akit-flow-event/1","type":"step-end","time":"2026-11-17T12:00:00.000Z","step":"plan","attempt":1,"outcome":"done","reason":"","tokens":{"input":100,"output":20,"cache_read":5,"cost":0.01},"exit":0,"commit":"0000000000000000000000000000000000000000","unknownEvents":1}
+{"schema":"akit-flow-event/1","type":"step-start","time":"2026-11-17T12:00:00.000Z","step":"implement","attempt":1}
+{"schema":"akit-flow-event/1","type":"step-end","time":"2026-11-17T12:00:00.000Z","step":"implement","attempt":1,"outcome":"done","reason":"","tokens":{"input":100,"output":20,"cache_read":5,"cost":0.01},"exit":0,"commit":"0000000000000000000000000000000000000000","unknownEvents":1}
+{"schema":"akit-flow-event/1","type":"step-start","time":"2026-11-17T12:00:00.000Z","step":"checks","attempt":1}
+{"schema":"akit-flow-event/1","type":"deviation","time":"2026-11-17T12:00:00.000Z","step":"checks","attempt":1,"rule":"check-failed","detail":"node check.mjs → 1"}
+{"schema":"akit-flow-event/1","type":"step-end","time":"2026-11-17T12:00:00.000Z","step":"checks","attempt":1,"outcome":"failed","reason":"checks","tokens":{"input":100,"output":20,"cache_read":5,"cost":0.01},"exit":0,"commit":"0000000000000000000000000000000000000000","unknownEvents":1}
+{"schema":"akit-flow-event/1","type":"step-start","time":"2026-11-17T12:00:00.000Z","step":"implement","attempt":2}
+{"schema":"akit-flow-event/1","type":"step-end","time":"2026-11-17T12:00:00.000Z","step":"implement","attempt":2,"outcome":"done","reason":"","tokens":{"input":100,"output":20,"cache_read":5,"cost":0.01},"exit":0,"commit":"0000000000000000000000000000000000000000","unknownEvents":1}
+{"schema":"akit-flow-event/1","type":"step-start","time":"2026-11-17T12:00:00.000Z","step":"checks","attempt":2}
+{"schema":"akit-flow-event/1","type":"step-end","time":"2026-11-17T12:00:00.000Z","step":"checks","attempt":2,"outcome":"done","reason":"","tokens":{"input":100,"output":20,"cache_read":5,"cost":0.01},"exit":0,"commit":"0000000000000000000000000000000000000000","unknownEvents":1}
+{"schema":"akit-flow-event/1","type":"run-end","time":"2026-11-17T12:00:00.000Z","stop":"done"}

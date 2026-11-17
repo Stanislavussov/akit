@@ -1365,4 +1365,24 @@ file "$DEMO/Library/Application Support/Meetings/settings.json" <<'EOF'
 {"vocabulary":["orders-api","order-created","idempotence","Kafka — message broker","Jana Nováková","staging"]}
 EOF
 
+# Flows → Runs (flows.ru.md): the runner's sample run in notes-mac, with one more deviation (a
+# guard block), and the flow file it followed.
+FLOWRUN="$DEMO/Projects/notes-mac/.pi/akit-flow/runs/20261117-1200-0000"
+rm -rf "$FLOWRUN" && mkdir -p "$(dirname "$FLOWRUN")"
+cp -R "$(dirname "$0")/../fixtures/flow-runs/sample" "$FLOWRUN"
+sed -i '' "s#/tmp/akit-flow-sample/project#$DEMO/Projects/notes-mac#g; s#/tmp/akit-flow-sample/home#$DEMO#g" "$FLOWRUN/run.json" "$FLOWRUN/events.jsonl"
+awk '/"step":"implement","attempt":1,"outcome"/ && !done { print "{\"schema\":\"akit-flow-event/1\",\"type\":\"deviation\",\"time\":\"2026-11-17T12:00:00.000Z\",\"step\":\"implement\",\"attempt\":1,\"rule\":\"tool-not-allowed\",\"tool\":\"bash\",\"input\":\"rm -rf build\",\"action\":\"blocked\"}"; done=1 } { print }' \
+    "$FLOWRUN/events.jsonl" > "$FLOWRUN/events.tmp" && mv "$FLOWRUN/events.tmp" "$FLOWRUN/events.jsonl"
+file "$DEMO/Projects/notes-mac/.pi/flows/feature.yaml" <<'EOF'
+{"akit-flow-format": 1, "name": "feature", "minPi": "1.0.4", "steps": [
+ {"id": "plan", "agent": "planner", "model": "demo/coder-large", "gate": true},
+ {"id": "implement", "agent": "implementer", "model": "demo/coder-large"},
+ {"id": "checks", "agent": "checker", "model": "demo/coder-large", "checks": ["node check.mjs"], "routes": {"failed:*": "implement"}}]}
+EOF
+
+# What akit doctor found in the demo's Pi (F20): the Flows screen shows it next to testedPi.
+file "$DEMO/.akit/local/pi-capabilities.json" <<'EOF'
+{"features": ["mode-json", "no-extensions", "no-skills", "session-dir", "skill", "thinking", "tool-call-block", "ui-confirm"], "version": "1.0.4"}
+EOF
+
 echo "Demo home: $DEMO"

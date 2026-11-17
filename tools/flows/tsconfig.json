@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": false,
+    "types": ["node"]
+  },
+  "files": ["../../fixtures/pi-types/1.0.4/index.d.ts"],
+  "include": ["../../AKitCore/Sources/AKitRender/Resources/flows/*.ts", "test/*.ts", "check-pi.ts"]
+}

@@ -20,6 +20,42 @@ public enum LocalOnly {
         /// Files of AKit's MCP switches (`MCPProjectSwitch`), apart from the local-only block that
         /// Set Up Project rewrites.
         static let mcp = Markers(start: "# >>> akit mcp (files of AKit's MCP switches; managed by AKit)", end: "# <<< akit mcp")
+        /// Run records of AKit flows (flows.md F4), in every project with flows, local only or not.
+        static let flows = Markers(start: "# >>> akit flows (run records of AKit flows; managed by AKit)", end: "# <<< akit flows")
+    }
+
+    /// Where Pi's flow runner keeps its run records in a project; never in git.
+    public static let flowRuns = ".pi/akit-flow"
+
+    /// Whether the project's exclude file keeps the run records out of git (`akit doctor`); nil when
+    /// the folder is not a repository's main checkout.
+    public static func flowRunsExcluded(_ project: URL) -> Bool? {
+        guard let file = excludeFile(of: project) else { return nil }
+        return blockUnits(in: file, markers: .flows)?.contains(flowRuns) ?? false
+    }
+
+    /// The flows block's units for a lock: the run records' folder while AKit wrote a project flow.
+    static func flowUnits(of lock: ProjectRecords.Lock) -> [String] {
+        lock.files.keys.contains { $0.hasPrefix(".pi/flows/") } ? [flowRuns] : []
+    }
+
+    /// The preview's note on the flows block; nil when nothing changes.
+    static func flowNote(_ plan: ProjectSetup.Plan) -> String? {
+        guard let file = excludeFile(of: plan.project) else { return nil }
+        let units = flowUnits(of: ProjectSetup.lock(after: plan, excluding: [], accepting: []))
+        let current = blockUnits(in: file, markers: .flows) ?? []
+        guard units != current else { return nil }
+        let shown = shownPath(file, in: plan.project)
+        return units.isEmpty ? "Flows: AKit's flows block comes out of \(shown)."
+            : "Flows: AKit's flows block in \(shown) keeps the run records out of git: \(units.map(line(for:)).joined(separator: ", "))."
+    }
+
+    /// After Apply: the flows block follows the lock. Returns a problem to report, nil when done.
+    static func syncFlowRuns(_ project: URL, lock: ProjectRecords.Lock?) -> String? {
+        guard let file = excludeFile(of: project) else { return nil }
+        let units = lock.map(flowUnits(of:)) ?? []
+        guard units != (blockUnits(in: file, markers: .flows) ?? []) else { return nil }
+        return write(units: units, to: file, markers: .flows)
     }
 
     /// What local only does to a project's exclude file, shown before Apply.
@@ -355,6 +391,7 @@ public enum LocalOnly {
     /// worktrees. Returns a problem, if any.
     static func takeOut(of project: URL, env: HarnessEnvironment) -> String? {
         guard let file = excludeFile(of: project) else { return nil }
+        if let problem = syncFlowRuns(project, lock: nil) { return problem }
         if let problem = problem(in: file) { return problem }
         guard let previous = blockUnits(in: file) else { return nil }
         if let problem = write(units: [], to: file) { return problem }

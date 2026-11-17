@@ -1,0 +1,39 @@
+{
+  "schema": "akit-flow-handoff/1",
+  "run": "20261117-1200-0000",
+  "flow": "feature",
+  "step": {
+    "index": 2,
+    "id": "implement",
+    "attempt": 1
+  },
+  "session": "sess-implement-1",
+  "session_file": "sessions/2026-11-17T12-00-00-000Z_sess-implement-1.jsonl",
+  "from": {
+    "outcome": "done",
+    "reason": ""
+  },
+  "next": {
+    "step": "checks"
+  },
+  "goal": "implement goal",
+  "done": [
+    "did implement"
+  ],
+  "files": [
+    {
+      "path": "src/implement.ts",
+      "change": "added"
+    }
+  ],
+  "open_questions": [],
+  "notes": "notes of implement",
+  "tokens": {
+    "input": 100,
+    "output": 20,
+    "cache_read": 5,
+    "cost": 0.01
+  },
+  "deviations": 0,
+  "evidence": null
+}

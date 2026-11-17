@@ -1,0 +1,39 @@
+{
+  "schema": "akit-flow-handoff/1",
+  "run": "20261117-1200-0000",
+  "flow": "feature",
+  "step": {
+    "index": 3,
+    "id": "checks",
+    "attempt": 1
+  },
+  "session": "sess-checks-1",
+  "session_file": "sessions/2026-11-17T12-00-00-000Z_sess-checks-1.jsonl",
+  "from": {
+    "outcome": "failed",
+    "reason": "checks"
+  },
+  "next": {
+    "step": "implement"
+  },
+  "goal": "checks goal",
+  "done": [
+    "did checks"
+  ],
+  "files": [
+    {
+      "path": "src/checks.ts",
+      "change": "added"
+    }
+  ],
+  "open_questions": [],
+  "notes": "notes of checks",
+  "tokens": {
+    "input": 100,
+    "output": 20,
+    "cache_read": 5,
+    "cost": 0.01
+  },
+  "deviations": 1,
+  "evidence": "evidence/03-checks-a1-checks.json"
+}

@@ -120,7 +120,7 @@ public enum ProjectSetup {
     /// offered. Skills (and the link to them) stay AKit's. The home folder follows the core
     /// layer completely.
     static func isProjectOwned(_ path: String, forHome: Bool) -> Bool {
-        !forHome && !path.hasPrefix(ProjectBundle.skillsFolder + "/") && path != ".claude/skills"
+        !forHome && !path.hasPrefix(ProjectBundle.skillsFolder + "/") && path != ".claude/skills" && !FlowRender.isFlowPath(path)
     }
 
     /// Everything wrong with a project's bundle before a preview: its own errors and warnings,
@@ -324,6 +324,15 @@ public enum ProjectSetup {
                     if kind == .update, let current, let entry = previous?.files[output.path], entry.sha256 != Checksum.sha256(current) {
                         change.editedSinceRender = true
                     }
+                    // A flow file or the runner extension that AKit didn't write as it is now
+                    // (edited by hand, or someone else's): shown with its diff, never overwritten (F3).
+                    if kind == .update, FlowRender.isFlowPath(output.path), let current,
+                       previous?.files[output.path]?.sha256 != Checksum.sha256(current) {
+                        change = Change(path: output.path, kind: .keepEdited, oldText: change.oldText, newText: change.newText,
+                                        replacesUnmanaged: change.replacesUnmanaged, layers: output.layers)
+                        change.editedSinceRender = true
+                        warnings.append("\(output.path) was edited by hand since AKit wrote it; Apply leaves it alone. Look at the diff, then delete the file (or undo the edit) and apply again.")
+                    }
                     changes.append(change)
                 }
                 snapshot[output.path] = state(url)
@@ -375,6 +384,7 @@ public enum ProjectSetup {
         if !forHome {
             plan.localOnly = answers.isLocalOnly(store: store)
             LocalOnly.preview(&plan, env: env)
+            if let note = LocalOnly.flowNote(plan) { plan.notes.append(note) }
         }
         return plan
     }
@@ -521,7 +531,10 @@ public enum ProjectSetup {
             throw Failure(message: "The project was written, but the answers couldn't be saved in \(plan.store.describe(id: plan.id)): \(error.localizedDescription)")
         }
         // Local only: AKit's block in the repository's exclude file follows the new lock.
-        if !plan.forHome { notes += LocalOnly.afterApply(plan, lock: lock, previous: previousBlock, env: env) }
+        if !plan.forHome {
+            notes += LocalOnly.afterApply(plan, lock: lock, previous: previousBlock, env: env)
+            if let problem = LocalOnly.syncFlowRuns(plan.project, lock: lock) { notes.append(problem) }
+        }
         // For before/after measurements: a local spool line, never in the brain; can't fail the apply.
         Spool.append(applyEvent(plan), home: home)
         if lock.brainDirty { notes.append("The brain has uncommitted changes in skills/ or layers/; commit them so this render can be reproduced.") }
@@ -587,7 +600,7 @@ public enum ProjectSetup {
             lock.files[output.path] = entry(for: output)
         }
         for change in plan.changes where change.kind == .keepEdited || (change.kind == .remove && excluded.contains(change.path)) {
-            if let old = plan.previous?.files[change.path] { lock.files[change.path] = old }
+            lock.files[change.path] = plan.previous?.files[change.path]
         }
         // Merged JSON files: the keys AKit now owns; a change left out keeps the old record.
         var json: [String: ProjectRecords.Lock.MergedJSON] = plan.jsonRecords

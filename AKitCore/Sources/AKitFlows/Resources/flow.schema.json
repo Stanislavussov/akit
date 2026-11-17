@@ -1,0 +1,123 @@
+{
+  "$id" : "https://akit.local/flow.schema.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "akit-flow-format" : {
+      "const" : 1,
+      "type" : "integer"
+    },
+    "minPi" : {
+      "default" : "1.0.4",
+      "type" : "string"
+    },
+    "name" : {
+      "type" : "string"
+    },
+    "steps" : {
+      "items" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "agent" : {
+            "description" : "From the agent list; implementer and reviewer must use different models.",
+            "type" : "string"
+          },
+          "bash" : {
+            "description" : "Default: true unless paths is set.",
+            "type" : "boolean"
+          },
+          "checks" : {
+            "items" : {
+              "maxLength" : 120,
+              "pattern" : "^[A-Za-z][A-Za-z0-9 _.:/=%@-]*$",
+              "type" : "string"
+            },
+            "maxItems" : 10,
+            "type" : "array"
+          },
+          "extensions" : {
+            "description" : "The per-step -e list of Pi extensions.",
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "gate" : {
+            "default" : false,
+            "type" : "boolean"
+          },
+          "id" : {
+            "pattern" : "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+            "type" : "string"
+          },
+          "maxLoops" : {
+            "default" : 3,
+            "minimum" : 1,
+            "type" : "integer"
+          },
+          "model" : {
+            "type" : "string"
+          },
+          "paths" : {
+            "description" : "Paths the step may write; empty means anywhere in the worktree.",
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "prompt" : {
+            "description" : "What the step does; the runner puts it after the task.",
+            "type" : "string"
+          },
+          "routes" : {
+            "additionalProperties" : {
+              "type" : "string"
+            },
+            "description" : "outcome:reason or outcome:* to the next step's id, or end.",
+            "propertyNames" : {
+              "pattern" : "^(done|failed|blocked):(\\*|[A-Za-z0-9][A-Za-z0-9_.-]*)$"
+            },
+            "type" : "object"
+          },
+          "skills" : {
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "thinking" : {
+            "type" : "string"
+          },
+          "tools" : {
+            "description" : "A subset of the flow's tools.",
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "id",
+          "agent",
+          "model"
+        ],
+        "type" : "object"
+      },
+      "minItems" : 1,
+      "type" : "array"
+    },
+    "tools" : {
+      "items" : {
+        "type" : "string"
+      },
+      "type" : "array"
+    }
+  },
+  "required" : [
+    "akit-flow-format",
+    "name",
+    "steps"
+  ],
+  "title" : "AKit flow",
+  "type" : "object"
+}

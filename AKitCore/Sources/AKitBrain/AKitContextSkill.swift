@@ -190,6 +190,10 @@ akit worklog fill [DAY] [--slot 15|30] [--language cs] [--thinking low] [--harne
                                                    # under the sending policy); --add only when asked
 ```
 
+## Flows
+
+To run a task by a flow, the user types `/flow <name> <task>` in Pi; `akit flow runs --json` reads the results.
+
 ## Rules
 
 - Write to the base only with `kb propose`, and to the notebook and the work log only when the user asked.

@@ -16,6 +16,8 @@ public struct Layer: Identifiable, Hashable, Sendable {
     public let files: [LayerFile]
     /// `brain/layers/<name>`.
     public let folder: URL
+    /// Flows from `brain/flows/<name>.yaml` that Apply renders for Pi (flows.md F3).
+    public var flows: [String] = []
 
     public var manifest: URL { folder.appending(path: "layer.yaml") }
     public var templates: URL { folder.appending(path: "templates") }

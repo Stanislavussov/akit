@@ -77,6 +77,8 @@ targets:
         product: AKitKnowledge
       - package: AKitCore
         product: AKitCorrections
+      - package: AKitCore
+        product: AKitFlows
       - package: Meetings
         product: MeetingsCore
       - package: Meetings

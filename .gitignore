@@ -12,3 +12,4 @@ xcuserdata/
 .claude/skills
 .claude/settings.local.json
 dist/
+tools/flows/node_modules/

@@ -282,6 +282,14 @@ shot worklog-summary     $MAIN --section worklog --tab worklog-open
 shot worklog-calendar    $MAIN --section worklog --tab worklog-calendar --query 2026-10-22
 shot worklog-report      $MAIN --section worklog --tab worklog-report --query 2026-10-22
 shot worklog-fill        $MAIN --section worklog --tab worklog-fill --query 2026-10-05
+# Flows (flows.ru.md): the empty screen, a Feature draft with its back-arrows, and Check on it.
+shot flows-empty         $MAIN --section flows
+shot flows-feature       1180x900 --section flows --tab feature
+shot flows-check         1180x900 --section flows --tab check
+shot flows-card          1180x900 --section flows --tab feature --query plan --add
+# Runs (flows.ru.md): the sample run in notes-mac, and its checks card open.
+shot runs                1180x820 --section runs
+shot runs-step           1180x900 --section runs --query checks
 shot meetings            $MAIN --section meetings --select 0930
 shot meetings-transcript $MAIN --section meetings --select 0930 --tab meetings-transcript
 shot meetings-tab        $MAIN --section meetings --select 0930 --tab meetings-tab

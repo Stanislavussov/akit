@@ -19,9 +19,33 @@ restart: build   ## quit this checkout's AKit, rebuild and start it again (in th
 	sleep 1
 	open $(DERIVED)/Build/Products/Debug/AKit.app
 
-test:   ## core and Meetings tests (no UI), under the memory and time guard (tools/guarded-test.sh)
+test:   ## core and Meetings tests (no UI), under the memory and time guard (tools/guarded-test.sh), then the Flows runner tests
 	GUARD_MINUTES=25 tools/guarded-test.sh
 	GUARD_DIR=Meetings tools/guarded-test.sh
+	$(MAKE) test-flows
+
+# Flows Pi runner (docs/design/flows.md F20). Node runs the .ts files directly (type stripping,
+# Node 22.18 or newer; tested on NODE_TESTED). TypeScript and @types/node are pinned in
+# tools/flows/package.json (+ lock) and installed there by npm ci, never globally.
+NODE_MIN = 22.18
+NODE_TESTED = 26.1.0
+TYPESCRIPT_VERSION = 5.9.3
+FLOWS = tools/flows
+
+check-node:   ## fail clearly when Node.js is missing or too old for the Flows tests
+	@command -v node >/dev/null 2>&1 || { echo "Node.js $(NODE_MIN) or newer not found on PATH: make test-flows needs it (tested on $(NODE_TESTED))." >&2; exit 1; }
+	@node -e 'const [a,b]=process.versions.node.split(".").map(Number),[x,y]="$(NODE_MIN)".split(".").map(Number);process.exit(a>x||(a===x&&b>=y)?0:1)' || { echo "Node.js $(NODE_MIN) or newer needed for make test-flows; this one is older (tested on $(NODE_TESTED))." >&2; exit 1; }
+
+test-flows: check-node   ## Flows runner: tsc --noEmit against the minimum Pi's types, node --test with the vectors and a fake pi
+	@$(FLOWS)/node_modules/.bin/tsc --version 2>/dev/null | grep -qx "Version $(TYPESCRIPT_VERSION)" || npm ci --prefix $(FLOWS) --no-audit --no-fund --silent
+	$(FLOWS)/node_modules/.bin/tsc --noEmit -p $(FLOWS)/tsconfig.json
+	node --test $(FLOWS)/test/*.test.ts
+
+test-flows-e2e: check-node   ## Flows on the real installed Pi in a pty with a fake model server (before merge; not in make test)
+	python3 -I $(FLOWS)/e2e/flow-e2e.py
+
+check-pi: check-node   ## the installed Pi against the runner's minPi / testedPi and the flags it needs
+	node $(FLOWS)/check-pi.ts
 
 snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview] [QUERY=tdd] [DELAY=2] [PROJECT=akit] [HARNESS=pi] [BRAIN=<folder>] [TAB=setup] [OWN=1] [ADD=1] [CAPTURE=1] [SELECT=<layer>|project:<id>] [SETTINGS=1] [LOCAL=1] [GUIDE=[screens:]<section id>] [CLICK=x,y] [RCLICK="x,y;x,y"] [ASK=1]
 	# Ignore saved window state: a running AKit (or one closed without windows) must not

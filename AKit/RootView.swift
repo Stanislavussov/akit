@@ -36,8 +36,8 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
     var sections: [SidebarSection] {
         switch self {
         case .installed: [.overview, .skills, .skillsSh, .mcp, .instructions]
-        case .setup: [.brain]
-        case .activity: [.sessions, .usage]
+        case .setup: [.brain, .flows]
+        case .activity: [.sessions, .usage, .runs]
         case .improve: [.insights, .lab, .analysis]
         case .work: [.review, .knowledge, .notebook, .worklog, .meetings]
         }
@@ -53,10 +53,12 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case instructions
     case sessions
     case usage
+    case runs
     case insights
     case lab
     case analysis
     case brain
+    case flows
     case review
     case knowledge
     case notebook
@@ -73,10 +75,12 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .instructions: "Instructions"
         case .sessions: "Sessions"
         case .usage: "Usage"
+        case .runs: "Runs"
         case .insights: "Insights"
         case .lab: "Lab"
         case .analysis: "Error Analysis"
         case .brain: "Brain"
+        case .flows: "Flows"
         case .review: "Review"
         case .knowledge: "Knowledge"
         case .notebook: "Notebook"
@@ -95,10 +99,12 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .instructions: "The AGENTS.md and CLAUDE.md files each harness loads for a session in a project, in order, with their size"
         case .sessions: "Saved conversations, newest first; open one for its tokens and Analysis. Review in Terminal… starts a Lab run"
         case .usage: "Tokens and cost per day, summed from the same session files"
+        case .runs: "Flow runs Pi made in your projects: each step's state, time, tokens, deviations, checks and handoff; Stop halts a run"
         case .insights: "What the skill list costs in every request and which skills the model never calls; Apply… makes one manual in its layer"
         case .lab: "The queue of runs that start an agent or a model: reviews, replays, analysis batches, control cells; Sends logs what went out"
         case .analysis: "Recurring failure modes across many sessions, their frequencies, and whether a fix helped; its batches run in Lab"
         case .brain: "Your git repo of skills and layers; Set Up Project… renders them into a project"
+        case .flows: "Multi-agent runs for Pi as a column of steps: agent, model, skills, tools, routes, gates; a layer includes a flow and Apply renders it"
         case .review: "AI review of GitLab merge requests: Pi proposes comments, you approve each, AKit adds them as your drafts"
         case .knowledge: "Notes about your services, flows and teams by space, in a local git repo that agents read; edits are committed by AKit"
         case .notebook: "Short notes, plans, to-dos and what you did today, one tab per Markdown file in the knowledge base; check boxes, images, links"
@@ -116,10 +122,12 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .instructions: "doc.text"
         case .sessions: "bubble.left.and.bubble.right"
         case .usage: "chart.bar.xaxis"
+        case .runs: "point.3.connected.trianglepath.dotted"
         case .insights: "lightbulb"
         case .lab: "flask"
         case .analysis: "stethoscope"
         case .brain: "brain"
+        case .flows: "arrow.triangle.branch"
         case .review: "checklist"
         case .knowledge: "books.vertical"
         case .notebook: "note.text"
@@ -202,10 +210,12 @@ struct RootView: View {
             case .instructions: InstructionsView()
             case .sessions: SessionsView()
             case .usage: UsageView()
+            case .runs: RunsView()
             case .insights: InsightsView()
             case .lab: LabView()
             case .analysis: ErrorAnalysisView()
             case .brain: BrainView()
+            case .flows: FlowsView()
             case .review: ReviewView()
             case .knowledge: KnowledgeView()
             case .notebook: NotebookView()

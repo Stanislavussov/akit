@@ -315,6 +315,12 @@ public enum AKitCLI {
                                           The work log: what you did, a line at a time, with the day and time added
                                           for you; one file per day. akit worklog --help lists the rest
 
+        Flows (multi-step runs for Pi; Pi runs them with /flow, AKit writes and checks the files):
+          akit flow list | show NAME | check [NAME] | schema [--project PATH] [--json]
+                                          The flows in .pi/flows and ~/.pi/agent/flows, a flow's steps, the
+                                          check before Apply (exit 1 on an error), the flow file's JSON Schema.
+                                          akit flow --help lists the rest
+
         Translate (model-written output in another language; the original stays):
           akit translate --to LANG FILE|-|--notes SESSION|--lab-run ID|--review RUN
                                           One call with the translation model, cached next to the
@@ -437,6 +443,9 @@ public enum AKitCLI {
             if arguments.first == "kb" {
                 return try await knowledge(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, trash: trash,
                                             input: input)
+            }
+            if arguments.first == "flow" {
+                return try flow(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out)
             }
             if arguments.first == "notebook" {
                 return try await notebook(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)

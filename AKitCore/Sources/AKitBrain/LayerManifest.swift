@@ -31,7 +31,7 @@ public enum LayerManifest {
         if name != folderName {
             problems.append("name “\(name)” differs from the folder “\(folderName)”; the folder name is used.")
         }
-        let known: Set = ["name", "description", "requires", "conflicts", "fields", "skills", "files"]
+        let known: Set = ["name", "description", "requires", "conflicts", "fields", "skills", "files", "flows"]
         for key in root.keys.compactMap(\.string) where !known.contains(key) {
             problems.append("Unknown key “\(key)”.")
         }
@@ -40,12 +40,16 @@ public enum LayerManifest {
         let skills = list(root["skills"], "skills", &problems).compactMap { skill($0, &problems) }
         let files = list(root["files"], "files", &problems).compactMap { file($0, &problems) }
 
+        var flows: [String] = []
+        for flow in strings(root["flows"], "flows", &problems) {
+            if ProjectBundle.isFlowName(flow) { flows.append(flow) } else { problems.append("Flow “\(flow)”: a name may use only letters, digits, _ and -.") }
+        }
         let layer = Layer(
             name: folderName,
             description: scalar(root["description"]) ?? "",
             requires: strings(root["requires"], "requires", &problems),
             conflicts: strings(root["conflicts"], "conflicts", &problems),
-            fields: fields, skills: skills, files: files, folder: folder)
+            fields: fields, skills: skills, files: files, folder: folder, flows: flows)
         return Parsed(layer: layer, problems: problems)
     }
 

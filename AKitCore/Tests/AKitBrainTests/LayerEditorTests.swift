@@ -179,3 +179,15 @@ struct LayerEditorTests {
         }
     }
 }
+
+struct BrainFlowsManifestTests {
+    @Test func aFlowGoesInAndOutAndOtherLinesStay() {
+        let text = "description: X\nskills:\n  - tdd\n"
+        let added = BrainFlows.manifest(text, flow: "feature", included: true)
+        #expect(added == "description: X\nskills:\n  - tdd\nflows:\n  - feature\n")
+        let both = BrainFlows.manifest(added, flow: "bug", included: true)
+        #expect(both.contains("flows:\n  - feature\n  - bug\n"))
+        #expect(BrainFlows.manifest(BrainFlows.manifest(both, flow: "bug", included: false), flow: "feature", included: false) == text)
+        #expect(BrainFlows.manifest("flows: [a, b]\n", flow: "a", included: false) == "flows:\n  - b\n")
+    }
+}
