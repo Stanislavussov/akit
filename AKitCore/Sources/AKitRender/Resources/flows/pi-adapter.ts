@@ -7,7 +7,9 @@
 // stdin /dev/null, own process group killed as a group, unknown fields kept as unknown.
 
 import { execFile, spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -90,6 +92,8 @@ export interface ChildOptions {
 	/** Added to the child's environment (AKIT_FLOW_HANDOFF). */
 	env?: Record<string, string>;
 	signal?: AbortSignal;
+	/** Each parsed JSON event of the child, for the row and the overlay (F18). */
+	onEvent?: (event: Record<string, unknown>) => void;
 }
 
 /** The child command (flows.md, "Child command form"); no `-p`, the task is the prompt argument. */
@@ -136,7 +140,7 @@ function add(total: number | undefined, value: unknown): number | undefined {
 }
 
 /** Tolerant reader of Pi's JSON events: known types are parsed, the rest counted. */
-export function readEvent(line: string, result: ChildResult, seen: { assistant: boolean }): void {
+export function readEvent(line: string, result: ChildResult, seen: { assistant: boolean }, onEvent?: (event: Record<string, unknown>) => void): void {
 	if (!line.trim()) return;
 	let event: Record<string, unknown>;
 	try {
@@ -146,6 +150,11 @@ export function readEvent(line: string, result: ChildResult, seen: { assistant: 
 	} catch {
 		result.badLines++;
 		return;
+	}
+	try {
+		onEvent?.(event);
+	} catch {
+		// The view never stops a run.
 	}
 	if (event.type === "session") {
 		if (typeof event.id === "string") result.session = event.id;
@@ -222,13 +231,13 @@ export function runChild(o: ChildOptions): Promise<ChildResult> {
 			buffer += data.toString();
 			const lines = buffer.split("\n");
 			buffer = lines.pop() ?? "";
-			for (const line of lines) readEvent(line, result, seen);
+			for (const line of lines) readEvent(line, result, seen, o.onEvent);
 		});
 		proc.stderr.on("data", (data: Buffer) => {
 			result.stderr = (result.stderr + data.toString()).slice(-8000);
 		});
 		proc.on("close", (code, signal) => {
-			if (buffer.trim()) readEvent(buffer, result, seen);
+			if (buffer.trim()) readEvent(buffer, result, seen, o.onEvent);
 			result.code = code;
 			result.signal = signal;
 			finish();
@@ -289,4 +298,84 @@ export function say(ctx: ExtensionContext, message: string, level: "info" | "war
 
 export function status(ctx: ExtensionContext, text: string | undefined): void {
 	if (typeof ctx.ui?.setStatus === "function") ctx.ui.setStatus("akit-flow", text);
+}
+
+/** Test log of the UI calls (make test-flows-e2e): one JSON line per call when AKIT_FLOW_UI_LOG is set. */
+function uiLog(entry: Record<string, unknown>): void {
+	const path = process.env.AKIT_FLOW_UI_LOG;
+	if (!path) return;
+	try {
+		appendFileSync(path, `${JSON.stringify({ time: new Date().toISOString(), ...entry })}\n`);
+	} catch {
+		// Only a test log.
+	}
+}
+
+/** The step row below the editor (1.0.4 has the placement; an older Pi draws it above). */
+export function showRow(ctx: ExtensionContext, line: string | undefined): void {
+	if (typeof ctx.ui?.setWidget !== "function") return;
+	ctx.ui.setWidget("akit-flow", line === undefined ? undefined : [line], { placement: "belowEditor" });
+	uiLog({ call: "setWidget", lines: line === undefined ? [] : [line], placement: "belowEditor" });
+}
+
+/** Keys the user bound in Pi's keybindings.json: a step shortcut must not take them. */
+export function userKeys(): string[] {
+	const dir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+	try {
+		const value = JSON.parse(readFileSync(join(dir, "keybindings.json"), "utf8")) as Record<string, unknown>;
+		return Object.values(value).flatMap((v) => (Array.isArray(v) ? v : [v])).filter((k): k is string => typeof k === "string");
+	} catch {
+		return [];
+	}
+}
+
+/** One shortcut per key; `alt+N` opens step N. */
+export function registerStepShortcuts(pi: ExtensionAPI, keys: string[], open: (n: number, ctx: ExtensionContext) => Promise<void>): void {
+	for (const key of keys) {
+		const n = Number(key.split("+").pop());
+		pi.registerShortcut(key, { description: `AKit flow: show step ${n}`, handler: (ctx) => open(n, ctx) });
+	}
+	uiLog({ call: "shortcuts", keys });
+}
+
+type Width = { truncateToWidth?: (text: string, width: number) => string; visibleWidth?: (text: string) => number };
+let tuiHelpers: Width | undefined;
+
+/** pi-tui's width helpers inside Pi; outside it (tests) a plain cut by characters. */
+async function helpers(): Promise<Width> {
+	if (tuiHelpers) return tuiHelpers;
+	try {
+		const name = "@earendil-works/pi-tui";
+		tuiHelpers = (await import(name)) as Width;
+	} catch {
+		tuiHelpers = {};
+	}
+	return tuiHelpers;
+}
+
+/** The step overlay (ctx.ui.custom): `lines()` is read on each render, `subscribe` asks for a
+ * render on new events; Esc closes. No copy button: the text is only drawn. */
+export async function showOverlay(ctx: ExtensionContext, step: number, lines: () => string[], subscribe: (render: () => void) => () => void): Promise<void> {
+	if (typeof ctx.ui?.custom !== "function") {
+		say(ctx, lines().join("\n"));
+		return;
+	}
+	const width = await helpers();
+	const cut = (text: string, w: number) => (width.truncateToWidth ? width.truncateToWidth(text, w) : [...text].slice(0, w).join(""));
+	uiLog({ call: "overlay", state: "open", step, lines: lines() });
+	await ctx.ui.custom<void>((tui, _theme, _keys, done) => {
+		const stop = subscribe(() => tui.requestRender());
+		return {
+			render: (w: number) => lines().flatMap((l) => l.split("\n")).map((l) => cut(l, Math.max(1, w))),
+			handleInput: (data: string) => {
+				if (data === "\x1b" || data === "\x1b[27u") {
+					stop();
+					done();
+				}
+			},
+			invalidate: () => {},
+			dispose: stop,
+		};
+	}, { overlay: true });
+	uiLog({ call: "overlay", state: "closed", step });
 }

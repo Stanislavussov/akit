@@ -11,6 +11,7 @@ import type { ExtensionCommandContext } from "../../../AKitCore/Sources/AKitRend
 
 const repo = join(import.meta.dirname, "..", "..", "..");
 let root: string, project: string, piDir: string, messages: { text: string; level?: string }[];
+let widgets: { lines?: string[]; placement?: string }[] = [];
 const saved = { HOME: process.env.HOME, PATH: process.env.PATH };
 // Commits in the fake project and the run's worktree need a name; the fake HOME has no git config.
 for (const key of ["GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"]) process.env[key] = "Flow Test";
@@ -21,10 +22,11 @@ function ctx(): ExtensionCommandContext {
 		cwd: project, hasUI: false, signal: undefined, waitForIdle: async () => {},
 		ui: {
 			notify: (text: string, level?: string) => messages.push({ text, level }),
-			setStatus: () => {}, setWidget: () => {}, confirm: async () => false, select: async () => undefined,
+			setStatus: () => {}, setWidget: (_key: string, lines?: string[], options?: { placement?: string }) => widgets.push({ lines, placement: options?.placement }),
+			confirm: async () => false, select: async () => undefined,
 			input: async () => undefined, editor: async () => undefined,
 		},
-	} as ExtensionCommandContext;
+	} as unknown as ExtensionCommandContext;
 }
 
 beforeEach(() => {
@@ -44,6 +46,7 @@ beforeEach(() => {
 	process.env.PATH = `${bin}:${saved.PATH}`;
 	process.env.FAKE_PI_DIR = piDir;
 	messages = [];
+	widgets = [];
 	pi({});
 });
 
@@ -90,8 +93,11 @@ function events(run: string): Record<string, unknown>[] {
 test("the extension registers /flow and the tool akit_flow", () => {
 	const names: string[] = [];
 	const tools: { name: string; parameters: { required: string[] } }[] = [];
-	akitFlow({ registerCommand: (name: string) => names.push(name), registerTool: (t: never) => tools.push(t), on: () => () => {} } as never);
+	const shortcuts: string[] = [];
+	akitFlow({ registerCommand: (name: string) => names.push(name), registerTool: (t: never) => tools.push(t), on: () => () => {},
+		registerShortcut: (key: string) => shortcuts.push(key) } as never);
 	assert.deepEqual(names, ["flow"]);
+	assert.deepEqual(shortcuts, ["alt+1", "alt+2", "alt+3", "alt+4", "alt+5", "alt+6", "alt+7", "alt+8", "alt+9"]);
 	assert.deepEqual(tools.map((t) => t.name), ["akit_flow"]);
 	assert.deepEqual(tools[0].parameters.required, ["task"]);
 });
@@ -693,4 +699,16 @@ test("a child loads only the guard, the handoff tool and the step's named extens
 	assert.equal(rules.bash, false, "a write-restricted step has no bash by default");
 	assert.equal(rules.events, join(run, "events.jsonl"));
 	assert.equal(JSON.parse(readFileSync(join(run, "guard", "01-plan-a1.json"), "utf8")).bash, true);
+});
+
+test("the row below the editor follows this Pi's run; /flow show opens a step", async () => {
+	flow(fourSteps());
+	await flowCommand("feature add CSV export", ctx());
+	assert.ok(widgets.length > 0 && widgets.every((w) => w.placement === "belowEditor"));
+	assert.ok(widgets.some((w) => /1 plan ● a/.test(w.lines?.[0] ?? "")), "a running step shows ● and its model");
+	assert.match(widgets.at(-1)?.lines?.[0] ?? "", /^1 plan ✓ a 120  2 implement ✓ a 120  3 checks ✓ a 120  4 review ✓ b 120 {3}alt\+1…4 view$/, "shortcuts of the registered extension, up to the step count");
+	await flowCommand("show 9", ctx());
+	assert.match(messages.at(-1)?.text ?? "", /Usage: \/flow show <1-4>/);
+	await flowCommand("show 2", ctx());
+	assert.match(messages.at(-1)?.text ?? "", /step 2 implement ✓[\s\S]*worked on implement[\s\S]*Esc closes/, "without custom UI the overlay text is a message");
 });

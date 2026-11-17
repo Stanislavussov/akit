@@ -29,6 +29,22 @@ declare module "@earendil-works/pi-coding-agent" {
         /** Set a widget to display above or below the editor. Accepts string array or component factory. */
         setWidget(key: string, content: string[] | undefined, options?: ExtensionWidgetOptions): void;
         editor(title: string, prefill?: string): Promise<string | undefined>;
+        /** Show a custom component with keyboard focus. Excerpt: pi-tui's TUI is cut to
+         * requestRender, Theme and KeybindingsManager are `unknown`, OverlayOptions left out. */
+        custom<T>(factory: (tui: { requestRender(): void }, theme: unknown, keybindings: unknown, done: (result: T) => void) => (Component & {
+            dispose?(): void;
+        }) | Promise<Component & {
+            dispose?(): void;
+        }>, options?: {
+            overlay?: boolean;
+        }): Promise<T>;
+    }
+    /** From pi-tui's tui.d.ts. */
+    export interface Component {
+        render(width: number): string[];
+        handleInput?(data: string): void;
+        wantsKeyRelease?: boolean;
+        invalidate(): void;
     }
     export interface ExtensionContext {
         /** UI methods for user interaction */
@@ -101,5 +117,10 @@ declare module "@earendil-works/pi-coding-agent" {
         /** Register a custom command. */
         registerCommand(name: string, options: Omit<RegisteredCommand, "name">): void;
         registerTool(tool: ToolDefinition): void;
+        /** Excerpt: pi-tui's KeyId template union is `string`. */
+        registerShortcut(shortcut: string, options: {
+            description?: string;
+            handler: (ctx: ExtensionContext) => Promise<void> | void;
+        }): void;
     }
 }

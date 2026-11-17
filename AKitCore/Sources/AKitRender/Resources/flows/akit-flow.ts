@@ -21,14 +21,21 @@ import {
 } from "./flow-record.ts";
 import {
 	type ChildResult, detectPi, type ExtensionAPI, type ExtensionContext, missingFlags, onShutdown, type PiInfo, readFlowFile,
-	registerFlowCommand, registerStartTool, runChild, say, sessionFile, status,
+	registerFlowCommand, registerStartTool, registerStepShortcuts, runChild, say, sessionFile, showOverlay, showRow, status, userKeys,
 } from "./pi-adapter.ts";
+import { newView, overlayLines, pickShortcuts, rowLine, type RunView, type StepState, viewEvent } from "./flow-view.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 let warnedNewerPi = false;
+/** This Pi process's run, as the row and the overlay show it (F18); listeners re-render an open overlay. */
+let view: RunView | undefined;
+let keys: string[] = [];
+const listeners = new Set<() => void>();
 
 export default function akitFlow(pi: ExtensionAPI): void {
 	const controller = new AbortController();
+	keys = pickShortcuts(9, userKeys());
+	registerStepShortcuts(pi, keys, showStep);
 	registerFlowCommand(pi, (args, ctx) => flowCommand(args, ctx, controller.signal));
 	registerStartTool(pi, (params, ctx) => startTool(params, ctx, controller.signal));
 	onShutdown(pi, () => controller.abort());
@@ -38,7 +45,38 @@ export default function akitFlow(pi: ExtensionAPI): void {
 export async function flowCommand(args: string, ctx: ExtensionContext, signal?: AbortSignal): Promise<void> {
 	const words = args.trim().split(/\s+/).filter(Boolean);
 	if (words[0] === "resume") return resume(ctx, words[1], signal);
+	if (words[0] === "show") return showStep(Number(words[1]), ctx);
 	await start(ctx, words, signal);
+}
+
+/** `/flow show <n>` and the step shortcuts: the overlay of step n of this Pi's run. */
+async function showStep(n: number, ctx: ExtensionContext): Promise<void> {
+	if (!view) return say(ctx, "No flow run in this Pi yet.", "warning");
+	if (!Number.isInteger(n) || n < 1 || n > view.steps.length) return say(ctx, `Usage: /flow show <1-${view.steps.length}>`, "error");
+	const shown = view;
+	await showOverlay(ctx, n, () => overlayLines(shown, n), (render) => {
+		listeners.add(render);
+		return () => listeners.delete(render);
+	});
+}
+
+/** Redraws the row from the view; the deviation count comes from events.jsonl (the guard writes there too). */
+function refresh(ctx: ExtensionContext, run: Run): void {
+	if (!view) return;
+	view.deviations = readEvents(run.folder).filter((e) => e.type === "deviation").length;
+	showRow(ctx, rowLine(view, keys.filter((k) => Number(k.split("+").pop()) <= view!.steps.length)));
+	for (const render of listeners) render();
+}
+
+function setStep(ctx: ExtensionContext, run: Run, id: string, state: StepState): void {
+	const step = view?.steps.find((s) => s.id === id);
+	if (!step) return;
+	if (state === "running") {
+		step.entries = [];
+		step.tokens = undefined;
+	}
+	step.state = state;
+	refresh(ctx, run);
 }
 
 /** The tool `akit_flow`: the model may start a flow when the user asks in words (F11). It always
@@ -414,6 +452,12 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: Previous | undefined, signal?: AbortSignal): Promise<void> {
 	let decision = first;
 	let visits: Visits = decision.visits;
+	if (view?.run !== run.id) {
+		view = newView(run.flow, run.id);
+		for (const e of readEvents(run.folder)) {
+			if (e.type === "step-end" && e.step) setStep(ctx, run, e.step, e.outcome === "done" ? "done" : "failed");
+		}
+	}
 	try {
 		while ("next" in decision) {
 			const id = decision.next;
@@ -438,6 +482,8 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			}
 			// The state is in events.jsonl before the step starts (F19), so a crash resumes here.
 			appendEvent(run.folder, "step-start", { step: step.id, attempt });
+			setStep(ctx, run, step.id, "running");
+			const shown = view?.steps.find((s) => s.id === step.id);
 			writeRunJson(run, { status: "running", state: { step: step.id, visits } });
 			status(ctx, `flow ${run.flow.name}: ${index + 1}/${run.flow.steps.length} ${step.id}`);
 			const checks = step.checks ?? [];
@@ -469,9 +515,13 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 					cwd: run.worktree.path, sessionDir, model: step.model, thinking: step.thinking, skills,
 					tools: step.tools ?? [], extensions: childExtensions(run.project, step.extensions ?? []),
 					prompt: prompt(run, step.id, step.agent, previous), info: run.info, env: { AKIT_FLOW_HANDOFF: partPath, AKIT_FLOW_GUARD: guardPath }, signal,
+					onEvent: (event) => {
+						if (shown && viewEvent(shown, event)) refresh(ctx, run);
+					},
 				});
 				if (result.aborted || result.spawnError) {
 					appendEvent(run.folder, "step-end", { step: step.id, attempt, outcome: "failed", reason: result.aborted ? "aborted" : "spawn", tokens: recordTokens(result.tokens), exit: result.code });
+				setStep(ctx, run, step.id, "failed");
 					writeRunJson(run, { status: "stopped", state: { step: step.id, visits } });
 					say(ctx, result.aborted ? `Flow ${run.flow.name} aborted in step ${step.id}; /flow resume continues.` : `Can't start pi: ${result.spawnError}`, "error");
 					return;
@@ -489,6 +539,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			}
 			if (!result || !part) {
 				appendEvent(run.folder, "step-end", { step: step.id, attempt, outcome: "failed", reason: "no-handoff", tokens: recordTokens(result?.tokens ?? {}), exit: result?.code ?? null });
+				setStep(ctx, run, step.id, "failed");
 				return finish(ctx, run, { stop: "no-handoff", step: step.id, visits }, `Flow ${run.flow.name} stopped: step ${step.id} ended twice without flow_handoff.`);
 			}
 			let { outcome, reason } = part;
@@ -532,6 +583,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 				step: step.id, attempt, outcome, reason, tokens: recordTokens(result.tokens), exit: result.code, commit: done.commit,
 				...(result.unknownEvents ? { unknownEvents: result.unknownEvents } : {}),
 			});
+			setStep(ctx, run, step.id, outcome === "done" ? "done" : "failed");
 			previous = { step: step.id, outcome, reason, handoff, failedChecks };
 			if (step.gate && outcome === "done") {
 				const answered = await atGate(ctx, run, step.id, attempt, visits, decision, previous);
@@ -595,6 +647,7 @@ function finish(ctx: ExtensionContext, run: Run, decision: Decision, message?: s
 	if ("next" in decision) return;
 	if (decision.stop === "no-route" && !message) appendEvent(run.folder, "deviation", { step: decision.step, rule: "no-route" });
 	appendEvent(run.folder, "run-end", { stop: decision.stop, ...(decision.step ? { step: decision.step } : {}) });
+	refresh(ctx, run);
 	writeRunJson(run, { status: decision.stop === "done" ? "done" : "stopped", stop: decision.stop, state: { step: decision.step ?? null, visits: decision.visits } });
 	status(ctx, undefined);
 	const text = message ?? (decision.stop === "done" ? `Flow ${run.flow.name} done (run ${run.id}).`

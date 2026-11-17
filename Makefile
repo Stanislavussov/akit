@@ -41,6 +41,9 @@ test-flows: check-node   ## Flows runner: tsc --noEmit against the minimum Pi's 
 	$(FLOWS)/node_modules/.bin/tsc --noEmit -p $(FLOWS)/tsconfig.json
 	node --test $(FLOWS)/test/*.test.ts
 
+test-flows-e2e: check-node   ## Flows on the real installed Pi in a pty with a fake model server (before merge; not in make test)
+	python3 -I $(FLOWS)/e2e/flow-e2e.py
+
 check-pi: check-node   ## the installed Pi against the runner's minPi / testedPi and the flags it needs
 	node $(FLOWS)/check-pi.ts
 
