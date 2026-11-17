@@ -13,14 +13,14 @@ import {
 	compareVersions, type Decision, DEFAULT_MAX_LOOPS, firstStep, type Flow, formatProblem, isOutcome, isSafeCommand, MAX_CHECK_COMMANDS, nextStep,
 	type Outcome, parseOutcome, requiredPi, runId, TESTED_PI, type Visits,
 } from "./flow-core.ts";
-import { changes, commit, createWorktree, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
+import { changes, commit, createWorktree, diffFromBase, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
 import {
 	appendEvent, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, type RecordedEvent, recordTokens, releaseLock,
 	RUN_SCHEMA, runChecks, stepKey, takeLock, visitsFrom, writeAtomic,
 } from "./flow-record.ts";
 import {
-	type ChildResult, detectPi, type ExtensionAPI, type ExtensionCommandContext, missingFlags, onShutdown, type PiInfo, readFlowFile,
-	registerFlowCommand, runChild, say, sessionFile, status,
+	type ChildResult, detectPi, type ExtensionAPI, type ExtensionContext, missingFlags, onShutdown, type PiInfo, readFlowFile,
+	registerFlowCommand, registerStartTool, runChild, say, sessionFile, status,
 } from "./pi-adapter.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -29,14 +29,29 @@ let warnedNewerPi = false;
 export default function akitFlow(pi: ExtensionAPI): void {
 	const controller = new AbortController();
 	registerFlowCommand(pi, (args, ctx) => flowCommand(args, ctx, controller.signal));
+	registerStartTool(pi, (params, ctx) => startTool(params, ctx, controller.signal));
 	onShutdown(pi, () => controller.abort());
 }
 
 /** `/flow …`; exported for the tests. */
-export async function flowCommand(args: string, ctx: ExtensionCommandContext, signal?: AbortSignal): Promise<void> {
+export async function flowCommand(args: string, ctx: ExtensionContext, signal?: AbortSignal): Promise<void> {
 	const words = args.trim().split(/\s+/).filter(Boolean);
 	if (words[0] === "resume") return resume(ctx, words[1], signal);
-	return start(ctx, words, signal);
+	await start(ctx, words, signal);
+}
+
+/** The tool `akit_flow`: the model may start a flow when the user asks in words (F11). It always
+ * asks first; without a yes it starts nothing. Exported for the tests. */
+export async function startTool(params: { flow?: string; task: string }, ctx: ExtensionContext, signal?: AbortSignal): Promise<string> {
+	const task = (params.task ?? "").trim();
+	if (!task) return "No task given; no flow was started.";
+	const name = params.flow?.trim();
+	const yes = ctx.hasUI && typeof ctx.ui?.confirm === "function"
+		&& await ctx.ui.confirm("Start a flow?", `The model asks to run the flow ${name ?? "(the project's default)"} for: ${task}`);
+	if (!yes) return "The user did not confirm; no flow was started.";
+	const words = task.split(/\s+/);
+	const id = await start(ctx, name ? [name, ...words] : words, signal);
+	return id ? `Flow run ${id} has ended; its messages are shown to the user. The record is in .pi/akit-flow/runs/${id}.` : "The flow did not start; the reason is shown to the user.";
 }
 
 function mainCheckout(cwd: string): string {
@@ -68,7 +83,7 @@ function flowPath(project: string, name: string): string | undefined {
 	return undefined;
 }
 
-async function loadFlow(ctx: ExtensionCommandContext, project: string, name: string): Promise<Flow | undefined> {
+async function loadFlow(ctx: ExtensionContext, project: string, name: string): Promise<Flow | undefined> {
 	const path = flowPath(project, name);
 	if (!path) {
 		say(ctx, `No flow "${name}" in .pi/flows or ~/.pi/agent/flows; run Apply in AKit.`, "error");
@@ -90,7 +105,7 @@ async function loadFlow(ctx: ExtensionCommandContext, project: string, name: str
 }
 
 /** The Pi checks of F11/F20: below minPi or a missing flag refuses; above testedPi warns once. */
-async function checkPi(ctx: ExtensionCommandContext, flow: Flow): Promise<{ info: PiInfo; newer: boolean } | undefined> {
+async function checkPi(ctx: ExtensionContext, flow: Flow): Promise<{ info: PiInfo; newer: boolean } | undefined> {
 	const info = await detectPi(ctx);
 	const need = requiredPi(flow);
 	const missing = missingFlags(info);
@@ -147,7 +162,7 @@ function writeRunJson(run: Run, fields: Record<string, unknown>): void {
 	});
 }
 
-async function start(ctx: ExtensionCommandContext, words: string[], signal?: AbortSignal): Promise<void> {
+async function start(ctx: ExtensionContext, words: string[], signal?: AbortSignal): Promise<string | undefined> {
 	const project = mainCheckout(ctx.cwd);
 	const names = flowNames(project);
 	let name: string | undefined;
@@ -177,6 +192,7 @@ async function start(ctx: ExtensionCommandContext, words: string[], signal?: Abo
 	const run: Run = { folder, id, flow, task, project, info: pi.info, newer: pi.newer, started: new Date().toISOString(), worktree };
 	appendEvent(folder, "run-start", { run: id, flow: flow.name, task, pi: pi.info.version, worktree: worktree.path, branch: worktree.branch, base: worktree.base });
 	await loop(ctx, run, firstStep(flow), undefined, signal);
+	return id;
 }
 
 /** The handoff file a step attempt wrote, read back for the next step's prompt. */
@@ -199,7 +215,7 @@ function previousFrom(folder: string, flow: Flow, step: string, attempt: number)
 }
 
 /** `/flow resume`: events.jsonl and the commit trailers are the truth; run.json is rebuilt (F9). */
-async function resume(ctx: ExtensionCommandContext, id: string | undefined, signal?: AbortSignal): Promise<void> {
+async function resume(ctx: ExtensionContext, id: string | undefined, signal?: AbortSignal): Promise<void> {
 	const project = mainCheckout(ctx.cwd);
 	const folder = id ? join(project, ".pi", "akit-flow", "runs", id) : latestRun(project);
 	if (!folder || !existsSync(folder)) {
@@ -223,7 +239,7 @@ async function resume(ctx: ExtensionCommandContext, id: string | undefined, sign
 	}
 }
 
-async function resumeLocked(ctx: ExtensionCommandContext, project: string, folder: string, events: RecordedEvent[], signal?: AbortSignal): Promise<void> {
+async function resumeLocked(ctx: ExtensionContext, project: string, folder: string, events: RecordedEvent[], signal?: AbortSignal): Promise<void> {
 	const startEvent = events.find((e) => e.type === "run-start");
 	const name = startEvent?.flow;
 	const worktree = typeof startEvent?.worktree === "string" && typeof startEvent.base === "string"
@@ -279,8 +295,20 @@ async function resumeLocked(ctx: ExtensionCommandContext, project: string, folde
 				: { next: last.step, visits: { ...visits, [last.step]: count } };
 		}
 	} else {
-		previous = previousFrom(folder, flow, last.step, last.attempt ?? visits[last.step] ?? 1);
+		const attempt = last.attempt ?? visits[last.step] ?? 1;
+		previous = previousFrom(folder, flow, last.step, attempt);
 		decision = nextStep(flow, { step: last.step, visits }, (last.outcome ?? "failed") as Outcome, last.reason ?? "");
+		// Halted at a gate (no answer): the gate asks again.
+		const after = events.slice(events.lastIndexOf(last) + 1);
+		const sentBack = after.find((e) => e.type === "gate" && e.answer === "send-back");
+		if (sentBack && previous) {
+			decision = nextStep(flow, { step: last.step, visits }, "failed", "sent-back");
+			previous = { ...previous, outcome: "failed", reason: "sent-back", note: typeof sentBack.note === "string" ? sentBack.note : "" };
+		} else if (flow.steps.find((s) => s.id === last.step)?.gate && last.outcome === "done" && previous && !after.some((e) => e.type === "gate")) {
+			const answered = await atGate(ctx, run, last.step, attempt, visits, decision, previous);
+			if (!answered) return;
+			({ decision, previous } = answered);
+		}
 	}
 	// Resume is the user's word to go on: a STOP left from the halt is removed.
 	const stopped = existsSync(join(folder, "STOP"));
@@ -345,7 +373,8 @@ interface Previous {
 	/** The previous step's handoff file, as written. */
 	handoff: Record<string, unknown>;
 	/** Failed checks of the previous step: command, exit code, last lines. */
-	failedChecks?: { command: string; exit: number | null; tail: string[] }[];
+	failedChecks?: { command: string; exit: number | null; tail: string[] }[];	/** The user's note when a gate sent the work back. */
+	note?: string;
 }
 
 function prompt(run: Run, stepId: string, agent: string, previous: Previous | undefined): string {
@@ -356,6 +385,7 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 	if (previous) {
 		lines.push("", `Handoff from the step "${previous.step}" (${previous.outcome}${previous.reason ? `:${previous.reason}` : ""}):`,
 			JSON.stringify(previous.handoff, null, 2));
+		if (previous.note !== undefined) lines.push("", `The user sent the work back at the gate after the step "${previous.step}". Their note:`, previous.note || "(no note)");
 		for (const check of previous.failedChecks ?? []) {
 			lines.push("", `The check \`${check.command}\` exited ${check.exit}. Its last lines:`, ...check.tail);
 		}
@@ -364,7 +394,7 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 	return lines.join("\n");
 }
 
-async function loop(ctx: ExtensionCommandContext, run: Run, first: Decision, previous: Previous | undefined, signal?: AbortSignal): Promise<void> {
+async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: Previous | undefined, signal?: AbortSignal): Promise<void> {
 	let decision = first;
 	let visits: Visits = decision.visits;
 	try {
@@ -485,11 +515,53 @@ async function loop(ctx: ExtensionCommandContext, run: Run, first: Decision, pre
 				...(result.unknownEvents ? { unknownEvents: result.unknownEvents } : {}),
 			});
 			previous = { step: step.id, outcome, reason, handoff, failedChecks };
+			if (step.gate && outcome === "done") {
+				const answered = await atGate(ctx, run, step.id, attempt, visits, decision, previous);
+				if (!answered) return;
+				({ decision, previous } = answered);
+			}
 		}
 		finish(ctx, run, decision);
 	} finally {
 		releaseLock(run.folder);
 	}
+}
+
+/** The user's answer at a gate (F5): the diff of the run branch against its base (read only),
+ * then Approve or Send Back with a note. */
+async function askGate(ctx: ExtensionContext, run: Run, step: string): Promise<{ approve: true } | { note: string } | undefined> {
+	if (!ctx.hasUI || typeof ctx.ui?.select !== "function" || typeof ctx.ui?.editor !== "function") return undefined;
+	await ctx.ui.editor(`Gate after ${step}: ${run.worktree.branch} against its base (read only; edits here are not kept)`,
+		diffFromBase(run.worktree.path, run.worktree.base));
+	const choice = await ctx.ui.select(`Gate after step ${step}`, ["Approve", "Send Back"]);
+	if (choice === "Approve") return { approve: true };
+	if (choice !== "Send Back") return undefined;
+	const note = await ctx.ui.editor(`Send Back: a note for the step that gets the work back`, "");
+	return { note: (note ?? "").trim() };
+}
+
+/** A gate step that ended done: Approve keeps the decision; Send Back routes `failed:sent-back`
+ * by the step's routes (a deviation) and gives the note to that step. No answer halts the run. */
+async function atGate(ctx: ExtensionContext, run: Run, step: string, attempt: number, visits: Visits, decision: Decision,
+	previous: Previous): Promise<{ decision: Decision; previous: Previous } | undefined> {
+	const answer = await askGate(ctx, run, step);
+	if (!answer) {
+		appendEvent(run.folder, "halted", { reason: "gate", step });
+		writeRunJson(run, { status: "stopped", state: { step, visits } });
+		status(ctx, undefined);
+		say(ctx, `Flow ${run.flow.name} waits at the gate after step ${step}; /flow resume asks again.`, "warning");
+		return undefined;
+	}
+	if ("approve" in answer) {
+		appendEvent(run.folder, "gate", { step, attempt, answer: "approve" });
+		return { decision, previous };
+	}
+	appendEvent(run.folder, "gate", { step, attempt, answer: "send-back", note: answer.note });
+	appendEvent(run.folder, "deviation", { step, attempt, rule: "sent-back", detail: answer.note });
+	return {
+		decision: nextStep(run.flow, { step, visits }, "failed", "sent-back"),
+		previous: { ...previous, outcome: "failed", reason: "sent-back", note: answer.note },
+	};
 }
 
 /** Visits before the step that was about to start: a halt leaves that visit uncounted. */
@@ -501,7 +573,7 @@ function previousVisits(visits: Visits, step: string): Visits {
 	return rest;
 }
 
-function finish(ctx: ExtensionCommandContext, run: Run, decision: Decision, message?: string): void {
+function finish(ctx: ExtensionContext, run: Run, decision: Decision, message?: string): void {
 	if ("next" in decision) return;
 	if (decision.stop === "no-route" && !message) appendEvent(run.folder, "deviation", { step: decision.step, rule: "no-route" });
 	appendEvent(run.folder, "run-end", { stop: decision.stop, ...(decision.step ? { step: decision.step } : {}) });

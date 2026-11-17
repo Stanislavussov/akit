@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import akitFlow, { flowCommand } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
+import akitFlow, { flowCommand, startTool } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
 import { checksGreen } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-record.ts";
 import type { ExtensionCommandContext } from "../../../AKitCore/Sources/AKitRender/Resources/flows/pi-adapter.ts";
 
@@ -87,10 +87,13 @@ function events(run: string): Record<string, unknown>[] {
 	return readFileSync(join(run, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 }
 
-test("the extension registers /flow", () => {
+test("the extension registers /flow and the tool akit_flow", () => {
 	const names: string[] = [];
-	akitFlow({ registerCommand: (name: string) => names.push(name), on: () => () => {} } as never);
+	const tools: { name: string; parameters: { required: string[] } }[] = [];
+	akitFlow({ registerCommand: (name: string) => names.push(name), registerTool: (t: never) => tools.push(t), on: () => () => {} } as never);
 	assert.deepEqual(names, ["flow"]);
+	assert.deepEqual(tools.map((t) => t.name), ["akit_flow"]);
+	assert.deepEqual(tools[0].parameters.required, ["task"]);
 });
 
 test("a 4-step flow runs in order and is recorded", async () => {
@@ -578,4 +581,95 @@ test("STOP halts before the next step; gate edits are committed before it on res
 	assert.deepEqual(trailers(tree), ["plan/1/", "//plan", "implement/1/", "review/1/"]);
 	assert.equal(git(tree, "show", "HEAD:notes.md"), "my edit");
 	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+const gated = () => [
+	{ id: "plan", agent: "planner", model: "m/a" },
+	{ id: "implement", agent: "implementer", model: "m/a" },
+	{ id: "review", agent: "reviewer", model: "m/b", gate: true, routes: { "failed:sent-back": "implement" } },
+];
+
+/** A ctx with a UI that answers the gate from lists and records what it showed. */
+function gateCtx(choices: string[], notes: string[] = []) {
+	const shown = { editors: [] as { title: string; text: string }[], selects: [] as string[] };
+	const c = ctx();
+	(c as { hasUI: boolean }).hasUI = true;
+	c.ui.editor = async (title: string, text?: string) => {
+		shown.editors.push({ title, text: text ?? "" });
+		return title.startsWith("Send Back") ? notes.shift() : text;
+	};
+	c.ui.select = async (title: string) => (shown.selects.push(title), choices.shift());
+	return { c, shown };
+}
+
+test("Approve at a gate continues, after the diff of the run branch", async () => {
+	flow(gated());
+	pi({ writes: { implement: { "src/export.ts": "export const csv = 1;\n" } } });
+	const { c, shown } = gateCtx(["Approve"]);
+	await flowCommand("feature x", c);
+	const run = onlyRun();
+	assert.deepEqual(calls().map((x) => x.step), ["plan", "implement", "review"]);
+	assert.deepEqual(shown.selects, ["Gate after step review"]);
+	const diff = shown.editors[0];
+	assert.match(diff.title, /akit-flow\/.* against its base \(read only/);
+	assert.match(diff.text, /src\/export\.ts/);
+	assert.match(diff.text, /\+export const csv = 1;/);
+	assert.deepEqual(events(run).filter((e) => e.type === "gate").map((e) => e.answer), ["approve"]);
+	assert.deepEqual(deviations(run), []);
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("Send Back routes failed:sent-back with a deviation and gives the note to that step", async () => {
+	flow(gated());
+	const { c } = gateCtx(["Send Back", "Approve"], ["The CSV needs a header row."]);
+	await flowCommand("feature x", c);
+	const run = onlyRun();
+	assert.deepEqual(calls().map((x) => x.step), ["plan", "implement", "review", "implement", "review"]);
+	assert.deepEqual(deviations(run).map((d) => [d.rule, d.detail]), [["sent-back", "The CSV needs a header row."]]);
+	assert.deepEqual(events(run).filter((e) => e.type === "gate").map((e) => e.answer), ["send-back", "approve"]);
+	const back = calls()[3].args.at(-1) ?? "";
+	assert.match(back, /sent the work back at the gate after the step "review"/);
+	assert.match(back, /The CSV needs a header row\./);
+	assert.deepEqual(events(run).filter((e) => e.type === "step-start" && e.step === "implement").map((e) => e.attempt), [1, 2]);
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("a gate without an answer halts; resume asks again", async () => {
+	flow(gated());
+	await flowCommand("feature x", ctx());
+	const run = onlyRun();
+	assert.equal(events(run).at(-1)?.type, "halted");
+	assert.match(messages.at(-1)?.text ?? "", /waits at the gate after step review/);
+	const { c } = gateCtx(["Approve"]);
+	await flowCommand("resume", c);
+	assert.deepEqual(calls().map((x) => x.step), ["plan", "implement", "review"]);
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("akit_flow without a yes starts nothing", async () => {
+	flow(twoSteps());
+	const c = ctx();
+	(c as { hasUI: boolean }).hasUI = true;
+	const asked: string[] = [];
+	c.ui.confirm = async (title: string, message: string) => (asked.push(`${title} ${message}`), false);
+	const text = await startTool({ flow: "feature", task: "add CSV export" }, c);
+	assert.match(text, /did not confirm; no flow was started/);
+	assert.deepEqual(asked, ["Start a flow? The model asks to run the flow feature for: add CSV export"]);
+	assert.equal(calls().length, 0);
+	assert.ok(!existsSync(join(project, ".pi", "akit-flow")), "no run folder");
+	// No UI to ask in: nothing starts either.
+	assert.match(await startTool({ task: "x" }, ctx()), /no flow was started/);
+	assert.equal(calls().length, 0);
+});
+
+test("akit_flow with a yes runs the flow", async () => {
+	flow(twoSteps());
+	const c = ctx();
+	(c as { hasUI: boolean }).hasUI = true;
+	c.ui.confirm = async () => true;
+	const text = await startTool({ task: "add CSV export" }, c);
+	const run = onlyRun();
+	assert.match(text, new RegExp(`Flow run ${run.split("/").pop()} has ended`));
+	assert.deepEqual(calls().map((x) => x.step), ["plan", "implement", "review"]);
+	assert.match(calls()[0].args.at(-1) ?? "", /Task: add CSV export/);
 });

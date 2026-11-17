@@ -257,6 +257,27 @@ export function registerFlowCommand(pi: ExtensionAPI, handler: (args: string, ct
 	});
 }
 
+/** The tool `akit_flow`: the model may start a flow when the user asks in words (F11). */
+export function registerStartTool(pi: ExtensionAPI, handler: (params: { flow?: string; task: string }, ctx: ExtensionContext) => Promise<string>): void {
+	pi.registerTool({
+		name: "akit_flow",
+		label: "AKit flow",
+		description: "Start an AKit flow (a fixed chain of agent steps) when the user asks for one in words, e.g. \"do it by the Feature flow\". The user is asked to confirm first.",
+		parameters: {
+			type: "object",
+			properties: {
+				flow: { type: "string", description: "The flow's name; leave out for the project's default flow." },
+				task: { type: "string", description: "The task for the flow, as the user said it." },
+			},
+			required: ["task"],
+			additionalProperties: false,
+		},
+		async execute(_id, params, _signal, _update, ctx) {
+			return { content: [{ type: "text", text: await handler(params as { flow?: string; task: string }, ctx) }], details: undefined };
+		},
+	});
+}
+
 export function onShutdown(pi: ExtensionAPI, handler: () => void): void {
 	pi.on("session_shutdown", () => handler());
 }
