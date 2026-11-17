@@ -12,6 +12,9 @@ import type { ExtensionCommandContext } from "../../../AKitCore/Sources/AKitRend
 const repo = join(import.meta.dirname, "..", "..", "..");
 let root: string, project: string, piDir: string, messages: { text: string; level?: string }[];
 const saved = { HOME: process.env.HOME, PATH: process.env.PATH };
+// Commits in the fake project and the run's worktree need a name; the fake HOME has no git config.
+for (const key of ["GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"]) process.env[key] = "Flow Test";
+for (const key of ["GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"]) process.env[key] = "flow@example.com";
 
 function ctx(): ExtensionCommandContext {
 	return {
@@ -33,7 +36,8 @@ beforeEach(() => {
 	for (const d of [home, project, piDir, bin]) mkdirSync(d, { recursive: true });
 	cpSync(join(import.meta.dirname, "fake-pi.mjs"), join(bin, "pi"));
 	execFileSync("chmod", ["+x", join(bin, "pi")]);
-	execFileSync("git", ["init", "-q"], { cwd: project });
+	execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project });
+	execFileSync("git", ["commit", "-q", "--allow-empty", "-m", "init"], { cwd: project });
 	mkdirSync(join(project, ".pi", "skills", "tdd"), { recursive: true });
 	writeFileSync(join(project, ".pi", "skills", "tdd", "SKILL.md"), "---\nname: tdd\n---\n");
 	process.env.HOME = home;
@@ -66,7 +70,7 @@ const fourSteps = (implementLoops = 3) => [
 	{ id: "review", agent: "reviewer", model: "m/b" },
 ];
 
-function calls(): { step: string; args: string[]; stdinNull: boolean }[] {
+function calls(): { step: string; args: string[]; cwd: string; stdinNull: boolean }[] {
 	const path = join(piDir, "calls.jsonl");
 	return existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
 }
@@ -294,6 +298,8 @@ for (let i = 1; i <= 50; i++) console.log("line " + i);
 if (n < ${fails}) { console.error("1 test failed: export writes no header"); process.exit(1); }
 console.log("all tests passed");
 `);
+	execFileSync("git", ["add", "check.mjs"], { cwd: project });
+	execFileSync("git", ["commit", "-q", "-m", "check script"], { cwd: project });
 }
 
 const checkedSteps = () => [
@@ -384,4 +390,192 @@ test("the sample run matches fixtures/flow-runs/sample", async () => {
 	}
 	assert.deepEqual(files(SAMPLE), [...got.keys()]);
 	for (const [name, text] of got) assert.equal(readFileSync(join(SAMPLE, name), "utf8"), text, name);
+});
+
+function git(cwd: string, ...args: string[]): string {
+	return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function worktreeOf(run: string): string {
+	return join(process.env.HOME ?? "", ".akit", "local", "flows", "runs", run.split("/").pop() ?? "", "worktree");
+}
+
+/** Flow-* trailers of the run branch's commits, oldest first. */
+function trailers(worktree: string): string[] {
+	return git(worktree, "log", "--reverse", "--format=%(trailers:key=Flow-Step,valueonly,separator=)/%(trailers:key=Flow-Attempt,valueonly,separator=)/%(trailers:key=Flow-Gate,valueonly,separator=)", "main..HEAD")
+		.split("\n").filter(Boolean);
+}
+
+const twoSteps = () => [
+	{ id: "plan", agent: "planner", model: "m/a" },
+	{ id: "implement", agent: "implementer", model: "m/a" },
+	{ id: "review", agent: "reviewer", model: "m/b" },
+];
+
+test("a run works in its own worktree outside the project and commits each step", async () => {
+	flow(twoSteps());
+	pi({ writes: { implement: { "src/export.ts": "export {}\n" } } });
+	await flowCommand("feature add CSV export", ctx());
+	const run = onlyRun();
+	const id = run.split("/").pop() ?? "";
+	const tree = worktreeOf(run);
+	assert.ok(!tree.startsWith(project + "/"), "worktree is outside the project tree");
+	assert.ok(calls().every((c) => realpathSync(c.cwd) === tree), "children run in the worktree");
+	assert.equal(git(tree, "branch", "--show-current"), `akit-flow/${id}`);
+	assert.deepEqual(trailers(tree), ["plan/1/", "implement/1/", "review/1/"]);
+	const body = git(tree, "log", "-1", "--format=%B", "HEAD~1");
+	assert.match(body, /^implement goal\n\nFlow-Run: \d{8}-\d{4}-[0-9a-f]{4}\nFlow-Step: implement\nFlow-Attempt: 1$/);
+	assert.equal(git(tree, "show", "--name-only", "--format=", "HEAD~1"), "src/export.ts");
+	assert.ok(!existsSync(join(project, "src")), "the main checkout is untouched");
+	assert.ok(existsSync(join(project, ".pi", "akit-flow", "runs", id, "events.jsonl")), "records live in the main checkout");
+	const ends = events(run).filter((e) => e.type === "step-end");
+	assert.equal(ends[1].commit, git(tree, "rev-parse", "HEAD~1"));
+	const cache = JSON.parse(readFileSync(join(run, "run.json"), "utf8"));
+	assert.equal(cache.worktree, tree);
+	assert.equal(cache.branch, `akit-flow/${id}`);
+});
+
+test("a project without a commit refuses to start", async () => {
+	rmSync(join(project, ".git"), { recursive: true });
+	execFileSync("git", ["init", "-q"], { cwd: project });
+	flow(twoSteps());
+	await flowCommand("feature x", ctx());
+	assert.match(messages.at(-1)?.text ?? "", /no commit yet/);
+	assert.equal(calls().length, 0);
+});
+
+/** Events without the lines after `keep` (the index of the last kept line): a crash at that point. */
+function cutEvents(run: string, keep: number) {
+	const lines = readFileSync(join(run, "events.jsonl"), "utf8").trim().split("\n").slice(0, keep + 1);
+	writeFileSync(join(run, "events.jsonl"), `${lines.join("\n")}\n`);
+}
+
+test("killed mid-step: resume resets to the last step commit and reruns the step, attempt + 1", async () => {
+	flow(twoSteps());
+	pi({ writes: { implement: { "src/half.ts": "half done\n" } }, outcomes: { implement: ["blocked"] } });
+	await flowCommand("feature x", ctx());
+	const run = onlyRun();
+	const tree = worktreeOf(run);
+	// The crash: implement started and wrote a file, then the extension died (no commit, no step-end).
+	git(tree, "reset", "-q", "--hard", "HEAD~1");
+	mkdirSync(join(tree, "src"));
+	writeFileSync(join(tree, "src", "half.ts"), "half done\n");
+	cutEvents(run, events(run).findIndex((e) => e.type === "step-start" && e.step === "implement"));
+	rmSync(join(run, "run.json"));
+	pi({});
+	const asked: string[] = [];
+	const c = ctx();
+	c.ui.confirm = async (title: string) => (asked.push(title), true);
+	await flowCommand("resume", c);
+	assert.deepEqual(asked, ["Reset the flow's worktree?"]);
+	assert.deepEqual(calls().map((x) => x.step), ["plan", "implement", "implement", "review"]);
+	const starts = events(run).filter((e) => e.type === "step-start" && e.step === "implement").map((e) => e.attempt);
+	assert.deepEqual(starts, [1, 2]);
+	assert.ok(!existsSync(join(tree, "src", "half.ts")), "the half-done file was reset");
+	assert.deepEqual(trailers(tree), ["plan/1/", "implement/2/", "review/1/"]);
+	// run.json was deleted; resume rebuilt it from the events.
+	const cache = JSON.parse(readFileSync(join(run, "run.json"), "utf8"));
+	assert.equal(cache.status, "done");
+	assert.equal(cache.flow, "feature");
+	assert.equal(cache.worktree, tree);
+	assert.deepEqual(cache.state.visits, { plan: 1, implement: 2, review: 1 });
+	// The rerun step got the last finished step's handoff.
+	assert.match(calls()[2].args.at(-1) ?? "", /Handoff from the step "plan"/);
+});
+
+test("killed after the step commit, before step-end: resume does not rerun the step", async () => {
+	flow(twoSteps());
+	await flowCommand("feature x", ctx());
+	const run = onlyRun();
+	const tree = worktreeOf(run);
+	// The crash: implement's commit is there, its step-end and everything after are not.
+	git(tree, "reset", "-q", "--hard", "HEAD~1");
+	cutEvents(run, events(run).findIndex((e) => e.type === "step-start" && e.step === "implement"));
+	await flowCommand("resume", ctx());
+	assert.deepEqual(calls().map((x) => x.step), ["plan", "implement", "review", "review"]);
+	const recovered = events(run).find((e) => e.type === "step-end" && e.step === "implement");
+	assert.equal(recovered?.recovered, true);
+	assert.equal(recovered?.outcome, "done");
+	assert.deepEqual(trailers(tree), ["plan/1/", "implement/1/", "review/1/"]);
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("uncommitted changes at resume: it asks, and a no resets nothing", async () => {
+	flow(twoSteps());
+	pi({ hang: ["implement"], writes: { implement: { "src/mine.ts": "keep me\n" } } });
+	const controller = new AbortController();
+	const running = flowCommand("feature x", ctx(), controller.signal);
+	await waitFor(() => existsSync(join(piDir, "hang-implement.json")));
+	controller.abort();
+	await running;
+	const run = onlyRun();
+	const tree = worktreeOf(run);
+	pi({});
+	const before = calls().length;
+	let asked = 0;
+	const c = ctx();
+	c.ui.confirm = async () => (asked++, false);
+	messages = [];
+	await flowCommand("resume", c);
+	assert.equal(asked, 1);
+	assert.equal(readFileSync(join(tree, "src", "mine.ts"), "utf8"), "keep me\n", "no reset");
+	assert.equal(calls().length, before, "no child started");
+	assert.match(messages.at(-1)?.text ?? "", /nothing was reset/);
+	assert.ok(!existsSync(join(run, "lock")), "lock released");
+});
+
+async function waitFor(ok: () => boolean, ms = 10_000) {
+	const end = Date.now() + ms;
+	while (!ok()) {
+		if (Date.now() > end) throw new Error("timed out");
+		await new Promise((r) => setTimeout(r, 25));
+	}
+}
+
+function alive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+test("abort kills the child's process group: no orphan is left", async () => {
+	flow(twoSteps());
+	pi({ hang: ["plan"] });
+	const controller = new AbortController();
+	const running = flowCommand("feature x", ctx(), controller.signal);
+	await waitFor(() => existsSync(join(piDir, "hang-plan.json")));
+	const { pid, grandchild } = JSON.parse(readFileSync(join(piDir, "hang-plan.json"), "utf8"));
+	assert.ok(alive(pid) && alive(grandchild));
+	controller.abort();
+	await running;
+	await waitFor(() => !alive(pid) && !alive(grandchild), 3000);
+	const end = events(onlyRun()).at(-1);
+	assert.equal(end?.type, "step-end");
+	assert.equal(end?.reason, "aborted");
+});
+
+test("STOP halts before the next step; gate edits are committed before it on resume", async () => {
+	flow(twoSteps());
+	pi({ stop: ["plan"] });
+	await flowCommand("feature x", ctx());
+	assert.deepEqual(calls().map((x) => x.step), ["plan"]);
+	const run = onlyRun();
+	const tree = worktreeOf(run);
+	const halt = events(run).at(-1);
+	assert.equal(halt?.type, "halted");
+	assert.equal(halt?.next, "implement");
+	assert.ok(!events(run).some((e) => e.type === "run-end"));
+	assert.match(messages.at(-1)?.text ?? "", /halted by STOP before step implement/);
+	// While halted, the user edits the worktree (as at a gate).
+	writeFileSync(join(tree, "notes.md"), "my edit\n");
+	pi({});
+	await flowCommand("resume", ctx());
+	assert.ok(!existsSync(join(run, "STOP")), "resume removed STOP");
+	assert.deepEqual(calls().map((x) => x.step), ["plan", "implement", "review"]);
+	assert.deepEqual(trailers(tree), ["plan/1/", "//plan", "implement/1/", "review/1/"]);
+	assert.equal(git(tree, "show", "HEAD:notes.md"), "my edit");
+	assert.equal(events(run).at(-1)?.stop, "done");
 });

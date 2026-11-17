@@ -10,11 +10,12 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-	compareVersions, type Decision, firstStep, type Flow, formatProblem, isOutcome, isSafeCommand, MAX_CHECK_COMMANDS, nextStep,
+	compareVersions, type Decision, DEFAULT_MAX_LOOPS, firstStep, type Flow, formatProblem, isOutcome, isSafeCommand, MAX_CHECK_COMMANDS, nextStep,
 	type Outcome, parseOutcome, requiredPi, runId, TESTED_PI, type Visits,
 } from "./flow-core.ts";
+import { changes, commit, createWorktree, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
 import {
-	appendEvent, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, recordTokens, releaseLock,
+	appendEvent, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, type RecordedEvent, recordTokens, releaseLock,
 	RUN_SCHEMA, runChecks, stepKey, takeLock, visitsFrom, writeAtomic,
 } from "./flow-record.ts";
 import {
@@ -122,6 +123,8 @@ interface Run {
 	info: PiInfo;
 	newer: boolean;
 	started: string;
+	/** The run's worktree outside the project tree, its branch and base commit (F8). */
+	worktree: Worktree;
 }
 
 function writeRunJson(run: Run, fields: Record<string, unknown>): void {
@@ -131,6 +134,9 @@ function writeRunJson(run: Run, fields: Record<string, unknown>): void {
 		flow: run.flow.name,
 		task: run.task,
 		project: run.project,
+		worktree: run.worktree.path,
+		branch: run.worktree.branch,
+		base: run.worktree.base,
 		pi: run.info.version,
 		piFeatures: run.info.features,
 		piApi: run.info.api,
@@ -161,13 +167,38 @@ async function start(ctx: ExtensionCommandContext, words: string[], signal?: Abo
 	const pi = await checkPi(ctx, flow);
 	if (!pi) return;
 	const id = runId(new Date(), randomBytes(2).toString("hex"));
+	const worktree = createWorktree(project, id);
+	if ("error" in worktree) {
+		say(ctx, `Can't start the flow: ${worktree.error}`, "error");
+		return;
+	}
 	const folder = createRunFolder(project, id);
 	takeLock(folder);
-	const run: Run = { folder, id, flow, task, project, info: pi.info, newer: pi.newer, started: new Date().toISOString() };
-	appendEvent(folder, "run-start", { run: id, flow: flow.name, task, pi: pi.info.version });
+	const run: Run = { folder, id, flow, task, project, info: pi.info, newer: pi.newer, started: new Date().toISOString(), worktree };
+	appendEvent(folder, "run-start", { run: id, flow: flow.name, task, pi: pi.info.version, worktree: worktree.path, branch: worktree.branch, base: worktree.base });
 	await loop(ctx, run, firstStep(flow), undefined, signal);
 }
 
+/** The handoff file a step attempt wrote, read back for the next step's prompt. */
+function readHandoff(folder: string, index: number, step: string, attempt: number): Record<string, unknown> | undefined {
+	const prefix = `${stepKey(index, step)}-a${attempt}-`;
+	const name = existsSync(join(folder, "handoffs")) ? readdirSync(join(folder, "handoffs")).find((n) => n.startsWith(prefix) && n.endsWith(".json")) : undefined;
+	if (!name) return undefined;
+	try {
+		return JSON.parse(readFileSync(join(folder, "handoffs", name), "utf8")) as Record<string, unknown>;
+	} catch {
+		return undefined;
+	}
+}
+
+function previousFrom(folder: string, flow: Flow, step: string, attempt: number): Previous | undefined {
+	const handoff = readHandoff(folder, flow.steps.findIndex((s) => s.id === step), step, attempt);
+	if (!handoff) return undefined;
+	const from = (handoff.from ?? {}) as { outcome?: unknown; reason?: unknown };
+	return { step, outcome: isOutcome(from.outcome) ? from.outcome : "failed", reason: typeof from.reason === "string" ? from.reason : "", handoff };
+}
+
+/** `/flow resume`: events.jsonl and the commit trailers are the truth; run.json is rebuilt (F9). */
 async function resume(ctx: ExtensionCommandContext, id: string | undefined, signal?: AbortSignal): Promise<void> {
 	const project = mainCheckout(ctx.cwd);
 	const folder = id ? join(project, ".pi", "akit-flow", "runs", id) : latestRun(project);
@@ -185,40 +216,77 @@ async function resume(ctx: ExtensionCommandContext, id: string | undefined, sign
 		say(ctx, `Run ${folder.split("/").pop()} is running in process ${holder}; resume refused.`, "error");
 		return;
 	}
-	const startEvent = events.find((e) => e.type === "run-start");
-	let cache: Record<string, unknown> = {};
 	try {
-		cache = JSON.parse(readFileSync(join(folder, "run.json"), "utf8")) as Record<string, unknown>;
-	} catch {
-		// run.json is a cache; the events say enough.
-	}
-	const name = startEvent?.flow ?? (cache.flow as string | undefined);
-	const task = startEvent?.task ?? (cache.task as string | undefined) ?? "";
-	const flow = name ? await loadFlow(ctx, project, name) : undefined;
-	const pi = flow ? await checkPi(ctx, flow) : undefined;
-	if (!flow || !pi) {
+		await resumeLocked(ctx, project, folder, events, signal);
+	} finally {
 		releaseLock(folder);
-		if (!name) say(ctx, "The run names no flow.", "error");
+	}
+}
+
+async function resumeLocked(ctx: ExtensionCommandContext, project: string, folder: string, events: RecordedEvent[], signal?: AbortSignal): Promise<void> {
+	const startEvent = events.find((e) => e.type === "run-start");
+	const name = startEvent?.flow;
+	const worktree = typeof startEvent?.worktree === "string" && typeof startEvent.base === "string"
+		? { path: startEvent.worktree, branch: String(startEvent.branch ?? ""), base: startEvent.base } : undefined;
+	if (!name || !worktree) {
+		say(ctx, "The run's events name no flow or worktree; it can't resume.", "error");
 		return;
 	}
+	if (!worktreeExists(worktree.path)) {
+		say(ctx, `The run's worktree ${worktree.path} is gone; it can't resume.`, "error");
+		return;
+	}
+	const flow = await loadFlow(ctx, project, name);
+	const pi = flow ? await checkPi(ctx, flow) : undefined;
+	if (!flow || !pi) return;
 	const run: Run = {
-		folder, id: folder.split("/").pop() ?? "", flow, task, project, info: pi.info, newer: pi.newer,
-		started: (cache.started as string | undefined) ?? startEvent?.time as string ?? new Date().toISOString(),
+		folder, id: folder.split("/").pop() ?? "", flow, task: startEvent.task ?? "", project, info: pi.info, newer: pi.newer,
+		started: typeof startEvent.time === "string" ? startEvent.time : new Date().toISOString(), worktree,
 	};
 	const visits = visitsFrom(events);
+	const commits = flowCommits(worktree.path, run.id, worktree.base);
 	const last = [...events].reverse().find((e) => e.type === "step-start" || e.type === "step-end");
+	const crashed = last?.type === "step-start" || (last?.type === "step-end" && last.reason === "aborted");
 	let decision: Decision;
-	if (!last) decision = firstStep(flow);
-	else if (last.type === "step-start" && last.step) {
-		// The step crashed: it starts again (a new visit, attempt + 1), under the same cap.
-		const step = flow.steps.find((s) => s.id === last.step);
-		const count = (visits[last.step] ?? 0) + 1;
-		decision = !step ? { stop: "unknown-step", step: last.step, visits }
-			: count > (step.maxLoops ?? 3) ? { stop: "visit-cap", step: last.step, visits }
-			: { next: last.step, visits: { ...visits, [last.step]: count } };
-	} else decision = nextStep(flow, { step: last.step ?? "", visits }, (last.outcome ?? "failed") as Outcome, last.reason ?? "");
-	appendEvent(folder, "resume", { run: run.id });
-	await loop(ctx, run, decision, undefined, signal);
+	let previous: Previous | undefined;
+	if (!last || !last.step) decision = firstStep(flow);
+	else if (crashed) {
+		const attempt = last.attempt ?? visits[last.step] ?? 1;
+		const committed = commits.find((c) => c.trailers["Flow-Step"] === last.step && c.trailers["Flow-Attempt"] === String(attempt) && !c.trailers["Flow-Gate"]);
+		previous = previousFrom(folder, flow, last.step, attempt);
+		if (committed && last.type === "step-start" && previous) {
+			// Killed after the step's commit, before its step-end: the step is finished, not rerun.
+			appendEvent(folder, "step-end", { step: last.step, attempt, outcome: previous.outcome, reason: previous.reason, commit: committed.commit, recovered: true });
+			decision = nextStep(flow, { step: last.step, visits }, previous.outcome, previous.reason);
+		} else {
+			// The step crashed: back to the last step commit, then the step again (attempt + 1).
+			const target = commits[0]?.commit ?? worktree.base;
+			const dirty = changes(worktree.path);
+			if (dirty.length > 0) {
+				const yes = await ctx.ui.confirm("Reset the flow's worktree?",
+					`Step ${last.step} stopped before it finished. ${worktree.path} has ${dirty.length} uncommitted change(s):\n${dirty.slice(0, 20).join("\n")}\n\nReset to the last step commit ${target.slice(0, 10)} and run the step again?`);
+				if (!yes) {
+					say(ctx, `Resume stopped; nothing was reset. Commit or remove the changes in ${worktree.path}, then /flow resume.`, "warning");
+					return;
+				}
+			}
+			resetTo(worktree.path, target);
+			previous = commits[0] ? previousFrom(folder, flow, commits[0].trailers["Flow-Step"] ?? "", Number(commits[0].trailers["Flow-Attempt"])) : undefined;
+			const step = flow.steps.find((s) => s.id === last.step);
+			const count = (visits[last.step] ?? 0) + 1;
+			decision = !step ? { stop: "unknown-step", step: last.step, visits }
+				: count > (step.maxLoops ?? DEFAULT_MAX_LOOPS) ? { stop: "visit-cap", step: last.step, visits }
+				: { next: last.step, visits: { ...visits, [last.step]: count } };
+		}
+	} else {
+		previous = previousFrom(folder, flow, last.step, last.attempt ?? visits[last.step] ?? 1);
+		decision = nextStep(flow, { step: last.step, visits }, (last.outcome ?? "failed") as Outcome, last.reason ?? "");
+	}
+	// Resume is the user's word to go on: a STOP left from the halt is removed.
+	const stopped = existsSync(join(folder, "STOP"));
+	rmSync(join(folder, "STOP"), { force: true });
+	appendEvent(folder, "resume", { run: run.id, ...(stopped ? { removed: "STOP" } : {}) });
+	await loop(ctx, run, decision, previous, signal);
 }
 
 function resolveSkill(project: string, name: string): string | undefined {
@@ -307,6 +375,20 @@ async function loop(ctx: ExtensionCommandContext, run: Run, first: Decision, pre
 			visits = decision.visits;
 			const attempt = visits[step.id] ?? 1;
 			const key = stepKey(index, step.id);
+			// AKit's Stop button writes STOP: the run halts before the next step; /flow resume goes on (F19).
+			if (existsSync(join(run.folder, "STOP"))) {
+				appendEvent(run.folder, "halted", { reason: "STOP", next: step.id });
+				writeRunJson(run, { status: "stopped", state: { step: previous?.step ?? null, visits: previousVisits(visits, step.id) } });
+				status(ctx, undefined);
+				say(ctx, `Flow ${run.flow.name} halted by STOP before step ${step.id}; /flow resume continues.`, "warning");
+				return;
+			}
+			// Edits made between steps (at a gate) are committed before the next step starts (F9).
+			if (changes(run.worktree.path).length > 0) {
+				const edits = commit(run.worktree.path, `Flow edits before ${step.id}`, { "Flow-Run": run.id, "Flow-Gate": previous?.step ?? "start" });
+				if ("error" in edits) return finish(ctx, run, { stop: "commit-failed", step: step.id, visits: previousVisits(visits, step.id) }, `Can't commit the edits before step ${step.id}: ${edits.error}`);
+				appendEvent(run.folder, "gate-edits", { before: step.id, commit: edits.commit });
+			}
 			// The state is in events.jsonl before the step starts (F19), so a crash resumes here.
 			appendEvent(run.folder, "step-start", { step: step.id, attempt });
 			writeRunJson(run, { status: "running", state: { step: step.id, visits } });
@@ -336,7 +418,7 @@ async function loop(ctx: ExtensionCommandContext, run: Run, first: Decision, pre
 			for (let round = 1; round <= 2 && !part; round++) {
 				rmSync(partPath, { force: true });
 				result = await runChild({
-					cwd: ctx.cwd, sessionDir, model: step.model, thinking: step.thinking, skills,
+					cwd: run.worktree.path, sessionDir, model: step.model, thinking: step.thinking, skills,
 					tools: step.tools ?? [], extensions: childExtensions(run.project, step.extensions ?? []),
 					prompt: prompt(run, step.id, step.agent, previous), info: run.info, env: { AKIT_FLOW_HANDOFF: partPath }, signal,
 				});
@@ -366,7 +448,7 @@ async function loop(ctx: ExtensionCommandContext, run: Run, first: Decision, pre
 			let failedChecks: Previous["failedChecks"];
 			if (checks.length > 0) {
 				// The runner runs the checks; they count as green only with the evidence file (F19).
-				evidence = await runChecks(run.folder, key, run.id, { id: step.id, attempt }, checks, ctx.cwd, signal);
+				evidence = await runChecks(run.folder, key, run.id, { id: step.id, attempt }, checks, run.worktree.path, signal);
 				if (!checksGreen(evidence)) {
 					try {
 						failedChecks = (JSON.parse(readFileSync(evidence, "utf8")).checks as NonNullable<Previous["failedChecks"]>).filter((c) => c.exit !== 0);
@@ -392,8 +474,14 @@ async function loop(ctx: ExtensionCommandContext, run: Run, first: Decision, pre
 				evidence: evidence ? `evidence/${basename(evidence)}` : null,
 			};
 			writeAtomic(join(run.folder, "handoffs", handoffName(index, step.id, attempt, result.session)), handoff);
+			// The finished step is a commit with trailers, before its step-end: resume trusts the trailer (F9).
+			const done = commit(run.worktree.path, handoff.goal, { "Flow-Run": run.id, "Flow-Step": step.id, "Flow-Attempt": String(attempt) });
+			if ("error" in done) {
+				appendEvent(run.folder, "deviation", { step: step.id, attempt, rule: "commit-failed", detail: done.error });
+				return finish(ctx, run, { stop: "commit-failed", step: step.id, visits }, `Can't commit step ${step.id}: ${done.error}`);
+			}
 			appendEvent(run.folder, "step-end", {
-				step: step.id, attempt, outcome, reason, tokens: recordTokens(result.tokens), exit: result.code,
+				step: step.id, attempt, outcome, reason, tokens: recordTokens(result.tokens), exit: result.code, commit: done.commit,
 				...(result.unknownEvents ? { unknownEvents: result.unknownEvents } : {}),
 			});
 			previous = { step: step.id, outcome, reason, handoff, failedChecks };
@@ -402,6 +490,15 @@ async function loop(ctx: ExtensionCommandContext, run: Run, first: Decision, pre
 	} finally {
 		releaseLock(run.folder);
 	}
+}
+
+/** Visits before the step that was about to start: a halt leaves that visit uncounted. */
+function previousVisits(visits: Visits, step: string): Visits {
+	const count = (visits[step] ?? 1) - 1;
+	const rest = { ...visits };
+	if (count > 0) rest[step] = count;
+	else delete rest[step];
+	return rest;
 }
 
 function finish(ctx: ExtensionCommandContext, run: Run, decision: Decision, message?: string): void {

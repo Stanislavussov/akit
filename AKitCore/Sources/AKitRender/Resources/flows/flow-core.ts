@@ -12,8 +12,8 @@ export const END = "end";
 export const DEFAULT_MAX_LOOPS = 3;
 
 export type Outcome = "done" | "failed" | "blocked";
-/** Why a run ended. `no-handoff` and `check-refused` come from the runner, never from `nextStep`. */
-export type Stop = "done" | "visit-cap" | "no-route" | "unknown-step" | "no-handoff" | "check-refused";
+/** Why a run ended. `no-handoff`, `check-refused` and `commit-failed` come from the runner, never from `nextStep`. */
+export type Stop = "done" | "visit-cap" | "no-route" | "unknown-step" | "no-handoff" | "check-refused" | "commit-failed";
 
 export interface FlowStep {
 	id: string;
