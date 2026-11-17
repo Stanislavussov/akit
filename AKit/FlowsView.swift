@@ -179,6 +179,12 @@ struct FlowsView: View {
             Text("\(flow.steps.count) step\(flow.steps.count == 1 ? "" : "s") · Pi \(flow.minPi) or newer · a flow runs in Pi with /flow \(flow.name) <task>")
                 .font(.caption).foregroundStyle(.secondary)
             piVersionLine.font(.caption)
+            if saved != nil, let brain = model.brain, BrainFlows.layers(including: flow.name, in: brain).isEmpty {
+                Label("In no layer: Apply… doesn't write it, so Pi has no /flow. Include it with Layers (core for the home folder), then Apply….",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange).font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
