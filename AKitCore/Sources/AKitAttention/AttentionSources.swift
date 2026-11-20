@@ -147,6 +147,29 @@ enum AttentionSources {
         return items
     }
 
+    // MARK: Agent Reports
+
+    /// The latest summary of the agent's own end-of-task reports saved on Error Analysis → Agent
+    /// Reports (earlier ones cover the same days again): with a High finding it needs a look, else
+    /// it is ready to read.
+    static func agentReports(env: HarnessEnvironment, since: Date) -> [AttentionItem] {
+        let store = AgentReportStore(env: env)
+        return store.list().prefix(1).compactMap { saved in
+            let date = (try? saved.file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            guard let date, date >= since else { return nil }
+            let findings = store.analysis(of: saved.file)?.findings ?? []
+            let high = findings.filter { $0.severity == .high }
+            let period = saved.from.isEmpty ? "" : " \(saved.from) – \(saved.to)"
+            let first = (high.first ?? findings.first).map { ". First: \(Attention.short($0.title, limit: 140))" } ?? "."
+            let counts = findings.isEmpty ? "\(Attention.plural(saved.reports, "report")) summed up"
+                : "\(Attention.plural(findings.count, "finding")), \(high.count) high, from \(Attention.plural(saved.reports, "report"))"
+            return AttentionItem(id: "agent-reports:\(saved.file.lastPathComponent)", level: high.isEmpty ? .ready : .check,
+                                 source: .analysis, title: "Agent reports summed up:\(period)", detail: counts + first, date: date,
+                                 link: AttentionLink(screen: "analysis", tab: "agent-reports"),
+                                 fingerprint: "\(findings.count)|\(high.count)")
+        }
+    }
+
     // MARK: Evals
 
     /// The saved verdict of each layer eval, per agent: a sanity failure is a problem, every

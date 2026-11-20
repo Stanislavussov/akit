@@ -102,6 +102,24 @@ struct AttentionReviewTests {
     }
 }
 
+struct AttentionAgentReportsTests {
+    @Test func aSavedSummaryWithAHighFindingNeedsALook() throws {
+        let home = AttentionHome()
+        let store = AgentReportStore(env: home.env)
+        home.write(".akit/lab/agent-reports/20261120-090000.md", "---\nfrom: 2026-11-13 00:00\nto: 2026-11-20 00:00\nreports: 42\n---\n# Report\n")
+        let finding = AgentReports.Finding(severity: .high, title: "Tests are skipped when the build is slow", detail: "d", section: "s",
+                                           count: 5, reports: [1], prompt: "p")
+        try JSONEncoder().encode(AgentReports.Analysis(summary: "s", findings: [finding]))
+            .write(to: store.folder.appending(path: "20261120-090000.json"))
+        home.write(".akit/lab/agent-reports/20261119-090000.md", "---\nreports: 3\n---\n")
+        let found = items(home)
+        #expect(found.map(\.level) == [.check], "only the latest summary")
+        #expect(found[0].title == "Agent reports summed up: 2026-11-13 00:00 – 2026-11-20 00:00")
+        #expect(found[0].detail == "1 finding, 1 high, from 42 reports. First: Tests are skipped when the build is slow")
+        #expect(found[0].link == AttentionLink(screen: "analysis", tab: "agent-reports"))
+    }
+}
+
 struct AttentionStateTests {
     @Test func mcpServersThatDidNotConnect() throws {
         let home = AttentionHome()

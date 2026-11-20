@@ -121,6 +121,7 @@ public enum Attention {
         let items = AttentionSources.lab(env: env, since: since)
             + AttentionSources.review(env: env, since: since)
             + AttentionSources.analysis(env: env, since: since)
+            + AttentionSources.agentReports(env: env, since: since)
             + AttentionSources.evals(env: env, layers: brain?.layers.map(\.name) ?? [], since: since)
             + AttentionSources.flows(env: env, projects: projects, since: since)
             + AttentionSources.mcp(env: env, since: since)
