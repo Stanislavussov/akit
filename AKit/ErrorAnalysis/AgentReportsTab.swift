@@ -74,7 +74,16 @@ final class AgentReportsModel {
     private(set) var progress: String?
     private(set) var saved: [AgentReportStore.Saved] = []
     /// The report on the Report pane: the last summary or a saved one.
-    private(set) var shown: (file: URL, markdown: String)?
+    private(set) var shown: Shown?
+
+    /// A report on the Report pane: its file and Markdown, its findings when saved with them, and
+    /// its line from Saved (period, model, focus).
+    struct Shown {
+        let file: URL
+        let markdown: String
+        let analysis: AgentReports.Analysis?
+        let saved: AgentReportStore.Saved?
+    }
 
     var sections: [AgentReports.Section] { AgentReports.sections(fromText: sectionsText) }
     var readKey: String { "\(from.timeIntervalSince1970) \(to.timeIntervalSince1970) \(source.rawValue) \(sectionsText)" }
@@ -132,7 +141,7 @@ final class AgentReportsModel {
             throw AgentReports.Failure(message: "The report came back but couldn't be saved: \(error.localizedDescription)")
         }
         loadSaved()
-        shown = (file, summary.markdown)
+        shown = Shown(file: file, markdown: summary.markdown, analysis: summary.analysis, saved: saved.first { $0.file == file })
         pane = .report
         return "Report of \(collection.withItems.count) reports by \(summary.model) in \(summary.calls) call\(summary.calls == 1 ? "" : "s"), saved as \(file.lastPathComponent)."
     }
@@ -140,15 +149,18 @@ final class AgentReportsModel {
     /// Reads the saved reports; the newest is on the Report pane until another one is opened.
     func loadSaved() {
         saved = store.list()
-        if shown == nil, let newest = saved.first, let text = try? String(contentsOf: newest.file, encoding: .utf8) {
-            shown = (newest.file, text)
-        }
+        if shown == nil, let newest = saved.first { shown = load(newest) }
     }
 
     func open(_ report: AgentReportStore.Saved) {
-        guard let text = try? String(contentsOf: report.file, encoding: .utf8) else { return }
-        shown = (report.file, text)
+        guard let loaded = load(report) else { return }
+        shown = loaded
         pane = .report
+    }
+
+    private func load(_ report: AgentReportStore.Saved) -> Shown? {
+        guard let text = try? String(contentsOf: report.file, encoding: .utf8) else { return nil }
+        return Shown(file: report.file, markdown: text, analysis: store.analysis(of: report.file), saved: report)
     }
 
     /// The Markdown of what was found, as `akit reports --markdown` prints it.
@@ -162,9 +174,11 @@ struct AgentReportsTab: View {
     var body: some View {
         let model = analysis.agentReports
         @Bindable var bound = model
-        HSplitView {
+        // A fixed settings column: nothing to drag.
+        HStack(spacing: 0) {
             AgentReportsSettings(model: model)
-                .frame(minWidth: 300, idealWidth: 340, maxWidth: 420)
+                .frame(width: 340)
+            Divider()
             VStack(spacing: 0) {
                 HStack {
                     Picker("Show", selection: $bound.pane) {
@@ -184,8 +198,8 @@ struct AgentReportsTab: View {
                             .disabled(model.collection?.reports.isEmpty ?? true)
                             .help("Every item by section with its time, project and session, as Markdown; nothing is sent")
                     } else if model.pane == .report, let shown = model.shown {
-                        Button("Copy", systemImage: "doc.on.doc") { copy(shown.markdown) }
-                            .help("The report's Markdown")
+                        Button("Copy as Markdown", systemImage: "doc.on.doc") { copy(shown.markdown) }
+                            .help("The whole report as Markdown")
                         Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([shown.file]) }
                     }
                 }
@@ -224,7 +238,15 @@ struct AgentReportsTab: View {
 
     @ViewBuilder
     private func report(_ model: AgentReportsModel) -> some View {
-        if let shown = model.shown {
+        if let shown = model.shown, let analysis = shown.analysis {
+            ScrollView {
+                AgentReportFindings(analysis: analysis, saved: shown.saved)
+                    .frame(maxWidth: 820, alignment: .leading)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else if let shown = model.shown {
+            // A report saved before findings had their own file.
             ScrollView {
                 MarkdownText(text: AgentReportsTab.body(of: shown.markdown), large: true)
                     .textSelection(.enabled)
@@ -370,6 +392,133 @@ private struct AgentReportsSettings: View {
                                     model: target, records: SendLog.records(env: .current))
             .flatMap { $0 >= 0.005 ? String(format: " (≈ $%.2f)", $0) : nil } ?? ""
         return "Sends only what the agent wrote in these sections, never a whole session, to \(target)\(cost)."
+    }
+}
+
+/// The Report pane of a report with findings: one or two sentences, the focus' answer, how many
+/// findings of each severity, and a card per finding with its color and a prompt to copy.
+private struct AgentReportFindings: View {
+    let analysis: AgentReports.Analysis
+    let saved: AgentReportStore.Saved?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Agent reports").font(.title2.bold())
+                if let saved {
+                    Text("\(saved.from) – \(saved.to) · \(saved.reports) reports · \(saved.model)")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            if !analysis.summary.isEmpty {
+                Text(analysis.summary).font(.title3).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            if let focus = saved?.focus, !focus.isEmpty, !analysis.focus.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Focus: \(focus)", systemImage: "scope").font(.callout.weight(.semibold))
+                    Text(analysis.focus).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            }
+            HStack(spacing: 8) {
+                ForEach(AgentReports.Severity.allCases, id: \.self) { severity in
+                    let count = analysis.findings.filter { $0.severity == severity }.count
+                    if count > 0 { FindingSeverityBadge(severity: severity, text: "\(count) \(severity.title)") }
+                }
+                Spacer()
+                Button("Copy All Prompts", systemImage: "doc.on.doc") {
+                    copy(AgentReports.allPrompts(analysis, period: saved.map { "\($0.from) – \($0.to)" } ?? ""))
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(analysis.findings.allSatisfy(\.prompt.isEmpty))
+                .help("Every finding's prompt as one message to paste into your coding agent, most severe first")
+            }
+            if analysis.findings.isEmpty {
+                Text("No findings: the reports show nothing to improve.").foregroundStyle(.secondary)
+            }
+            ForEach(Array(analysis.findings.enumerated()), id: \.offset) { _, finding in
+                FindingCard(finding: finding)
+            }
+        }
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+extension AgentReports.Severity {
+    var color: Color {
+        switch self {
+        case .high: .red
+        case .medium: .orange
+        case .low: .blue
+        }
+    }
+}
+
+/// A severity as a colored capsule.
+private struct FindingSeverityBadge: View {
+    let severity: AgentReports.Severity
+    var text: String?
+
+    var body: some View {
+        Text(text ?? severity.title)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(severity.color.opacity(0.18), in: Capsule())
+            .foregroundStyle(severity.color)
+    }
+}
+
+/// One finding: severity, title, what the reports show, where, and its prompt with Copy Prompt.
+private struct FindingCard: View {
+    let finding: AgentReports.Finding
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                FindingSeverityBadge(severity: finding.severity)
+                Text(finding.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+            }
+            if !finding.detail.isEmpty {
+                Text(finding.detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Text(seen).font(.caption).foregroundStyle(.secondary)
+            if !finding.prompt.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(finding.prompt).font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Spacer()
+                        Button("Copy Prompt", systemImage: "doc.on.doc") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(finding.prompt, forType: .string)
+                        }
+                        .controlSize(.small)
+                        .help("A prompt to paste into your coding agent that makes this change")
+                    }
+                }
+                .padding(10)
+                .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(12)
+        .padding(.leading, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(finding.severity.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(alignment: .leading) {
+            UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10).fill(finding.severity.color).frame(width: 4)
+        }
+    }
+
+    private var seen: String {
+        let reports = "\(finding.count) report\(finding.count == 1 ? "" : "s")"
+            + (finding.reports.isEmpty ? "" : ": " + finding.reports.map { "R\($0)" }.joined(separator: ", "))
+        return finding.section.isEmpty ? reports : "\(reports) · \(finding.section)"
     }
 }
 
