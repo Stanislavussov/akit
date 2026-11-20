@@ -159,17 +159,35 @@ struct SkillRemovalTests {
         #expect(!exists(".agents/skills/solo") && !exists(".pi/agent/skills/solo") && move.trashed().count == 2)
     }
 
-    @Test func aRenderedCopyEditedByHandBlocksWithShowEdits() async throws {
+    @Test func aRenderedCopyEditedByHandGoesToTheTrashWithItsEdits() async throws {
         try move.harnesses()
         _ = try await move.renderedInCore()
         try f.write(".agents/skills/deploy/SKILL.md", move.skill + "my notes\n")
-        let plan = SkillRemoval.plan(name: "deploy", brain: try #require(Brain.load(from: f.brainRoot)), context: context([:]))
-        #expect(!plan.canApply && plan.blockers.first?.hasPrefix("~/.agents/skills/deploy/SKILL.md was edited by hand") == true)
+        let brain = try #require(Brain.load(from: f.brainRoot))
+        let plan = SkillRemoval.plan(name: "deploy", brain: brain, context: context([:]))
+        // No blocker: the edited copy leaves with the Apply; Show Edits says what goes with it.
+        #expect(plan.canApply && plan.blockers.isEmpty, "\(plan.blockers)")
         #expect(plan.edits.first?.copyText?.hasSuffix("my notes\n") == true)
-        // Unticking core leaves the copy, and the plan says where it still loads.
+        #expect(plan.notes.contains { $0.hasPrefix("~/.agents/skills/deploy/SKILL.md was edited by hand") })
+        let copy = try #require(plan.places.first { $0.action == .rendered })
+        #expect(copy.selected && copy.editedByHand && plan.summary == "After this, deploy loads in: nowhere.")
+
+        try await SkillRemoval.apply(plan, brain: brain, env: f.env, trash: f.trash)
+        let trashed = try #require(move.trashed().first { $0.hasSuffix("-SKILL.md") })
+        #expect(!exists(".agents/skills/deploy") && f.read("Trash/\(trashed)", in: f.home)?.hasSuffix("my notes\n") == true)
+        // The home record no longer lists it, so nothing is left to remove.
+        let again = SkillRemoval.plan(name: "deploy", brain: try #require(Brain.load(from: f.brainRoot)), context: context([:]))
+        #expect(again.places.allSatisfy { $0.action == .library } && again.notes.allSatisfy { !$0.contains("edited by hand") })
+    }
+
+    @Test func untickingTheLayerKeepsAnEditedCopy() async throws {
+        try move.harnesses()
+        _ = try await move.renderedInCore()
+        try f.write(".agents/skills/deploy/SKILL.md", move.skill + "my notes\n")
         let kept = SkillRemoval.plan(name: "deploy", brain: try #require(Brain.load(from: f.brainRoot)), context: context([:]),
                                      leaving: ["layer:core", "library"])
         #expect(kept.blockers.isEmpty && !kept.canApply && kept.summary.contains("its brain entry stays"))
+        #expect(kept.places.first { $0.action == .rendered }?.selected == false)
     }
 
     // MARK: - Review round

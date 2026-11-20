@@ -65,6 +65,8 @@ public enum SkillRemoval {
         public let after: String?
         /// A link of its own to the skill's folder: only the link goes (`title` says where it leads).
         public let isLink: Bool
+        /// AKit's copy, edited by hand since it was rendered: the edits go to the Trash with it.
+        public let editedByHand: Bool
         /// Other paths harnesses reach this folder through (a folder of skills that is a link, like
         /// `~/.claude/skills` → `~/.agents/skills`), shown with it.
         public let via: [String]
@@ -81,13 +83,27 @@ public enum SkillRemoval {
         }
     }
 
+    /// Something that stops the whole removal, and where to fix it.
+    public struct Blocker: Identifiable, Hashable, Sendable {
+        public var id: String { text }
+        /// What is wrong, why it stops the removal, and what to do.
+        public let text: String
+        /// The project (or home folder) whose Apply can't run: its setup shows the problem.
+        public let project: String?
+        public let folder: URL?
+        public let forHome: Bool
+    }
+
     /// One project (or the home folder) whose files or answers change.
     struct Record: Sendable {
         let id: String
         /// nil: not on this Mac; only its answers change.
         let folder: URL?
         let setup: ProjectSetup.Plan?
+        /// The skill's files the Apply takes out, `discarding` among them.
         let paths: Set<String>
+        /// Files of the skill edited by hand since AKit wrote them: to the Trash too, backed up first.
+        var discarding: Set<String> = []
         let excluded: Set<String>
         /// Answers of a project not on this Mac.
         let answers: ProjectAnswers?
@@ -104,9 +120,9 @@ public enum SkillRemoval {
         let trashDigests: [String: String]
         let claudeOff: [String: SkillSwitches.Plan]
         let store: ProjectStore
-        /// Rendered copies edited by hand, for Show Edits.
+        /// Rendered copies edited by hand, for Show Edits (they go to the Trash with their Apply).
         public let edits: [SkillMove.Edit]
-        public let blockers: [String]
+        public let blockers: [Blocker]
         public let notes: [String]
         /// Where it still loads afterwards, and why; empty: nowhere.
         public let remaining: [String]
@@ -360,7 +376,7 @@ public enum SkillRemoval {
             case .rendered, .keep: return false
             }
         }
-        var blockers: [String] = [], edits: [SkillMove.Edit] = []
+        var blockers: [Blocker] = [], edits: [SkillMove.Edit] = []
         let layers = drafts.compactMap { draft -> String? in if case .layer(let layer) = draft.action, ticked(draft) { layer } else { nil } }
         let answered = Set(drafts.compactMap { draft -> String? in if case .answers(let id) = draft.action, ticked(draft) { id } else { nil } })
         // The library copy only goes when nothing in the brain lists the skill any more.
@@ -413,10 +429,12 @@ public enum SkillRemoval {
                 // whose Apply never ran here) leaves with this Apply too.
                 let leftOver = ours.contains { $0.kind == .remove || $0.kind == .keepEdited }
                 guard layers.isEmpty == false || answered.contains(id) || leftOver else { continue }
+                // Edited by hand since AKit wrote it: it goes too (the Trash keeps the edits, and
+                // Apply backs it up first); Show Edits says what they were.
                 let handEdited = ours.filter { $0.kind == .keepEdited }
                 let root = isHome ? "~/" : shown(folder) + "/"
                 if !handEdited.isEmpty {
-                    blockers.append("\(handEdited.map { root + $0.path }.joined(separator: ", ")) was edited by hand since AKit wrote it. Show Edits, bring what you want to keep into the brain's skills/\(name), then remove it again.")
+                    notes.append("\(handEdited.map { root + $0.path }.joined(separator: ", ")) was edited by hand since AKit wrote it; it goes to the Trash with the rest, so the edits are still there if you need them (Show Edits says what they are).")
                     for change in handEdited {
                         let relative = String(change.path.dropFirst(prefix(name).count))
                         edits.append(.init(path: root + change.path,
@@ -424,10 +442,17 @@ public enum SkillRemoval {
                                            copyText: change.oldText))
                     }
                 }
-                if !setup.canApply { blockers += (setup.render.errors + setup.blockers).map { "\(id): \($0)" } }
-                let paths = Set(ours.filter { $0.kind == .remove }.map(\.path))
+                if !setup.canApply {
+                    let place = isHome ? "the home folder" : id
+                    for problem in setup.render.errors + setup.blockers {
+                        blockers.append(Blocker(text: "\(place): \(problem) The skill's files leave \(place) with an Apply, and that Apply can't run until this is fixed; fix it, then remove \(name) again.",
+                                                project: id, folder: isHome ? nil : folder, forHome: isHome))
+                    }
+                }
+                let discarding = Set(handEdited.map(\.path))
+                let paths = Set(ours.filter { $0.kind == .remove }.map(\.path)).union(discarding)
                 guard !paths.isEmpty || answered.contains(id) else { continue }
-                records.append(Record(id: id, folder: folder, setup: setup, paths: paths,
+                records.append(Record(id: id, folder: folder, setup: setup, paths: paths, discarding: discarding,
                                       excluded: Set(setup.changes.map(\.path)).subtracting(paths), answers: nil, workBrainAnswers: false))
             }
         }
@@ -435,6 +460,10 @@ public enum SkillRemoval {
         // A rendered copy goes when a record's Apply removes its files.
         let removedFolders = Set(records.compactMap { record -> String? in
             guard let folder = record.folder, record.paths.contains(where: { $0.hasPrefix(prefix(name)) }) else { return nil }
+            return folder.appending(path: "\(ProjectBundle.skillsFolder)/\(name)").resolvingSymlinksInPath().standardizedFileURL.path
+        })
+        let editedFolders = Set(records.compactMap { record -> String? in
+            guard let folder = record.folder, !record.discarding.isEmpty else { return nil }
             return folder.appending(path: "\(ProjectBundle.skillsFolder)/\(name)").resolvingSymlinksInPath().standardizedFileURL.path
         })
         var places: [Place] = []
@@ -450,8 +479,10 @@ public enum SkillRemoval {
             let selected = selectedIDs.contains(draft.id)
             places.append(Place(id: draft.id, action: draft.action, title: draft.title, group: draft.group, harnesses: draft.harnesses,
                                 skill: draft.skill, byHeader: draft.byHeader, selected: selected, reason: draft.reason, plugin: draft.plugin,
-                                before: draft.before, after: draft.after, isLink: draft.isLink, via: draft.via,
-                                forgetsLock: draft.forgetsLock))
+                                before: draft.before, after: draft.after, isLink: draft.isLink,
+                                editedByHand: draft.action == .rendered && draft.skill.map {
+                                    editedFolders.contains($0.realFolder.resolvingSymlinksInPath().standardizedFileURL.path) } == true,
+                                via: draft.via, forgetsLock: draft.forgetsLock))
             // Only places a harness loads from count as remaining; a brain entry shows through its rendered copies.
             guard draft.skill != nil, !selected, !draft.byHeader else { continue }
             // A link that stays while its folder goes loads nothing: it dangles.
@@ -538,7 +569,7 @@ public enum SkillRemoval {
             Failure(message: message + (outcome.done.isEmpty ? " Nothing was changed." : " Done before it stopped: \(outcome.done.joined(separator: "; ")).") ,
                     outcome: outcome)
         }
-        guard plan.canApply else { throw fail((plan.blockers.isEmpty ? ["Nothing is ticked."] : plan.blockers).joined(separator: "\n")) }
+        guard plan.canApply else { throw fail((plan.blockers.isEmpty ? ["Nothing is ticked."] : plan.blockers.map(\.text)).joined(separator: "\n")) }
         let home = env.homeDirectory
         let selected = plan.places.filter(\.selected)
 
@@ -580,8 +611,8 @@ public enum SkillRemoval {
             guard let setup = record.setup, let brain = current else { continue }
             do {
                 let result = try await hold(record.id) {
-                    try await ProjectSetup.apply(setup, excluding: record.excluded, deferring: record.excluded, brain: brain, home: home,
-                                                 env: env, trash: trash)
+                    try await ProjectSetup.apply(setup, excluding: record.excluded, deferring: record.excluded, discarding: record.discarding,
+                                                 brain: brain, home: home, env: env, trash: trash)
                 }
                 outcome.done.append("\(record.id): \(result.removed.count) file\(result.removed.count == 1 ? "" : "s") to the Trash")
                 outcome.notes += result.notes
