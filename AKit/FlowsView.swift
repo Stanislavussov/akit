@@ -278,8 +278,8 @@ struct FlowsView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(open ? Color.accentColor : .secondary.opacity(0.25)))
     }
 
-    /// The open card: what is set for most steps (agent, model, prompt, skills, gate, checks), and
-    /// the rest under More Settings.
+    /// The open card: what is set for most steps (agent, model, reasoning, prompt, skills, gate,
+    /// checks), and the rest under More Settings.
     private func details(_ step: FlowStep, index: Int, flow: Flow) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Divider()
@@ -302,26 +302,29 @@ struct FlowsView: View {
                     }
                 }
             }
-            Picker("Runs on", selection: Binding(get: { step.isClaudeCode }, set: { claude in
-                updateStep(index) { step in
-                    guard claude != step.isClaudeCode else { return }
-                    step.harness = claude ? FlowStep.claudeCode : nil
-                    if claude {
-                        // Read-only on Claude Code (F21): its tools lose edit and write; skills stay.
-                        let tools = (step.tools.isEmpty ? flow.tools : step.tools).filter { FlowStep.claudeTools.contains($0) }
-                        step.tools = tools.isEmpty ? ["read", "grep", "find", "ls"] : tools
-                        step.model = FlowStep.claudeModels[0]
-                    } else {
-                        step.model = piModels.first ?? ""
+            HStack(spacing: 16) {
+                reasoningPicker(step, index: index)
+                Picker("Runs on", selection: Binding(get: { step.isClaudeCode }, set: { claude in
+                    updateStep(index) { step in
+                        guard claude != step.isClaudeCode else { return }
+                        step.harness = claude ? FlowStep.claudeCode : nil
+                        if claude {
+                            // Read-only on Claude Code (F21): its tools lose edit and write; skills stay.
+                            let tools = (step.tools.isEmpty ? flow.tools : step.tools).filter { FlowStep.claudeTools.contains($0) }
+                            step.tools = tools.isEmpty ? ["read", "grep", "find", "ls"] : tools
+                            step.model = FlowStep.claudeModels[0]
+                        } else {
+                            step.model = piModels.first ?? ""
+                        }
                     }
+                })) {
+                    Text("Pi").tag(false)
+                    Text("Claude Code").tag(true)
                 }
-            })) {
-                Text("Pi").tag(false)
-                Text("Claude Code").tag(true)
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("Claude Code: the runner starts claude -p for this step, read only, and its answer is the handoff. Good for a judge on another model family")
             }
-            .pickerStyle(.segmented)
-            .fixedSize()
-            .help("Claude Code: the runner starts claude -p for this step, read only, and its answer is the handoff. Good for a judge on another model family")
             promptEditor(step, index: index, flow: flow)
             skillsRow(step, index: index)
             if step.agent == "checker" || !step.checks.isEmpty { checksPicker(step, index: index) }
@@ -337,8 +340,22 @@ struct FlowsView: View {
             DisclosureGroup("More Settings", isExpanded: $showsMore) {
                 moreSettings(step, index: index, flow: flow).padding(.top, 6)
             }
-            .help("Thinking, tools, where the run goes after the step, and its loop limit")
+            .help("Tools, where the run goes after the step, and its loop limit")
         }
+    }
+
+    /// How much the model reasons in the step: Pi's --thinking, Claude Code's --effort (F21).
+    private func reasoningPicker(_ step: FlowStep, index: Int) -> some View {
+        Picker("Reasoning", selection: stepBinding(index, \.thinking)) {
+            Text("Model default").tag(String?.none)
+            ForEach(FlowTemplates.thinkingLevels, id: \.self) { Text($0).tag(String?.some($0)) }
+            if let other = step.thinking, !FlowTemplates.thinkingLevels.contains(other) { Text(other).tag(String?.some(other)) }
+        }
+        .fixedSize()
+        .disabled(!step.isClaudeCode && missing(.thinking) != nil && step.thinking == nil)
+        .help(step.isClaudeCode
+              ? "How much Claude reasons in this step (claude --effort: off and minimal are low); Model default leaves it to Claude Code"
+              : missing(.thinking).map { "Can't: \($0)" } ?? "How much the model reasons in this step (pi --thinking); Model default leaves it to Pi")
     }
 
     /// The prompt, always in sight, with Generate… (Pi writes it) and Undo after a generation.
@@ -391,13 +408,6 @@ struct FlowsView: View {
 
     private func moreSettings(_ step: FlowStep, index: Int, flow: Flow) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Picker("Thinking", selection: stepBinding(index, \.thinking)) {
-                Text("Model default").tag(String?.none)
-                ForEach(FlowTemplates.thinkingLevels, id: \.self) { Text($0).tag(String?.some($0)) }
-                if let other = step.thinking, !FlowTemplates.thinkingLevels.contains(other) { Text(other).tag(String?.some(other)) }
-            }
-            .fixedSize()
-            .help("How much the model thinks in this step (pi --thinking); Model default leaves it to Pi")
             LabeledContent("Tools") {
                 checkboxes(step.isClaudeCode ? flow.tools.filter { FlowStep.claudeTools.contains($0) } : flow.tools, selected: step.tools) { tool, on in
                     updateStep(index) { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }

@@ -14,6 +14,8 @@ struct FlowPromptGenerator: View {
     let apply: (String) -> Void
     @State private var request = ""
     @State private var model: String
+    /// Pi's --thinking for the call; writing a prompt needs little.
+    @State private var reasoning = "low"
     @State private var running: Task<Void, Never>?
     @State private var problem: String?
 
@@ -36,6 +38,11 @@ struct FlowPromptGenerator: View {
                 .textFieldStyle(.roundedBorder)
             PiModelPicker(selection: $model, models: models, empty: "Choose a model",
                           help: "The model that writes the prompt (pi --list-models)", allowsOther: false) { Text("Model") }
+            Picker("Reasoning", selection: $reasoning) {
+                ForEach(FlowTemplates.thinkingLevels, id: \.self) { Text($0).tag($0) }
+            }
+            .fixedSize()
+            .help("How much the model reasons while it writes the prompt (pi --thinking)")
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
@@ -65,7 +72,7 @@ struct FlowPromptGenerator: View {
             problem = error.localizedDescription
             return
         }
-        let agent = LabAgent(harness: .pi, model: model, effort: "", mode: .call)
+        let agent = LabAgent(harness: .pi, model: model, effort: reasoning, mode: .call)
         running = Task {
             defer { running = nil }
             do {

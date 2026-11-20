@@ -150,6 +150,10 @@ struct FlowStepLine: View {
             Text(step.model.isEmpty ? "no model" : String(step.model.split(separator: "/").last ?? ""))
                 .font(.callout.monospaced()).foregroundStyle(step.model.isEmpty ? .red : .secondary).lineLimit(1)
                 .help(step.model)
+            if let thinking = step.thinking {
+                Label(thinking, systemImage: "brain").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .help("Reasoning: \(thinking)")
+            }
             if !step.skills.isEmpty {
                 Label("\(step.skills.count)", systemImage: "book.closed").font(.caption).foregroundStyle(.secondary)
                     .help("\(step.skills.count) skill\(step.skills.count == 1 ? "" : "s"): \(step.skills.joined(separator: ", "))")
