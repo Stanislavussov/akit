@@ -201,6 +201,20 @@ never committed) and marks it. `akit corrections dismiss ID` hides a pattern. `a
 rules [--json]` gives each rule's verdict after 10 sessions: fewer, no change or more
 corrections; for no change or more, offer `akit corrections remove ID` (diff, then `--yes`).
 
+## Agent reports
+
+`akit reports [--days N | --from WHEN --to WHEN] [--harness pi|claude|all] [--json]` gathers the
+sections Pi writes at the end of each task (Agent decisions, Autonomy improvements, Unknown
+unknowns; `--section "NAME|ALIAS"` for others) from every session of a period, by section, with
+time, project and session; `--markdown` as a document. It only reads. Use it when the user asks
+what the agent decided, missed or would improve over some days. `akit reports summarize`
+(same period flags, `--focus TEXT` for what to look at first, `--language`, `--model`,
+`--thinking`) prints what would be sent; `--show` the text; ask before `--yes`: it sends the found
+sections to a Pi model and saves a short report in ~/.akit/lab/agent-reports: up to 8 findings,
+each with a severity (high, medium, low) and a prompt that fixes it (`--json` has them). `akit
+reports list` and `akit reports show [FILE|latest]` read the saved ones; `show --prompts` prints
+every prompt as one message; offer it when the user wants to act on the report.
+
 ## Recommendations
 
 `akit recommend [--project ID|PATH | --all] [--details] [--json]` lists auto skills listed
@@ -297,7 +311,8 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
 ## Flows (multi-step runs for Pi)
 
 A flow is a column of Pi steps (agent, model, skills, tools, routes on done/failed/blocked,
-gate, max loops). Pi runs it with `/flow [name] <task>`; akit only reads and checks the files
+gate, max loops); a read-only step may run on Claude Code instead (`harness: claude-code`, its
+answer is the handoff). Pi runs it with `/flow [name] <task>`; akit only reads and checks the files
 (the project's `.pi/flows/*.yaml`, then `~/.pi/agent/flows/`). There is no `akit flow run`.
 
 - `akit flow list [--project PATH] [--json]`: the flows and their steps, or why a file can't be read.

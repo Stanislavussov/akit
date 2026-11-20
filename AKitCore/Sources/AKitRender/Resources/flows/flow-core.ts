@@ -17,6 +17,8 @@ export type Stop = "done" | "visit-cap" | "no-route" | "unknown-step" | "no-hand
 
 export interface FlowStep {
 	id: string;
+	/** Left out: Pi. "claude-code": the step runs as `claude -p`, read only (F21). */
+	harness?: string;
 	agent: string;
 	model: string;
 	thinking?: string;

@@ -254,12 +254,17 @@ struct FlowRunRecordTests {
         #expect(run.events.filter { $0.kind == .deviation }.map { $0.raw.member("rule")?.string } == ["check-failed"])
         let ends = run.events.filter { $0.kind == .stepEnd && $0.step == "checks" }
         #expect(ends.map(\.outcome) == [.failed, .done] && ends.first?.reason == "checks")
-        #expect(run.tokens == FlowTokens(input: 500, output: 100, cacheRead: 25, cost: 0.05))
+        // The checks step has check commands, so it starts no model: no tokens, no session.
+        #expect(run.tokens == FlowTokens(input: 300, output: 60, cacheRead: 15, cost: 0.03))
         #expect(run.handoffs.map(\.fileName) == ["01-plan-a1-sess-plan-1.json", "02-implement-a1-sess-implement-1.json",
-                                                 "02-implement-a2-sess-implement-2.json", "03-checks-a1-sess-checks-1.json",
-                                                 "03-checks-a2-sess-checks-2.json"])
+                                                 "02-implement-a2-sess-implement-2.json", "03-checks-a1-no-session.json",
+                                                 "03-checks-a2-no-session.json"])
         for handoff in run.handoffs {
             #expect(handoff.run == "20261117-1200-0000" && handoff.flow == "feature")
+            guard handoff.stepID != "checks" else {
+                #expect(handoff.session == nil && handoff.sessionFile == nil)
+                continue
+            }
             let file = try #require(handoff.sessionFile)
             #expect(FileManager.default.fileExists(atPath: sample.appending(path: file).path), "\(file)")
             #expect(file.contains(try #require(handoff.session)))
@@ -267,7 +272,8 @@ struct FlowRunRecordTests {
         let red = try #require(run.handoffs.first { $0.stepID == "checks" && $0.attempt == 1 })
         #expect(red.outcome == .failed && red.reason == "checks" && red.next == "implement")
         #expect(red.evidence == "evidence/03-checks-a1-checks.json")
-        #expect(red.done == ["did checks"] && red.files == [.init(path: "src/checks.ts", change: "added")])
+        // It passes the implementer's work on.
+        #expect(red.done == ["did implement"] && red.files == [.init(path: "src/implement.ts", change: "added")])
     }
 
     @Test func runsAreNewestFirst() throws {

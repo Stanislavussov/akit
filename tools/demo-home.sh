@@ -1391,4 +1391,93 @@ file "$DEMO/.akit/local/pi-capabilities.json" <<'EOF'
 {"features": ["mode-json", "no-extensions", "no-skills", "session-dir", "skill", "thinking", "tool-call-block", "ui-confirm"], "version": "1.0.4"}
 EOF
 
+# Agent reports (Error Analysis → Agent Reports): Pi sessions of the last days whose final
+# answers end with the three sections the global AGENTS.md asks for, and one saved summary.
+pi_report() { # file id, folder, hours ago, title prompt, the final answer (JSON-escaped)
+    local file="$DEMO/.pi/agent/sessions/--${2//\//-}--/$(date -u -v-"$3"H +%Y-%m-%dT%H-%M-%S-000Z)_7a0f0000-0000-4000-8000-0000000$1.jsonl"
+    {
+        printf '{"type":"session","version":3,"id":"7a0f0000-0000-4000-8000-0000000%s","timestamp":"%s","cwd":"%s"}\n' "$1" "$(ago "$3"H)" "$2"
+        printf '{"type":"message","id":"u1","parentId":null,"timestamp":"%s","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' "$(ago "$3"H)" "$4"
+        printf '{"type":"message","id":"a1","parentId":"u1","timestamp":"%s","message":{"role":"assistant","model":"coder-large","provider":"demo","content":[{"type":"text","text":"%s"}],"usage":{"input":5200,"output":420,"cacheRead":0,"cacheWrite":0,"totalTokens":5620}}}\n' "$(ago "$3"H)" "$5"
+    } | file "$file"
+    touch -t "$(date -v-"$3"H +%Y%m%d%H%M)" "$file"
+}
+pi_report 0101 "$NOTESMAC" 50 "Add a tags filter to the notes list" \
+    'The tags row is above the list; `swift test` passed (15 tests).\n\nAgent decisions:\n- Kept the filter in NotesList; the shared FilterBar was left as it is.\n- Assumed a note may have no tags.\n\nAutonomy improvements:\n- A new filter on a list → write the test with an empty list and a list without the tag first → the empty states are covered before the UI.\n\nUnknown unknowns:\n- How the row looks with 40 tags was not checked on screen.'
+pi_report 0102 "$WEATHER" 30 "Show the temperature in Fahrenheit too" \
+    '**Changed:** `TemperatureView.swift`. **Checks:** `swift test` passed.\n\n**Agent decisions:** Took the unit from the system locale, as the settings screen has no unit yet.\n\n**Autonomy improvements:** - none.\n\n**Unknown unknowns:** The forecast API may round Fahrenheit values differently; not verified against a live answer.'
+pi_report 0103 "$NOTESMAC" 6 "Keep the sort order after a restart" \
+    'The order is kept in UserDefaults; the test restarts the store and passes.\n\nAgent decisions:\n- Stored the order in UserDefaults, not in the database, to keep the migration out.\n\nAutonomy improvements:\n- none\n\nUnknown unknowns:\n- Sync between two Macs may overwrite the order; not tested.\n- The screen was not checked after a real restart of the app.'
+REPORT_ID="$(date -v-1H +%Y%m%d-%H%M%S)"
+file "$DEMO/.akit/lab/agent-reports/$REPORT_ID.md" <<EOF
+---
+from: $(date -v-7d +%Y-%m-%d) 00:00
+to: $(date -v-1H "+%Y-%m-%d %H:%M")
+created: $(date -v-1H "+%Y-%m-%d %H:%M")
+model: demo/coder-large
+sessions: 4
+reports: 3
+focus: what was never checked on screen
+---
+
+# Agent reports $(date -v-7d +%Y-%m-%d) 00:00 – $(date -v-1H "+%Y-%m-%d %H:%M")
+
+4 sessions read, 3 with reports; 3 reports, 0 of them only “none”. Model: demo/coder-large. Focus: what was never checked on screen
+
+The agent kept its changes small, but UI work was called done on tests alone.
+
+**Focus:** The tags row with many tags and the order after a real restart were never seen on screen.
+
+## Findings
+
+### 🔴 High · UI changes are called done without a look at the screen
+
+Two UI tasks ended on passing tests; nobody saw the result. (2 reports: R1, R3 · Unknown unknowns)
+
+Prompt:
+
+\`\`\`text
+Add a rule to the global AGENTS.md: after a change to a screen, take a snapshot of it and look at it before you say the work is done. Say in the final report which screen you checked. It works when the next UI report names the snapshot.
+\`\`\`
+
+### 🟠 Medium · Live data and a second device are never tried
+
+The forecast's rounding and sync between two Macs were left unverified. (2 reports: R2, R3 · Unknown unknowns)
+
+Prompt:
+
+\`\`\`text
+Add a rule to the global AGENTS.md: when a change depends on live data or sync between devices, try one real case or say exactly which case is left for the person. It works when the final report names the case.
+\`\`\`
+
+### 🔵 Low · Defaults are picked when a setting is missing
+
+The unit came from the system locale, as the app has no setting yet. (1 report: R2 · Agent decisions)
+
+Prompt:
+
+\`\`\`text
+Add a rule to the global AGENTS.md: when you pick a default because a setting is missing, ask once before you build on it. It works when the next such task asks first.
+\`\`\`
+
+## Reports cited
+
+| # | Time | Project | Session | File |
+|---|---|---|---|---|
+| R1 | $(date -v-50H "+%Y-%m-%d %H:%M") | notes-mac | Add a tags filter to the notes list | \`demo\` |
+| R2 | $(date -v-30H "+%Y-%m-%d %H:%M") | weather-app | Show the temperature in Fahrenheit too | \`demo\` |
+| R3 | $(date -v-6H "+%Y-%m-%d %H:%M") | notes-mac | Keep the sort order after a restart | \`demo\` |
+EOF
+file "$DEMO/.akit/lab/agent-reports/$REPORT_ID.json" <<'EOF'
+{
+  "findings" : [
+    { "count" : 2, "detail" : "Two UI tasks ended on passing tests; nobody saw the result.", "prompt" : "Add a rule to the global AGENTS.md: after a change to a screen, take a snapshot of it and look at it before you say the work is done. Say in the final report which screen you checked. It works when the next UI report names the snapshot.", "reports" : [1, 3], "section" : "Unknown unknowns", "severity" : "high", "title" : "UI changes are called done without a look at the screen" },
+    { "count" : 2, "detail" : "The forecast's rounding and sync between two Macs were left unverified.", "prompt" : "Add a rule to the global AGENTS.md: when a change depends on live data or sync between devices, try one real case or say exactly which case is left for the person. It works when the final report names the case.", "reports" : [2, 3], "section" : "Unknown unknowns", "severity" : "medium", "title" : "Live data and a second device are never tried" },
+    { "count" : 1, "detail" : "The unit came from the system locale, as the app has no setting yet.", "prompt" : "Add a rule to the global AGENTS.md: when you pick a default because a setting is missing, ask once before you build on it. It works when the next such task asks first.", "reports" : [2], "section" : "Agent decisions", "severity" : "low", "title" : "Defaults are picked when a setting is missing" }
+  ],
+  "focus" : "The tags row with many tags and the order after a real restart were never seen on screen.",
+  "summary" : "The agent kept its changes small, but UI work was called done on tests alone."
+}
+EOF
+
 echo "Demo home: $DEMO"

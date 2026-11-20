@@ -46,6 +46,13 @@
             "default" : false,
             "type" : "boolean"
           },
+          "harness" : {
+            "description" : "Left out: Pi. claude-code: the step runs as claude -p, read only.",
+            "enum" : [
+              "claude-code"
+            ],
+            "type" : "string"
+          },
           "id" : {
             "pattern" : "^[A-Za-z0-9][A-Za-z0-9_-]*$",
             "type" : "string"

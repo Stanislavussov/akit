@@ -225,6 +225,8 @@ shot analysis-cluster    $MAIN --section analysis --tab review --add
 shot analysis-bootstrap  $MAIN --section analysis --tab bootstrap
 shot analysis-labeling   $MAIN --section analysis --tab bootstrap --select $DRAFT_SESSION --query 7
 shot analysis-reports    $MAIN --section analysis --tab reports
+shot analysis-agent-reports        $MAIN --section analysis --tab agent-reports --delay 6
+shot analysis-agent-reports-report $MAIN --section analysis --tab agent-reports --select report --delay 6
 # Wider: two matrices side by side.
 shot analysis-report-matrix 1480x800 --section analysis --tab reports --select $BATCH_B --query $BATCH_A --add
 shot analysis-report-diff   $MAIN --section analysis --tab reports --select $BATCH_B --query $BATCH_A --add --capture
@@ -293,7 +295,8 @@ shot worklog-summary     $MAIN --section worklog --tab worklog-open
 shot worklog-calendar    $MAIN --section worklog --tab worklog-calendar --query 2026-10-22
 shot worklog-report      $MAIN --section worklog --tab worklog-report --query 2026-10-22
 shot worklog-fill        $MAIN --section worklog --tab worklog-fill --query 2026-10-05
-# Flows (flows.ru.md): the empty screen, a Feature draft with its back-arrows, and Check on it.
+# Flows (flows.ru.md): the empty screen, a Feature draft with its back-arrows, Check on it, and a card
+# with More Settings open.
 shot flows-empty         $MAIN --section flows
 shot flows-feature       1180x900 --section flows --tab feature
 shot flows-check         1180x900 --section flows --tab check

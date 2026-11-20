@@ -8,6 +8,7 @@ import SwiftUI
 struct ErrorAnalysisView: View {
     enum Tab: String, CaseIterable {
         case modes, review, bootstrap, reports, evals
+        case agentReports = "agent-reports"
 
         var title: String {
             switch self {
@@ -16,12 +17,13 @@ struct ErrorAnalysisView: View {
             case .bootstrap: "Bootstrap"
             case .reports: "Reports"
             case .evals: "Evals"
+            case .agentReports: "Agent Reports"
             }
         }
     }
 
     @Environment(AnalysisModel.self) private var analysis
-    /// Snapshots: `--tab modes|review|bootstrap|reports|evals`.
+    /// Snapshots: `--tab modes|review|bootstrap|reports|evals|agent-reports` (`--select report|saved` for its pane).
     @State private var tab = DebugSnapshot.options?.tab.flatMap(Tab.init(rawValue:)) ?? .modes
     @State private var modeAction: ModeAction?
 
@@ -34,6 +36,7 @@ struct ErrorAnalysisView: View {
             case .bootstrap: BootstrapTab()
             case .reports: ReportsTab()
             case .evals: EvalsTab()
+            case .agentReports: AgentReportsTab()
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) { statusBar }
@@ -50,7 +53,7 @@ struct ErrorAnalysisView: View {
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()
-                .help("Modes: the list of failure modes. Review: what waits for you. Bootstrap: your own notes on 30+ sessions. Reports: what a batch found. Evals: did a fix help on fixed tasks.")
+                .help("Modes: the list of failure modes. Review: what waits for you. Bootstrap: your own notes on 30+ sessions. Reports: what a batch found. Evals: did a fix help on fixed tasks. Agent Reports: what the agent wrote at the end of each task in a period, in one report.")
             }
             ToolbarItem {
                 Button("History", systemImage: "clock.arrow.circlepath") { modeAction = .history }
@@ -135,9 +138,11 @@ struct ErrorAnalysisView: View {
 
     private func bar(_ text: String, icon: String, tint: Color, close: @escaping () -> Void) -> some View {
         HStack {
+            // A line limit, not fixedSize: a selectable label with a fixed height pushed the whole
+            // window's content up under the toolbar.
             Label(text, systemImage: icon)
                 .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(4)
             Spacer()
             Button("Dismiss", systemImage: "xmark", action: close)
                 .labelStyle(.iconOnly)

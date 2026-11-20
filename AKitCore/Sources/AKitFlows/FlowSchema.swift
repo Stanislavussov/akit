@@ -12,6 +12,7 @@ public enum FlowSchema {
             "required": ["id", "agent", "model"],
             "properties": [
                 "id": ["type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"],
+                "harness": ["type": "string", "enum": [FlowStep.claudeCode], "description": "Left out: Pi. claude-code: the step runs as claude -p, read only."],
                 "agent": ["type": "string", "description": "From the agent list; implementer and reviewer must use different models."],
                 "model": ["type": "string"],
                 "thinking": ["type": "string"],

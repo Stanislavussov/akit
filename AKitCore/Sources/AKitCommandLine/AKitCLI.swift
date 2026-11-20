@@ -297,6 +297,11 @@ public enum AKitCLI {
                                           Claude Code session. akit lab --help lists the rest
           akit analysis notes [SESSION]   Error analysis: a reviewed session's outcome, verified notes
                                           and advice. akit analysis --help lists the rest
+          akit reports [--days N | --from WHEN --to WHEN] [--json]
+                                          Agent reports: the sections Pi writes at the end of each task
+                                          (Agent decisions, Autonomy improvements, Unknown unknowns) from
+                                          every session of a period; summarize --yes writes one report by a
+                                          model. akit reports --help lists the rest
 
         Review (AI review of GitLab merge requests; ~/.akit/local/review, never in the brain):
           akit review MR-URL [--wi N] [--scenario S]
@@ -459,6 +464,9 @@ public enum AKitCLI {
             }
             if arguments.first == "worklog" {
                 return try await worklog(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
+            }
+            if arguments.first == "reports" {
+                return try await reports(Array(arguments.dropFirst()), env: env, out: out)
             }
             if arguments.first == "translate" {
                 return try await translate(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, input: input)
