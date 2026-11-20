@@ -56,8 +56,10 @@ struct FlowClaudeStepTests {
         #expect(writes.contains { $0.code == .claudeStepWrites && $0.severity == .error && $0.message.contains("drop edit") })
         // No tools of its own: the flow's tools, which include edit.
         #expect(FlowCheck.check(flow(tools: []), knownModels: ["m/a"], knownSkills: [], pi: nil).contains { $0.code == .claudeStepWrites })
-        let skills = FlowCheck.check(flow(tools: ["read"], skills: ["tdd"]), knownModels: ["m/a"], knownSkills: [], pi: nil)
-        #expect(skills.contains { $0.code == .claudeStepPiOnly && $0.severity == .warning })
-        #expect(!skills.contains { $0.code == .unknownSkill })
+        // Its skills are checked like a Pi step's: they reach Claude too.
+        let skills = FlowCheck.check(flow(tools: ["read"], skills: ["tdd"]), knownModels: ["m/a"], knownSkills: ["tdd"], pi: nil)
+        #expect(!skills.contains { $0.step == "architect" })
+        let missing = FlowCheck.check(flow(tools: ["read"], skills: ["nope"]), knownModels: ["m/a"], knownSkills: ["tdd"], pi: nil)
+        #expect(missing.contains { $0.code == .unknownSkill && $0.step == "architect" })
     }
 }

@@ -389,7 +389,7 @@ function claudeCalls(): { step: string; args: string[]; cwd: string }[] {
 
 const architectOnClaude = () => [
 	{ id: "plan", agent: "planner", model: "m/a" },
-	{ id: "architect", harness: "claude-code", agent: "architect", model: "opus", thinking: "high", tools: ["read", "grep", "bash"], routes: { "failed:*": "plan" } },
+	{ id: "architect", harness: "claude-code", agent: "architect", model: "opus", thinking: "high", tools: ["read", "grep", "bash"], skills: ["tdd"], routes: { "failed:*": "plan" } },
 	{ id: "implement", agent: "implementer", model: "m/a" },
 ];
 
@@ -407,6 +407,9 @@ test("a claude-code step runs claude -p read only, and its structured output is 
 	assert.equal(flag("--permission-prompts"), "none");
 	assert.equal(flag("--output-format"), "json");
 	assert.ok(a.includes("--safe-mode") && a.includes("--strict-mcp-config"));
+	// Its skills: the folder readable, the name and SKILL.md path in the system prompt.
+	assert.equal(flag("--add-dir"), join(project, ".pi", "skills", "tdd"));
+	assert.match(flag("--append-system-prompt"), /read its SKILL\.md and follow it:\n- tdd: \(no description\) \(.*\/\.pi\/skills\/tdd\/SKILL\.md\)/);
 	assert.deepEqual(JSON.parse(flag("--json-schema")).required, ["goal", "done", "files", "open_questions", "notes", "outcome", "reason"]);
 	assert.match(flag("-p"), /The plan|Handoff from the step "plan"/);
 	assert.match(flag("-p"), /answer with the handoff in the JSON schema/);

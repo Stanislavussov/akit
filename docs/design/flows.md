@@ -304,6 +304,8 @@ reads run records and writes a `STOP` file.
   hooks, plugins or MCP, like Pi's `-ns -ne`), `--permission-prompts none` (anything that would
   ask is denied), `--tools` mapped from the step's tools (read → Read, grep → Grep, find and ls →
   Glob, bash → Bash), `--effort` from the thinking level and a `--session-id` the handoff keeps.
+  Its skills reach it as Pi gives them: name, description and `SKILL.md` path in
+  `--append-system-prompt`, each skill folder readable with `--add-dir`.
   The handoff comes back as the structured output of `--json-schema` with `flow_handoff`'s
   schema, so the rest of the run treats it like any handoff; tokens and cost come from the
   result line. Pi's guard can't watch a Claude child, so a Claude step is read-only: AKit's check

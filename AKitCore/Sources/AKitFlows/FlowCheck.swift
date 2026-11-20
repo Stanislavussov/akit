@@ -87,7 +87,8 @@ public enum FlowCheck {
     private static var commandPattern: Regex<Substring> { /^[A-Za-z][A-Za-z0-9 _.:\/=%@-]*$/ }
     private static var routeKeyPattern: Regex<(Substring, Substring, Substring)> { /^(done|failed|blocked):(\*|[A-Za-z0-9][A-Za-z0-9_.-]*)$/ }
 
-    /// A Claude Code step (F21) is read-only and takes none of Pi's per-step settings.
+    /// A Claude Code step (F21) is read-only; its skills work (listed in its system prompt), Pi's
+    /// extensions and path rules don't.
     static func claudeIssues(_ step: FlowStep, flowTools: [String]) -> [FlowIssue] {
         var issues: [FlowIssue] = []
         let writes = (step.tools.isEmpty ? flowTools : step.tools).filter { !FlowStep.claudeTools.contains($0) }
@@ -95,9 +96,9 @@ public enum FlowCheck {
             issues.append(.init(.error, .claudeStepWrites, step: step.id,
                                 "Step \(step.id) runs on Claude Code, which is read-only in a flow: drop \(writes.joined(separator: ", ")) from its tools."))
         }
-        if !step.skills.isEmpty || !step.extensions.isEmpty || !step.paths.isEmpty {
+        if !step.extensions.isEmpty || !step.paths.isEmpty {
             issues.append(.init(.warning, .claudeStepPiOnly, step: step.id,
-                                "Step \(step.id) runs on Claude Code: its skills, extensions and paths are Pi's and are not used."))
+                                "Step \(step.id) runs on Claude Code: its extensions and paths are Pi's and are not used."))
         }
         return issues
     }
@@ -128,9 +129,7 @@ public enum FlowCheck {
             }
             if step.isClaudeCode {
                 issues += claudeIssues(step, flowTools: flow.tools)
-                continue
-            }
-            if let knownModels, !knownModels.contains(step.model) {
+            } else if let knownModels, !knownModels.contains(step.model) {
                 issues.append(.init(.error, .unknownModel, step: step.id, "Model \(step.model) of step \(step.id) is not one Pi knows."))
             }
             if let knownSkills {
