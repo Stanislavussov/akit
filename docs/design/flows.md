@@ -309,6 +309,21 @@ reads run records and writes a `STOP` file.
   | Pi updates | AKit's About / Update view shows the installed Pi version next to `testedPi`; when Pi is newer, it links the Pi changelog lines that mention extensions or the CLI. |
   | Plugins | Flows depends on no Pi plugin (`pi-subagents` and the like): children run with `-ne` and only the per-step `-e` list. |
 
+- **F23 Review from outside, edits from the terminal (2026-11-20, the user's request).** Export
+  (Copy for Review, Save for Review…; `akit flow export NAME`) writes one Markdown pack for an
+  agent with a fresh context: a request for per-step changes, the runner's rules, the flow at a
+  glance with defaults resolved, the check, and per step its settings, routes, child command,
+  instructions and the first-round prompt in the runner's layout (`FlowReviewExport`; a test
+  keeps its fixed sentences equal to `akit-flow.ts`), then each skill's full text once, the flow
+  file and exact runner excerpts (`FlowRender.reviewExcerpts`). The whole text goes through the
+  send scrub. The answer comes back through `akit flow set | set-flow | route | add-step |
+  remove-step | move-step` (`FlowEdit`): each shows the YAML diff and the check, writes the
+  brain's `flows/NAME.yaml` and commits only with `--yes`, and refuses a change that adds a
+  check error. The Flows screen's Generate… popover became an inline Rewrite with Pi under
+  the instructions, and Max loops is called Max rounds (entries into a step, not agent turns).
+  A Claude Code step has no skills of its own in a flow (`--safe-mode`); it may now load
+  skills from Claude Code's folders (`~/.claude/skills`, the project's `.claude/skills`) after
+  Pi's: the runner, the check and the chooser look there for Claude steps only.
 - **F22 Stop and ask, and disputes (2026-11-20).** A loop limit or an outcome without a route
   no longer ends the run in a dead end. With a screen, Pi shows what the step said and asks:
   at the limit, one more round of the capped step (logged as a `decision` event; resume adds

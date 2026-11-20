@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import akitFlow, { fallbackNotes, flowCommand, handoffForPrompt, NOTES_IN_PROMPT, PRECEDENCE, startTool } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
+import akitFlow, { fallbackNotes, flowCommand, handoffForPrompt, NOTES_IN_PROMPT, PRECEDENCE, resolveSkill, startTool } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
 import { checksGreen, releaseLock, takeLock } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-record.ts";
 import type { ExtensionCommandContext } from "../../../AKitCore/Sources/AKitRender/Resources/flows/pi-adapter.ts";
 
@@ -426,6 +426,16 @@ test("a claude-code step runs claude -p read only, and its structured output is 
 	// The next Pi step gets Claude's handoff.
 	assert.match(calls()[1].args.at(-1) ?? "", /notes of architect from claude/);
 	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("a claude-code step also finds Claude Code's own skills; a Pi step doesn't", () => {
+	const own = join(process.env.HOME ?? "", ".claude", "skills", "house");
+	mkdirSync(own, { recursive: true });
+	writeFileSync(join(own, "SKILL.md"), "---\nname: house\n---\n");
+	assert.equal(resolveSkill(project, "house", true), own);
+	assert.equal(resolveSkill(project, "house"), undefined);
+	// Pi's folders come first, for both.
+	assert.equal(resolveSkill(project, "tdd", true), join(project, ".pi", "skills", "tdd"));
 });
 
 test("a step without bash is told its tools and not sent to git", async () => {

@@ -28,6 +28,37 @@ public enum FlowRender {
         ("pi-adapter.ts", Data(FlowTemplateSources.pi_adapter_ts.utf8)),
     ]
 
+    /// The runner code a flow review needs (FlowReviewExport), quoted from the sources with their
+    /// doc comments: the handoff schema, how a handoff reaches a prompt, the prompt itself and the
+    /// two child commands. A declaration that is gone is left out (a test keeps the list whole).
+    public static let reviewExcerpts: [(title: String, file: String, code: String)] = [
+        ("The handoff schema", "akit-flow-handoff.ts", FlowTemplateSources.akit_flow_handoff_ts, ["export const HANDOFF_PARAMETERS"]),
+        ("A handoff in the next prompt", "akit-flow.ts", FlowTemplateSources.akit_flow_ts,
+         ["export function handoffForPrompt", "export const NOTES_IN_PROMPT", "export const PRECEDENCE", "export function earlierSteps",
+          "function planHandoff"]),
+        ("The step's prompt", "akit-flow.ts", FlowTemplateSources.akit_flow_ts, ["function prompt("]),
+        ("Routing at a rejection or a limit", "akit-flow.ts", FlowTemplateSources.akit_flow_ts, ["function disputes(", "function again("]),
+        ("The Pi child", "pi-adapter.ts", FlowTemplateSources.pi_adapter_ts, ["export function childArgs"]),
+        ("The Claude Code child", "claude-adapter.ts", FlowTemplateSources.claude_adapter_ts, ["export function claudeArgs", "export function skillListing"]),
+    ].map { title, file, source, starts in
+        (title, file, starts.compactMap { declaration($0, in: source) }.joined(separator: "\n\n"))
+    }
+
+    /// The top-level declaration starting with `start`, with the comment lines right above it: one
+    /// line when it ends there, else up to the closing `}`, `};` or `} as const;` at the start of a line.
+    static func declaration(_ start: String, in source: String) -> String? {
+        let lines = source.components(separatedBy: "\n")
+        guard let first = lines.firstIndex(where: { $0.hasPrefix(start) }) else { return nil }
+        var top = first
+        while top > 0, ["/**", " *", "//"].contains(where: lines[top - 1].hasPrefix) { top -= 1 }
+        var last = first
+        if !lines[first].hasSuffix(";") {
+            guard let end = lines[(first + 1)...].firstIndex(where: { ["}", "};", "} as const;"].contains($0) }) else { return nil }
+            last = end
+        }
+        return lines[top...last].joined(separator: "\n")
+    }
+
     /// Pi's folder relative to the rendered root: the project's `.pi`, the home's `.pi/agent`.
     public static func piFolder(forHome: Bool) -> String { forHome ? ".pi/agent" : ".pi" }
 

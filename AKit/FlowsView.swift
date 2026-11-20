@@ -2,7 +2,9 @@ import AKitBrain
 import AKitFlows
 import AKitFoundation
 import AKitLab
+import AKitRender
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Setup → Flows (docs/design/flows.md F2, F3, F14): a flow is a column of step cards, set up by
 /// clicks only. Save writes `brain/flows/<name>.yaml`; a layer includes it; Apply… renders it for Pi.
@@ -21,9 +23,7 @@ struct FlowsView: View {
     /// The one open card.
     @State private var expanded: String?
     @State private var choosingSkills: String?
-    /// The card whose Generate… popover is open.
-    @State private var generating: String?
-    /// Each step's prompt before Generate… replaced it, for Undo.
+    /// Each step's instructions before Rewrite with Pi replaced them, for Undo.
     @State private var promptBefore: [String: String?] = [:]
     /// The open card shows its rarely changed settings too.
     @State private var showsMore = false
@@ -38,6 +38,8 @@ struct FlowsView: View {
     private var brainNames: [String] { model.brain.map { BrainFlows.names(in: $0.root) } ?? [] }
     private var rendered: [FlowFile] { FlowFile.list(project: project, env: env) }
     private var skills: [String] { FlowFile.knownSkills(project: project, env: env).sorted() }
+    /// Claude Code's own skills, which a Claude Code step may load too.
+    private var claudeSkills: Set<String> { FlowFile.claudeSkills(project: project, env: env) }
     private var commands: [String] { FlowProjectCommands.known(in: project) }
     private static let builtInTools = ["read", "bash", "edit", "write", "grep", "find", "ls"]
     private static let newTag = "\u{1}new"
@@ -172,6 +174,7 @@ struct FlowsView: View {
                 Spacer()
                 Button("Check", systemImage: "checkmark.seal") { check(flow) }
                     .help("Runs the flow check (akit flow check): routes, tools, models, skills, check commands, Pi features")
+                exportMenu(flow)
                 Button("Save", systemImage: "square.and.arrow.down") { Task { await save(flow) } }
                     .keyboardShortcut("s")
                     .disabled(saving || flow == saved || !ProjectBundle.isFlowName(flow.name) || flow.steps.contains { $0.model.isEmpty })
@@ -193,6 +196,42 @@ struct FlowsView: View {
                     .foregroundStyle(.orange).font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    /// Export for Review: the flow as on screen, with each step's whole context, as one Markdown
+    /// text for an agent with a fresh context (FlowReviewExport). Its answer comes back through
+    /// `akit flow set | route | …` (the /akit skill).
+    private func exportMenu(_ flow: Flow) -> some View {
+        Menu("Export", systemImage: "square.and.arrow.up") {
+            Button("Copy for Review") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(reviewExport(flow).text, forType: .string)
+            }
+            Button("Save for Review…") { saveReview(flow) }
+        }
+        .fixedSize()
+        .help("Everything that shapes this flow's run, for an agent to review: each step's settings, routes, command, instructions, first-round prompt and skill texts, the flow file and the runner's prompt code. Secrets are masked")
+    }
+
+    private func reviewExport(_ flow: Flow) -> FlowReviewExport.Result {
+        let issues = FlowCheck.check(flow, knownModels: piModels.isEmpty ? nil : Set(piModels),
+                                     knownSkills: FlowFile.knownSkills(project: project, env: env), pi: FlowFile.capabilities(env: env),
+                                 claudeSkills: claudeSkills)
+        return FlowReviewExport.markdown(flow: flow, source: flow == saved ? "brain/flows/\(flow.name).yaml" : "the Flows screen (with unsaved changes)",
+                                         project: project, env: env, issues: issues,
+                                         runner: FlowRender.reviewExcerpts.map { .init(title: $0.title, file: $0.file, code: $0.code) })
+    }
+
+    private func saveReview(_ flow: Flow) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(flow.name.isEmpty ? "flow" : flow.name)-flow-review.md"
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Data(reviewExport(flow).text.utf8).write(to: url, options: .atomic)
+        } catch {
+            problem = "Couldn't write \(url.lastPathComponent): \(error.localizedDescription)"
         }
     }
 
@@ -358,7 +397,8 @@ struct FlowsView: View {
               : missing(.thinking).map { "Can't: \($0)" } ?? "How much the model reasons in this step (pi --thinking); Model default leaves it to Pi")
     }
 
-    /// The prompt, always in sight, with Generate… (Pi writes it) and Undo after a generation.
+    /// The instructions, always in sight and edited in place; under them Rewrite with Pi, and Undo
+    /// after a rewrite.
     private func promptEditor(_ step: FlowStep, index: Int, flow: Flow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -370,18 +410,8 @@ struct FlowsView: View {
                         updateStep(index) { $0.prompt = before }
                         promptBefore[step.id] = nil
                     }
-                    .help("Bring back the instructions from before Generate…")
+                    .help("Bring back the instructions from before Rewrite with Pi")
                 }
-                Button("Generate…", systemImage: "sparkles") { generating = step.id }
-                    .disabled(piModels.isEmpty)
-                    .help(piModels.isEmpty ? "Pi has no models with credentials on this Mac" : "Pi writes or changes these instructions from your request")
-                    .popover(isPresented: Binding(get: { generating == step.id }, set: { if !$0 { generating = nil } })) {
-                        FlowPromptGenerator(flow: flow, step: step.id, models: piModels) { text in
-                            if promptBefore[step.id] == nil { promptBefore[step.id] = .some(step.prompt) }
-                            updateStep(index) { $0.prompt = text }
-                            generating = nil
-                        }
-                    }
             }
             TextEditor(text: Binding(get: { step.prompt ?? "" }, set: { text in
                 updateStep(index) { $0.prompt = text.isEmpty ? nil : text }
@@ -390,6 +420,13 @@ struct FlowsView: View {
             .frame(minHeight: 90, maxHeight: 200)
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(.secondary.opacity(0.3)))
             .help("What the step does, in the model's words; the runner puts it after the task and the plan")
+            FlowInstructionsRewrite(flow: flow, step: step.id, models: piModels) { text in
+                if promptBefore[step.id] == nil { promptBefore[step.id] = .some(step.prompt) }
+                updateStep(index) { $0.prompt = text }
+            }
+            .id(step.id)
+            .disabled(piModels.isEmpty)
+            .help(piModels.isEmpty ? "Pi has no models with credentials on this Mac" : "")
         }
     }
 
@@ -420,30 +457,32 @@ struct FlowsView: View {
                 HStack(spacing: 12) { routePickers(index: index, flow: flow) }
                 VStack(alignment: .leading, spacing: 6) { routePickers(index: index, flow: flow) }
             }
-            Stepper("Max loops: \(step.maxLoops)", value: stepBinding(index, \.maxLoops), in: 1...9)
+            Stepper("Max rounds: \(step.maxLoops)", value: stepBinding(index, \.maxLoops), in: 1...9)
                 .fixedSize()
-                .help("How often the run may come back to this step before it stops")
+                .help("How many times the run may enter this step: the first try plus reworks after a rejection. Not the agent's turns inside the step, which are unlimited. At the limit the run asks you")
         }
     }
 
     private func skillsRow(_ step: FlowStep, index: Int) -> some View {
-        LabeledContent("Skills") {
+        // A Claude Code step may load Claude Code's own skills too.
+        let offered = step.isClaudeCode ? Array(Set(skills).union(claudeSkills)).sorted() : skills
+        return LabeledContent("Skills") {
             HStack {
                 Text("\(step.skills.count) chosen").foregroundStyle(.secondary)
                 Button("Choose…") { choosingSkills = step.id }
-                    .disabled(skills.isEmpty && step.skills.isEmpty)
+                    .disabled(offered.isEmpty && step.skills.isEmpty)
                     .popover(isPresented: Binding(get: { choosingSkills == step.id }, set: { if !$0 { choosingSkills = nil } })) {
-                        SkillChooser(all: Array(Set(skills + step.skills)), selected: step.skills) { skill, on in
+                        SkillChooser(all: Array(Set(offered + step.skills)), selected: step.skills) { skill, on in
                             updateStep(index) { $0.skills = on ? $0.skills + [skill] : $0.skills.filter { $0 != skill } }
                         }
                     }
-                if skills.isEmpty && step.skills.isEmpty { Text("No Pi skills found").foregroundStyle(.secondary) }
+                if offered.isEmpty && step.skills.isEmpty { Text(step.isClaudeCode ? "No Pi or Claude Code skills found" : "No Pi skills found").foregroundStyle(.secondary) }
                 if let reason = missing(.skill), !step.skills.isEmpty {
                     Label(reason, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
                 }
             }
         }
-        .help("Only these skills reach the step (Pi: -ns --skill; Claude Code: listed in its system prompt, folders readable)")
+        .help("Only these skills reach the step (Pi: -ns --skill). A Claude Code step has none of its own in a flow (--safe-mode): it gets only these, from Pi's or Claude Code's skill folders, listed in its system prompt and read with Read")
     }
 
     /// This Mac's Pi (from `akit doctor`) next to the newest Pi the runner was tested on (F20).
@@ -569,7 +608,8 @@ struct FlowsView: View {
 
     private func check(_ flow: Flow) {
         issues = FlowCheck.check(flow, knownModels: piModels.isEmpty ? nil : Set(piModels),
-                                 knownSkills: FlowFile.knownSkills(project: project, env: env), pi: FlowFile.capabilities(env: env))
+                                 knownSkills: FlowFile.knownSkills(project: project, env: env), pi: FlowFile.capabilities(env: env),
+                                 claudeSkills: claudeSkills)
     }
 
     private func save(_ flow: Flow) async {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Generate… on a step card: one model call writes or changes the step's prompt from the user's
+/// Rewrite with Pi under a step's instructions: one model call rewrites them from the user's
 /// request. This part is pure: the text sent and the check on the answer; the app makes the call
 /// through Pi (`ModelCall`, with the sending policy, scrub and send log).
 public enum FlowPromptWriter {

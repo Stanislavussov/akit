@@ -1,5 +1,7 @@
 import Foundation
 import Testing
+import AKitBrain
+import AKitFlows
 import AKitFoundation
 @testable import AKitCommandLine
 
@@ -93,5 +95,90 @@ struct FlowCLITests {
         #expect(schema.code == 0 && schema.out.contains("\"$schema\""))
         let unknown = await akit("flow", "show", "nope")
         #expect(unknown.code != 0 && unknown.err.contains("No flow nope"))
+    }
+}
+
+/// `akit flow export` and the edit commands over a brain made by `akit init` (F23).
+struct FlowEditCLITests {
+    let home: URL
+    let fm = FileManager.default
+
+    init() throws {
+        home = fm.temporaryDirectory.appending(path: "akit-flow-edit-\(UUID().uuidString)")
+        try fm.createDirectory(at: home.appending(path: "Projects/app"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: home.appending(path: ".pi/agent/skills/planning"), withIntermediateDirectories: true)
+        try Data("---\nname: planning\ndescription: Plans in small steps\n---\nWrite the plan as numbered steps.\n".utf8)
+            .write(to: home.appending(path: ".pi/agent/skills/planning/SKILL.md"))
+    }
+
+    var env: HarnessEnvironment {
+        HarnessEnvironment(homeDirectory: home, variables: [
+            "HOME": home.path, "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
+            "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com",
+        ], executableSearchPaths: [URL(filePath: "/usr/bin")])
+    }
+    var file: URL { Brain.defaultRoot(home: home).appending(path: "flows/feature.yaml") }
+
+    func akit(_ arguments: String..., input: String = "") async -> (code: Int32, out: String) {
+        var out: [String] = []
+        let code = await AKitCLI.run(arguments, env: env, cwd: home.appending(path: "Projects/app"), projectsRoot: home.appending(path: "Projects"),
+                                     hostName: "TestMac.local", out: { out.append($0) }, err: { out.append($0) },
+                                     input: { Data(input.utf8) }, hardwareHash: { "test-hardware" })
+        return (code, out.joined(separator: "\n"))
+    }
+
+    func flow() throws -> Flow { try Flow.decode(yaml: String(contentsOf: file, encoding: .utf8)) }
+
+    @Test func editsShowTheDiffAndWriteOnlyWithYes() async throws {
+        let made = await akit("init")
+        #expect(made.code == 0, "\(made.out)")
+        try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(FlowCLITests.good.utf8).write(to: file)
+        let preview = await akit("flow", "set", "feature", "review", "thinking", "high")
+        #expect(preview.code == 0 && preview.out.contains("+ ") && preview.out.contains("--yes"), "\(preview)")
+        #expect(try flow().step("review")?.thinking == nil)
+
+        #expect(await akit("flow", "set", "feature", "review", "thinking", "high", "--yes").code == 0)
+        #expect(try flow().step("review")?.thinking == "high")
+        #expect(await akit("flow", "set", "feature", "implement", "prompt", "--file", "-", "--yes", input: "Do it.\nThen hand over.\n").code == 0)
+        #expect(try flow().step("implement")?.prompt == "Do it.\nThen hand over.")
+        #expect(await akit("flow", "set", "feature", "review", "max-rounds", "5", "--yes").code == 0)
+        #expect(await akit("flow", "route", "feature", "review", "blocked:disputed", "implement", "--yes").code == 0)
+        let added = await akit("flow", "add-step", "feature", "checker", "--model", "m/a", "--after", "implement", "--yes")
+        #expect(added.code == 0, "\(added.out)")
+        var edited = try flow()
+        #expect(edited.steps.map(\.id) == ["implement", "checks", "review"])
+        #expect(edited.step("review")?.maxLoops == 5 && edited.step("review")?.routes["blocked:disputed"] == "implement")
+
+        // A route to a step that isn't there is refused before anything is written.
+        let wrong = await akit("flow", "route", "feature", "review", "failed", "nowhere", "--yes")
+        #expect(wrong.code != 0 && wrong.out.contains("No step nowhere"))
+        // Removing a step drops the routes to it, so it adds no check error.
+        #expect(await akit("flow", "remove-step", "feature", "implement", "--yes").code == 0)
+        edited = try flow()
+        #expect(edited.steps.map(\.id) == ["checks", "review"] && edited.step("review")?.routes["failed:*"] == nil)
+        #expect(await akit("flow", "move-step", "feature", "review", "--first", "--yes").code == 0)
+        #expect(try flow().steps.map(\.id) == ["review", "checks"])
+
+        let json = await akit("flow", "set", "feature", "review", "gate", "yes", "--json")
+        #expect(json.out.contains("\"written\" : false") && json.out.contains("gate"), "\(json)")
+    }
+
+    @Test func exportHasEveryStepsContext() async throws {
+        let made = await akit("init")
+        #expect(made.code == 0, "\(made.out)")
+        try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(FlowCLITests.good.utf8).write(to: file)
+        let export = await akit("flow", "export", "feature")
+        #expect(export.code == 0)
+        for part in ["## What to review", "## Step 1: implement", "## Step 2: review", "### What the agent gets on its first round",
+                     "Most recent: the handoff from the step \"implement\" (done)", "Write the plan as numbered steps.", "Used by: implement.",
+                     "```yaml", "export const HANDOFF_PARAMETERS", "function prompt(", "export function childArgs", "- failed → implement"] {
+            #expect(export.out.contains(part), "missing \(part)")
+        }
+        let out = home.appending(path: "review.md")
+        #expect(await akit("flow", "export", "feature", "--out", out.path).code == 0)
+        #expect(fm.fileExists(atPath: out.path))
     }
 }

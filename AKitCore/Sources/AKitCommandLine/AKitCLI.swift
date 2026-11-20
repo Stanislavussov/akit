@@ -457,7 +457,7 @@ public enum AKitCLI {
                 return try attention(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
             }
             if arguments.first == "flow" {
-                return try flow(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out)
+                return try await flow(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, input: input)
             }
             if arguments.first == "notebook" {
                 return try await notebook(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)

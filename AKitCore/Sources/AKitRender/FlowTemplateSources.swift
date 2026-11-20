@@ -692,11 +692,14 @@ async function resumeLocked(ctx: ExtensionContext, project: string, folder: stri
 	await loop(ctx, run, decision, previous, signal);
 }
 
-function resolveSkill(project: string, name: string): string | undefined {
+/** Where a step's skill is: Pi's folders, and for a Claude Code step Claude's own after them
+ * (--safe-mode turns those off in the child, so the step gets them only this way). */
+export function resolveSkill(project: string, name: string, claude = false): string | undefined {
 	if (isAbsolute(name)) return existsSync(name) ? name : undefined;
 	const home = homedir();
 	return [join(project, ".pi", "skills", name), join(home, ".pi", "agent", "skills", name), join(project, ".agents", "skills", name),
-		join(home, ".agents", "skills", name)].find((p) => existsSync(p));
+		join(home, ".agents", "skills", name),
+		...(claude ? [join(project, ".claude", "skills", name), join(home, ".claude", "skills", name)] : [])].find((p) => existsSync(p));
 }
 
 /** A checker step with check commands: the runner runs them and no model is started. */
@@ -892,7 +895,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			}
 			const skills: string[] = [];
 			for (const name of step.skills ?? []) {
-				const path = resolveSkill(run.project, name);
+				const path = resolveSkill(run.project, name, step.harness === "claude-code");
 				if (!path) {
 					appendEvent(run.folder, "deviation", { step: step.id, rule: "skill-missing", detail: name });
 					return finish(ctx, run, { stop: "no-route", step: step.id, visits }, `The skill ${name} of step ${step.id} is not installed.`);

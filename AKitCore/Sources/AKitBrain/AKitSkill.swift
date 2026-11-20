@@ -311,22 +311,42 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
 ## Flows (multi-step runs for Pi)
 
 A flow is a column of Pi steps (agent, model, skills, tools, routes on done/failed/blocked,
-gate, max loops); a read-only step may run on Claude Code instead (`harness: claude-code`, its
-answer is the handoff). Pi runs it with `/flow [name] <task>`; akit only reads and checks the files
-(the project's `.pi/flows/*.yaml`, then `~/.pi/agent/flows/`). There is no `akit flow run`.
+gate, max rounds); a read-only step may run on Claude Code instead (`harness: claude-code`, its
+answer is the handoff; it has no skills of its own, only its step's, from Pi's or Claude Code's
+skill folders). Pi runs it with `/flow [name] <task>`; akit reads and checks the files Pi runs
+(the project's `.pi/flows/*.yaml`, then `~/.pi/agent/flows/`) and edits the brain's flows.
+There is no `akit flow run`.
 
 - `akit flow list [--project PATH] [--json]`: the flows and their steps, or why a file can't be read.
 - `akit flow show NAME [--json]`: a flow's steps, models, skills, tools and routes.
 - `akit flow check [NAME] [--json]`: run before Apply or when the user asks why a flow fails;
   exit 1 on an error (unknown or malformed route, a failed/blocked route to a later step, step
   tools outside the flow's, unsafe check commands, missing skills, the reviewer on the
-  implementer's model, a Pi feature this Mac lacks). Fix the flow in AKit's Flows screen, not by hand.
+  implementer's model, a Pi feature this Mac lacks). Fix it with the edit commands below or the
+  Flows screen, not by hand.
 - `akit flow runs [--project PATH] [--json]`: the project's runs (`.pi/akit-flow/runs`), newest
   first: status, each step attempt's state, time, tokens, deviations (with the quote), evidence,
   session file, and a step the routes forbid (`forbiddenNext`). Use it when the user asks how a
   run went or why it stopped. Read only; stopping a run is the Runs screen's Stop… (it writes
   `STOP`; `/flow resume` in Pi goes on).
 - `akit flow schema`: the JSON Schema of a flow file.
+- `akit flow export NAME [--out FILE] [--project PATH]`: the review pack (the Flows screen's
+  Export): each step's settings, routes, child command, instructions, first-round prompt and
+  skill texts, the flow file and the runner's prompt code, secrets masked. Use it when the user
+  wants a flow reviewed by an agent with a fresh context.
+- Edit a brain flow (`brain/flows/NAME.yaml`), e.g. to apply such a review: without `--yes` each
+  shows the YAML diff and the check; `--yes` writes and commits; a change that adds a check error
+  is refused (exit 1). `--json`: {name, path, written, diff, issues}.
+  - `akit flow set NAME STEP FIELD VALUE [--file FILE|-]`: agent, model, harness (pi,
+    claude-code), thinking (default, off … max), prompt (the step's instructions; `--file -` reads
+    stdin), skills, tools, paths, extensions (comma lists, `none` clears), checks (`;` list), bash,
+    gate (yes/no), max-rounds (1-9).
+  - `akit flow set-flow NAME tools|minPi VALUE`; `akit flow route NAME STEP KEY TARGET` (KEY
+    `failed`, `blocked:disputed` …; TARGET a step, `end`, or `stop` to drop the route);
+    `akit flow add-step NAME AGENT --model M [--id ID] [--after STEP]`; `akit flow remove-step NAME
+    STEP` (drops the routes to it); `akit flow move-step NAME STEP --after STEP|--first`.
+  Show the user the diffs before `--yes`, write instructions in English, and say that Pi gets
+  the change after Apply.
 - `akit doctor` probes this Mac's Pi (`pi --version`, `pi --help`; no secrets) into
   `~/.akit/local/pi-capabilities.json`, which `akit flow check` and the Flows screen read; it also
   says whether each project with flows keeps `/.pi/akit-flow` out of git and names run worktrees
