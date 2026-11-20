@@ -18,6 +18,8 @@ struct KnowledgeView: View {
     @State private var sampleRequest: SampleRequest? = DebugSnapshot.options?.tab == "sample-remove" ? .remove : nil
     /// Hide Note List: the note or map gets the whole width (K29). Snapshots: `--tab hide-list`.
     @AppStorage("knowledgeNoteListHidden") private var listHiddenSetting = false
+    /// The note list has the keys: ↑ and ↓ step through its notes and maps.
+    @FocusState private var listFocused: Bool
     private var listHidden: Bool { DebugSnapshot.options.map { $0.tab == "hide-list" } ?? listHiddenSetting }
 
     enum SampleRequest { case add, remove }
@@ -64,14 +66,16 @@ struct KnowledgeView: View {
             } else {
                 HSplitView {
                     if !listHidden {
-                        Group {
+                        // Stacked, not inset: the list's rows never show through the bars.
+                        VStack(spacing: 0) {
                             if model.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                                noteList.safeAreaInset(edge: .top, spacing: 0) { listHeader }
+                                listHeader
+                                noteList
                             } else {
                                 SearchResultsList()
                             }
+                            IndexStatusLine()
                         }
-                        .safeAreaInset(edge: .bottom, spacing: 0) { IndexStatusLine() }
                         .frame(minWidth: 200, idealWidth: 260, maxWidth: 380)
                     }
                     if model.map != nil {
@@ -257,55 +261,167 @@ struct KnowledgeView: View {
 
     /// The selection of the list: a note id, or `map:` and a map id. A space's own row isn't
     /// selectable: a click folds or unfolds it.
-    private var listSelection: Binding<String?> {
-        // A note or map in a folded space or group is not given to the list: the list then lit
-        // the row it was folded under. It stays open beside the list all the same.
-        Binding(get: { model.map.map { "map:" + $0 }.flatMap { visible($0) ? $0 : nil } ?? model.note.flatMap { visible($0) ? $0 : nil } },
-                set: { value in
-            // Only a note's or a map's row selects; a space or group row is never a selection.
-            guard let value, value.hasPrefix("map:") || model.notes(in: String(value.split(separator: "/").first ?? "")).contains(where: { $0.id == value })
-            else { return }
-            if value.hasPrefix("map:") {
-                model.open(map: String(value.dropFirst("map:".count)))
-            } else {
-                Task {
-                    await model.closeMap()
-                    model.open(value)
-                }
-            }
-        })
-    }
+    /// The row lit in the note list: the open map, else the open note. A row in a folded space
+    /// or group isn't there to light; its note stays open beside the list all the same.
+    private var selectedRow: String? { model.map.map { "map:" + $0 } ?? model.note }
 
-    /// One column (K29): every space is a foldable group with its note count, and in it the
-    /// space's maps, then its notes.
-    /// Whether a list row (a note id or `map:<id>`) is shown: its space unfolded, and its group too.
-    private func visible(_ row: String) -> Bool {
-        let id = row.hasPrefix("map:") ? String(row.dropFirst("map:".count)) : row
-        guard let area = id.split(separator: "/").first.map(String.init), model.expandedAreas.contains(area) else { return false }
-        if let group = model.notes(in: area).first(where: { $0.id == id })?.group { return !model.collapsedGroups.contains(area + "/" + group) }
-        return true
-    }
+    /// One row of the note list (K29, K37): a space, a group in it, a map, a note, or the hint
+    /// of an empty space or group.
+    private enum ListRow: Identifiable {
+        case space(KnowledgeBase.Area)
+        case group(area: String, name: String, count: Int)
+        case map(String)
+        case note(KnowledgeBase.NoteEntry)
+        case hint(key: String, text: String, depth: Int)
 
-    private var noteList: some View {
-        List(selection: listSelection) {
-            ForEach(model.areas, id: \.name) { area in
-                DisclosureGroup(isExpanded: Binding(get: { model.expandedAreas.contains(area.name) }, set: { open in
-                    if open { model.expandedAreas.insert(area.name) } else { model.expandedAreas.remove(area.name) }
-                    model.choose(area: area.name)
-                })) {
-                    areaRows(area.name)
-                } label: {
-                    spaceRow(area).selectionDisabled()
-                }
+        /// A note's id, `map:<id>` for a map: what `selectedRow` holds.
+        var id: String {
+            switch self {
+            case .space(let area): "space:" + area.name
+            case .group(let area, let name, _): "group:" + area + "/" + name
+            case .map(let id): "map:" + id
+            case .note(let note): note.id
+            case .hint(let key, _, _): "hint:" + key
             }
         }
-        .listStyle(.sidebar)
+
+        /// How far in the row sits: a space's rows one step, a group's two.
+        var depth: Int {
+            switch self {
+            case .space: 0
+            case .group, .map: 1
+            case .note(let note): note.group == nil ? 1 : 2
+            case .hint(_, _, let depth): depth
+            }
+        }
+
+        var selectable: Bool {
+            switch self {
+            case .map, .note: true
+            default: false
+            }
+        }
+    }
+
+    /// The rows of the list, flat: every space, and in an unfolded one its maps, then its groups
+    /// (each with its notes, unless folded), then the notes at its top.
+    private var listRows: [ListRow] {
+        model.areas.flatMap { area -> [ListRow] in
+            guard model.expandedAreas.contains(area.name) else { return [.space(area)] }
+            let maps = model.maps(in: area.name)
+            let notes = model.notes(in: area.name)
+            let groups = model.groups(in: area.name)
+            var rows: [ListRow] = [.space(area)] + maps.map(ListRow.map)
+            for group in groups {
+                let inGroup = notes.filter { $0.group == group }
+                rows.append(.group(area: area.name, name: group, count: inGroup.count))
+                guard !model.collapsedGroups.contains(area.name + "/" + group) else { continue }
+                rows += inGroup.map(ListRow.note)
+                if inGroup.isEmpty {
+                    rows.append(.hint(key: area.name + "/" + group, text: "Empty: New Note… here, or drop a note on the group", depth: 2))
+                }
+            }
+            rows += notes.filter { $0.group == nil }.map(ListRow.note)
+            if maps.isEmpty, notes.isEmpty, groups.isEmpty {
+                rows.append(.hint(key: area.name, text: "No notes yet: New Note… writes one", depth: 1))
+            }
+            return rows
+        }
+    }
+
+    /// One column (K29): every space folds, with its note count, and in it the space's maps, then
+    /// its groups and notes. Plain stacked rows, not a List of DisclosureGroups: an outline
+    /// view keeps row heights from before a space unfolds, so rows were cut or overlapped.
+    private var noteList: some View {
+        let rows = listRows
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(rows) { row in
+                        listRow(row).id(row.id)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+            }
+            .focusable()
+            .focused($listFocused)
+            .focusEffectDisabled()
+            .onKeyPress(.upArrow) { step(-1, in: rows) }
+            .onKeyPress(.downArrow) { step(1, in: rows) }
+            // A note opened elsewhere (a link, search, the map) is scrolled into view.
+            .onChange(of: selectedRow) { _, id in
+                if let id { proxy.scrollTo(id) }
+            }
+        }
         .overlay {
             if model.areas.isEmpty {
                 ContentUnavailableView("No spaces", systemImage: "folder",
                                        description: Text("New Area… adds one, like payments."))
             }
         }
+    }
+
+    private func listRow(_ row: ListRow) -> some View {
+        Group {
+            switch row {
+            case .space(let area): spaceRow(area)
+            case .group(let area, let name, let count): groupRow(name, in: area, count: count)
+            case .map(let id): mapRow(id)
+            case .note(let note): noteRow(note)
+            case .hint(_, let text, _): Text(text).font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.leading, CGFloat(row.depth) * Self.indent)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(row.id == selectedRow ? Color(nsColor: .unemphasizedSelectedContentBackgroundColor) : .clear,
+                    in: RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            listFocused = true
+            switch row {
+            case .space(let area): model.toggle(area: area.name)
+            case .group(let area, let name, _): model.toggle(group: name, in: area)
+            case .map, .note: select(row)
+            case .hint: break
+            }
+        }
+    }
+
+    /// One step in: a chevron's width and its gap, so a row's children line up with its icon.
+    private static let indent: CGFloat = 18
+
+    /// The fold chevron of a space or group row.
+    private func chevron(open: Bool) -> some View {
+        Image(systemName: "chevron.right")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .rotationEffect(.degrees(open ? 90 : 0))
+            .animation(.easeOut(duration: 0.12), value: open)
+            .frame(width: 12)
+    }
+
+    private func select(_ row: ListRow) {
+        switch row {
+        case .map(let id): model.open(map: id)
+        case .note(let note):
+            Task {
+                await model.closeMap()
+                model.open(note.id)
+            }
+        default: break
+        }
+    }
+
+    /// ↑ or ↓ in the list: the note or map above or below the lit one.
+    private func step(_ offset: Int, in rows: [ListRow]) -> KeyPress.Result {
+        let selectable = rows.filter(\.selectable)
+        guard !selectable.isEmpty else { return .ignored }
+        let index = selectable.firstIndex { $0.id == selectedRow }.map { $0 + offset } ?? (offset > 0 ? 0 : selectable.count - 1)
+        if selectable.indices.contains(index) { select(selectable[index]) }
+        return .handled
     }
 
     /// Over the list: Collapse All and Expand All for the spaces.
@@ -331,15 +447,15 @@ struct KnowledgeView: View {
     }
 
     private func spaceRow(_ area: KnowledgeBase.Area) -> some View {
-        HStack {
+        HStack(spacing: 6) {
+            chevron(open: model.expandedAreas.contains(area.name))
             Label(area.name, systemImage: "folder")
                 .fontWeight(area.name == model.area ? .semibold : .regular)
+                .lineLimit(1)
             Spacer()
             Text("\(area.notes)").foregroundStyle(.secondary).monospacedDigit()
             addNoteButton(area: area.name, group: nil)
         }
-        .contentShape(Rectangle())
-        .onTapGesture { model.toggle(area: area.name) }
         // Drag a space onto another to put it there (K31); a dropped note is no space.
         .draggable(Self.spaceDragPrefix + area.name)
         .dropDestination(for: String.self) { items, _ in
@@ -377,48 +493,18 @@ struct KnowledgeView: View {
         }
     }
 
-    /// A space's maps, then its groups (K37) with their notes, then the notes at its top.
-    @ViewBuilder private func areaRows(_ area: String) -> some View {
-        let maps = model.maps(in: area)
-        let notes = model.notes(in: area)
-        let groups = model.groups(in: area)
-        // The row's ForEach id is its selection value (a .tag isn't), so it carries the "map:" itself.
-        ForEach(maps.map { "map:" + $0 }, id: \.self) { row in
-            let id = String(row.dropFirst("map:".count))
-            Label(KnowledgeModel.mapName(id), systemImage: "point.3.connected.trianglepath.dotted")
-                .lineLimit(1)
-                .help("areas/\(id).excalidraw: click to view the map; click a block on it to open its note")
-                .contextMenu {
-                    Button("Show in Finder") {
-                        if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.mapFile(id)]) }
-                    }
-                    Button("Rename…") { model.renameRequest = id }
-                    Button("Delete…", role: .destructive) { model.mapDeleteRequest = id }
+    /// A map of a space: click to view it.
+    private func mapRow(_ id: String) -> some View {
+        Label(KnowledgeModel.mapName(id), systemImage: "point.3.connected.trianglepath.dotted")
+            .lineLimit(1)
+            .help("areas/\(id).excalidraw: click to view the map; click a block on it to open its note")
+            .contextMenu {
+                Button("Show in Finder") {
+                    if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.mapFile(id)]) }
                 }
-        }
-        // The id carries the space: two spaces may both have a group flows, and the list mixes up
-        // rows with one id.
-        ForEach(groups.map { area + "/" + $0 }, id: \.self) { key in
-            let group = String(key.dropFirst(area.count + 1))
-            let inGroup = notes.filter { $0.group == group }
-            DisclosureGroup(isExpanded: Binding(get: { !model.collapsedGroups.contains(area + "/" + group) }, set: { open in
-                if open { model.collapsedGroups.remove(area + "/" + group) } else { model.collapsedGroups.insert(area + "/" + group) }
-            })) {
-                ForEach(inGroup, id: \.id) { noteRow($0) }
-                if inGroup.isEmpty {
-                    Text("Empty: New Note… here, or drop a note on the group").font(.callout).foregroundStyle(.secondary)
-                        .selectionDisabled()
-                }
-            } label: {
-                // Its id is no note: the list must not light it as the selection.
-                groupRow(group, in: area, count: inGroup.count).selectionDisabled()
+                Button("Rename…") { model.renameRequest = id }
+                Button("Delete…", role: .destructive) { model.mapDeleteRequest = id }
             }
-        }
-        ForEach(notes.filter { $0.group == nil }, id: \.id) { noteRow($0) }
-        if maps.isEmpty, notes.isEmpty, groups.isEmpty {
-            Text("No notes yet: New Note… writes one").font(.callout).foregroundStyle(.secondary)
-                .selectionDisabled()
-        }
     }
 
     /// The + of a space or group row: New Note… with that space and group filled in.
@@ -434,14 +520,13 @@ struct KnowledgeView: View {
 
     /// A group's row (K37): a folder in the space, folded and unfolded like a space.
     private func groupRow(_ group: String, in area: String, count: Int) -> some View {
-        HStack {
-            Label(group, systemImage: "rectangle.stack")
+        HStack(spacing: 6) {
+            chevron(open: !model.collapsedGroups.contains(area + "/" + group))
+            Label(group, systemImage: "rectangle.stack").lineLimit(1)
             Spacer()
             Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
             addNoteButton(area: area, group: group)
         }
-        .contentShape(Rectangle())
-        .onTapGesture { model.toggle(group: group, in: area) }
         .dropDestination(for: String.self) { items, _ in
             guard let note = items.first, !note.hasPrefix(Self.spaceDragPrefix) else { return false }
             Task { await model.move(note: note, toArea: area, group: group) }
@@ -469,10 +554,6 @@ struct KnowledgeView: View {
             }
         }
         .padding(.vertical, 2)
-        // Its whole height, never squeezed into a row height the list kept from before the
-        // space unfolded (lines cut at the top or bottom).
-        .fixedSize(horizontal: false, vertical: true)
-        .tag(Optional(note.id))
         // Drag onto an open map: a block linked to the note (K6); onto a group: moved there (K37).
         .draggable(note.id)
         .contextMenu {
