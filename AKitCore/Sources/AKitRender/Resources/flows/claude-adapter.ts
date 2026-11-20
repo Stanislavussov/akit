@@ -4,7 +4,10 @@
 // output of a JSON schema (Claude can't load Pi's flow_handoff tool). The runner treats the answer
 // like a flow_handoff part. Claude steps are read-only (AKit's check refuses edit and write), since
 // Pi's guard can't watch a Claude child; Claude's own tool list and permission rules do instead.
+// The step's skills are listed in the system prompt, their folders readable (--add-dir).
 
+import { existsSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { HANDOFF_PARAMETERS } from "./akit-flow-handoff.ts";
 import { type ChildOptions, type ChildResult, runChild } from "./pi-adapter.ts";
 
@@ -25,7 +28,24 @@ export function claudeArgs(o: ChildOptions & { sessionId: string }): string[] {
 		"--json-schema", JSON.stringify(HANDOFF_PARAMETERS)];
 	const effort = o.thinking ? EFFORT[o.thinking] : undefined;
 	if (effort) args.push("--effort", effort);
+	// The step's skills, as Pi gives them: names and descriptions up front, each SKILL.md read on
+	// demand. --add-dir lets Read reach a skill folder outside the worktree without a prompt.
+	if (o.skills.length > 0) {
+		for (const folder of o.skills) args.push("--add-dir", folder);
+		args.push("--append-system-prompt", skillListing(o.skills));
+	}
 	return args;
+}
+
+/** The step's skills for Claude's system prompt: name, description and where its SKILL.md is. */
+export function skillListing(folders: string[]): string {
+	const lines = folders.map((folder) => {
+		const file = join(folder, "SKILL.md");
+		const text = existsSync(file) ? readFileSync(file, "utf8") : "";
+		const field = (key: string) => new RegExp(`^${key}:\\s*(.+)$`, "m").exec(text.split(/^---\s*$/m)[1] ?? "")?.[1].trim().replace(/^["']|["']$/g, "");
+		return `- ${field("name") ?? basename(folder)}: ${field("description") ?? "(no description)"} (${file})`;
+	});
+	return ["Skills for this step. Before you do what a skill covers, read its SKILL.md and follow it:", ...lines].join("\n");
 }
 
 /** Claude Code's one `{"type":"result", …}` line: tokens, cost, the answer and the structured output. */

@@ -278,8 +278,8 @@ struct FlowsView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(open ? Color.accentColor : .secondary.opacity(0.25)))
     }
 
-    /// The open card: what is set for most steps (agent, model, prompt, gate, checks), and the
-    /// rest under More Settings.
+    /// The open card: what is set for most steps (agent, model, prompt, skills, gate, checks), and
+    /// the rest under More Settings.
     private func details(_ step: FlowStep, index: Int, flow: Flow) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Divider()
@@ -307,10 +307,9 @@ struct FlowsView: View {
                     guard claude != step.isClaudeCode else { return }
                     step.harness = claude ? FlowStep.claudeCode : nil
                     if claude {
-                        // Read-only on Claude Code (F21): its tools lose edit and write, Pi's skills go.
+                        // Read-only on Claude Code (F21): its tools lose edit and write; skills stay.
                         let tools = (step.tools.isEmpty ? flow.tools : step.tools).filter { FlowStep.claudeTools.contains($0) }
                         step.tools = tools.isEmpty ? ["read", "grep", "find", "ls"] : tools
-                        step.skills = []
                         step.model = FlowStep.claudeModels[0]
                     } else {
                         step.model = piModels.first ?? ""
@@ -324,6 +323,7 @@ struct FlowsView: View {
             .fixedSize()
             .help("Claude Code: the runner starts claude -p for this step, read only, and its answer is the handoff. Good for a judge on another model family")
             promptEditor(step, index: index, flow: flow)
+            skillsRow(step, index: index)
             if step.agent == "checker" || !step.checks.isEmpty { checksPicker(step, index: index) }
             HStack(spacing: 18) {
                 Toggle("Gate", isOn: stepBinding(index, \.gate)).toggleStyle(.switch)
@@ -337,7 +337,7 @@ struct FlowsView: View {
             DisclosureGroup("More Settings", isExpanded: $showsMore) {
                 moreSettings(step, index: index, flow: flow).padding(.top, 6)
             }
-            .help("Thinking, skills, tools, where the run goes after the step, and its loop limit")
+            .help("Thinking, tools, where the run goes after the step, and its loop limit")
         }
     }
 
@@ -398,17 +398,16 @@ struct FlowsView: View {
             }
             .fixedSize()
             .help("How much the model thinks in this step (pi --thinking); Model default leaves it to Pi")
-            if !step.isClaudeCode { skillsRow(step, index: index) }
             LabeledContent("Tools") {
                 checkboxes(step.isClaudeCode ? flow.tools.filter { FlowStep.claudeTools.contains($0) } : flow.tools, selected: step.tools) { tool, on in
                     updateStep(index) { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }
                 }
             }
             .help("The step's tool allow-list; the guard blocks every other tool. None checked: the flow's tools")
-            HStack(spacing: 12) {
-                routePicker("On done", outcome: "done", index: index, flow: flow)
-                routePicker("On failed", outcome: "failed", index: index, flow: flow)
-                routePicker("On blocked", outcome: "blocked", index: index, flow: flow)
+            // One row when it fits, else one picker per row: the card never grows past the window.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { routePickers(index: index, flow: flow) }
+                VStack(alignment: .leading, spacing: 6) { routePickers(index: index, flow: flow) }
             }
             Stepper("Max loops: \(step.maxLoops)", value: stepBinding(index, \.maxLoops), in: 1...9)
                 .fixedSize()
@@ -433,7 +432,7 @@ struct FlowsView: View {
                 }
             }
         }
-        .help("Only these skills reach the step (Pi runs it with -ns --skill)")
+        .help("Only these skills reach the step (Pi: -ns --skill; Claude Code: listed in its system prompt, folders readable)")
     }
 
     /// This Mac's Pi (from `akit doctor`) next to the newest Pi the runner was tested on (F20).
@@ -458,6 +457,13 @@ struct FlowsView: View {
     private func missing(_ feature: FlowPiFeature) -> String? {
         guard let pi = capabilities, !pi.features.contains(feature.rawValue) else { return nil }
         return "this Mac's Pi \(pi.version ?? "") has no \(feature.rawValue) (akit doctor)"
+    }
+
+    @ViewBuilder
+    private func routePickers(index: Int, flow: Flow) -> some View {
+        routePicker("On done", outcome: "done", index: index, flow: flow)
+        routePicker("On failed", outcome: "failed", index: index, flow: flow)
+        routePicker("On blocked", outcome: "blocked", index: index, flow: flow)
     }
 
     /// The three route pickers (F2): next step by default on done, stop on failed or blocked.
