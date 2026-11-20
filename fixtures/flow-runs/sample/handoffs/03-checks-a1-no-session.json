@@ -7,8 +7,8 @@
     "id": "checks",
     "attempt": 1
   },
-  "session": "sess-checks-1",
-  "session_file": "sessions/2026-11-17T12-00-00-000Z_sess-checks-1.jsonl",
+  "session": null,
+  "session_file": null,
   "from": {
     "outcome": "failed",
     "reason": "checks"
@@ -16,23 +16,23 @@
   "next": {
     "step": "implement"
   },
-  "goal": "checks goal",
+  "goal": "implement goal",
   "done": [
-    "did checks"
+    "did implement"
   ],
   "files": [
     {
-      "path": "src/checks.ts",
+      "path": "src/implement.ts",
       "change": "added"
     }
   ],
   "open_questions": [],
-  "notes": "notes of checks",
+  "notes": "notes of implement",
   "tokens": {
-    "input": 100,
-    "output": 20,
-    "cache_read": 5,
-    "cost": 0.01
+    "input": 0,
+    "output": 0,
+    "cache_read": 0,
+    "cost": 0
   },
   "deviations": 1,
   "evidence": "evidence/03-checks-a1-checks.json"

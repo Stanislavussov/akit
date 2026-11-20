@@ -336,13 +336,14 @@ test("the runner runs the checks; red routes back with the evidence", async () =
 	flow(checkedSteps());
 	checkScript(1);
 	await flowCommand("feature x", ctx());
-	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "implement", "checks"]);
+	// A checker step with check commands starts no model: only the runner runs the checks.
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "implement"]);
 	const run = onlyRun();
 	const ends = events(run).filter((e) => e.type === "step-end" && e.step === "checks");
 	// The model said done both times; the first time the checks were red.
 	assert.deepEqual(ends.map((e) => [e.outcome, e.reason]), [["failed", "checks"], ["done", ""]]);
 	assert.deepEqual(deviations(run).map((d) => d.rule), ["check-failed"]);
-	const second = calls()[3].args.at(-1) ?? "";
+	const second = calls()[2].args.at(-1) ?? "";
 	assert.match(second, /The check `node check\.mjs` exited 1/);
 	assert.match(second, /1 test failed: export writes no header/);
 	// One evidence file per attempt: the rerun does not overwrite attempt 1.
@@ -356,12 +357,28 @@ test("the runner runs the checks; red routes back with the evidence", async () =
 	assert.equal(evidence.checks[0].exit, 0);
 	assert.equal(evidence.checks[0].tail.length, 40);
 	assert.equal(evidence.checks[0].tail.at(-1), "all tests passed");
-	const h = JSON.parse(readFileSync(join(run, "handoffs", "03-checks-a1-sess-checks-1.json"), "utf8"));
+	const h = JSON.parse(readFileSync(join(run, "handoffs", "03-checks-a1-no-session.json"), "utf8"));
 	assert.equal(h.evidence, "evidence/03-checks-a1-checks.json");
-	const h2 = JSON.parse(readFileSync(join(run, "handoffs", "03-checks-a2-sess-checks-2.json"), "utf8"));
+	const h2 = JSON.parse(readFileSync(join(run, "handoffs", "03-checks-a2-no-session.json"), "utf8"));
 	assert.equal(h2.evidence, "evidence/03-checks-a2-checks.json");
 	assert.deepEqual(h.from, { outcome: "failed", reason: "checks" });
 	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("later steps get the plan and a slim handoff; a code-only checks step passes the work on", async () => {
+	flow([...checkedSteps(), { id: "review", agent: "reviewer", model: "m/b" }]);
+	checkScript(0);
+	await flowCommand("feature x", ctx());
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "review"]);
+	const review = calls()[2].args.at(-1) ?? "";
+	assert.match(review, /The plan \(handoff of the step "plan"\):/);
+	assert.match(review, /notes of plan/);
+	// The checks step's handoff carries the implementer's work to the reviewer.
+	assert.match(review, /Handoff from the step "checks" \(done\)/);
+	assert.match(review, /did implement/);
+	assert.doesNotMatch(review, /"tokens"|"session"|"schema"/);
+	// The step right after the plan gets it once, as the previous handoff.
+	assert.equal((calls()[1].args.at(-1) ?? "").match(/notes of plan/g)?.length, 1);
 });
 
 test("checks count as green only with an evidence file", () => {

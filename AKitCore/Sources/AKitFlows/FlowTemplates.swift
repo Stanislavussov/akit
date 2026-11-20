@@ -340,20 +340,25 @@ public enum FlowTemplates {
     }
 
     /// The Feature flow (the diagram in flows.md): `model` for every step, `reviewModel` for the
-    /// review, so the reviewer's model differs from the implementer's (F6).
+    /// review, so the reviewer's model differs from the implementer's (F6). Thinking is spent where
+    /// it pays: high for the plan and the review, low for asking and committing. The plan lives in
+    /// its handoff (the runner gives it to every later step), so the planner writes no file.
     public static func feature(model: String, reviewModel: String, checks: [String] = []) -> Flow {
         func step(_ id: String, _ agent: String, model: String = model, tools: [String], gate: Bool = false,
-                  checks: [String] = [], routes: [String: String] = [:]) -> FlowStep {
-            Self.step(id, agent, model: model, tools: tools, gate: gate, checks: checks, routes: routes)
+                  checks: [String] = [], thinking: String? = nil, routes: [String: String] = [:]) -> FlowStep {
+            var step = Self.step(id, agent, model: model, tools: tools, gate: gate, checks: checks, routes: routes)
+            step.thinking = thinking
+            return step
         }
         return Flow(name: "feature", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], steps: [
-            step("clarify", "clarifier", tools: read),
-            step("plan", "planner", tools: read + ["write"], gate: true, routes: ["blocked:*": "clarify"]),
+            step("clarify", "clarifier", tools: read, thinking: "low"),
+            step("plan", "planner", tools: read, gate: true, thinking: "high", routes: ["blocked:*": "clarify"]),
             step("implement", "implementer", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], routes: ["blocked:*": "plan"]),
             step("checks", "checker", tools: read + ["bash"], checks: checks, routes: ["failed:*": "implement", "blocked:*": "plan"]),
-            step("review", "reviewer", model: reviewModel, tools: read + ["bash"], gate: true,
+            step("review", "reviewer", model: reviewModel, tools: read + ["bash"], gate: true, thinking: "high",
                  routes: ["failed:*": "implement", "blocked:*": "plan"]),
-            step("commit", "committer", tools: ["read", "bash"], routes: ["done:*": FlowRouting.end, "failed:*": "implement"]),
+            step("commit", "committer", tools: ["read", "bash"], thinking: "low",
+                 routes: ["done:*": FlowRouting.end, "failed:*": "implement"]),
         ])
     }
 
@@ -373,16 +378,17 @@ public enum FlowTemplates {
             name folders or filters, not only new files, since they do not exist before the change). Change no code.
             """,
         "implementer": """
-            Implement the plan from the previous step's handoff. Run only the tests you need; the checks step runs the \
+            Implement the plan (the plan's handoff above; a later handoff says what to fix). Run only the tests you need; the checks step runs the \
             full commands after you. Keep the change to what the plan asks; when the plan is wrong or not enough, end \
             blocked with the reason instead of guessing.
             """,
         "checker": """
-            The runner runs this step's check commands after you. Read the failures the handoff names, if any, and say \
-            in the handoff which tests fail and why; change no code. End failed when a check is red.
+            Run the project's tests and lint the plan names, read only, and say in the handoff which fail and why; \
+            change no code. End failed when one is red. (With check commands set, the runner runs them and \
+            this step starts no model.)
             """,
         "reviewer": """
-            Another model made the change. Review the branch's diff against the plan, read only: change nothing \
+            Another model made the change. Review the run's diff (git diff against the base commit named above) against the plan, read only: change nothing \
             and run no command that changes files. Go through the risks that apply: the plan's invariants, states and \
             their transitions, a crash halfway, repeats and parallel calls, access and data. Look also for what the plan \
             asks and the diff does not do (or does differently, or does on top), correctness errors, missing or fake \

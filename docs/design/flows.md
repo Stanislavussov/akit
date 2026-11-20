@@ -142,7 +142,9 @@ reads run records and writes a `STOP` file.
   ends without a valid `flow_handoff` reruns once, then the run stops (a deviation).
   `outcome` is one of `done`, `failed`, `blocked`; the runner turns it into the next step by
   F19's route table. The next step gets the previous handoff as its input, not the whole
-  output. The handoff holds the run id and the child's session id, and that session file
+  output, and (2026-11-20) the newest done handoff of the last planner step before it, so a fix
+  after red checks or the review still sees the plan; both without the record's ids, tokens and
+  paths. Every prompt names the base commit (`git diff <base>` shows the run's changes). The handoff holds the run id and the child's session id, and that session file
   exists in `<run>/sessions`.
 
   Rules for the record:
@@ -157,7 +159,9 @@ reads run records and writes a `STOP` file.
   - **Lock.** `<run>/lock` holds the pid. Resume refuses a live pid. Each run has its own
     branch. The Pi row shows only its own run.
 - **F5 Gates and checks.** A check step runs the project's test and lint commands, set in
-  the flow. Red goes by the step's route. At a gate the extension stops and asks in Pi
+  the flow. A checker step with check commands starts no model (2026-11-20): the runner's
+  checks are the whole step, and its handoff passes the previous step's work on with the
+  evidence. Red goes by the step's route. At a gate the extension stops and asks in Pi
   (`ctx.ui.confirm` / `ctx.ui.editor`): Approve, or Send Back with a note. Max loops per step
   (default 3), then it stops and asks. Push and MR are always behind a gate; in v1 the runner
   never pushes or opens an MR at all: the run ends on its local branch `akit-flow/<run>`, and

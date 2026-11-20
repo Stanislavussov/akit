@@ -246,6 +246,33 @@ function readHandoff(folder: string, index: number, step: string, attempt: numbe
 	}
 }
 
+/** The newest done handoff of the flow's last planner step before `stepId`: the approved plan,
+ * which every later step gets next to the previous handoff, so a fix or review after checks still
+ * sees what was planned. Undefined when the flow has no planner before the step or it never ended done. */
+function planHandoff(folder: string, flow: Flow, stepId: string): { step: string; handoff: Record<string, unknown> } | undefined {
+	const index = flow.steps.findIndex((s) => s.id === stepId);
+	const plans = flow.steps.map((s, i) => ({ s, i })).filter(({ s, i }) => s.agent === "planner" && i < index);
+	const plan = plans.at(-1);
+	if (!plan || !existsSync(join(folder, "handoffs"))) return undefined;
+	const prefix = `${stepKey(plan.i, plan.s.id)}-a`;
+	const attempts = readdirSync(join(folder, "handoffs"))
+		.filter((n) => n.startsWith(prefix) && n.endsWith(".json"))
+		.map((n) => Number(/^\d+/.exec(n.slice(prefix.length))?.[0] ?? 0))
+		.sort((a, b) => b - a);
+	for (const attempt of attempts) {
+		const handoff = readHandoff(folder, plan.i, plan.s.id, attempt);
+		if (handoff && (handoff.from as { outcome?: unknown } | undefined)?.outcome === "done") return { step: plan.s.id, handoff };
+	}
+	return undefined;
+}
+
+/** What a handoff tells the next step: the model's part and the outcome, without the record's ids,
+ * tokens and paths (they cost tokens and help no step). */
+export function handoffForPrompt(handoff: Record<string, unknown>): Record<string, unknown> {
+	const { goal, done, files, open_questions, notes, from } = handoff;
+	return { from, goal, done, files, open_questions, notes };
+}
+
 function previousFrom(folder: string, flow: Flow, step: string, attempt: number): Previous | undefined {
 	const handoff = readHandoff(folder, flow.steps.findIndex((s) => s.id === step), step, attempt);
 	if (!handoff) return undefined;
@@ -366,6 +393,11 @@ function resolveSkill(project: string, name: string): string | undefined {
 		join(home, ".agents", "skills", name)].find((p) => existsSync(p));
 }
 
+/** A checker step with check commands: the runner runs them and no model is started. */
+export function codeOnly(step: { agent: string; checks?: string[] }): boolean {
+	return step.agent === "checker" && (step.checks ?? []).length > 0;
+}
+
 /** -e list of a child: the guard when present (Phase 3a), the handoff tool, then the step's own extensions. */
 function childExtensions(project: string, own: string[]): string[] {
 	const list: string[] = [];
@@ -449,12 +481,17 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 	const lines = [
 		`You are the ${agent} step "${stepId}" of the AKit flow "${run.flow.name}" (run ${run.id}).`,
 		`Task: ${run.task}`,
+		`The run's changes: git diff ${run.worktree.base}`,
 	];
 	const own = run.flow.steps.find((s) => s.id === stepId)?.prompt;
 	if (own) lines.push("", own);
+	const plan = agent === "planner" ? undefined : planHandoff(run.folder, run.flow, stepId);
+	if (plan && plan.step !== previous?.step) {
+		lines.push("", `The plan (handoff of the step "${plan.step}"):`, JSON.stringify(handoffForPrompt(plan.handoff), null, 2));
+	}
 	if (previous) {
 		lines.push("", `Handoff from the step "${previous.step}" (${previous.outcome}${previous.reason ? `:${previous.reason}` : ""}):`,
-			JSON.stringify(previous.handoff, null, 2));
+			JSON.stringify(handoffForPrompt(previous.handoff), null, 2));
 		if (previous.note !== undefined) lines.push("", `The user sent the work back at the gate after the step "${previous.step}". Their note:`, previous.note || "(no note)");
 		for (const check of previous.failedChecks ?? []) {
 			lines.push("", `The check \`${check.command}\` exited ${check.exit}. Its last lines:`, ...check.tail);
@@ -519,10 +556,22 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			}
 			const sessionDir = join(run.folder, "sessions");
 			const partPath = join(run.folder, "handoffs", `${key}-a${attempt}.part`);
-			const guardPath = writeGuardRules(run, step, key, attempt);
+			const guardPath = codeOnly(step) ? "" : writeGuardRules(run, step, key, attempt);
 			let result: ChildResult | undefined;
 			let part: HandoffPart | undefined;
 			let deviations = 0;
+			// A checker step with check commands runs no model: the runner's checks are the whole step,
+			// and its handoff passes the previous step's work on with the evidence (saves a child's tokens).
+			if (codeOnly(step)) {
+				result = { code: 0, signal: null, aborted: false, text: "", tokens: { input: 0, output: 0, cacheRead: 0, cost: 0 }, unknownEvents: 0, badLines: 0, stderr: "" };
+				const before = previous?.handoff ?? {};
+				const list = (v: unknown) => (Array.isArray(v) ? v : []);
+				part = {
+					goal: typeof before.goal === "string" && before.goal ? before.goal : run.task, done: list(before.done) as string[],
+					files: list(before.files) as HandoffPart["files"], open_questions: list(before.open_questions) as string[],
+					notes: typeof before.notes === "string" ? before.notes : "", outcome: "done", reason: "",
+				};
+			}
 			// No valid flow_handoff: the step reruns once, then the run stops (F4).
 			for (let round = 1; round <= 2 && !part; round++) {
 				rmSync(partPath, { force: true });
