@@ -1,3 +1,4 @@
+import AKitAttention
 import AKitBrain
 import AKitCorrections
 import AKitDoctor
@@ -74,7 +75,7 @@ final class AppModel {
     var mcpSwitchRequest: MCPSwitchRequest?
 
     /// Sidebar section shown in the window.
-    var section: SidebarSection? = DebugSnapshot.options?.section ?? .overview
+    var section: SidebarSection? = DebugSnapshot.options?.section ?? .attention
     /// A skill the Skills screen should select when it appears (set by "Show in Skills").
     var revealSkill: Skill.ID?
     /// A session the Sessions screen should select and scroll to (Insights → Stuck Loops → Show).
@@ -97,6 +98,19 @@ final class AppModel {
     /// A layer whose set Error Analysis → Evals should show when it appears (set by Brain's
     /// "Show in Error Analysis" and "Edit in Set…").
     var revealLayerSet: String?
+
+    /// What the Attention screen lists, problems first (docs/design/attention.md), and what the
+    /// person dismissed there; read again every 30 seconds (`watchAttention`).
+    var attention: [AttentionItem] = []
+    var attentionDismissals = AttentionDismissals()
+    /// An Error Analysis tab to show when it appears (Attention → Open).
+    var revealAnalysisTab: String?
+    /// A flow run the Runs screen should select (Attention → Open).
+    var revealFlowRun: String?
+    /// The MCP server whose check has this key (`MCPCheckResult.id`), for the MCP Servers screen.
+    var revealMCPCheck: String?
+    /// A brain layer the Brain screen should select (Attention → Open).
+    var revealBrainLayer: String?
 
     /// Opens Error Analysis → Evals on the layer's set.
     func showLayerSet(_ layer: String) {

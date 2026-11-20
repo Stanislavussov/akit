@@ -30,6 +30,10 @@ akit skills builtin [NAME…] [--mode auto|manual] [--json] [--yes]
                                 # missing, outdated or not in core; --yes adds or updates them
                                 # (one brain commit), then akit apply --home
 akit sync                       # pull other Macs' brain commits, push this one's
+akit attention [--all] [--json] # what needs the user now, from every AKit screen: failed runs, reviews and
+                                # sends, code reviews, reports and eval verdicts ready to read, MCP servers
+                                # that don't connect, inbox proposals; each with an akit:// link that opens
+                                # its place in AKit. Reads only; dismissing is on the Attention screen
 akit doctor                     # when AKit doesn't behave, run this first: what it sees, what's wrong
 akit doctor pi [--live] [--json] # when Pi misbehaves: install, settings, env, MCP, packages, skills, context
                                 # (exit 1 on a problem); --live also connects MCP servers, checks sign-in;

@@ -505,6 +505,7 @@ struct BrainView: View {
         .searchable(text: $query, placement: .toolbar, prompt: "Layer, project or skill")
         .onAppear { if !reveal() { selection = selection ?? first(in: brain) } }
         .onChange(of: model.revealBrainSkill) { reveal() }
+        .onChange(of: model.revealBrainLayer) { reveal() }
         .onChange(of: model.lastScan) {
             if !exists(selection, in: brain) { selection = first(in: brain) }
         }
@@ -513,6 +514,13 @@ struct BrainView: View {
     /// Selects the brain skill another screen asked to show. Returns whether there was one.
     @discardableResult
     private func reveal() -> Bool {
+        if let layer = model.revealBrainLayer {
+            // Attention → Open: a layer with a problem.
+            model.revealBrainLayer = nil
+            query = ""
+            selection = .layer(layer)
+            return true
+        }
         guard let name = model.revealBrainSkill else { return false }
         model.revealBrainSkill = nil
         query = ""

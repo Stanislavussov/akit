@@ -116,6 +116,17 @@ struct MCPView: View {
             }
             selection = selection ?? filtered.first?.id
         }
+        .task(id: model.revealMCPCheck) {
+            // Attention → Open: the server whose last check this was, with the filters that hide it cleared.
+            guard let key = model.revealMCPCheck else { return }
+            model.revealMCPCheck = nil
+            guard let server = model.mcpServers.first(where: { server in model.mcpChecks(of: server).contains { $0.id == key } }) else { return }
+            if !filtered.contains(where: { $0.id == server.id }) {
+                model.mcpFilter = .all
+                model.mcpHarness = nil
+            }
+            selection = server.id
+        }
         .onChange(of: model.mcpHarness) { keepSelectionVisible() }
         .onChange(of: model.mcpFilter) { keepSelectionVisible() }
         .onChange(of: model.mcpServers) {

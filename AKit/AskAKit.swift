@@ -74,7 +74,7 @@ final class AskAKitModel {
     /// The element the next questions are about, until New Chat or the screen changes.
     var focus: AskContext.Element?
     /// The screen in view; RootView keeps it current. Another screen drops the focus.
-    var section: SidebarSection = DebugSnapshot.options?.section ?? .overview {
+    var section: SidebarSection = DebugSnapshot.options?.section ?? .attention {
         didSet { if oldValue != section { focus = nil } }
     }
     /// What a screen's own view shows now (`.askAKitScreen`), per screen.

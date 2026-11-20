@@ -53,6 +53,17 @@ TASK=show-pinned-notes-at-the-top-a1b2
 CELL=20261001-071100-c011                                   # a variant cell that changed a test file
 REVIEW=20261001-120000-demo
 
+# Attention: what the demo home has, and only for this shot a replay that failed (a problem).
+FAILED_RUN="$DEMO/.akit/lab/20261001-130000-fail"
+if [[ "$ONLY" == "  " || "$ONLY" == *" attention "* ]]; then
+    mkdir -p "$FAILED_RUN"
+    printf '{"schema":1,"id":"20261001-130000-fail","kind":"replay","title":"Replay 1c9cf65 · lean · 1/3","createdAt":"%s","folder":"%s","environment":"background","akit":"/usr/bin/true","sessionID":"00000000-0000-0000-0000-0000000000f1","keep":false}\n' \
+        "$(date -u -v-20M +%Y-%m-%dT%H:%M:%S.000Z)" "$DEMO/Projects/notes-mac" > "$FAILED_RUN/run.json"
+    printf '{"status":"error","updatedAt":"%s","message":"The clone failed: the commit 1c9cf65 is not in the repository."}\n' \
+        "$(date -u -v-18M +%Y-%m-%dT%H:%M:%S.000Z)" > "$FAILED_RUN/state.json"
+fi
+shot attention           $MAIN --section attention
+rm -rf "$FAILED_RUN"
 shot overview            $MAIN --section overview
 # Only for this shot: Pi settings and MCP servers with a few mistakes, a stand-in MCP server
 # command, and a stand-in pi that answers pi mcp list and pi auth check. Removed afterwards.
