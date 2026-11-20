@@ -9,7 +9,7 @@ public enum ReviewBuiltIns {
       passes: ""        # provider/model for the brief and the roles; empty = Pi's default model
       verifier: ""      # required: a strong model for the verifier, best of another family than the passes'.
     thinking:
-      passes: ""
+      passes: high      # the brief and the roles trace each finding to its cause: they need to think
       verifier: high
     posting:
       marker: "🤖"
@@ -150,8 +150,10 @@ public enum ReviewBuiltIns {
                              For each acceptance criterion (and each repro step of a bug) say one of:
                              - `code`: the change implements it; name the file and line.
                              - `test`: a test checks it; name the test.
-                             - `not found`: nothing in the change does it.
+                             - `not found`: nothing in the change, nor code it relies on, does it.
                              - `can't check`: you need something the context pack doesn't have; say what.
+
+                             Before you write `not found`, look for the behaviour across the repository, not only in the diff: grep for its names (the field, the state, the error code, the text, the setting) and follow the code to where it decides it; the brief's "Cause and mechanism" names places to start. When code outside the diff already does it, the status is `code` with that file and line. `not found` only when that search found nothing; say in `why` what you searched for.
 
                              Submit the matrix as findings with `kind: "ac"`, one per criterion, `title` = the criterion, `why` = the status and the place. A criterion that is `not found` is also a finding with severity medium or higher, if the change claims to deliver it.
                              Often there are no criteria at all. Then submit nothing and report no gap: a missing criterion is never a finding, a gap or a question. Don't invent criteria from the code.
@@ -159,7 +161,7 @@ public enum ReviewBuiltIns {
         "tests": role("tests", "Review whether the change is tested: missing tests for new behaviour, regression tests for bugs, weak assertions.",
                       max: 6, needs: ["diff", "full_files", "tests"],
                       doNotComment: ["test style or naming", "coverage numbers without a concrete untested path"], body: """
-                      - Which new or changed behaviour has no test? Name the branch or case, not "add more tests".
+                      - Which new or changed behaviour has no test? Name the branch or case, not "add more tests". A missing test alone is a finding only for a path a risk points to: one the brief's "Where it can break" names, one another role's finding is on, or a bug's repro. Any other missing test is `nit`.
                       - For a bug: does a test fail without the fix? A test that passes either way is a finding.
                       - Do assertions check the result, or only that no exception was thrown?
                       - Are there tests that the change makes wrong but leaves passing (mocks that hide the change)?
@@ -180,7 +182,7 @@ public enum ReviewBuiltIns {
                            - Resources not closed; queries in loops; unbounded growth.
                            - Copy-paste: a block copied from elsewhere with one name not changed.
                            - Conditions the change adds: what happens in the branch it doesn't handle (the `else` that is missing, a new enum case not handled in a `switch` elsewhere — grep for it).
-                           - For a bugfix: is the cause fixed, or only the symptom? Do nearby paths have the same defect?
+                           - For a bugfix: start from the brief's "Cause and mechanism". Follow the repro to the line where the wrong value or state is born: is that the line the diff changes, or does the diff only catch the result later (a guard, a default, an error hidden)? A fix of the symptom is a finding: name the cause's line in the trace. grep for other paths through the same cause.
 
                            Quote the exact line as evidence.
                            """),
@@ -309,7 +311,7 @@ public enum ReviewBuiltIns {
           max_findings: \(max)
           needs: [\(needs.joined(separator: ", "))]
           do_not_comment:
-        \(doNotComment.map { "    - \($0)" }.joined(separator: "\n"))
+        \(doNotComment.map { "    - \"\($0.replacingOccurrences(of: "\"", with: "\\\""))\"" }.joined(separator: "\n"))
         ---
 
         \(body)

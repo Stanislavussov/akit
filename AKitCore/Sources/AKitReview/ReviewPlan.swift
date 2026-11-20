@@ -254,6 +254,12 @@ public enum ReviewPlanner {
                 place(.onlyInAKit, "The quoted code isn't in \(finding.file ?? "the file") at the reviewed commit, so the finding can't be tied to the code.")
                 continue
             }
+            // R68: a finding must show the path it claims, beyond its own lines.
+            if !forced, finding.traced == false {
+                place(.onlyInAKit, "No traced path: no step of its trace quotes code AKit found beyond the anchored line (the caller, where "
+                      + "the value comes from, what it harms), so it may be a guess. Move it inline to post it anyway.")
+                continue
+            }
             // A secret is reported whatever else is said on those lines or about the path.
             let secret = finding.role == ReviewScan.role
             if !forced, !secret, let author = personThread(near: finding, in: input.discussions, head: spec.headSHA) {

@@ -11,8 +11,9 @@ extension ReviewProcessTests {
     struct ExtensionKnowledgeTests {
         /// SHA-256 of what v12 registered (name, label, description, parameters of every tool, then
         /// the events), as `harness.mjs` prints it, per mode and pass (the impact pass has one tool
-        /// more). Taken from v12's source on 2026-10-25.
-        static let v12 = [Pass(mode: "review", pass: "role-x"): "bbe18190aac3d514", Pass(mode: "review", pass: "impact"): "a6c25a6976164330",
+        /// more). Taken from v12's source on 2026-10-25; the review passes' from v16 (R68: the
+        /// findings' `trace`) on 2026-11-20.
+        static let v12 = [Pass(mode: "review", pass: "role-x"): "03caeea9d3bb679b", Pass(mode: "review", pass: "impact"): "658c2bb8b73ab611",
                           Pass(mode: "fetch", pass: "role-x"): "6ad5502c16dc0dd6", Pass(mode: "send", pass: "role-x"): "62e5f656af48d547"]
         static let v12Review = v12[Pass(mode: "review", pass: "role-x")]
 
@@ -72,9 +73,9 @@ extension ReviewProcessTests {
             home.write("bin/akit", "#!/bin/sh\nfor a in \"$@\"; do echo \"[$a]\"; done\n", executable: true)
         }
 
-        @Test func versionFifteen() {
-            #expect(ReviewExtension.version == 15)
-            #expect(ReviewExtension.source.hasPrefix("// akit-review.ts v15:"))
+        @Test func versionSixteen() {
+            #expect(ReviewExtension.version == 16)
+            #expect(ReviewExtension.source.hasPrefix("// akit-review.ts v16:"))
             #expect(ReviewExtension.source.contains("const kbTimeout = 20000;") && ReviewExtension.source.contains("const kbOutputCap = 65536;"))
             #expect(ReviewExtension.source.contains("execFile(akit, argv, { shell: false, timeout: kbTimeout, maxBuffer: kbOutputCap"))
             #expect(!ReviewExtension.source.contains("execSync") && !ReviewExtension.source.contains("spawn("), "no shell")

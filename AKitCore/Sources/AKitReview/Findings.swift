@@ -10,6 +10,26 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
     /// (requirements role). `question`: something to ask the author.
     public enum Kind: String, Codable, Sendable { case finding, ac, question }
 
+    /// One step of the path from the cause to the harm (R68): a place in the code, the line
+    /// quoted, and what happens there. AKit checks the quote against the file.
+    public struct TraceStep: Codable, Sendable, Hashable {
+        public var file: String
+        public var line: Int?
+        public var quote: String
+        public var note: String
+        /// Whether the quote is in the file at the reviewed commit; nil when AKit can't tell (no
+        /// worktree, a file it may not read, no quote worth looking for). Set by AKit.
+        public var found: Bool?
+
+        public init(file: String, line: Int?, quote: String, note: String, found: Bool? = nil) {
+            self.file = file
+            self.line = line
+            self.quote = quote
+            self.note = note
+            self.found = found
+        }
+    }
+
     public struct Verdict: Codable, Sendable, Hashable {
         public enum Value: String, Codable, Sendable, CaseIterable { case confirmed, rejected, question, merged }
         public var verdict: Value
@@ -21,15 +41,18 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
         public var confidence: Double?
         /// The verifier's say on whether the problem was there before the merge request.
         public var preExisting: Bool?
+        /// The path the verifier walked when it confirmed the finding itself (R68).
+        public var trace: [TraceStep]?
 
         public init(verdict: Value, note: String, into: String? = nil, severity: ReviewSeverity? = nil, confidence: Double? = nil,
-                    preExisting: Bool? = nil) {
+                    preExisting: Bool? = nil, trace: [TraceStep]? = nil) {
             self.verdict = verdict
             self.note = note
             self.into = into
             self.severity = severity
             self.confidence = confidence
             self.preExisting = preExisting
+            self.trace = trace
         }
     }
 
@@ -65,6 +88,11 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
     /// The earlier run this finding comes from in a rerun (R28): carried over, or checked again
     /// by the verifier. nil for a finding of this run's roles.
     public var carriedFrom: String?
+    /// The role's path from the cause to the harm (R68).
+    public var trace: [TraceStep]?
+    /// Whether AKit found a step of the role's or the verifier's trace in the code beyond the
+    /// anchored lines; nil when it can't tell (no worktree, a finding from before R68). Set by AKit.
+    public var traced: Bool?
 
     public init(id: String, kind: Kind = .finding, role: String, file: String?, side: Side = .new, line: Int?, title: String,
                 evidence: String, why: String, severity: ReviewSeverity, confidence: Double, suggestion: String? = nil,

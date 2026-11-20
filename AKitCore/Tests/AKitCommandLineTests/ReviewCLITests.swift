@@ -80,7 +80,9 @@ extension AKitCLITests {
         let none = home.appending(path: "none").path
         let shown = await review(["config", "show", "--project", "app", "--brain", none, "--verifier-thinking", "low"])
         #expect(shown.code == 0, "\(shown)")
-        #expect(shown.out.contains("fake/strong") && shown.out.contains("low") && !shown.out.contains("thinking high"), "\(shown.out)")
+        // The passes think `high` by default (R68); the verifier's line takes the run's level.
+        let verifier = shown.out.split(separator: "\n").first { $0.contains("fake/strong") } ?? ""
+        #expect(verifier.contains("low") && !verifier.contains("thinking high"), "\(shown.out)")
         #expect(await review(["config", "show", "--project", "app", "--brain", none, "--verifier-thinking", "huge"]).err
             .contains("--verifier-thinking is one of off, minimal"))
         #expect(await review(["--help"]).out.contains("--verifier-thinking L"))

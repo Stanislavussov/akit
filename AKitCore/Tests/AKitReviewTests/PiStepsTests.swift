@@ -224,7 +224,7 @@ extension ReviewProcessTests {
             let run = ReviewRunFixture(home: home, head: "", folder: ReviewPaths(home: home.url).run(started.spec.id))
             run.fake("step-pi-api-reviewer", """
             {"findings":[{"file":"src/Auth.swift","line":3,"title":"A consumer breaks","evidence":"log(\\"Auth: \\\\(header)\\")",
-              "why":"The client reads the old field","severity":"high","confidence":0.9}]}
+              "why":"The client reads the old field","severity":"high","confidence":0.9,"trace":[{"file":"src/Auth.swift","line":2,"quote":"func auth(header: String) {","note":"hlavička přichází jako parametr"}]}]}
             """)
             run.fake("verifier", #"{"verdicts":[{"id":"f1","verdict":"confirmed","note":"Real","confidence":0.9}]}"#)
             let result = try await ReviewPasses.run(folder: run.folder, env: home.env)

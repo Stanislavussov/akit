@@ -25,10 +25,11 @@ import Foundation
 /// only with `AKIT_REVIEW_PUBLISH=1` (the user confirmed Publish Now…); without it a matching call
 /// is blocked and logged with `needsPublish`, so AKit can ask. Every answer
 /// is saved word for word in `<run>/mcp/calls/`, and every write in `<run>/send/log.jsonl`:
-/// AKit reads those, not the model's account.
+/// AKit reads those, not the model's account. v16 (R68): a finding carries its `trace`, the path from
+/// the cause to the harm; a verdict may carry the verifier's own.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 15
+    public static let version = 16
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -143,7 +144,7 @@ public enum ReviewExtension {
     """#
 
     public static let source = #"""
-    // akit-review.ts v15: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v16: written by AKit for one review run. Do not edit: AKit writes it again.
     import { execFile } from "node:child_process";
     import * as fs from "node:fs";
     import * as path from "node:path";
@@ -514,6 +515,10 @@ public enum ReviewExtension {
         if (!severities.includes(f.severity)) out.push(`${at}.severity must be one of ${severities.join(", ")}`);
         if (typeof f.confidence !== "number" || f.confidence < 0 || f.confidence > 1) out.push(`${at}.confidence must be 0–1`);
         if (f.preExisting !== undefined && typeof f.preExisting !== "boolean") out.push(`${at}.preExisting must be true or false`);
+        out.push(...traceProblems(f.trace, `${at}.trace`));
+        if ((f.kind ?? "finding") === "finding" && !Array.isArray(f.trace)) {
+          out.push(`${at}.trace is missing: the path from the cause to the harm, 2–6 steps, each a file, a line, the exact code and what happens there; at least one step outside the anchored lines (the caller, where the value comes from, what it harms)`);
+        }
       });
       verdictList.forEach((v, i) => {
         const at = `verdicts[${i}]`;
@@ -522,6 +527,24 @@ public enum ReviewExtension {
         if (typeof v?.note !== "string") out.push(`${at}.note is missing`);
         if (v?.verdict === "merged" && typeof v?.into !== "string") out.push(`${at}.into names the finding it merges into`);
         if (v?.preExisting !== undefined && typeof v?.preExisting !== "boolean") out.push(`${at}.preExisting must be true or false`);
+        out.push(...traceProblems(v?.trace, `${at}.trace`));
+      });
+      return out;
+    }
+
+    // R68: a trace is a list of steps, each a place in the code AKit can check.
+    function traceProblems(trace: any, at: string): string[] {
+      if (trace === undefined || trace === null) return [];
+      if (!Array.isArray(trace)) return [`${at} must be a list of steps`];
+      const out: string[] = [];
+      if (trace.length > 8) out.push(`${at}: at most 8 steps`);
+      trace.forEach((step: any, i: number) => {
+        const here = `${at}[${i}]`;
+        if (typeof step !== "object" || step === null) { out.push(`${here} is not an object`); return; }
+        if (typeof step.file !== "string" || step.file.trim() === "") out.push(`${here}.file is missing`);
+        if (step.line !== undefined && step.line !== null && (!Number.isInteger(step.line) || step.line < 1)) out.push(`${here}.line must be a line number from 1`);
+        if (typeof step.quote !== "string" || step.quote.trim() === "") out.push(`${here}.quote must copy the code of that line`);
+        if (typeof step.note !== "string" || step.note.trim() === "") out.push(`${here}.note says what happens there`);
       });
       return out;
     }
@@ -578,6 +601,20 @@ public enum ReviewExtension {
                     suggestion: { type: "string", description: "Replacement code for the anchored line, when there is a clear fix" },
                     related: { type: "array", items: { type: "string" } },
                     preExisting: { type: "boolean", description: "true: the problem is already there at the base commit; this change didn't bring it" },
+                    trace: {
+                      type: "array",
+                      description: "The path from the cause to the harm, in order: where the value or the call comes from, the changed code, who gets hurt",
+                      items: {
+                        type: "object",
+                        properties: {
+                          file: { type: "string", description: "Path in the repository" },
+                          line: { type: ["integer", "null"] },
+                          quote: { type: "string", description: "The exact code of that line, copied from the file" },
+                          note: { type: "string", description: "What happens there, in one short sentence" },
+                        },
+                        required: ["file", "quote", "note"],
+                      },
+                    },
                   },
                   required: ["title", "evidence", "why", "severity", "confidence"],
                 },
@@ -594,6 +631,20 @@ public enum ReviewExtension {
                     severity: { type: "string", enum: severities },
                     confidence: { type: "number", minimum: 0, maximum: 1 },
                     preExisting: { type: "boolean", description: "true: the problem is already there at the base commit" },
+                    trace: {
+                      type: "array",
+                      description: "The path from the cause to the harm, in order: where the value or the call comes from, the changed code, who gets hurt",
+                      items: {
+                        type: "object",
+                        properties: {
+                          file: { type: "string", description: "Path in the repository" },
+                          line: { type: ["integer", "null"] },
+                          quote: { type: "string", description: "The exact code of that line, copied from the file" },
+                          note: { type: "string", description: "What happens there, in one short sentence" },
+                        },
+                        required: ["file", "quote", "note"],
+                      },
+                    },
                   },
                   required: ["id", "verdict", "note"],
                 },
