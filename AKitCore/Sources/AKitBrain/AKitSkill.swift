@@ -307,7 +307,8 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
 ## Flows (multi-step runs for Pi)
 
 A flow is a column of Pi steps (agent, model, skills, tools, routes on done/failed/blocked,
-gate, max loops). Pi runs it with `/flow [name] <task>`; akit only reads and checks the files
+gate, max loops); a read-only step may run on Claude Code instead (`harness: claude-code`, its
+answer is the handoff). Pi runs it with `/flow [name] <task>`; akit only reads and checks the files
 (the project's `.pi/flows/*.yaml`, then `~/.pi/agent/flows/`). There is no `akit flow run`.
 
 - `akit flow list [--project PATH] [--json]`: the flows and their steps, or why a file can't be read.

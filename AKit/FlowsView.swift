@@ -21,6 +21,12 @@ struct FlowsView: View {
     /// The one open card.
     @State private var expanded: String?
     @State private var choosingSkills: String?
+    /// The card whose Generate… popover is open.
+    @State private var generating: String?
+    /// Each step's prompt before Generate… replaced it, for Undo.
+    @State private var promptBefore: [String: String?] = [:]
+    /// The open card shows its rarely changed settings too.
+    @State private var showsMore = false
     @State private var capabilities: PiCapabilities?
 
     struct ApplyTarget: Identifiable {
@@ -142,9 +148,10 @@ struct FlowsView: View {
                 header(flow)
                 if let problem { Label(problem, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
                 if let issues { checkResult(issues, flow: flow) }
-                toolsBox(flow)
                 column(flow)
                 addStepMenu
+                DisclosureGroup("Tools of the flow") { toolsBox(flow) }
+                    .help("Every step's tools are a subset of these (F13)")
             }
             .padding(16)
             .frame(maxWidth: 760, alignment: .leading)
@@ -176,9 +183,10 @@ struct FlowsView: View {
                           ?? "Update the home folder: the core layer's flows go to ~/.pi/agent/flows")
                 GuideButton(guide: .flows)
             }
-            Text("\(flow.steps.count) step\(flow.steps.count == 1 ? "" : "s") · Pi \(flow.minPi) or newer · a flow runs in Pi with /flow \(flow.name) <task>")
+            Text("\(flow.steps.count) step\(flow.steps.count == 1 ? "" : "s") · run it in Pi with /flow \(flow.name) <task>")
                 .font(.caption).foregroundStyle(.secondary)
-            piVersionLine.font(.caption)
+                .help("Needs Pi \(flow.minPi) or newer")
+            if piNeedsAttention { piVersionLine.font(.caption) }
             if saved != nil, let brain = model.brain, BrainFlows.layers(including: flow.name, in: brain).isEmpty {
                 Label("In no layer: Apply… doesn't write it, so Pi has no /flow. Include it with Layers (core for the home folder), then Apply….",
                       systemImage: "exclamationmark.triangle")
@@ -230,11 +238,10 @@ struct FlowsView: View {
     }
 
     private func toolsBox(_ flow: Flow) -> some View {
-        GroupBox {
-            checkboxes(Array(Set(Self.builtInTools + flow.tools)).sorted(), selected: flow.tools) { tool, on in
-                update { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }
-            }
-        } label: { Text("Tools of the flow").help("Every step's tools are a subset of these (F13)") }
+        checkboxes(Array(Set(Self.builtInTools + flow.tools)).sorted(), selected: flow.tools) { tool, on in
+            update { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }
+        }
+        .padding(.top, 4)
     }
 
     // MARK: - Column of cards
@@ -271,83 +278,162 @@ struct FlowsView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(open ? Color.accentColor : .secondary.opacity(0.25)))
     }
 
+    /// The open card: what is set for most steps (agent, model, prompt, gate, checks), and the
+    /// rest under More Settings.
     private func details(_ step: FlowStep, index: Int, flow: Flow) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Divider()
-            Picker(selection: stepBinding(index, \.agent)) {
-                ForEach(Array(Set(FlowTemplates.agents + [step.agent])).sorted(), id: \.self) { Text($0).tag($0) }
-            } label: { RequiredLabel("Agent") }
-                .help("The role of the step; implementer and reviewer must use different models (F6)")
-            PiModelPicker(selection: stepBinding(index, \.model), models: piModels, empty: "Choose a model",
-                          help: "Models Pi has credentials for (pi --list-models)", allowsOther: false) {
-                RequiredLabel("Model")
-            }
-            Picker("Thinking", selection: stepBinding(index, \.thinking)) {
-                Text("Model default").tag(String?.none)
-                ForEach(FlowTemplates.thinkingLevels, id: \.self) { Text($0).tag(String?.some($0)) }
-                if let other = step.thinking, !FlowTemplates.thinkingLevels.contains(other) { Text(other).tag(String?.some(other)) }
-            }
-            .help("How much the model thinks in this step (pi --thinking); Model default leaves it to Pi")
-            LabeledContent("Skills") {
-                HStack {
-                    Text("\(step.skills.count) chosen").foregroundStyle(.secondary)
-                    Button("Choose…") { choosingSkills = step.id }
-                        .disabled(skills.isEmpty && step.skills.isEmpty)
-                        .popover(isPresented: Binding(get: { choosingSkills == step.id }, set: { if !$0 { choosingSkills = nil } })) {
-                            SkillChooser(all: Array(Set(skills + step.skills)), selected: step.skills) { skill, on in
-                                updateStep(index) { $0.skills = on ? $0.skills + [skill] : $0.skills.filter { $0 != skill } }
-                            }
-                        }
-                    if skills.isEmpty && step.skills.isEmpty { Text("No Pi skills found").foregroundStyle(.secondary) }
-                    if let reason = missing(.skill), !step.skills.isEmpty {
-                        Label(reason, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
+            HStack(spacing: 16) {
+                Picker(selection: stepBinding(index, \.agent)) {
+                    ForEach(Array(Set(FlowTemplates.agents + [step.agent])).sorted(), id: \.self) { Text($0).tag($0) }
+                } label: { RequiredLabel("Agent") }
+                    .fixedSize()
+                    .help("The role of the step; implementer and reviewer must use different models (F6)")
+                if step.isClaudeCode {
+                    Picker(selection: stepBinding(index, \.model)) {
+                        ForEach(Array(Set(FlowStep.claudeModels + [step.model])).filter { !$0.isEmpty }.sorted(), id: \.self) { Text($0).tag($0) }
+                    } label: { RequiredLabel("Model") }
+                        .fixedSize()
+                        .help("Claude Code's model (claude --model)")
+                } else {
+                    PiModelPicker(selection: stepBinding(index, \.model), models: piModels, empty: "Choose a model",
+                                  help: "Models Pi has credentials for (pi --list-models)", allowsOther: false) {
+                        RequiredLabel("Model")
                     }
                 }
             }
-            .help("Only these skills reach the step (Pi runs it with -ns --skill)")
-            LabeledContent("Tools") {
-                checkboxes(flow.tools, selected: step.tools) { tool, on in
-                    updateStep(index) { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }
+            Picker("Runs on", selection: Binding(get: { step.isClaudeCode }, set: { claude in
+                updateStep(index) { step in
+                    guard claude != step.isClaudeCode else { return }
+                    step.harness = claude ? FlowStep.claudeCode : nil
+                    if claude {
+                        // Read-only on Claude Code (F21): its tools lose edit and write, Pi's skills go.
+                        let tools = (step.tools.isEmpty ? flow.tools : step.tools).filter { FlowStep.claudeTools.contains($0) }
+                        step.tools = tools.isEmpty ? ["read", "grep", "find", "ls"] : tools
+                        step.skills = []
+                        step.model = FlowStep.claudeModels[0]
+                    } else {
+                        step.model = piModels.first ?? ""
+                    }
                 }
+            })) {
+                Text("Pi").tag(false)
+                Text("Claude Code").tag(true)
             }
-            .help("The step's tool allow-list; the guard blocks every other tool. None checked: the flow's tools")
-            DisclosureGroup("Prompt") {
-                TextEditor(text: Binding(get: { step.prompt ?? "" }, set: { text in
-                    updateStep(index) { $0.prompt = text.isEmpty ? nil : text }
-                }))
-                .font(.callout)
-                .frame(minHeight: 90, maxHeight: 200)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(.secondary.opacity(0.3)))
-            }
-            .help("What the step does, in the model's words; the runner puts it after the task")
-            HStack(spacing: 12) {
-                routePicker("On done", outcome: "done", index: index, flow: flow)
-                routePicker("On failed", outcome: "failed", index: index, flow: flow)
-                routePicker("On blocked", outcome: "blocked", index: index, flow: flow)
-            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .help("Claude Code: the runner starts claude -p for this step, read only, and its answer is the handoff. Good for a judge on another model family")
+            promptEditor(step, index: index, flow: flow)
+            if step.agent == "checker" || !step.checks.isEmpty { checksPicker(step, index: index) }
             HStack(spacing: 18) {
                 Toggle("Gate", isOn: stepBinding(index, \.gate)).toggleStyle(.switch)
                     .disabled(missing(.uiConfirm) != nil && !step.gate)
                     .help(missing(.uiConfirm).map { "Can't: \($0)" } ?? "After the step Pi stops and asks: Approve, or Send Back with a note")
-                Stepper("Max loops: \(step.maxLoops)", value: stepBinding(index, \.maxLoops), in: 1...9)
-                    .help("How often the run may come back to this step before it stops")
                 Spacer()
                 Button("Move Up", systemImage: "chevron.up") { swap(index, index - 1) }.labelStyle(.iconOnly).disabled(index == 0)
                 Button("Move Down", systemImage: "chevron.down") { swap(index, index + 1) }.labelStyle(.iconOnly).disabled(index == flow.steps.count - 1)
                 Button("Remove Step", systemImage: "trash") { remove(step.id) }.labelStyle(.iconOnly)
             }
-            LabeledContent("Checks") {
-                let offered = Array(Set(commands + step.checks)).sorted()
-                if offered.isEmpty {
-                    Text(project == nil ? "Pick a project for its commands" : "No test or lint commands found").foregroundStyle(.secondary)
-                } else {
-                    checkboxes(offered, selected: step.checks) { command, on in
-                        updateStep(index) { $0.checks = on ? $0.checks + [command] : $0.checks.filter { $0 != command } }
+            DisclosureGroup("More Settings", isExpanded: $showsMore) {
+                moreSettings(step, index: index, flow: flow).padding(.top, 6)
+            }
+            .help("Thinking, skills, tools, where the run goes after the step, and its loop limit")
+        }
+    }
+
+    /// The prompt, always in sight, with Generate… (Pi writes it) and Undo after a generation.
+    private func promptEditor(_ step: FlowStep, index: Int, flow: Flow) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Prompt")
+                Spacer()
+                if let before = promptBefore[step.id] {
+                    Button("Undo", systemImage: "arrow.uturn.backward") {
+                        updateStep(index) { $0.prompt = before }
+                        promptBefore[step.id] = nil
                     }
+                    .help("Bring back the prompt from before Generate…")
+                }
+                Button("Generate…", systemImage: "sparkles") { generating = step.id }
+                    .disabled(piModels.isEmpty)
+                    .help(piModels.isEmpty ? "Pi has no models with credentials on this Mac" : "Pi writes or changes the prompt from your request")
+                    .popover(isPresented: Binding(get: { generating == step.id }, set: { if !$0 { generating = nil } })) {
+                        FlowPromptGenerator(flow: flow, step: step.id, models: piModels) { text in
+                            if promptBefore[step.id] == nil { promptBefore[step.id] = .some(step.prompt) }
+                            updateStep(index) { $0.prompt = text }
+                            generating = nil
+                        }
+                    }
+            }
+            TextEditor(text: Binding(get: { step.prompt ?? "" }, set: { text in
+                updateStep(index) { $0.prompt = text.isEmpty ? nil : text }
+            }))
+            .font(.callout)
+            .frame(minHeight: 90, maxHeight: 200)
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(.secondary.opacity(0.3)))
+            .help("What the step does, in the model's words; the runner puts it after the task and the plan")
+        }
+    }
+
+    private func checksPicker(_ step: FlowStep, index: Int) -> some View {
+        LabeledContent("Checks") {
+            let offered = Array(Set(commands + step.checks)).sorted()
+            if offered.isEmpty {
+                Text(project == nil ? "Pick a project for its commands" : "No test or lint commands found").foregroundStyle(.secondary)
+            } else {
+                checkboxes(offered, selected: step.checks) { command, on in
+                    updateStep(index) { $0.checks = on ? $0.checks + [command] : $0.checks.filter { $0 != command } }
                 }
             }
-            .help("Commands the runner runs at the step's end, without a shell; red turns done into failed")
         }
+        .help("Commands the runner runs at the step's end, without a shell; red turns done into failed. A checker step with checks starts no model")
+    }
+
+    private func moreSettings(_ step: FlowStep, index: Int, flow: Flow) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Thinking", selection: stepBinding(index, \.thinking)) {
+                Text("Model default").tag(String?.none)
+                ForEach(FlowTemplates.thinkingLevels, id: \.self) { Text($0).tag(String?.some($0)) }
+                if let other = step.thinking, !FlowTemplates.thinkingLevels.contains(other) { Text(other).tag(String?.some(other)) }
+            }
+            .fixedSize()
+            .help("How much the model thinks in this step (pi --thinking); Model default leaves it to Pi")
+            if !step.isClaudeCode { skillsRow(step, index: index) }
+            LabeledContent("Tools") {
+                checkboxes(step.isClaudeCode ? flow.tools.filter { FlowStep.claudeTools.contains($0) } : flow.tools, selected: step.tools) { tool, on in
+                    updateStep(index) { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }
+                }
+            }
+            .help("The step's tool allow-list; the guard blocks every other tool. None checked: the flow's tools")
+            HStack(spacing: 12) {
+                routePicker("On done", outcome: "done", index: index, flow: flow)
+                routePicker("On failed", outcome: "failed", index: index, flow: flow)
+                routePicker("On blocked", outcome: "blocked", index: index, flow: flow)
+            }
+            Stepper("Max loops: \(step.maxLoops)", value: stepBinding(index, \.maxLoops), in: 1...9)
+                .fixedSize()
+                .help("How often the run may come back to this step before it stops")
+        }
+    }
+
+    private func skillsRow(_ step: FlowStep, index: Int) -> some View {
+        LabeledContent("Skills") {
+            HStack {
+                Text("\(step.skills.count) chosen").foregroundStyle(.secondary)
+                Button("Choose…") { choosingSkills = step.id }
+                    .disabled(skills.isEmpty && step.skills.isEmpty)
+                    .popover(isPresented: Binding(get: { choosingSkills == step.id }, set: { if !$0 { choosingSkills = nil } })) {
+                        SkillChooser(all: Array(Set(skills + step.skills)), selected: step.skills) { skill, on in
+                            updateStep(index) { $0.skills = on ? $0.skills + [skill] : $0.skills.filter { $0 != skill } }
+                        }
+                    }
+                if skills.isEmpty && step.skills.isEmpty { Text("No Pi skills found").foregroundStyle(.secondary) }
+                if let reason = missing(.skill), !step.skills.isEmpty {
+                    Label(reason, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
+                }
+            }
+        }
+        .help("Only these skills reach the step (Pi runs it with -ns --skill)")
     }
 
     /// This Mac's Pi (from `akit doctor`) next to the newest Pi the runner was tested on (F20).
@@ -360,6 +446,12 @@ struct FlowsView: View {
                      systemImage: newer || older ? "exclamationmark.triangle" : "info.circle")
             .foregroundStyle(older ? .red : newer ? .orange : .secondary)
             .help("akit doctor stores this Mac's Pi features in ~/.akit/local/pi-capabilities.json; options it lacks are grey")
+    }
+
+    /// The Pi line shows only when this Mac's Pi is unknown, too old or newer than tested.
+    private var piNeedsAttention: Bool {
+        guard let installed = capabilities?.version else { return true }
+        return FlowCheck.compare(installed, Flow.testedPi) == .orderedDescending || FlowCheck.compare(installed, Flow.defaultMinPi) == .orderedAscending
     }
 
     /// Why this Mac's Pi can't do `feature` (from `pi-capabilities.json`), or nil when it can or nothing is known.
@@ -499,10 +591,13 @@ struct FlowsView: View {
         if let name = options.select { open(name) }
         if options.tab == "feature" || options.tab == "check", draft == nil { newFromTemplate(FlowTemplates.all[0]) }
         if options.tab == "check", let draft { check(draft) }
-        // `--query <step id>` opens that card; `--add` opens its skill chooser too.
+        // `--query <step id>` opens that card; `--add` opens More Settings and its skill chooser.
         if let step = options.query, draft?.step(step) != nil {
             expanded = step
-            if options.add { choosingSkills = step }
+            if options.add {
+                showsMore = true
+                choosingSkills = step
+            }
         }
     }
 }

@@ -82,7 +82,17 @@ public struct Flow: Codable, Equatable, Sendable {
 public struct FlowStep: Codable, Equatable, Sendable {
     public static let defaultMaxLoops = 3
 
+    /// Harness values a step may run on: Pi (the default, no field) or Claude Code (F21).
+    public static let claudeCode = "claude-code"
+    /// Claude Code's model aliases, offered when a step runs there.
+    public static let claudeModels = ["opus", "sonnet", "haiku"]
+    /// Tools a Claude Code step may have: it is read-only, since Pi's guard can't watch it (F21).
+    public static let claudeTools: Set<String> = ["read", "grep", "find", "ls", "bash"]
+
     public var id: String
+    /// Nil: Pi. `claude-code`: the runner starts `claude -p` for the step (F21).
+    public var harness: String?
+    public var isClaudeCode: Bool { harness == FlowStep.claudeCode }
     /// From the agent list; `implementer` and `reviewer` are the pair F6's model rule compares.
     public var agent: String
     public var model: String
@@ -104,10 +114,11 @@ public struct FlowStep: Codable, Equatable, Sendable {
     /// `outcome:reason` → next step id or `end`; `outcome:*` is the fallback (F19).
     public var routes: [String: String]
 
-    public init(id: String, agent: String, model: String, thinking: String? = nil, prompt: String? = nil, skills: [String] = [], tools: [String] = [],
+    public init(id: String, harness: String? = nil, agent: String, model: String, thinking: String? = nil, prompt: String? = nil, skills: [String] = [], tools: [String] = [],
                 paths: [String] = [], bash: Bool? = nil, extensions: [String] = [], gate: Bool = false, checks: [String] = [],
                 maxLoops: Int = FlowStep.defaultMaxLoops, routes: [String: String] = [:]) {
         self.id = id
+        self.harness = harness
         self.agent = agent
         self.model = model
         self.thinking = thinking
@@ -124,12 +135,13 @@ public struct FlowStep: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, agent, model, thinking, prompt, skills, tools, paths, bash, extensions, gate, checks, maxLoops, routes
+        case id, harness, agent, model, thinking, prompt, skills, tools, paths, bash, extensions, gate, checks, maxLoops, routes
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
+        harness = try c.decodeIfPresent(String.self, forKey: .harness)
         agent = try c.decode(String.self, forKey: .agent)
         model = try c.decode(String.self, forKey: .model)
         thinking = try c.decodeIfPresent(String.self, forKey: .thinking)
@@ -149,6 +161,7 @@ public struct FlowStep: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(harness, forKey: .harness)
         try c.encode(agent, forKey: .agent)
         try c.encode(model, forKey: .model)
         try c.encodeIfPresent(thinking, forKey: .thinking)

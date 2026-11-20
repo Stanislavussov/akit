@@ -57,6 +57,9 @@ public struct FlowIssue: Codable, Equatable, Sendable {
         case piTooOld = "pi-too-old"
         case missingPiFeature = "missing-pi-feature"
         case piNotChecked = "pi-not-checked"
+        case unknownHarness = "unknown-harness"
+        case claudeStepWrites = "claude-step-writes"
+        case claudeStepPiOnly = "claude-step-pi-only"
     }
 
     public var severity: Severity
@@ -84,6 +87,21 @@ public enum FlowCheck {
     private static var commandPattern: Regex<Substring> { /^[A-Za-z][A-Za-z0-9 _.:\/=%@-]*$/ }
     private static var routeKeyPattern: Regex<(Substring, Substring, Substring)> { /^(done|failed|blocked):(\*|[A-Za-z0-9][A-Za-z0-9_.-]*)$/ }
 
+    /// A Claude Code step (F21) is read-only and takes none of Pi's per-step settings.
+    static func claudeIssues(_ step: FlowStep, flowTools: [String]) -> [FlowIssue] {
+        var issues: [FlowIssue] = []
+        let writes = (step.tools.isEmpty ? flowTools : step.tools).filter { !FlowStep.claudeTools.contains($0) }
+        if !writes.isEmpty {
+            issues.append(.init(.error, .claudeStepWrites, step: step.id,
+                                "Step \(step.id) runs on Claude Code, which is read-only in a flow: drop \(writes.joined(separator: ", ")) from its tools."))
+        }
+        if !step.skills.isEmpty || !step.extensions.isEmpty || !step.paths.isEmpty {
+            issues.append(.init(.warning, .claudeStepPiOnly, step: step.id,
+                                "Step \(step.id) runs on Claude Code: its skills, extensions and paths are Pi's and are not used."))
+        }
+        return issues
+    }
+
     public static func check(_ flow: Flow, knownModels: Set<String>?, knownSkills: Set<String>?,
                              pi: PiCapabilities?) -> [FlowIssue] {
         var issues: [FlowIssue] = []
@@ -105,6 +123,13 @@ public enum FlowCheck {
                 issues.append(.init(.error, .nestedFlow, step: step.id, "Step \(step.id) may not start agents or flows (\(tool)); make it another step."))
             }
             issues += commandIssues(step)
+            if let harness = step.harness, harness != FlowStep.claudeCode {
+                issues.append(.init(.error, .unknownHarness, step: step.id, "Step \(step.id) runs on \(harness); a step runs on Pi or claude-code."))
+            }
+            if step.isClaudeCode {
+                issues += claudeIssues(step, flowTools: flow.tools)
+                continue
+            }
             if let knownModels, !knownModels.contains(step.model) {
                 issues.append(.init(.error, .unknownModel, step: step.id, "Model \(step.model) of step \(step.id) is not one Pi knows."))
             }

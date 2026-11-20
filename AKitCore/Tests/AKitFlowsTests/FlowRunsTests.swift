@@ -39,7 +39,7 @@ struct FlowRunSummaryTests {
         #expect(summary.deviationCount == 2)
         #expect(summary.attempts(of: "implement").first?.deviations.first.map(FlowRunReport.describe) == "tool-not-allowed: bash rm -rf build")
         #expect(summary.attempts(of: "checks").first?.deviations.first.map(FlowRunReport.describe) == "check-failed: node check.mjs → 1")
-        #expect(summary.attempts.allSatisfy { $0.handoff != nil && $0.sessionFile != nil })
+        #expect(summary.attempts.allSatisfy { $0.handoff != nil && ($0.sessionFile != nil) == ($0.step != "checks") })
         #expect(summary.attempts.last?.evidence == "evidence/03-checks-a2-checks.json")
         #expect(summary.attempts(of: "checks").first?.evidence == "evidence/03-checks-a1-checks.json")
         #expect(summary.attempts.allSatisfy { $0.forbiddenNext == nil }, "the sample follows its routes")
