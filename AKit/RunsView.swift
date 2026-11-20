@@ -295,7 +295,10 @@ struct RunsView: View {
             }
             if let goal = handoff.goal { Text("Goal: \(goal)").font(.callout) }
             ForEach(handoff.done, id: \.self) { Text("✓ \($0)").font(.callout) }
-            ForEach(handoff.files, id: \.path) { Text("\($0.change) \($0.path)").font(.callout.monospaced()) }
+            ForEach(Array(handoff.planSteps.enumerated()), id: \.offset) { Text("\($0.offset + 1). \($0.element)").font(.callout) }
+            if let check = handoff.planCheck { Text("Plan check: \(check)").font(.callout.monospaced()) }
+            // What git saw wins over what the model named; a difference is a files-mismatch deviation.
+            ForEach(handoff.changed ?? handoff.files, id: \.path) { Text("\($0.change) \($0.path)").font(.callout.monospaced()) }
             ForEach(handoff.openQuestions, id: \.self) { Text("? \($0)").font(.callout) }
             if let notes = handoff.notes, !notes.isEmpty { Text(notes).font(.callout).foregroundStyle(.secondary) }
         }

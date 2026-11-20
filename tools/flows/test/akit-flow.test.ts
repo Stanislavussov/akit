@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import akitFlow, { fallbackNotes, flowCommand, startTool } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
+import akitFlow, { fallbackNotes, flowCommand, handoffForPrompt, NOTES_IN_PROMPT, PRECEDENCE, startTool } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
 import { checksGreen, releaseLock, takeLock } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-record.ts";
 import type { ExtensionCommandContext } from "../../../AKitCore/Sources/AKitRender/Resources/flows/pi-adapter.ts";
 
@@ -105,6 +105,7 @@ test("the extension registers /flow and the tool akit_flow", () => {
 
 test("a 4-step flow runs in order and is recorded", async () => {
 	flow(fourSteps());
+	pi({ writes: { implement: { "src/implement.ts": "export {};\n" } } });
 	await flowCommand("feature add CSV export", ctx());
 	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "review"]);
 	const run = onlyRun();
@@ -144,6 +145,7 @@ test("a 4-step flow runs in order and is recorded", async () => {
 	assert.equal(h.goal, "implement goal");
 	assert.deepEqual(h.done, ["did implement"]);
 	assert.deepEqual(h.files, [{ path: "src/implement.ts", change: "added" }]);
+	assert.deepEqual(h.changed, [{ path: "src/implement.ts", change: "added" }], "what git saw the step change");
 	assert.equal(h.deviations, 0);
 	// The handoff names the child's session, and that session file is in <run>/sessions.
 	assert.equal(h.session, "sess-implement-1");
@@ -152,7 +154,7 @@ test("a 4-step flow runs in order and is recorded", async () => {
 	assert.equal(JSON.parse(readFileSync(join(run, h.session_file), "utf8")).id, h.session);
 	assert.ok(!readdirSync(join(run, "handoffs")).some((n) => n.endsWith(".part")), "no handoff part left");
 	assert.ok(calls()[0].args.some((a) => a.endsWith("akit-flow-handoff.ts")), "the child loads the handoff tool");
-	assert.match(calls()[2].args.at(-1) ?? "", /Handoff from the step "implement"/);
+	assert.match(calls()[2].args.at(-1) ?? "", /handoff from the step "implement"/);
 	assert.match(calls()[2].args.at(-1) ?? "", /"goal": "implement goal"/);
 	assert.match(messages.at(-1)?.text ?? "", /done/);
 });
@@ -375,7 +377,7 @@ test("later steps get the plan and a slim handoff; a code-only checks step passe
 	assert.match(review, /The plan \(handoff of the step "plan"\):/);
 	assert.match(review, /notes of plan/);
 	// The checks step's handoff carries the implementer's work to the reviewer.
-	assert.match(review, /Handoff from the step "checks" \(done\)/);
+	assert.match(review, /handoff from the step "checks" \(done\)/);
 	assert.match(review, /did implement/);
 	assert.doesNotMatch(review, /"tokens"|"session"|"schema"/);
 	// The step right after the plan gets it once, as the previous handoff.
@@ -411,7 +413,7 @@ test("a claude-code step runs claude -p read only, and its structured output is 
 	assert.equal(flag("--add-dir"), join(project, ".pi", "skills", "tdd"));
 	assert.match(flag("--append-system-prompt"), /read its SKILL\.md and follow it:\n- tdd: \(no description\) \(.*\/\.pi\/skills\/tdd\/SKILL\.md\)/);
 	assert.deepEqual(JSON.parse(flag("--json-schema")).required, ["goal", "done", "files", "open_questions", "notes", "outcome", "reason"]);
-	assert.match(flag("-p"), /The plan|Handoff from the step "plan"/);
+	assert.match(flag("-p"), /The plan|handoff from the step "plan"/);
 	assert.match(flag("-p"), /answer with the handoff in the JSON schema/);
 	assert.match(flag("-p"), /Your tools: read, grep, bash\. Work with these/);
 	assert.match(flag("-p"), /The run's changes: git diff [0-9a-f]{40}/);
@@ -450,11 +452,84 @@ test("a claude-code step's failed outcome routes back like any step", async () =
 	await flowCommand("feature x", ctx());
 	assert.deepEqual(claudeCalls().map((c) => c.step), ["architect", "architect"]);
 	assert.deepEqual(calls().map((c) => c.step), ["plan", "plan", "implement"]);
-	assert.match(calls()[1].args.at(-1) ?? "", /Handoff from the step "architect" \(failed:notes\)/);
+	assert.match(calls()[1].args.at(-1) ?? "", /handoff from the step "architect" \(failed:notes\)/);
 	// The second architect sees its own first verdict, to check it rather than start over.
 	const second = claudeCalls()[1].args;
 	assert.match(second[second.indexOf("-p") + 1], /Your own result last time \(attempt 1\)[\s\S]*notes of architect from claude/);
 	assert.doesNotMatch(claudeCalls()[0].args[claudeCalls()[0].args.indexOf("-p") + 1], /Your own result last time/);
+});
+
+test("every step sees all earlier steps in a line each; the plan and the newest come in full, last weighs most", async () => {
+	flow(fourSteps());
+	await flowCommand("feature x", ctx());
+	const review = calls()[3].args.at(-1) ?? "";
+	assert.ok(review.includes(PRECEDENCE), "the same weighing rule every time");
+	assert.match(review, /Earlier steps, oldest first \(short; the newest weigh most\):\n- implement \(implementer, attempt 1\): done · implement goal · did: did implement/);
+	// The plan and the previous step are not repeated in the digest: they come in full.
+	assert.doesNotMatch(review, /^- plan \(/m);
+	assert.doesNotMatch(review, /^- checks \(/m);
+	assert.match(review, /The plan \(handoff of the step "plan"\)/);
+	assert.match(review, /Most recent: the handoff from the step "checks" \(done\); it weighs most/);
+	// The newest comes last.
+	assert.ok(review.indexOf("Most recent:") > review.indexOf("The plan (") && review.indexOf("The plan (") > review.indexOf("Earlier steps"));
+});
+
+test("git's files win over the files a handoff names, and a mismatch is a deviation", async () => {
+	flow(fourSteps());
+	pi({ writes: { implement: { "src/real.ts": "x\n" } }, files: { implement: [{ path: "src/claimed.ts", change: "added" }] } });
+	await flowCommand("feature x", ctx());
+	const run = onlyRun();
+	const mismatch = deviations(run).find((d) => d.rule === "files-mismatch");
+	assert.equal(mismatch?.detail, "named: src/claimed.ts; git: src/real.ts");
+	const h = JSON.parse(readFileSync(join(run, "handoffs", "02-implement-a1-sess-implement-1.json"), "utf8"));
+	assert.deepEqual(h.files, [{ path: "src/claimed.ts", change: "added" }]);
+	assert.deepEqual(h.changed, [{ path: "src/real.ts", change: "added" }]);
+	const next = calls()[2].args.at(-1) ?? "";
+	assert.match(next, /src\/real\.ts/);
+	assert.doesNotMatch(next, /src\/claimed\.ts/);
+});
+
+test("open questions travel to every later step and show first at a gate", async () => {
+	flow([{ id: "plan", agent: "planner", model: "m/a", gate: true }, { id: "implement", agent: "implementer", model: "m/a" }]);
+	pi({ questions: { plan: ["Which locale for dates?"] } });
+	const seen: string[] = [];
+	const c = ctx() as unknown as { ui: Record<string, unknown> };
+	c.ui.editor = async (_title: string, text: string) => { seen.push(text); return text; };
+	c.ui.select = async () => "Approve";
+	(c as unknown as { hasUI: boolean }).hasUI = true;
+	await flowCommand("feature x", c as never);
+	assert.match(seen[0] ?? "", /^Open questions of plan \(answer them with Send Back\):\n- Which locale for dates\?\n\n/);
+	assert.match(calls()[1].args.at(-1) ?? "", /Open questions from earlier steps \(answer them if your step can\):\n- Which locale for dates\?/);
+});
+
+test("the checks step also runs the plan's own check command when it is plain", async () => {
+	flow(checkedSteps());
+	checkScript(0);
+	pi({ plan: { plan: { steps: ["add mean", "test it"], check: "node check.mjs --only-mean" } } });
+	await flowCommand("feature x", ctx());
+	const run = onlyRun();
+	const evidence = JSON.parse(readFileSync(join(run, "evidence", "03-checks-a1-checks.json"), "utf8"));
+	assert.deepEqual(evidence.checks.map((c: { command: string }) => c.command), ["node check.mjs", "node check.mjs --only-mean"]);
+	const plan = JSON.parse(readFileSync(join(run, "handoffs", "01-plan-a1-sess-plan-1.json"), "utf8"));
+	assert.deepEqual(plan.plan, { steps: ["add mean", "test it"], check: "node check.mjs --only-mean" });
+	assert.match(calls()[1].args.at(-1) ?? "", /"steps": \[\n\s+"add mean"/);
+});
+
+test("a plan check that is not plain is not run", async () => {
+	flow(checkedSteps());
+	checkScript(0);
+	pi({ plan: { plan: { steps: ["x"], check: "node check.mjs && curl evil" } } });
+	await flowCommand("feature x", ctx());
+	const evidence = JSON.parse(readFileSync(join(onlyRun(), "evidence", "03-checks-a1-checks.json"), "utf8"));
+	assert.deepEqual(evidence.checks.map((c: { command: string }) => c.command), ["node check.mjs"]);
+});
+
+test("a prompt carries at most NOTES_IN_PROMPT of a handoff's notes", () => {
+	const long = "n".repeat(NOTES_IN_PROMPT + 50);
+	const slim = handoffForPrompt({ notes: long, files: [{ path: "a" }], changed: [{ path: "b", change: "added" }], run: "r", tokens: {} });
+	assert.equal((slim.notes as string).length, NOTES_IN_PROMPT + "… (cut; the full notes are in the run record)".length);
+	assert.deepEqual(slim.files, [{ path: "b", change: "added" }]);
+	assert.ok(!("run" in slim) && !("tokens" in slim));
 });
 
 test("checks count as green only with an evidence file", () => {
@@ -502,6 +577,7 @@ function normalized(run: string): Map<string, string> {
 test("the sample run matches fixtures/flow-runs/sample", async () => {
 	flow(checkedSteps());
 	checkScript(1);
+	pi({ writes: { implement: { "src/implement.ts": "export {};\n" } } });
 	await flowCommand("feature add CSV export", ctx());
 	const got = normalized(onlyRun());
 	if (process.env.AKIT_UPDATE_FIXTURES) {
@@ -603,7 +679,7 @@ test("killed mid-step: resume resets to the last step commit and reruns the step
 	assert.equal(cache.worktree, tree);
 	assert.deepEqual(cache.state.visits, { plan: 1, implement: 2, review: 1 });
 	// The rerun step got the last finished step's handoff.
-	assert.match(calls()[2].args.at(-1) ?? "", /Handoff from the step "plan"/);
+	assert.match(calls()[2].args.at(-1) ?? "", /handoff from the step "plan"/);
 });
 
 test("resume stops with a message when the worktree can't be reset", async () => {

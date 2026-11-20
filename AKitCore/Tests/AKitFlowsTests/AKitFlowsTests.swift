@@ -272,6 +272,9 @@ struct FlowRunRecordTests {
         let red = try #require(run.handoffs.first { $0.stepID == "checks" && $0.attempt == 1 })
         #expect(red.outcome == .failed && red.reason == "checks" && red.next == "implement")
         #expect(red.evidence == "evidence/03-checks-a1-checks.json")
+        let implement = try #require(run.handoffs.first { $0.stepID == "implement" && $0.attempt == 1 })
+        #expect(implement.changed == [.init(path: "src/implement.ts", change: "added")], "what git saw")
+        #expect(implement.planSteps.isEmpty && implement.planCheck == nil)
         // It passes the implementer's work on.
         #expect(red.done == ["did implement"] && red.files == [.init(path: "src/implement.ts", change: "added")])
     }

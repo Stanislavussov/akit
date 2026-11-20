@@ -213,6 +213,16 @@ export const HANDOFF_PARAMETERS = {
 		},
 		open_questions: { type: "array", items: { type: "string" } },
 		notes: { type: "string", description: "What the next step must know." },
+		plan: {
+			type: "object",
+			description: "Planner steps only: the plan as ordered steps and one plain command that proves it (runs only the tests the change touches).",
+			properties: {
+				steps: { type: "array", items: { type: "string" } },
+				check: { type: "string", description: "One plain command, such as python3 -m unittest test_stats; empty when there is none." },
+			},
+			required: ["steps", "check"],
+			additionalProperties: false,
+		},
 		outcome: { type: "string", enum: ["done", "failed", "blocked"] },
 		reason: { type: "string", description: "Why the step failed or is blocked; one word such as tests or unclear. Empty when done." },
 	},
@@ -256,7 +266,7 @@ import {
 } from "./flow-core.ts";
 import { DEFAULT_TOOLS, type GuardRules } from "./akit-flow-guard.ts";
 import { runClaudeChild } from "./claude-adapter.ts";
-import { changes, commit, createWorktree, diffFromBase, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
+import { changedFiles, changes, commit, createWorktree, diffFromBase, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
 import {
 	appendEvent, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, type RecordedEvent, recordTokens, releaseLock,
 	RUN_SCHEMA, runChecks, stepKey, takeLock, visitsFrom, writeAtomic,
@@ -511,8 +521,46 @@ function planHandoff(folder: string, flow: Flow, stepId: string): { step: string
 /** What a handoff tells the next step: the model's part and the outcome, without the record's ids,
  * tokens and paths (they cost tokens and help no step). */
 export function handoffForPrompt(handoff: Record<string, unknown>): Record<string, unknown> {
-	const { goal, done, files, open_questions, notes, from } = handoff;
-	return { from, goal, done, files, open_questions, notes };
+	const { goal, done, files, changed, open_questions, notes, from, plan } = handoff;
+	const text = typeof notes === "string" && notes.length > NOTES_IN_PROMPT
+		? `${notes.slice(0, NOTES_IN_PROMPT)}… (cut; the full notes are in the run record)` : notes;
+	// The files git saw win over the files the model named.
+	return { from, goal, done, files: Array.isArray(changed) ? changed : files, open_questions, notes: text, ...(plan ? { plan } : {}) };
+}
+
+/** The most of a handoff's notes a prompt carries; the record keeps all of them. */
+export const NOTES_IN_PROMPT = 4000;
+
+/** How a step weighs what it gets (the same words every time, so the cache keeps them). */
+export const PRECEDENCE = "How to weigh what you get: the approved plan says what to build; the handoffs say what is true now, and a later handoff wins over an older one; a note from the user at a gate wins over both.";
+
+/** One line per earlier step, oldest first: the newest attempt of each step that ended, except
+ * the ones the prompt gives in full. Every step sees the whole run this way, in a few tokens. */
+export function earlierSteps(run: { folder: string; flow: Flow }, skip: Set<string>): { lines: string[]; questions: string[] } {
+	const latest = new Map<string, number>();
+	for (const e of readEvents(run.folder)) {
+		if (e.type !== "step-end" || typeof e.step !== "string") continue;
+		latest.delete(e.step);
+		latest.set(e.step, typeof e.attempt === "number" ? e.attempt : 1);
+	}
+	const lines: string[] = [];
+	const questions: string[] = [];
+	for (const [id, attempt] of latest) {
+		const index = run.flow.steps.findIndex((s) => s.id === id);
+		const h = index < 0 ? undefined : readHandoff(run.folder, index, id, attempt);
+		if (!h) continue;
+		for (const q of strings(h.open_questions)) if (!questions.includes(q)) questions.push(q);
+		if (skip.has(id)) continue;
+		const from = (h.from ?? {}) as { outcome?: string; reason?: string };
+		const done = strings(h.done);
+		const files = (Array.isArray(h.changed) ? h.changed : Array.isArray(h.files) ? h.files : []) as { path?: string }[];
+		const line = [`- ${id} (${run.flow.steps[index].agent}, attempt ${attempt}): ${from.outcome ?? "?"}${from.reason ? `:${from.reason}` : ""}`,
+			typeof h.goal === "string" && h.goal ? ` · ${h.goal}` : "",
+			done.length ? ` · did: ${done.slice(0, 3).join("; ")}${done.length > 3 ? ` (+${done.length - 3})` : ""}` : "",
+			files.length ? ` · files: ${files.map((f) => f.path).filter(Boolean).slice(0, 6).join(", ")}${files.length > 6 ? " …" : ""}` : ""].join("");
+		lines.push(line.length > 400 ? `${line.slice(0, 400)}…` : line);
+	}
+	return { lines, questions };
 }
 
 function previousFrom(folder: string, flow: Flow, step: string, attempt: number): Previous | undefined {
@@ -673,6 +721,8 @@ interface HandoffPart {
 	files: { path: string; change: string }[];
 	open_questions: string[];
 	notes: string;
+	/** The planner's plan as data (steps, a check command), when it gave one. */
+	plan?: { steps: string[]; check: string };
 	outcome: Outcome;
 	reason: string;
 	/** Set when the runner made the part from the answer's `outcome:` line, not `flow_handoff`. */
@@ -709,9 +759,11 @@ export function partFrom(value: unknown): HandoffPart | undefined {
 	if (!isOutcome(v.outcome)) return undefined;
 	const files = Array.isArray(v.files) ? v.files.filter((f): f is { path: string; change: string } => typeof f?.path === "string")
 		.map((f) => ({ path: f.path, change: typeof f.change === "string" ? f.change : "" })) : [];
+	const p = v.plan as Record<string, unknown> | undefined;
+	const plan = p && typeof p === "object" && Array.isArray(p.steps) ? { steps: strings(p.steps), check: typeof p.check === "string" ? p.check.trim() : "" } : undefined;
 	return {
 		goal: typeof v.goal === "string" ? v.goal : "", done: strings(v.done), files, open_questions: strings(v.open_questions),
-		notes: typeof v.notes === "string" ? v.notes : "", outcome: v.outcome, reason: typeof v.reason === "string" ? v.reason : "",
+		notes: typeof v.notes === "string" ? v.notes : "", ...(plan ? { plan } : {}), outcome: v.outcome, reason: typeof v.reason === "string" ? v.reason : "",
 	};
 }
 
@@ -737,7 +789,11 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 		`Your tools: ${tools.join(", ")}. Work with these; a tool you don't have is not a reason to end blocked.`,
 	];
 	if (step?.prompt) lines.push("", step.prompt);
+	lines.push("", PRECEDENCE);
 	const plan = agent === "planner" ? undefined : planHandoff(run.folder, run.flow, stepId);
+	const earlier = earlierSteps(run, new Set([stepId, ...(plan ? [plan.step] : []), ...(previous ? [previous.step] : [])]));
+	if (earlier.lines.length) lines.push("", "Earlier steps, oldest first (short; the newest weigh most):", ...earlier.lines);
+	if (earlier.questions.length) lines.push("", "Open questions from earlier steps (answer them if your step can):", ...earlier.questions.map((q) => `- ${q}`));
 	if (plan && plan.step !== previous?.step) {
 		lines.push("", `The plan (handoff of the step "${plan.step}"):`, JSON.stringify(handoffForPrompt(plan.handoff), null, 2));
 	}
@@ -748,7 +804,7 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 		lines.push("", `Your own result last time (attempt ${attempt - 1}): build on it; don't start over.`, JSON.stringify(handoffForPrompt(own), null, 2));
 	}
 	if (previous) {
-		lines.push("", `Handoff from the step "${previous.step}" (${previous.outcome}${previous.reason ? `:${previous.reason}` : ""}):`,
+		lines.push("", `Most recent: the handoff from the step "${previous.step}" (${previous.outcome}${previous.reason ? `:${previous.reason}` : ""}); it weighs most for where things stand:`,
 			JSON.stringify(handoffForPrompt(previous.handoff), null, 2));
 		if (previous.note !== undefined) lines.push("", `The user sent the work back at the gate after the step "${previous.step}". Their note:`, previous.note || "(no note)");
 		for (const check of previous.failedChecks ?? []) {
@@ -798,7 +854,11 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			const shown = view?.steps.find((s) => s.id === step.id);
 			writeRunJson(run, { status: "running", state: { step: step.id, visits } });
 			status(ctx, `flow ${run.flow.name}: ${index + 1}/${run.flow.steps.length} ${step.id}`);
-			const checks = step.checks ?? [];
+			// A checker also runs the approved plan's own check command, when it is a plain one.
+			const planCheck = step.agent === "checker" && (step.checks ?? []).length > 0
+				? (planHandoff(run.folder, run.flow, step.id)?.handoff.plan as { check?: unknown } | undefined)?.check : undefined;
+			const checks = [...(step.checks ?? []),
+				...(typeof planCheck === "string" && planCheck && isSafeCommand(planCheck) && !(step.checks ?? []).includes(planCheck) ? [planCheck] : [])];
 			const unsafe = checks.find((c) => !isSafeCommand(c));
 			if (unsafe !== undefined || checks.length > MAX_CHECK_COMMANDS) {
 				appendEvent(run.folder, "deviation", { step: step.id, rule: "check-refused", detail: unsafe ?? `${checks.length} commands` });
@@ -870,6 +930,18 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 				return finish(ctx, run, { stop: "no-handoff", step: step.id, visits }, `Flow ${run.flow.name} stopped: step ${step.id} ended twice without flow_handoff.`);
 			}
 			let { outcome, reason } = part;
+			// What git saw the step change, before the checks run: the truth its handoff's files are
+			// checked against and that later steps get. A code-only checks step passes work on; no check.
+			const changed = codeOnly(step) ? undefined : changedFiles(run.worktree.path);
+			if (changed) {
+				const named = new Set(part.files.map((f) => f.path));
+				const seen = new Set(changed.map((f) => f.path));
+				if (named.size !== seen.size || [...seen].some((p) => !named.has(p))) {
+					deviations++;
+					appendEvent(run.folder, "deviation", { step: step.id, attempt, rule: "files-mismatch",
+						detail: `named: ${[...named].join(", ") || "none"}; git: ${[...seen].join(", ") || "none"}` });
+				}
+			}
 			let evidence: string | undefined;
 			let failedChecks: Previous["failedChecks"];
 			if (checks.length > 0) {
@@ -896,7 +968,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 				schema: HANDOFF_SCHEMA, run: run.id, flow: run.flow.name, step: { index: index + 1, id: step.id, attempt },
 				session: result.session ?? null, session_file: file ? `sessions/${file}` : null, from: { outcome, reason },
 				next: next ? { step: next } : null, goal: part.goal || run.task, done: part.done, files: part.files,
-				open_questions: part.open_questions, notes: part.notes, ...(part.fallback ? { fallback: true } : {}), tokens: recordTokens(result.tokens), deviations,
+				...(changed ? { changed } : {}), open_questions: part.open_questions, notes: part.notes, ...(part.plan ? { plan: part.plan } : {}), ...(part.fallback ? { fallback: true } : {}), tokens: recordTokens(result.tokens), deviations,
 				evidence: evidence ? `evidence/${basename(evidence)}` : null,
 			};
 			writeAtomic(join(run.folder, "handoffs", handoffName(index, step.id, attempt, result.session)), handoff);
@@ -926,10 +998,13 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 
 /** The user's answer at a gate (F5): the diff of the run branch against its base (read only),
  * then Approve or Send Back with a note. */
-async function askGate(ctx: ExtensionContext, run: Run, step: string): Promise<{ approve: true } | { note: string } | undefined> {
+async function askGate(ctx: ExtensionContext, run: Run, step: string, handoff?: Record<string, unknown>): Promise<{ approve: true } | { note: string } | undefined> {
 	if (!ctx.hasUI || typeof ctx.ui?.select !== "function" || typeof ctx.ui?.editor !== "function") return undefined;
+	// The step's open questions come first: the gate is where the user can answer them (Send Back).
+	const questions = strings(handoff?.open_questions);
+	const head = questions.length ? `Open questions of ${step} (answer them with Send Back):\n${questions.map((q) => `- ${q}`).join("\n")}\n\n` : "";
 	await ctx.ui.editor(`Gate after ${step}: ${run.worktree.branch} against its base (read only; edits here are not kept)`,
-		diffFromBase(run.worktree.path, run.worktree.base));
+		head + diffFromBase(run.worktree.path, run.worktree.base));
 	const choice = await ctx.ui.select(`Gate after step ${step}`, ["Approve", "Send Back"]);
 	if (choice === "Approve") return { approve: true };
 	if (choice !== "Send Back") return undefined;
@@ -941,7 +1016,7 @@ async function askGate(ctx: ExtensionContext, run: Run, step: string): Promise<{
  * by the step's routes (a deviation) and gives the note to that step. No answer halts the run. */
 async function atGate(ctx: ExtensionContext, run: Run, step: string, attempt: number, visits: Visits, decision: Decision,
 	previous: Previous): Promise<{ decision: Decision; previous: Previous } | undefined> {
-	const answer = await askGate(ctx, run, step);
+	const answer = await askGate(ctx, run, step, previous.handoff);
 	if (!answer) {
 		appendEvent(run.folder, "halted", { reason: "gate", step });
 		writeRunJson(run, { status: "stopped", state: { step, visits } });
@@ -1272,6 +1347,17 @@ export function createWorktree(project: string, run: string): Worktree | { error
 export function changes(worktree: string): string[] {
 	const r = git(worktree, ["status", "--porcelain", "--untracked-files=all"]);
 	return r.out ? r.out.split("\n") : [];
+}
+
+/** What the worktree changed since the last commit, from git (the truth a handoff's `files` is
+ * checked against): added, changed or removed per path; a rename is its new path, changed. */
+export function changedFiles(worktree: string): { path: string; change: string }[] {
+	return changes(worktree).map((line) => {
+		const code = line.slice(0, 2);
+		const path = line.slice(3).split(" -> ").pop() ?? "";
+		const change = code.includes("?") || code.includes("A") ? "added" : code.includes("D") ? "removed" : "changed";
+		return { path: path.replace(/^"|"$/g, ""), change };
+	}).filter((f) => f.path);
 }
 
 /** Commits everything in the worktree (empty commits too: the trailers mark the finished step). */

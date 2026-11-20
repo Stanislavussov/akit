@@ -26,6 +26,12 @@
       "change": "added"
     }
   ],
+  "changed": [
+    {
+      "path": "src/implement.ts",
+      "change": "changed"
+    }
+  ],
   "open_questions": [],
   "notes": "notes of implement",
   "tokens": {

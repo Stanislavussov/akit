@@ -141,7 +141,18 @@ reads run records and writes a `STOP` file.
   `step`, `session`, `next`, `tokens`, `deviations` itself and writes the file. A step that
   ends without a valid `flow_handoff` reruns once, then the run stops (a deviation).
   `outcome` is one of `done`, `failed`, `blocked`; the runner turns it into the next step by
-  F19's route table. The next step gets the previous handoff as its input, not the whole
+  F19's route table. **Context contract (2026-11-20).** Every step sees the whole run, weighted: a line per
+  earlier step (newest attempt; outcome, goal, first things done, files), the open questions of
+  all earlier steps, the approved plan in full, its own last result when it runs again, and the
+  previous step's handoff in full, last, marked as weighing most. One fixed rule says how to
+  weigh them: the approved plan says what to build; the handoffs say what is true now, a later
+  one over an older one; a user's gate note over both. A prompt carries at most 4000 characters
+  of a handoff's notes (the record keeps all). The planner may give `plan: {steps, check}`; the
+  checks step also runs `check` when it passes F19's command rules. After each step the runner
+  records `changed`, the files git saw the step change; prompts and the Runs screen show those
+  instead of the model's `files`, and a difference is a `files-mismatch` deviation. A gate shows
+  the step's open questions above the diff. Before this:
+  the next step gets the previous handoff as its input, not the whole
   output; a step that runs again also gets its own last result (so a judge checks its notes
   instead of raising new ones each round), and (2026-11-20) the newest done handoff of the last planner step before it, so a fix
   after red checks or the review still sees the plan; both without the record's ids, tokens and
