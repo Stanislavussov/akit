@@ -52,7 +52,7 @@ struct FlowColumn<Card: View>: View {
 }
 
 /// One collapsed card in one line: number, step, agent, model's short name, skill count, gate,
-/// and the three routes as chips.
+/// and the routes set on the step as chips (the defaults go without saying).
 struct FlowStepLine: View {
     let step: FlowStep
     let index: Int
@@ -82,7 +82,8 @@ struct FlowStepLine: View {
             }
             if step.gate { Image(systemName: "diamond.fill").foregroundStyle(.orange).help("Gate after this step") }
             Spacer(minLength: 4)
-            ForEach(["done", "failed", "blocked"], id: \.self) { outcome in
+            // Only routes that differ from the default (done: next step; failed, blocked: stop).
+            ForEach(["done", "failed", "blocked"].filter { step.routes["\($0):*"] != nil }, id: \.self) { outcome in
                 let target = Self.target(step, index: index, flow: flow, outcome: outcome)
                 Text("\(outcome == "done" ? "✓" : outcome == "failed" ? "✗" : "⏸") \(target)")
                     .font(.caption).lineLimit(1)
