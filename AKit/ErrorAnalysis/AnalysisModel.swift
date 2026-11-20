@@ -135,6 +135,8 @@ final class AnalysisModel {
     var rebuild: [Clustering.Candidate]?
     /// The last pool judge run per mode: sessions where the judge found the mode and no note did.
     var judgeMissed: [String: [String]] = [:]
+    /// Agent Reports: the period, what was found and the last summary; kept while the window lives.
+    let agentReports = AgentReportsModel()
 
     var env: HarnessEnvironment { .current }
 

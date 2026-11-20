@@ -214,6 +214,8 @@ shot analysis-cluster    $MAIN --section analysis --tab review --add
 shot analysis-bootstrap  $MAIN --section analysis --tab bootstrap
 shot analysis-labeling   $MAIN --section analysis --tab bootstrap --select $DRAFT_SESSION --query 7
 shot analysis-reports    $MAIN --section analysis --tab reports
+shot analysis-agent-reports        $MAIN --section analysis --tab agent-reports --delay 6
+shot analysis-agent-reports-report $MAIN --section analysis --tab agent-reports --select report --delay 6
 # Wider: two matrices side by side.
 shot analysis-report-matrix 1480x800 --section analysis --tab reports --select $BATCH_B --query $BATCH_A --add
 shot analysis-report-diff   $MAIN --section analysis --tab reports --select $BATCH_B --query $BATCH_A --add --capture
