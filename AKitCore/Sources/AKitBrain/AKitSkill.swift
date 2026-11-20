@@ -197,6 +197,18 @@ never committed) and marks it. `akit corrections dismiss ID` hides a pattern. `a
 rules [--json]` gives each rule's verdict after 10 sessions: fewer, no change or more
 corrections; for no change or more, offer `akit corrections remove ID` (diff, then `--yes`).
 
+## Agent reports
+
+`akit reports [--days N | --from WHEN --to WHEN] [--harness pi|claude|all] [--json]` gathers the
+sections Pi writes at the end of each task (Agent decisions, Autonomy improvements, Unknown
+unknowns; `--section "NAME|ALIAS"` for others) from every session of a period, by section, with
+time, project and session; `--markdown` as a document. It only reads. Use it when the user asks
+what the agent decided, missed or would improve over some days. `akit reports summarize`
+(same period flags, `--focus TEXT` for what to look at first, `--language`, `--model`,
+`--thinking`) prints what would be sent; `--show` the text; ask before `--yes`: it sends the found
+sections to a Pi model and saves a short report (In short, each section, What to change) in
+~/.akit/lab/agent-reports. `akit reports list` and `akit reports show [FILE|latest]` read the saved ones.
+
 ## Recommendations
 
 `akit recommend [--project ID|PATH | --all] [--details] [--json]` lists auto skills listed

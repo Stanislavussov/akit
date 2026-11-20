@@ -1391,4 +1391,63 @@ file "$DEMO/.akit/local/pi-capabilities.json" <<'EOF'
 {"features": ["mode-json", "no-extensions", "no-skills", "session-dir", "skill", "thinking", "tool-call-block", "ui-confirm"], "version": "1.0.4"}
 EOF
 
+# Agent reports (Error Analysis → Agent Reports): Pi sessions of the last days whose final
+# answers end with the three sections the global AGENTS.md asks for, and one saved summary.
+pi_report() { # file id, folder, hours ago, title prompt, the final answer (JSON-escaped)
+    local file="$DEMO/.pi/agent/sessions/--${2//\//-}--/$(date -u -v-"$3"H +%Y-%m-%dT%H-%M-%S-000Z)_7a0f0000-0000-4000-8000-0000000$1.jsonl"
+    {
+        printf '{"type":"session","version":3,"id":"7a0f0000-0000-4000-8000-0000000%s","timestamp":"%s","cwd":"%s"}\n' "$1" "$(ago "$3"H)" "$2"
+        printf '{"type":"message","id":"u1","parentId":null,"timestamp":"%s","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' "$(ago "$3"H)" "$4"
+        printf '{"type":"message","id":"a1","parentId":"u1","timestamp":"%s","message":{"role":"assistant","model":"coder-large","provider":"demo","content":[{"type":"text","text":"%s"}],"usage":{"input":5200,"output":420,"cacheRead":0,"cacheWrite":0,"totalTokens":5620}}}\n' "$(ago "$3"H)" "$5"
+    } | file "$file"
+    touch -t "$(date -v-"$3"H +%Y%m%d%H%M)" "$file"
+}
+pi_report 0101 "$NOTESMAC" 50 "Add a tags filter to the notes list" \
+    'The tags row is above the list; `swift test` passed (15 tests).\n\nAgent decisions:\n- Kept the filter in NotesList; the shared FilterBar was left as it is.\n- Assumed a note may have no tags.\n\nAutonomy improvements:\n- A new filter on a list → write the test with an empty list and a list without the tag first → the empty states are covered before the UI.\n\nUnknown unknowns:\n- How the row looks with 40 tags was not checked on screen.'
+pi_report 0102 "$WEATHER" 30 "Show the temperature in Fahrenheit too" \
+    '**Changed:** `TemperatureView.swift`. **Checks:** `swift test` passed.\n\n**Agent decisions:** Took the unit from the system locale, as the settings screen has no unit yet.\n\n**Autonomy improvements:** - none.\n\n**Unknown unknowns:** The forecast API may round Fahrenheit values differently; not verified against a live answer.'
+pi_report 0103 "$NOTESMAC" 6 "Keep the sort order after a restart" \
+    'The order is kept in UserDefaults; the test restarts the store and passes.\n\nAgent decisions:\n- Stored the order in UserDefaults, not in the database, to keep the migration out.\n\nAutonomy improvements:\n- none\n\nUnknown unknowns:\n- Sync between two Macs may overwrite the order; not tested.\n- The screen was not checked after a real restart of the app.'
+file "$DEMO/.akit/lab/agent-reports/$(date -v-1H +%Y%m%d-%H%M%S).md" <<EOF
+---
+from: $(date -v-7d +%Y-%m-%d) 00:00
+to: $(date -v-1H "+%Y-%m-%d %H:%M")
+created: $(date -v-1H "+%Y-%m-%d %H:%M")
+model: demo/coder-large
+sessions: 4
+reports: 3
+focus: what was never checked on screen
+---
+
+# Agent reports $(date -v-7d +%Y-%m-%d) 00:00 – $(date -v-1H "+%Y-%m-%d %H:%M")
+
+4 sessions read, 3 with reports; 3 reports, 0 of them only “none”. Model: demo/coder-large. Focus: what was never checked on screen
+
+## In short
+- The agent kept its changes small and inside each feature (2 reports: R1, R3).
+- The biggest risk: UI changes were called done without a look at the screen (2 reports: R1, R3).
+- First change: after a UI change, take a snapshot of the screen before saying it is done (2 reports: R1, R3).
+
+## Focus
+- The tags row with many tags and the order after a real restart were never seen on screen (2 reports: R1, R3).
+
+## What the agent worked on
+- Small features of the notes list: a tags filter and a kept sort order (2 reports: R1, R3).
+- Fahrenheit in the weather app (1 report: R2).
+
+## Agent decisions
+- Kept changes in the feature's own view or store, not in shared code (2 reports: R1, R3).
+- Took the system locale's unit, as the app has no unit setting yet (1 report: R2).
+
+## Autonomy improvements
+- A new filter on a list → test the empty list first → empty states are covered before the UI (1 report: R1).
+
+## Unknown unknowns
+- Nothing was checked on screen after the change (2 reports: R1, R3).
+- Live data and a second Mac were not tried: the forecast's rounding, sync of the order (2 reports: R2, R3).
+
+## What to change
+- Add to the base layer's AGENTS.md: take a snapshot of the screen after a UI change; two reports missed it (2 reports: R1, R3).
+EOF
+
 echo "Demo home: $DEMO"
