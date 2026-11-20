@@ -532,6 +532,116 @@ test("a prompt carries at most NOTES_IN_PROMPT of a handoff's notes", () => {
 	assert.ok(!("run" in slim) && !("tokens" in slim));
 });
 
+/** A context with a screen: `pick` answers each select (by option prefix), notes answer the editors that ask for one. */
+function asking(pick: (title: string, options: string[]) => string | undefined, notes: string[] = []) {
+	const asked: { title: string; options: string[] }[] = [];
+	const shown: string[] = [];
+	const c = ctx() as unknown as { hasUI: boolean; ui: Record<string, unknown> };
+	c.hasUI = true;
+	c.ui.select = async (title: string, options: string[]) => {
+		asked.push({ title, options });
+		const want = pick(title, options);
+		return want === undefined ? undefined : options.find((o) => o.startsWith(want));
+	};
+	c.ui.editor = async (title: string, text: string) => {
+		shown.push(`${title}\n${text}`);
+		return /^(A note|Your decision)/.test(title) ? (notes.shift() ?? "") : text;
+	};
+	return { ctx: c as never, asked, shown };
+}
+
+test("at the loop limit the user can grant one more round, and resume keeps the grant", async () => {
+	flow(fourSteps(1));
+	pi({ outcomes: { checks: ["failed", "failed", "done"] } });
+	// No screen: it stops as before.
+	await flowCommand("feature x", ctx());
+	assert.equal(events(onlyRun()).at(-1)?.stop, "visit-cap");
+	// Resume asks instead of stopping again; two grants carry the run to the end.
+	const ui = asking(() => "One more round");
+	await flowCommand("resume", ui.ctx);
+	assert.equal(ui.asked[0].title, "checks ended failed, but implement reached its max loops (1)");
+	assert.deepEqual(ui.asked[0].options, ["One more round of implement", "Accept as is and go on", "Stop"]);
+	assert.equal(ui.asked[1].title, "checks ended failed, but implement reached its max loops (2)", "the first grant was kept");
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "implement", "checks", "implement", "checks", "review"]);
+	const run = onlyRun();
+	assert.deepEqual(events(run).filter((e) => e.type === "decision").map((e) => [e.answer, e.target]), [["more", "implement"], ["more", "implement"]]);
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("accept as is goes on past the objection, and the next step is told so", async () => {
+	flow(fourSteps(1));
+	pi({ outcomes: { checks: ["failed"] } });
+	const ui = asking(() => "Accept as is");
+	await flowCommand("feature x", ui.ctx);
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "review"]);
+	assert.match(ui.shown[0], /^What checks said \(read only\)\nOutcome: failed\n/);
+	assert.match(calls()[3].args.at(-1) ?? "", /The user's decision:\nThe user accepted the work of "checks" as it is, despite its failed\./);
+	assert.equal(events(onlyRun()).at(-1)?.stop, "done");
+});
+
+test("Stop and ask asks: a step with no route can be sent back to itself with a note", async () => {
+	flow([{ id: "plan", agent: "planner", model: "m/a" }, { id: "implement", agent: "implementer", model: "m/a" }]);
+	pi({ outcomes: { implement: ["failed:tests", "done"] } });
+	const ui = asking(() => "Send implement back", ["Use the fixture in tests/data."]);
+	await flowCommand("feature x", ui.ctx);
+	assert.equal(ui.asked[0].title, "implement ended failed:tests, and it has no route for that");
+	assert.deepEqual(ui.asked[0].options, ["Accept as is and go on", "Send implement back with a note", "Stop"]);
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "implement"]);
+	assert.match(calls()[2].args.at(-1) ?? "", /The user sent "implement" back to itself\. Their note:\nUse the fixture in tests\/data\./);
+	assert.equal(events(onlyRun()).at(-1)?.stop, "done");
+});
+
+test("Stop at the question stops; no deviation is lost", async () => {
+	flow(fourSteps(1));
+	pi({ outcomes: { checks: ["failed"] } });
+	const ui = asking(() => "Stop");
+	await flowCommand("feature x", ui.ctx);
+	const ev = events(onlyRun());
+	assert.equal(ev.at(-1)?.stop, "visit-cap");
+	assert.deepEqual(ev.filter((e) => e.type === "decision").map((e) => e.answer), ["stop"]);
+});
+
+/** The four steps with review sending its notes back to implement. */
+const reviewedSteps = () => fourSteps(5).map((s) => (s.id === "review" ? { ...s, routes: { "failed:*": "implement" } } : s));
+
+test("a maker may dispute a rejection; the user sides with the judge and the maker reruns", async () => {
+	flow(reviewedSteps());
+	pi({ outcomes: { review: ["failed:notes", "done"], implement: ["done", "blocked:disputed", "done"] } });
+	const ui = asking((title) => (title.startsWith("Dispute") ? "review is right" : undefined));
+	await flowCommand("feature x", ui.ctx);
+	// The rejected step is told it may dispute; red checks are not disputable.
+	assert.match(calls()[4].args.at(-1) ?? "", /If you are sure "review" is wrong, don't comply: end blocked with reason disputed/);
+	assert.match(ui.shown[0], /^Dispute: implement disagrees with review \(read only\)\nreview said:\nOutcome: failed:notes[\s\S]*implement answers:\nOutcome: blocked:disputed/);
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "review", "implement", "implement", "checks", "review"]);
+	assert.match(calls()[5].args.at(-1) ?? "", /The user's decision on a dispute:\nThe user sided with "review": do what it asks; don't dispute it again\./);
+	const run = onlyRun();
+	assert.deepEqual(events(run).filter((e) => e.type === "dispute").map((e) => [e.step, e.judge, e.answer]), [["implement", "review", "judge"]]);
+	assert.ok(deviations(run).some((d) => d.rule === "disputed"));
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("the user sides with the maker: the run goes on as if the judge had passed it", async () => {
+	flow([...reviewedSteps(), { id: "commit", agent: "committer", model: "m/a" }]);
+	pi({ outcomes: { review: ["failed:notes"], implement: ["done", "blocked:disputed"] } });
+	const ui = asking((title) => (title.startsWith("Dispute") ? "implement is right" : undefined));
+	await flowCommand("feature x", ui.ctx);
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "review", "implement", "commit"]);
+	assert.match(calls()[5].args.at(-1) ?? "", /The user sided with "implement" against the objection of "review"\./);
+});
+
+test("a dispute without a screen halts; resume asks", async () => {
+	flow(reviewedSteps());
+	pi({ outcomes: { review: ["failed:notes", "done"], implement: ["done", "blocked:disputed", "done"] } });
+	await flowCommand("feature x", ctx());
+	const run = onlyRun();
+	assert.deepEqual(events(run).filter((e) => e.type === "halted").map((e) => e.reason), ["dispute"]);
+	assert.match(messages.at(-1)?.text ?? "", /implement disputes review; \/flow resume asks again/);
+	const ui = asking((title) => (title.startsWith("Dispute") ? "review is right" : undefined));
+	await flowCommand("resume", ui.ctx);
+	assert.equal(ui.asked.length, 1);
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
 test("checks count as green only with an evidence file", () => {
 	const folder = join(root, "evidence");
 	mkdirSync(folder);

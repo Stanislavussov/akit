@@ -309,6 +309,19 @@ reads run records and writes a `STOP` file.
   | Pi updates | AKit's About / Update view shows the installed Pi version next to `testedPi`; when Pi is newer, it links the Pi changelog lines that mention extensions or the CLI. |
   | Plugins | Flows depends on no Pi plugin (`pi-subagents` and the like): children run with `-ne` and only the per-step `-e` list. |
 
+- **F22 Stop and ask, and disputes (2026-11-20).** A loop limit or an outcome without a route
+  no longer ends the run in a dead end. With a screen, Pi shows what the step said and asks:
+  at the limit, one more round of the capped step (logged as a `decision` event; resume adds
+  granted rounds to the limit again), accept as is (the step counts as done, and the next step
+  is told so) or stop; with no route, accept as is, send the step back to itself with a note,
+  or stop. Without a screen, or after Stop, the run ends as before, and `/flow resume` asks
+  again instead of refusing a finished run (only `visit-cap` and `no-route` ends resume). A
+  step that got a rejection from another step (not red checks, not a gate note) is told it may
+  end `blocked:disputed` with its arguments; the runner then shows both handoffs and asks: the
+  maker is right (the run goes on as if the judge had passed it), the judge is right (the maker
+  reruns and must comply) or a note. No answer halts the run (`halted: dispute`); resume asks
+  again. A flow's own `blocked:disputed` route wins over this. Disputes are deviations and
+  `dispute` events. Feature's implement has 5 loops: red checks and review notes share them.
 - **F21 A step on Claude Code (2026-11-20, the user's request).** A step may set
   `harness: claude-code`: the runner starts `claude -p` in the run's worktree instead of a Pi
   child (`claude-adapter.ts`), with `--safe-mode --strict-mcp-config` (no CLAUDE.md, skills,

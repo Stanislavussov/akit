@@ -29,20 +29,20 @@ struct FlowPromptGenerator: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Generate the Prompt").font(.headline)
-            Text("Pi writes the step's prompt from your request and the flow. It lands in the card; Save keeps it.")
+            Text("Generate the Instructions").font(.headline)
+            Text("Pi writes the step's instructions from your request and the flow. They land in the card; Save keeps them.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextField("What should the step do, or what to change? Empty: make it shorter and clearer",
                       text: $request, axis: .vertical)
                 .lineLimit(3...6)
                 .textFieldStyle(.roundedBorder)
             PiModelPicker(selection: $model, models: models, empty: "Choose a model",
-                          help: "The model that writes the prompt (pi --list-models)", allowsOther: false) { Text("Model") }
+                          help: "The model that writes the instructions (pi --list-models)", allowsOther: false) { Text("Model") }
             Picker("Reasoning", selection: $reasoning) {
                 ForEach(FlowTemplates.thinkingLevels, id: \.self) { Text($0).tag($0) }
             }
             .fixedSize()
-            .help("How much the model reasons while it writes the prompt (pi --thinking)")
+            .help("How much the model reasons while it writes the instructions (pi --thinking)")
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
                     .fixedSize(horizontal: false, vertical: true)

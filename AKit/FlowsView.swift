@@ -362,18 +362,19 @@ struct FlowsView: View {
     private func promptEditor(_ step: FlowStep, index: Int, flow: Flow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("Prompt")
+                Text("Instructions")
+                    .help("What this step's agent is told to do: sent to it as is, after the task and the plan")
                 Spacer()
                 if let before = promptBefore[step.id] {
                     Button("Undo", systemImage: "arrow.uturn.backward") {
                         updateStep(index) { $0.prompt = before }
                         promptBefore[step.id] = nil
                     }
-                    .help("Bring back the prompt from before Generate…")
+                    .help("Bring back the instructions from before Generate…")
                 }
                 Button("Generate…", systemImage: "sparkles") { generating = step.id }
                     .disabled(piModels.isEmpty)
-                    .help(piModels.isEmpty ? "Pi has no models with credentials on this Mac" : "Pi writes or changes the prompt from your request")
+                    .help(piModels.isEmpty ? "Pi has no models with credentials on this Mac" : "Pi writes or changes these instructions from your request")
                     .popover(isPresented: Binding(get: { generating == step.id }, set: { if !$0 { generating = nil } })) {
                         FlowPromptGenerator(flow: flow, step: step.id, models: piModels) { text in
                             if promptBefore[step.id] == nil { promptBefore[step.id] = .some(step.prompt) }
