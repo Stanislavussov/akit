@@ -32,6 +32,8 @@ struct RemoveEverywhereSheet: View {
     @State private var comparison: SkillMove.Edit?
     @State private var pluginPlan: PluginSwitch.Plan?
     @State private var piSwitch: SkillSwitches.Plan?
+    /// A blocker's Open Setup…: the project (or home folder) whose Apply can't run.
+    @State private var fixing: SkillRemoval.Blocker?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -45,6 +47,9 @@ struct RemoveEverywhereSheet: View {
             if let copy = kept ?? keep { await keepCopy(copy) } else { await replan(leaving: plan?.leaving) }
         }
         .modifier(DisablePluginAlert(plan: $pluginPlan, problem: $error) { Task { await replan(leaving: plan?.leaving) } })
+        .sheet(item: $fixing, onDismiss: { Task { await replan(leaving: plan?.leaving) } }) { blocker in
+            ProjectSetupSheet(initialProject: blocker.folder, forHome: blocker.forHome)
+        }
         .alert("Turn \(name) Off in Pi?", isPresented: Binding(get: { piSwitch != nil }, set: { if !$0 { piSwitch = nil } }),
                presenting: piSwitch) { plan in
             Button("Turn Off") { switchOff(plan) }
@@ -167,10 +172,26 @@ struct RemoveEverywhereSheet: View {
             .help("Turn the whole plugin \(plugin) off in Claude Code (enabledPlugins); every skill of it goes")
         } else if place.reason != nil, let skill = place.skill, case .project = skill.scope, skill.visibleTo.contains(.pi),
                   let options = SkillSwitches.options(for: skill, harness: .pi, in: .current), options.unavailable == nil {
-            Button("Pi: Off…") {
-                do { piSwitch = try SkillSwitches.plan(skill, harness: .pi, to: .off, in: .current) } catch { self.error = error.localizedDescription }
+            HStack {
+                Button("Pi: Off…") {
+                    do { piSwitch = try SkillSwitches.plan(skill, harness: .pi, to: .off, in: .current) } catch { self.error = error.localizedDescription }
+                }
+                .help("Turn it off for Pi in this project only (the project's .pi/settings.json); the files stay")
+                showInFinder(place)
             }
-            .help("Turn it off for Pi in this project only (the project's .pi/settings.json); the files stay")
+        } else if place.reason != nil {
+            showInFinder(place)
+        }
+    }
+
+    /// Where to remove it by hand: the copy (or the link) in Finder.
+    @ViewBuilder
+    private func showInFinder(_ place: SkillRemoval.Place) -> some View {
+        if let skill = place.skill, place.action == .keep {
+            let item = place.isLink ? (skill.isSingleFile ? skill.file : skill.folder) : (skill.isSingleFile ? skill.realFile : skill.realFolder)
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item]) }
+                .controlSize(.small)
+                .help("Show \(item.tildePath) in Finder, to remove it there")
         }
     }
 
@@ -219,9 +240,17 @@ struct RemoveEverywhereSheet: View {
 
     private func footer(_ plan: SkillRemoval.Plan) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(plan.blockers, id: \.self) { Label($0, systemImage: "xmark.octagon.fill").foregroundStyle(.red) }
+            ForEach(plan.blockers, id: \.self) { blocker in
+                HStack(alignment: .firstTextBaseline) {
+                    Label(blocker.text, systemImage: "xmark.octagon.fill").foregroundStyle(.red)
+                    if blocker.project != nil {
+                        Button(blocker.forHome ? "Open Home Folder Setup…" : "Open \(blocker.project ?? "") Setup…") { fixing = blocker }
+                            .help("The setup shows what stops its Apply; fix it there, and this list is checked again when it closes")
+                    }
+                }
+            }
             ForEach(plan.edits, id: \.path) { edit in
-                Button("Show Edits: \(edit.path)") { comparison = edit; selected = nil }.buttonStyle(.link)
+                Button("Show Edits (they go to the Trash too): \(edit.path)") { comparison = edit; selected = nil }.buttonStyle(.link)
             }
             ForEach(plan.notes, id: \.self) { Label($0, systemImage: "info.circle").foregroundStyle(.secondary) }
             let fine = kept == nil ? plan.remaining.isEmpty : resolved(plan)
@@ -356,6 +385,7 @@ struct RemoveEverywhereSheet: View {
         case .layer(let layer): return place.selected ? "Out of layer \(layer), committed" : "Stays in layer \(layer)"
         case .answers(let id): return place.selected ? "Out of \(id)'s answers" : "Stays in \(id)'s answers"
         case .claudeOff: return place.selected ? "Claude switch Off (skillOverrides)" : "A claude.ai skill: tick to turn it off in Claude Code"
+        case .rendered where place.editedByHand: return "AKit's copy, edited by hand since: to the Trash with its Apply, edits too (Show Edits below)"
         case .rendered: return place.selected ? "AKit's copy: to the Trash with its Apply" : "AKit's copy: stays while its brain entry stays"
         case .library: return place.selected ? "Out of the brain library, committed (its git history stays)" : "Stays in the brain library (tick to delete it there too)"
         case .keep: return "Stays"

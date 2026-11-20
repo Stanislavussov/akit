@@ -541,8 +541,17 @@ NAME --everywhere`) finds every place and takes the skill out of each. Core: `Sk
   "to the Trash" line.
   Before the first write too: what goes to the Trash is hashed again (a folder of more than 10,000 entries or with an unreadable part, git history or a
   link out of the skill blocks that place at plan time), each record's files and each layer file
-  must be as previewed. A rendered copy edited by hand blocks, with Show Edits. It stops at the
-  first failure and says what was done.
+  must be as previewed. A rendered copy edited by hand doesn't block (2026-11-20, the user's
+  request: removing from the Skills screen cleans up everywhere): its files go to the Trash with
+  the record's Apply (`ProjectSetup.apply`'s `discarding`, backed up first), the place says
+  "edited by hand", and Show Edits shows what the edits were. It stops at the first failure and
+  says what was done.
+- **What still blocks** is a record whose Apply can't run (a render error, a project blocker): the
+  line says which project, the problem, and why it stops the removal, with **Open … Setup…**
+  (the project's or the home folder's setup, which shows it; the plan is made again when it
+  closes; `akit remove` names `akit plan PROJECT` / `--home`). A place AKit can't remove itself
+  (git tracks it, not in a skill folder, a linked SKILL.md, …) has **Show in Finder** next to
+  its reason.
 - **The plan ends** with "After this, NAME loads in: nowhere." or the places left and why. Other
   Macs: Brain → Sync there, then Update Home Folder and each project's Apply.
 - MCP servers: Insights → MCP Servers' context menu has the MCP Servers screen's **Delete…**

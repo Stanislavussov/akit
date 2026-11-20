@@ -399,8 +399,10 @@ public enum ProjectSetup {
     /// Project applies only its skill): the lock keeps their previous offer, so a pending
     /// suggestion is offered again, and when one of them is a real change, the lock keeps the
     /// previous brain commit and Pi folder, since the project is not fully up to date.
+    /// `discarding`: files an earlier render wrote and this one doesn't that were edited by hand
+    /// since (`keepEdited`), which go to the Trash anyway, backed up first (Remove Everywhere).
     public static func apply(_ plan: Plan, excluding excluded: Set<String> = [], accepting: Set<String> = [], deferring: Set<String> = [],
-                             brain: Brain, home: URL,
+                             discarding: Set<String> = [], brain: Brain, home: URL,
                              env: HarnessEnvironment, trash: (URL) throws -> URL? = Trash.move) async throws(Failure) -> Outcome {
         guard plan.canApply else {
             throw Failure(message: (plan.render.errors + plan.blockers).joined(separator: "\n"))
@@ -411,7 +413,7 @@ public enum ProjectSetup {
         }
         let fm = FileManager.default
         let outputs = Dictionary(plan.render.outputs.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        let todo = Self.todo(plan, excluding: excluded, accepting: accepting)
+        let todo = Self.todo(plan, excluding: excluded, accepting: accepting, discarding: discarding)
 
         // Stop if the project changed since the preview (a file, link or folder, or a parent
         // that became a link out of the project).
@@ -439,7 +441,7 @@ public enum ProjectSetup {
             }
             for change in todo {
                 let url = location(change)
-                if change.kind == .remove || change.blockAction == .trash {
+                if change.kind == .remove || (change.kind == .keepEdited && !change.block) || change.blockAction == .trash {
                     _ = try trash(url)
                     removed.append(change.path)
                     // Not after a trashed instructions file: Pi's folder may be a link or meant to be empty.
@@ -511,7 +513,7 @@ public enum ProjectSetup {
             throw Failure(message: "Writing the project stopped: \(reason) Written: \(written.count), removed: \(removed.count).\(backup.map { " Backup: \($0.path)" } ?? "")\(blockProblem.map { " \($0)" } ?? "")")
         }
 
-        var lock = Self.lock(after: plan, excluding: excluded, accepting: accepting, deferring: deferring)
+        var lock = Self.lock(after: plan, excluding: excluded, accepting: accepting, deferring: deferring, discarding: discarding)
         // Something left for later: the files are not all from this commit.
         let behind = plan.changes.contains { deferring.contains($0.path) && [.create, .update, .remove, .suggest].contains($0.kind) }
 
@@ -563,18 +565,23 @@ public enum ProjectSetup {
     }
 
     /// The changes Apply carries out: everything but the excluded paths, and a suggestion or the
-    /// project's own version only when taken.
-    static func todo(_ plan: Plan, excluding excluded: Set<String>, accepting: Set<String>) -> [Change] {
+    /// project's own version only when taken, a file edited by hand only when discarded.
+    static func todo(_ plan: Plan, excluding excluded: Set<String>, accepting: Set<String>, discarding: Set<String> = []) -> [Change] {
         plan.changes.filter { change in
-            change.kind == .suggest || change.kind == .own ? accepting.contains(change.path) && !excluded.contains(change.path)
-                : !excluded.contains(change.path) && [.create, .update, .remove].contains(change.kind)
+            if excluded.contains(change.path) { return false }
+            switch change.kind {
+            case .suggest, .own: return accepting.contains(change.path)
+            case .keepEdited: return !change.block && discarding.contains(change.path)
+            case .create, .update, .remove: return true
+            case .same: return false
+            }
         }
     }
 
     /// The lock after applying `plan` (without the brain commit): what AKit then owns in the
     /// project. Excluded paths keep their old entry, if any.
     static func lock(after plan: Plan, excluding excluded: Set<String>, accepting: Set<String>,
-                     deferring: Set<String> = []) -> ProjectRecords.Lock {
+                     deferring: Set<String> = [], discarding: Set<String> = []) -> ProjectRecords.Lock {
         // A file that was already there with the same content stays the user's: AKit never
         // wrote it, so a later render or removal must not trash it.
         let kinds = Dictionary(plan.changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
@@ -599,7 +606,8 @@ public enum ProjectSetup {
             if let change = kinds[output.path], change.kind == .same, change.replacesUnmanaged { continue }
             lock.files[output.path] = entry(for: output)
         }
-        for change in plan.changes where change.kind == .keepEdited || (change.kind == .remove && excluded.contains(change.path)) {
+        for change in plan.changes where (change.kind == .keepEdited && (excluded.contains(change.path) || !discarding.contains(change.path)))
+            || (change.kind == .remove && excluded.contains(change.path)) {
             lock.files[change.path] = plan.previous?.files[change.path]
         }
         // Merged JSON files: the keys AKit now owns; a change left out keeps the old record.
@@ -613,7 +621,7 @@ public enum ProjectSetup {
         for path in plan.carried { if let old = plan.previous?.files[path] { lock.files[path] = old } }
         lock.json = json.isEmpty ? nil : json
         // Instruction blocks: what was written, else what the plan keeps (left out, an offer not taken).
-        let done = Set(todo(plan, excluding: excluded, accepting: accepting).map(\.path))
+        let done = Set(todo(plan, excluding: excluded, accepting: accepting, discarding: discarding).map(\.path))
         var blocks: [String: ProjectRecords.Lock.Block] = [:]
         for path in Set(plan.blockRecords.keys).union(plan.blockKept.keys) {
             // Left for later (a partial Apply): the previous record stays, so a later Update

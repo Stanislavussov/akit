@@ -56,7 +56,10 @@ extension AKitCLI {
                 }
             }
         }
-        lines += plan.blockers.map { "blocked: \($0)" }
+        lines += plan.blockers.map { blocker in
+            let fix = blocker.forHome ? " (akit plan --home shows it)" : blocker.folder.map { " (akit plan \($0.path) shows it)" } ?? ""
+            return "blocked: \(blocker.text)\(fix)"
+        }
         lines += plan.notes.map { "note: \($0)" }
         lines.append(plan.summary)
         if plan.places.contains(where: { $0.action == .claudeOff && !$0.selected }) {
