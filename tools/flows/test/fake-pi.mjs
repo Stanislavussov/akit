@@ -3,7 +3,9 @@
 // step's outcomes; every call is logged to FAKE_PI_DIR/calls.jsonl. It writes a session file in
 // --session-dir and, as the model calling flow_handoff, the handoff part to AKIT_FLOW_HANDOFF.
 // config.handoff[step]: per call "tool" (default), "line" (only a last `outcome:` line) or "none".
-// config.writes[step]: files to write in the working folder (the run's worktree). config.hang:
+// config.writes[step]: files to write in the working folder (the run's worktree); the handoff names
+// them as its files unless config.files[step] says otherwise. config.questions[step]: open questions;
+// config.plan[step]: a typed plan ({steps, check}). config.hang:
 // steps that write FAKE_PI_DIR/hang-<step>.json (own pid, a grandchild's pid) and never end.
 // config.stop: steps that write STOP into the run folder, as AKit's Stop button does.
 import { appendFileSync, existsSync, fstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -40,7 +42,8 @@ mkdirSync(sessionDir, { recursive: true });
 writeFileSync(join(sessionDir, `2026-11-17T12-00-00-000Z_${session}.jsonl`), `${JSON.stringify({ type: "session", version: 3, id: session })}\n`);
 for (const [path, text] of Object.entries(config.writes?.[step] ?? {})) {
 	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, text);
+	// A rerun of a step changes its files again, as a real one does.
+	writeFileSync(path, n === 0 ? text : `${text}// call ${n + 1}\n`);
 }
 if (config.stop?.includes(step)) writeFileSync(join(dirname(sessionDir), "STOP"), "");
 if (config.hang?.includes(step)) {
@@ -51,8 +54,8 @@ if (config.hang?.includes(step)) {
 	const [kind, reason] = outcome.split(":");
 	if (mode === "tool") {
 		writeFileSync(process.env.AKIT_FLOW_HANDOFF, JSON.stringify({
-			goal: `${step} goal`, done: [`did ${step}`], files: [{ path: `src/${step}.ts`, change: "added" }], open_questions: [],
-			notes: `notes of ${step}`, outcome: kind, reason: reason ?? "",
+			goal: `${step} goal`, done: [`did ${step}`], files: config.files?.[step] ?? Object.keys(config.writes?.[step] ?? {}).map((path) => ({ path, change: "added" })), open_questions: config.questions?.[step] ?? [],
+			notes: `notes of ${step}`, ...(config.plan?.[step] ? { plan: config.plan[step] } : {}), outcome: kind, reason: reason ?? "",
 		}));
 	}
 	const out = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);

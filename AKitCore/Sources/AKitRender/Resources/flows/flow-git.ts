@@ -47,6 +47,17 @@ export function changes(worktree: string): string[] {
 	return r.out ? r.out.split("\n") : [];
 }
 
+/** What the worktree changed since the last commit, from git (the truth a handoff's `files` is
+ * checked against): added, changed or removed per path; a rename is its new path, changed. */
+export function changedFiles(worktree: string): { path: string; change: string }[] {
+	return changes(worktree).map((line) => {
+		const code = line.slice(0, 2);
+		const path = line.slice(3).split(" -> ").pop() ?? "";
+		const change = code.includes("?") || code.includes("A") ? "added" : code.includes("D") ? "removed" : "changed";
+		return { path: path.replace(/^"|"$/g, ""), change };
+	}).filter((f) => f.path);
+}
+
 /** Commits everything in the worktree (empty commits too: the trailers mark the finished step). */
 export function commit(worktree: string, message: string, trailers: Record<string, string>): { commit: string } | { error: string } {
 	const added = git(worktree, ["add", "-A"]);

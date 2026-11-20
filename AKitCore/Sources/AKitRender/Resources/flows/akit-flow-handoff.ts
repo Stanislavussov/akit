@@ -23,6 +23,16 @@ export const HANDOFF_PARAMETERS = {
 		},
 		open_questions: { type: "array", items: { type: "string" } },
 		notes: { type: "string", description: "What the next step must know." },
+		plan: {
+			type: "object",
+			description: "Planner steps only: the plan as ordered steps and one plain command that proves it (runs only the tests the change touches).",
+			properties: {
+				steps: { type: "array", items: { type: "string" } },
+				check: { type: "string", description: "One plain command, such as python3 -m unittest test_stats; empty when there is none." },
+			},
+			required: ["steps", "check"],
+			additionalProperties: false,
+		},
 		outcome: { type: "string", enum: ["done", "failed", "blocked"] },
 		reason: { type: "string", description: "Why the step failed or is blocked; one word such as tests or unclear. Empty when done." },
 	},

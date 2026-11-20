@@ -72,6 +72,12 @@ public struct FlowHandoff: Equatable, Sendable {
     public var goal: String?
     public var done: [String]
     public var files: [File]
+    /// What git saw the step change (the runner's truth); nil in records from before it, and
+    /// for a checks step that passes the previous work on.
+    public var changed: [File]?
+    /// The planner's plan as data: ordered steps and the check command the checks step also runs.
+    public var planSteps: [String] = []
+    public var planCheck: String?
     public var openQuestions: [String]
     public var notes: String?
     public var tokens: FlowTokens
@@ -210,17 +216,23 @@ public struct FlowRun: Sendable {
             return nil
         }
         let step = value.member("step"), from = value.member("from")
-        let files = (value.member("files")?.array ?? []).compactMap { file -> FlowHandoff.File? in
-            guard let path = file.member("path")?.string else { return nil }
-            return .init(path: path, change: file.member("change")?.string ?? "")
+        func files(_ key: String) -> [FlowHandoff.File]? {
+            value.member(key)?.array.map { list in
+                list.compactMap { file in
+                    file.member("path")?.string.map { FlowHandoff.File(path: $0, change: file.member("change")?.string ?? "") }
+                }
+            }
         }
+        let plan = value.member("plan")
         return FlowHandoff(fileName: fileName, schemaVersion: version, run: value.member("run")?.string,
                            flow: value.member("flow")?.string, stepIndex: step?.member("index")?.int,
                            stepID: step?.member("id")?.string, attempt: step?.member("attempt")?.int,
                            session: value.member("session")?.string, sessionFile: value.member("session_file")?.string,
                            outcome: from?.member("outcome")?.string.flatMap(FlowOutcome.init(rawValue:)),
                            reason: from?.member("reason")?.string, next: value.member("next")?.member("step")?.string,
-                           goal: value.member("goal")?.string, done: value.member("done")?.strings ?? [], files: files,
+                           goal: value.member("goal")?.string, done: value.member("done")?.strings ?? [], files: files("files") ?? [],
+                           changed: files("changed"), planSteps: plan?.member("steps")?.strings ?? [],
+                           planCheck: plan?.member("check")?.string.flatMap { $0.isEmpty ? nil : $0 },
                            openQuestions: value.member("open_questions")?.strings ?? [], notes: value.member("notes")?.string,
                            tokens: FlowTokens(value.member("tokens")), deviations: value.member("deviations")?.int,
                            evidence: value.member("evidence")?.string, fallback: value.member("fallback") == .bool(true))

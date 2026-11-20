@@ -373,9 +373,10 @@ public enum FlowTemplates {
             """,
         "planner": """
             Plan the change for the task. First study the project: its structure, the code and test style, the test \
-            command. Then write the plan into the handoff: what changes, file by file, the steps in order, and one \
-            check command that runs only the tests the task touches (the tests of the changed modules and the new ones; \
-            name folders or filters, not only new files, since they do not exist before the change). Change no code.
+            command. Then give the plan in the handoff's plan field: steps, in order, each saying what changes in which \
+            file, and check, one plain command that runs only the tests the task touches (the tests of the changed \
+            modules and the new ones; name folders or filters, not only new files, since they do not exist before the \
+            change). The checks step runs it. Risks and decisions go in notes. Change no code.
             """,
         "implementer": """
             Implement the plan (the plan's handoff above; a later handoff says what to fix). Run only the tests you need; the checks step runs the \

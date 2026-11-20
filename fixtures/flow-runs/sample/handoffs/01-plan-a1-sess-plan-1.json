@@ -20,12 +20,8 @@
   "done": [
     "did plan"
   ],
-  "files": [
-    {
-      "path": "src/plan.ts",
-      "change": "added"
-    }
-  ],
+  "files": [],
+  "changed": [],
   "open_questions": [],
   "notes": "notes of plan",
   "tokens": {
