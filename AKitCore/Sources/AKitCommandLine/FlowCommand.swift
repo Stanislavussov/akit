@@ -1,6 +1,7 @@
 import AKitBrain
 import AKitFlows
 import AKitFoundation
+import AKitLab
 import AKitRender
 import Foundation
 
@@ -139,7 +140,8 @@ extension AKitCLI {
             struct Report: Encodable { let name: String, path: String, issues: [FlowIssue] }
             let reports = files.map { file in
                 Report(name: file.name, path: file.url.path, issues: file.flow.map {
-                    FlowCheck.check($0, knownModels: nil, knownSkills: skills, pi: pi, claudeSkills: FlowFile.claudeSkills(project: project, env: env))
+                    FlowCheck.check($0, knownModels: nil, knownSkills: skills, pi: pi, claudeSkills: FlowFile.claudeSkills(project: project, env: env),
+                                    claudeBlocked: claudeBlocked($0, env: env))
                 } ?? [FlowIssue(.error, .unreadable, file.error ?? "can't read")])
             }
             let failed = reports.contains { $0.issues.contains { $0.severity == .error } }
@@ -171,7 +173,8 @@ extension AKitCLI {
                 source = tilde(found.url)
             }
             let issues = FlowCheck.check(flow, knownModels: nil, knownSkills: FlowFile.knownSkills(project: project, env: env),
-                                         pi: FlowFile.capabilities(env: env), claudeSkills: FlowFile.claudeSkills(project: project, env: env))
+                                         pi: FlowFile.capabilities(env: env), claudeSkills: FlowFile.claudeSkills(project: project, env: env),
+                                         claudeBlocked: claudeBlocked(flow, env: env))
             let export = FlowReviewExport.markdown(flow: flow, source: source, project: project, env: env, issues: issues,
                                                    runner: FlowRender.reviewExcerpts.map { .init(title: $0.title, file: $0.file, code: $0.code) })
             guard let file else {
@@ -255,7 +258,7 @@ extension AKitCLI {
         }
         let check = { (flow: Flow) in
             FlowCheck.check(flow, knownModels: nil, knownSkills: FlowFile.knownSkills(project: project, env: env), pi: FlowFile.capabilities(env: env),
-                            claudeSkills: FlowFile.claudeSkills(project: project, env: env))
+                            claudeSkills: FlowFile.claudeSkills(project: project, env: env), claudeBlocked: claudeBlocked(flow, env: env))
         }
         let issues = check(new)
         let before = Set(check(old).filter { $0.severity == .error }.map(\.message))
@@ -285,6 +288,12 @@ extension AKitCLI {
         }
         out(lines.joined(separator: "\n"))
         return added.isEmpty ? 0 : 1
+    }
+
+    /// Why the sending policy refuses the flow's Claude Code steps; nil without such steps.
+    private static func claudeBlocked(_ flow: Flow, env: HarnessEnvironment) -> String? {
+        guard flow.steps.contains(where: \.isClaudeCode) else { return nil }
+        return SendAccounts.flowClaudeBlocker(isWork: MachineProfile.load(home: env.homeDirectory).isWork, env: env)
     }
 
     private static func brainFlow(_ name: String, brain: Brain) throws -> Flow {

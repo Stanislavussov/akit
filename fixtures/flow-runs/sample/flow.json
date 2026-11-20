@@ -1,0 +1,28 @@
+{
+  "akit-flow-format": 1,
+  "name": "feature",
+  "minPi": "1.0.4",
+  "steps": [
+    {
+      "id": "plan",
+      "agent": "planner",
+      "model": "m/a"
+    },
+    {
+      "id": "implement",
+      "agent": "implementer",
+      "model": "m/a"
+    },
+    {
+      "id": "checks",
+      "agent": "checker",
+      "model": "m/a",
+      "checks": [
+        "node check.mjs"
+      ],
+      "routes": {
+        "failed:*": "implement"
+      }
+    }
+  ]
+}

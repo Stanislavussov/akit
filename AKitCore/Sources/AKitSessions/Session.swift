@@ -226,21 +226,37 @@ struct TranscriptBuilder {
 public enum SessionScanner {
     /// Newest first. Harnesses whose sessions AKit can't read (custom ones too) add none.
     public static func scan(installations: [HarnessInstallation], in env: HarnessEnvironment) -> [SessionSummary] {
-        installations.flatMap { sessions(of: $0, in: env) }
-            .sorted { $0.modified > $1.modified }
+        split(installations: installations, in: env).sessions
+    }
+
+    /// One pass over the harnesses' sessions: their own, and the flow steps' that a harness keeps
+    /// in its own folder (a step on Claude Code), for `flowSessions(projects:steps:)`.
+    public static func split(installations: [HarnessInstallation], in env: HarnessEnvironment)
+        -> (sessions: [SessionSummary], flowSteps: [SessionSummary]) {
+        let all = installations.flatMap { sessions(of: $0, in: env) }.sorted { $0.modified > $1.modified }
+        return (all.filter { !isFlowWorktree($0.project, env: env) }, all.filter { isFlowWorktree($0.project, env: env) })
+    }
+
+    /// A session started in a flow run's worktree (`~/.akit/local/flows/runs/<run>/worktree`): a
+    /// flow step on Claude Code (F21) keeps its session in Claude's own folder, under that path.
+    public static func isFlowWorktree(_ project: URL?, env: HarnessEnvironment) -> Bool {
+        guard let path = project?.standardizedFileURL.path else { return false }
+        return path.hasPrefix(env.homeDirectory.appending(path: ".akit/local/flows/runs").standardizedFileURL.path + "/")
     }
 
     /// Flow step sessions of the projects (`.pi/akit-flow/runs/*/sessions/*.jsonl`), tagged `flow`,
     /// newest first. Kept apart from `scan`, so nothing that reads harness sessions counts them (D27).
-    public static func flowSessions(projects: [URL]) -> [SessionSummary] {
-        projects.flatMap { project -> [SessionSummary] in
-            FileWalk.children(of: project.appending(path: ".pi/akit-flow/runs")).flatMap { run -> [SessionSummary] in
-                PiSessions.list(folder: run.appending(path: "sessions")).map { session in
-                    var session = session
-                    session.origin = SessionSummary.flowOrigin
-                    return session
-                }
+    /// `steps`: the steps' sessions a harness keeps in its own folder (`split`).
+    public static func flowSessions(projects: [URL], steps: [SessionSummary] = []) -> [SessionSummary] {
+        let pi = projects.flatMap { project -> [SessionSummary] in
+            FileWalk.children(of: project.appending(path: ".pi/akit-flow/runs")).flatMap { run in
+                PiSessions.list(folder: run.appending(path: "sessions"))
             }
+        }
+        return (pi + steps).map { session in
+            var session = session
+            session.origin = SessionSummary.flowOrigin
+            return session
         }
         .sorted { $0.modified > $1.modified }
     }

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import akitFlow, { fallbackNotes, flowCommand, handoffForPrompt, NOTES_IN_PROMPT, PRECEDENCE, resolveSkill, startTool } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow.ts";
+import { projectRules } from "../../../AKitCore/Sources/AKitRender/Resources/flows/claude-adapter.ts";
 import { checksGreen, releaseLock, takeLock } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-record.ts";
 import type { ExtensionCommandContext } from "../../../AKitCore/Sources/AKitRender/Resources/flows/pi-adapter.ts";
 
@@ -179,7 +180,7 @@ test("the visit cap stops the run", async () => {
 	assert.equal(end?.type, "run-end");
 	assert.equal(end?.stop, "visit-cap");
 	assert.equal(end?.step, "implement");
-	assert.match(messages.at(-1)?.text ?? "", /max loops/);
+	assert.match(messages.at(-1)?.text ?? "", /max rounds/);
 });
 
 test("no route for a failed step stops loudly with a deviation", async () => {
@@ -438,6 +439,37 @@ test("a claude-code step also finds Claude Code's own skills; a Pi step doesn't"
 	assert.equal(resolveSkill(project, "tdd", true), join(project, ".pi", "skills", "tdd"));
 });
 
+test("a step without its own tools gets the flow's, named in its prompt and given to Pi with -t", async () => {
+	flow([{ id: "plan", agent: "planner", model: "m/a" }], { tools: ["read", "grep", "bash"] });
+	await flowCommand("feature x", ctx());
+	const a = calls()[0].args;
+	assert.equal(a[a.indexOf("-t") + 1], "read,grep,bash,flow_handoff");
+	assert.match(a.at(-1) ?? "", /Your tools: read, grep, bash\./);
+});
+
+test("a claude-code step gets the project's AGENTS.md and is told its bash only reads", async () => {
+	writeFileSync(join(project, "AGENTS.md"), "Always use tabs.\n");
+	execFileSync("git", ["add", "AGENTS.md"], { cwd: project });
+	execFileSync("git", ["commit", "-q", "-m", "rules"], { cwd: project });
+	flow(architectOnClaude());
+	await flowCommand("feature x", ctx());
+	const a = claudeCalls()[0].args;
+	const system = a[a.indexOf("--append-system-prompt") + 1];
+	assert.match(system, /^The project's instructions \(AGENTS\.md\); follow them:\n\nAlways use tabs\.\n\nSkills for this step/);
+	assert.match(a[a.indexOf("-p") + 1], /bash runs only commands that read/);
+	// A Pi step isn't told so: its bash runs anything.
+	assert.doesNotMatch(calls()[0].args.at(-1) ?? "", /bash runs only commands that read/);
+});
+
+test("CLAUDE.md's @file lines bring the file in for a claude-code step", () => {
+	const dir = mkdtempSync(join(tmpdir(), "akit-rules-"));
+	writeFileSync(join(dir, "CLAUDE.md"), "@RULES.md\nAlso this.\n");
+	writeFileSync(join(dir, "RULES.md"), "Short names.");
+	assert.equal(projectRules(dir), "The project's instructions (CLAUDE.md); follow them:\n\nShort names.\nAlso this.");
+	rmSync(dir, { recursive: true, force: true });
+	assert.equal(projectRules(dir), undefined);
+});
+
 test("a step without bash is told its tools and not sent to git", async () => {
 	flow([{ id: "plan", agent: "planner", model: "m/a", tools: ["read", "grep"] }]);
 	await flowCommand("feature x", ctx());
@@ -560,6 +592,26 @@ function asking(pick: (title: string, options: string[]) => string | undefined, 
 	return { ctx: c as never, asked, shown };
 }
 
+test("resume goes on with the run's own copy of the flow; with a screen the user may take the change", async () => {
+	flow(fourSteps(1));
+	pi({ outcomes: { checks: ["failed", "failed", "failed"] } });
+	await flowCommand("feature x", ctx());
+	const run = onlyRun();
+	assert.equal(JSON.parse(readFileSync(join(run, "flow.json"), "utf8")).steps[1].maxLoops, 1);
+	flow(fourSteps(4));
+	// No screen: the run keeps its copy and says so.
+	messages = [];
+	await flowCommand("resume", ctx());
+	assert.ok(messages.some((m) => /changed since this run started; the run goes on with its own copy/.test(m.text)));
+	assert.deepEqual(events(run).filter((e) => e.type === "flow-changed").map((e) => e.taken), [false]);
+	// A screen: the user takes the change; the copy follows it.
+	const ui = asking((title) => (title.startsWith("The flow") ? "Use the changed flow" : "Stop"));
+	await flowCommand("resume", ui.ctx);
+	assert.equal(ui.asked[0].title, "The flow feature changed since this run started");
+	assert.equal(JSON.parse(readFileSync(join(run, "flow.json"), "utf8")).steps[1].maxLoops, 4);
+	assert.deepEqual(events(run).filter((e) => e.type === "flow-changed").map((e) => e.taken), [false, true]);
+});
+
 test("at the loop limit the user can grant one more round, and resume keeps the grant", async () => {
 	flow(fourSteps(1));
 	pi({ outcomes: { checks: ["failed", "failed", "done"] } });
@@ -569,9 +621,9 @@ test("at the loop limit the user can grant one more round, and resume keeps the 
 	// Resume asks instead of stopping again; two grants carry the run to the end.
 	const ui = asking(() => "One more round");
 	await flowCommand("resume", ui.ctx);
-	assert.equal(ui.asked[0].title, "checks ended failed, but implement reached its max loops (1)");
+	assert.equal(ui.asked[0].title, "checks ended failed, but implement reached its max rounds (1)");
 	assert.deepEqual(ui.asked[0].options, ["One more round of implement", "Accept as is and go on", "Stop"]);
-	assert.equal(ui.asked[1].title, "checks ended failed, but implement reached its max loops (2)", "the first grant was kept");
+	assert.equal(ui.asked[1].title, "checks ended failed, but implement reached its max rounds (2)", "the first grant was kept");
 	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement", "checks", "implement", "checks", "implement", "checks", "review"]);
 	const run = onlyRun();
 	assert.deepEqual(events(run).filter((e) => e.type === "decision").map((e) => [e.answer, e.target]), [["more", "implement"], ["more", "implement"]]);
@@ -1025,7 +1077,13 @@ test("akit_flow with a yes runs the flow", async () => {
 	c.ui.confirm = async () => true;
 	const text = await startTool({ task: "add CSV export" }, c);
 	const run = onlyRun();
-	assert.match(text, new RegExp(`Flow run ${run.split("/").pop()} has ended`));
+	// The session that asked gets how it ended and where the work is, so it can go on from there.
+	const id = run.split("/").pop() ?? "";
+	assert.match(text, new RegExp(`Flow feature done \\(run ${id}\\)`));
+	assert.match(text, /Last step: review \(done\) · review goal\nDone: did review/);
+	assert.match(text, new RegExp(`The work is on branch akit-flow/${id} \\(3 commits since [0-9a-f]{7};`));
+	assert.match(text, new RegExp(`git merge akit-flow/${id}`));
+	assert.match(messages.at(-1)?.text ?? "", /git merge/, "the user sees it too");
 	assert.deepEqual(calls().map((x) => x.step), ["plan", "implement", "review"]);
 	assert.match(calls()[0].args.at(-1) ?? "", /Task: add CSV export/);
 });

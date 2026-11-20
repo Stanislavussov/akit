@@ -60,6 +60,8 @@ public struct FlowIssue: Codable, Equatable, Sendable {
         case unknownHarness = "unknown-harness"
         case claudeStepWrites = "claude-step-writes"
         case claudeStepPiOnly = "claude-step-pi-only"
+        case claudeBashReadOnly = "claude-bash-read-only"
+        case claudeStepNotAllowed = "claude-step-not-allowed"
     }
 
     public var severity: Severity
@@ -96,6 +98,10 @@ public enum FlowCheck {
             issues.append(.init(.error, .claudeStepWrites, step: step.id,
                                 "Step \(step.id) runs on Claude Code, which is read-only in a flow: drop \(writes.joined(separator: ", ")) from its tools."))
         }
+        if (step.tools.isEmpty ? flowTools : step.tools).contains("bash") {
+            issues.append(.init(.warning, .claudeBashReadOnly, step: step.id,
+                                "Step \(step.id) runs on Claude Code, where bash runs only commands that read: tests and anything that writes are denied. Give it checks (the runner runs them) or run it on Pi."))
+        }
         if !step.extensions.isEmpty || !step.paths.isEmpty {
             issues.append(.init(.warning, .claudeStepPiOnly, step: step.id,
                                 "Step \(step.id) runs on Claude Code: its extensions and paths are Pi's and are not used."))
@@ -104,8 +110,9 @@ public enum FlowCheck {
     }
 
     /// `claudeSkills`: the skills in Claude Code's own folders, which a Claude Code step may load too.
+    /// `claudeBlocked`: why the sending policy refuses Claude Code (`SendAccounts.flowClaudeBlocker`).
     public static func check(_ flow: Flow, knownModels: Set<String>?, knownSkills: Set<String>?,
-                             pi: PiCapabilities?, claudeSkills: Set<String> = []) -> [FlowIssue] {
+                             pi: PiCapabilities?, claudeSkills: Set<String> = [], claudeBlocked: String? = nil) -> [FlowIssue] {
         var issues: [FlowIssue] = []
         if flow.format > Flow.currentFormat {
             issues.append(.init(.error, .newerFormat, "akit-flow-format \(flow.format) is newer than this AKit (\(Flow.currentFormat)); update AKit."))
@@ -130,6 +137,10 @@ public enum FlowCheck {
             }
             if step.isClaudeCode {
                 issues += claudeIssues(step, flowTools: flow.tools)
+                if let claudeBlocked {
+                    issues.append(.init(.error, .claudeStepNotAllowed, step: step.id,
+                                        "Step \(step.id) runs on Claude Code, which gets the run's code and the Pi steps' handoffs, but the sending policy refuses it: \(claudeBlocked)"))
+                }
             } else if let knownModels, !knownModels.contains(step.model) {
                 issues.append(.init(.error, .unknownModel, step: step.id, "Model \(step.model) of step \(step.id) is not one Pi knows."))
             }

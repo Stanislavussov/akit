@@ -28,6 +28,9 @@ struct FlowsView: View {
     /// The open card shows its rarely changed settings too.
     @State private var showsMore = false
     @State private var capabilities: PiCapabilities?
+    /// The brain file changed outside this screen (`akit flow set`, a sync) while the draft has
+    /// edits: Save asks before it overwrites.
+    @State private var changedOnDisk = false
 
     struct ApplyTarget: Identifiable {
         let id = UUID()
@@ -40,6 +43,10 @@ struct FlowsView: View {
     private var skills: [String] { FlowFile.knownSkills(project: project, env: env).sorted() }
     /// Claude Code's own skills, which a Claude Code step may load too.
     private var claudeSkills: Set<String> { FlowFile.claudeSkills(project: project, env: env) }
+    /// Why the sending policy refuses a step on Claude Code, if it does.
+    private var claudeBlocked: String? {
+        SendAccounts.flowClaudeBlocker(isWork: MachineProfile.load(home: env.homeDirectory).isWork, env: env)
+    }
     private var commands: [String] { FlowProjectCommands.known(in: project) }
     private static let builtInTools = ["read", "bash", "edit", "write", "grep", "find", "ls"]
     private static let newTag = "\u{1}new"
@@ -65,6 +72,8 @@ struct FlowsView: View {
             capabilities = FlowFile.capabilities(env: env)
             snapshotSetup()
         }
+        // Back from the terminal: a flow `akit flow …` changed is read again, unless it has edits here.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in followDisk() }
         .sheet(item: $applying) { ProjectSetupSheet(initialProject: $0.project, forHome: $0.project == nil) }
     }
 
@@ -114,6 +123,7 @@ struct FlowsView: View {
         selection = name
         issues = nil
         problem = nil
+        changedOnDisk = false
         do {
             let flow = try Flow.decode(yaml: text)
             draft = flow
@@ -190,6 +200,19 @@ struct FlowsView: View {
                 .font(.caption).foregroundStyle(.secondary)
                 .help("Needs Pi \(flow.minPi) or newer")
             if piNeedsAttention { piVersionLine.font(.caption) }
+            if changedOnDisk {
+                HStack {
+                    Label("flows/\(flow.name).yaml changed outside this screen (akit flow, a sync) since you opened it.",
+                          systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Reload") { open(flow.name) }
+                        .help("Read the file again; your edits here are lost")
+                    Button("Save Mine") { Task { await save(flow, overwrite: true) } }
+                        .help("Write this screen's flow over the change")
+                }
+                .font(.caption)
+            }
             if saved != nil, let brain = model.brain, BrainFlows.layers(including: flow.name, in: brain).isEmpty {
                 Label("In no layer: Apply… doesn't write it, so Pi has no /flow. Include it with Layers (core for the home folder), then Apply….",
                       systemImage: "exclamationmark.triangle")
@@ -217,7 +240,8 @@ struct FlowsView: View {
     private func reviewExport(_ flow: Flow) -> FlowReviewExport.Result {
         let issues = FlowCheck.check(flow, knownModels: piModels.isEmpty ? nil : Set(piModels),
                                      knownSkills: FlowFile.knownSkills(project: project, env: env), pi: FlowFile.capabilities(env: env),
-                                 claudeSkills: claudeSkills)
+                                 claudeSkills: claudeSkills,
+                                 claudeBlocked: flow.steps.contains(where: \.isClaudeCode) ? claudeBlocked : nil)
         return FlowReviewExport.markdown(flow: flow, source: flow == saved ? "brain/flows/\(flow.name).yaml" : "the Flows screen (with unsaved changes)",
                                          project: project, env: env, issues: issues,
                                          runner: FlowRender.reviewExcerpts.map { .init(title: $0.title, file: $0.file, code: $0.code) })
@@ -609,11 +633,30 @@ struct FlowsView: View {
     private func check(_ flow: Flow) {
         issues = FlowCheck.check(flow, knownModels: piModels.isEmpty ? nil : Set(piModels),
                                  knownSkills: FlowFile.knownSkills(project: project, env: env), pi: FlowFile.capabilities(env: env),
-                                 claudeSkills: claudeSkills)
+                                 claudeSkills: claudeSkills,
+                                 claudeBlocked: flow.steps.contains(where: \.isClaudeCode) ? claudeBlocked : nil)
     }
 
-    private func save(_ flow: Flow) async {
+    /// The open flow as the brain file has it now; nil when it isn't there or can't be read.
+    private func onDisk(_ name: String) -> Flow? {
+        guard let brain = model.brain,
+              let text = try? String(contentsOf: BrainFlows.url(of: name, in: brain.root), encoding: .utf8) else { return nil }
+        return try? Flow.decode(yaml: text)
+    }
+
+    /// Follows a change of the brain file: reloads a flow without edits here, flags one with edits.
+    private func followDisk() {
+        guard let saved, let draft, let disk = onDisk(saved.name), disk != saved else { return }
+        if draft == saved { open(saved.name) } else { changedOnDisk = true }
+    }
+
+    private func save(_ flow: Flow, overwrite: Bool = false) async {
         guard let brain = model.brain else { return }
+        if !overwrite, let saved, let disk = onDisk(saved.name), disk != saved {
+            changedOnDisk = true
+            return
+        }
+        changedOnDisk = false
         saving = true
         defer { saving = false }
         do {

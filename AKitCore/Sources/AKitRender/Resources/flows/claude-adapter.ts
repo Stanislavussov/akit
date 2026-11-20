@@ -4,7 +4,8 @@
 // output of a JSON schema (Claude can't load Pi's flow_handoff tool). The runner treats the answer
 // like a flow_handoff part. Claude steps are read-only (AKit's check refuses edit and write), since
 // Pi's guard can't watch a Claude child; Claude's own tool list and permission rules do instead.
-// The step's skills are listed in the system prompt, their folders readable (--add-dir).
+// The step's skills are listed in the system prompt, their folders readable (--add-dir), and so
+// are the project's instructions: --safe-mode drops CLAUDE.md, while a Pi step loads AGENTS.md.
 
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -21,7 +22,7 @@ const EFFORT: Record<string, string> = { off: "low", minimal: "low", low: "low",
 
 /** The child command: `-p` with the prompt, one JSON result, no CLAUDE.md, skills, hooks, plugins
  * or MCP servers, and every permission prompt denied. */
-export function claudeArgs(o: ChildOptions & { sessionId: string }): string[] {
+export function claudeArgs(o: ChildOptions & { sessionId: string; rules?: string }): string[] {
 	const tools = [...new Set((o.tools.length > 0 ? o.tools : ["read", "grep", "find", "ls"]).map((t) => CLAUDE_TOOLS[t]).filter(Boolean))];
 	const args = ["-p", o.prompt, "--output-format", "json", "--model", o.model, "--tools", tools.join(","),
 		"--safe-mode", "--strict-mcp-config", "--permission-prompts", "none", "--session-id", o.sessionId,
@@ -30,11 +31,30 @@ export function claudeArgs(o: ChildOptions & { sessionId: string }): string[] {
 	if (effort) args.push("--effort", effort);
 	// The step's skills, as Pi gives them: names and descriptions up front, each SKILL.md read on
 	// demand. --add-dir lets Read reach a skill folder outside the worktree without a prompt.
-	if (o.skills.length > 0) {
-		for (const folder of o.skills) args.push("--add-dir", folder);
-		args.push("--append-system-prompt", skillListing(o.skills));
-	}
+	for (const folder of o.skills) args.push("--add-dir", folder);
+	const system = [o.rules, o.skills.length > 0 ? skillListing(o.skills) : undefined].filter(Boolean).join("\n\n");
+	if (system) args.push("--append-system-prompt", system);
 	return args;
+}
+
+/** The most of the project's instructions a Claude step gets. */
+export const RULES_LIMIT = 40_000;
+
+/** The project's instructions as a Pi step sees them: AGENTS.md at the worktree's root, else
+ * CLAUDE.md with its `@file` lines replaced by those files (one level). Undefined when neither. */
+export function projectRules(root: string): string | undefined {
+	const read = (name: string) => {
+		const path = join(root, name);
+		return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+	};
+	const agents = read("AGENTS.md");
+	const text = agents ?? read("CLAUDE.md")?.split("\n").map((line) => {
+		const m = /^@(\S+)\s*$/.exec(line.trim());
+		return m && !m[1].includes("..") ? (read(m[1]) ?? line) : line;
+	}).join("\n");
+	if (!text?.trim()) return undefined;
+	const body = text.length > RULES_LIMIT ? `${text.slice(0, RULES_LIMIT)}\n… (cut)` : text;
+	return `The project's instructions (${agents !== undefined ? "AGENTS.md" : "CLAUDE.md"}); follow them:\n\n${body.trim()}`;
 }
 
 /** The step's skills for Claude's system prompt: name, description and where its SKILL.md is. */
@@ -74,6 +94,6 @@ export function readClaudeLine(line: string, result: ChildResult): void {
 }
 
 /** Runs one Claude Code step child (own process group, stdin /dev/null, abort kills the group). */
-export function runClaudeChild(o: ChildOptions & { sessionId: string }): Promise<ChildResult> {
+export function runClaudeChild(o: ChildOptions & { sessionId: string; rules?: string }): Promise<ChildResult> {
 	return runChild(o, CLAUDE, claudeArgs(o), readClaudeLine);
 }

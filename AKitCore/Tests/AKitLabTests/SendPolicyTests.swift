@@ -34,6 +34,13 @@ struct SendPolicyTests {
     // MARK: Policy
 
     /// What the review sheets say before anything is queued, from the settings alone.
+    /// A flow step on Claude Code gets code worked on with Pi: without a Claude Code entry on the list, refused.
+    @Test func aFlowStepOnClaudeNeedsTheList() {
+        for work in [false, true] {
+            #expect(SendAccounts.flowClaudeBlocker(isWork: work, env: env)?.contains("Add its account to the allowed list") == true)
+        }
+    }
+
     @Test func blockersAreKnownBeforeTheRun() {
         let pi = LabAgent(harness: .pi, model: "github-copilot/gpt-5", effort: "high")
         let fromCopilot = SendOrigin.piSession(providers: ["github-copilot"])

@@ -309,6 +309,20 @@ reads run records and writes a `STOP` file.
   | Pi updates | AKit's About / Update view shows the installed Pi version next to `testedPi`; when Pi is newer, it links the Pi changelog lines that mention extensions or the CLI. |
   | Plugins | Flows depends on no Pi plugin (`pi-subagents` and the like): children run with `-ne` and only the per-step `-e` list. |
 
+- **F24 Where the parts meet (2026-11-20, from a review of the edges).** A step gets exactly
+  the tools its prompt names: `-t` (Pi) and `--tools` (Claude) always carry the step's, else the
+  flow's, else the built-ins (Pi alone turns on only read, bash, edit, write). A Claude Code step
+  gets the project's AGENTS.md (else CLAUDE.md, `@file` lines read in) in its system prompt, as
+  a Pi step loads it, and is told its bash only reads (`--permission-prompts none` denies tests
+  and writes; probed live). Such a step sends the run's code and the Pi steps' handoffs to
+  Anthropic past AKit's gate and scrub, so the check refuses it unless the sending policy
+  allows Claude Code for code worked on with Pi (`SendAccounts.flowClaudeBlocker`). A run keeps
+  its flow in `flow.json`; resume goes on with it and asks before it takes a changed flow (one
+  that still has every step the run used; `flow-changed` event). The run's end names the last
+  handoff and the branch with `git merge`, and `akit_flow` answers the model with the same.
+  Claude step sessions (under the run's worktree in `~/.claude/projects`) are flow sessions,
+  out of Insights. The Flows screen reloads a flow changed outside it and refuses to Save over
+  such a change without Reload or Save Mine.
 - **F23 Review from outside, edits from the terminal (2026-11-20, the user's request).** Export
   (Copy for Review, Save for Review…; `akit flow export NAME`) writes one Markdown pack for an
   agent with a fresh context: a request for per-step changes, the runner's rules, the flow at a

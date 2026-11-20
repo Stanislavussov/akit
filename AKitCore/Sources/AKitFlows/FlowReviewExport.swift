@@ -36,8 +36,9 @@ public enum FlowReviewExport {
     public static let disputeLine = "don't comply: end blocked with reason disputed and give your arguments in notes; the user decides."
     public static let piEnd = "When the step is finished, call the tool flow_handoff once with what you did and the outcome: done, failed or blocked (with a reason)."
     public static let claudeEnd = "When the step is finished, answer with the handoff in the JSON schema you were given: what you did and the outcome: done, failed or blocked (with a reason)."
+    public static let claudeBash = "On Claude Code, bash runs only commands that read (git log, git diff, cat, ls); anything that writes or runs a program, tests included, is denied. The runner runs the step's checks itself."
     /// Every fixed sentence above, for the test against the runner's source.
-    public static let runnerPhrases = [precedence, toolsLine, earlierTitle, questionsTitle, mostRecentEnd, ownResult, disputeLine, piEnd, claudeEnd]
+    public static let runnerPhrases = [precedence, toolsLine, earlierTitle, questionsTitle, mostRecentEnd, ownResult, disputeLine, piEnd, claudeEnd, claudeBash]
 
     /// The guard's tools when neither the step nor the flow names any (akit-flow-guard.ts DEFAULT_TOOLS).
     static let defaultTools = ["read", "bash", "edit", "write", "grep", "find", "ls"]
@@ -68,7 +69,7 @@ public enum FlowReviewExport {
         if !skills.isEmpty {
             out += ["## Skills", "", "Each skill once, with the steps that load it. A Pi step gets the names and descriptions up front and reads a SKILL.md when its task needs it. A Claude Code step has no skills of its own in a flow (--safe-mode): it gets only its step's skills, from Pi's folders or else Claude Code's, as a list in its system prompt, and reads each SKILL.md with Read; it has no Skill tool, and a skill's scripts need Bash.", ""]
             for name in skills {
-                out += skillSection(name, steps: flow.steps.filter { $0.skills.contains(name) }, project: project, env: env)
+                out += skillSection(name, steps: flow.steps.filter { $0.skills.contains(name) }, flow: flow, project: project, env: env)
             }
         }
         out += ["## The flow file", "", "```yaml", ((try? flow.yaml()) ?? "(can't encode)").trimmingCharacters(in: .newlines), "```", ""]
@@ -143,10 +144,10 @@ public enum FlowReviewExport {
             "- Runs on: \(step.isClaudeCode ? "Claude Code (`claude -p`, read-only)" : "Pi")",
             "- Model: \(step.model.isEmpty ? "(none)" : step.model); reasoning: \(step.thinking.map { step.isClaudeCode ? "\($0) (claude --effort \(claudeEffort[$0] ?? $0))" : $0 } ?? "the model's default")",
             "- Tools: \(tools.joined(separator: ", "))\(step.tools.isEmpty ? " (the flow's)" : "")"
-                + (step.isClaudeCode ? "; as Claude Code tools: \(claudeTools(step).joined(separator: ", "))" : ""),
+                + (step.isClaudeCode ? "; as Claude Code tools: \(claudeTools(step, flow: flow).joined(separator: ", "))" : ""),
         ]
         if step.isClaudeCode {
-            out.append("- Claude Code's own setup is off (--safe-mode, --strict-mcp-config): no CLAUDE.md, no skills of its own, hooks, plugins or MCP servers. It sees only the skills below, listed in its system prompt")
+            out.append("- Claude Code's own setup is off (--safe-mode, --strict-mcp-config): no skills of its own, hooks, plugins or MCP servers. The runner adds the project's AGENTS.md (else CLAUDE.md) and the step's skills to its system prompt; every command that needs a permission is denied")
         } else {
             if tools.contains("edit") || tools.contains("write") {
                 out.append("- Writes: \(step.paths.isEmpty ? "anywhere in the worktree" : step.paths.joined(separator: ", "))")
@@ -183,7 +184,7 @@ public enum FlowReviewExport {
         return out
     }
 
-    private static func skillSection(_ name: String, steps: [FlowStep], project: URL?, env: HarnessEnvironment) -> [String] {
+    private static func skillSection(_ name: String, steps: [FlowStep], flow: Flow, project: URL?, env: HarnessEnvironment) -> [String] {
         let used = "Used by: \(steps.map { $0.isClaudeCode ? "\($0.id) (Claude Code)" : $0.id }.joined(separator: ", "))."
         let pi = skillPath(name, project: project, env: env)
         let claude = steps.contains(where: \.isClaudeCode) ? skillPath(name, project: project, env: env, claude: true) : nil
@@ -208,7 +209,7 @@ public enum FlowReviewExport {
             let others = otherFiles(in: path)
             if !others.isEmpty { out += ["Other files in the skill (read on demand): \(others.joined(separator: ", "))", ""] }
             let scripts = others.filter { ["sh", "py", "js", "mjs", "ts", "rb"].contains(($0 as NSString).pathExtension) }
-            let blind = steps.filter { $0.isClaudeCode && !claudeTools($0).contains("Bash") }.map(\.id)
+            let blind = steps.filter { $0.isClaudeCode && !claudeTools($0, flow: flow).contains("Bash") }.map(\.id)
             if !scripts.isEmpty, !blind.isEmpty {
                 out += ["Warning: the skill has scripts (\(scripts.joined(separator: ", "))), but \(blind.joined(separator: ", ")) runs on Claude Code without Bash: it can read them, not run them.", ""]
             }
@@ -229,9 +230,9 @@ public enum FlowReviewExport {
         !step.tools.isEmpty ? step.tools : !flow.tools.isEmpty ? flow.tools : defaultTools
     }
 
-    static func claudeTools(_ step: FlowStep) -> [String] {
+    static func claudeTools(_ step: FlowStep, flow: Flow) -> [String] {
         var seen = Set<String>()
-        return (step.tools.isEmpty ? ["read", "grep", "find", "ls"] : step.tools).compactMap { claudeToolNames[$0] }.filter { seen.insert($0).inserted }
+        return effectiveTools(step, flow: flow).compactMap { claudeToolNames[$0] }.filter { seen.insert($0).inserted }
     }
 
     static func codeOnly(_ step: FlowStep) -> Bool { step.agent == "checker" && !step.checks.isEmpty }
@@ -242,6 +243,7 @@ public enum FlowReviewExport {
         var lines = ["You are the \(step.agent) step \"\(step.id)\" of the AKit flow \"\(flow.name)\" (run <run id>).", "Task: <the task given to /flow>"]
         if tools.contains("bash") { lines.append("The run's changes: git diff <base commit>") }
         lines.append("Your tools: \(tools.joined(separator: ", ")). \(toolsLine)")
+        if step.isClaudeCode, tools.contains("bash") { lines.append(claudeBash) }
         if let prompt = step.prompt, !prompt.isEmpty { lines += ["", prompt] }
         lines += ["", precedence]
         let previous = index > 0 ? flow.steps[index - 1] : nil
@@ -273,18 +275,18 @@ public enum FlowReviewExport {
     static func childCommand(_ step: FlowStep, flow: Flow) -> String {
         if codeOnly(step) { return step.checks.joined(separator: "\n") }
         if step.isClaudeCode {
-            var parts = ["claude -p \"<the prompt below>\"", "--output-format json", "--model \(step.model)", "--tools \(claudeTools(step).joined(separator: ","))",
-                         "--safe-mode --strict-mcp-config --permission-prompts none", "--session-id <new uuid>", "--json-schema '<the handoff schema>'"]
+            var parts = ["claude -p \"<the prompt below>\"", "--output-format json", "--model \(step.model)", "--tools \(claudeTools(step, flow: flow).joined(separator: ","))",
+                         "--safe-mode --strict-mcp-config --permission-prompts none", "--session-id <new uuid>", "--json-schema '<the handoff schema>'",
+                         "--append-system-prompt '<the project's AGENTS.md, else CLAUDE.md\(step.skills.isEmpty ? "" : "; the skills: name, description, SKILL.md path")>'"]
             if let thinking = step.thinking, let effort = claudeEffort[thinking] { parts.append("--effort \(effort)") }
             for name in step.skills { parts.append("--add-dir <\(name) folder>") }
-            if !step.skills.isEmpty { parts.append("--append-system-prompt '<the skills: name, description, SKILL.md path>'") }
             return parts.joined(separator: " \\\n  ")
         }
         var parts = ["pi --mode json --session-dir <run>/sessions", "-ns"]
         parts += step.skills.map { "--skill <\($0) folder>" }
         parts += ["-ne", "-e akit-flow-guard.ts", "-e akit-flow-handoff.ts"] + step.extensions.map { "-e \($0)" }
         parts.append("--model \(step.model.isEmpty ? "<none>" : step.model)" + (step.thinking.map { " --thinking \($0)" } ?? ""))
-        if !step.tools.isEmpty { parts.append("-t \((step.tools + ["flow_handoff"]).joined(separator: ","))") }
+        parts.append("-t \((effectiveTools(step, flow: flow) + ["flow_handoff"]).joined(separator: ","))")
         parts.append("-- \"<the prompt below>\"")
         return parts.joined(separator: " \\\n  ")
     }

@@ -1274,7 +1274,7 @@ final class AppModel {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let extra = ProjectFinder.projects(inRoots: roots)
             let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
-            async let sessions = SessionScanner.scan(installations: found, in: env)
+            async let sessions = SessionScanner.split(installations: found, in: env)
             async let mcp = MCPScanner.scan(installations: found, projects: projects, adapters: adapters, in: env)
             async let targets = MCPWriter.targets(installations: found, projects: projects, adapters: adapters, in: env)
             async let brain = Brain.load(from: brainRoot)
@@ -1293,7 +1293,7 @@ final class AppModel {
         }.value
         let (skills, states, switches) = scanned
         // Before anything is shown: the session list and its projects change together.
-        let folders = Array(Set(sessions.compactMap { $0.project?.path }))
+        let folders = Array(Set(sessions.sessions.compactMap { $0.project?.path }))
         let projectsRoot = projectsRoot
         let (sessionProjects, ratings) = await Task.detached {
             (SessionProjects.projectIDs(ofFolders: folders, env: env, projectsRoot: projectsRoot), Ratings.byTranscript(env: env))
@@ -1320,8 +1320,8 @@ final class AppModel {
             brainLinks = [:]
         }
         followLocalOnlyWorktrees()
-        self.sessions = sessions
-        flowSessions = await Task.detached { SessionScanner.flowSessions(projects: projects) }.value
+        self.sessions = sessions.sessions
+        flowSessions = await Task.detached { SessionScanner.flowSessions(projects: projects, steps: sessions.flowSteps) }.value
         self.sessionProjects = sessionProjects
         self.ratings = ratings
         mcpServers = mcp.servers

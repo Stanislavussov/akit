@@ -5,7 +5,7 @@
 
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,7 @@ import {
 	type FlowStep, type Outcome, parseOutcome, redact, requiredPi, runId, TESTED_PI, type Visits,
 } from "./flow-core.ts";
 import { DEFAULT_TOOLS, type GuardRules } from "./akit-flow-guard.ts";
-import { runClaudeChild } from "./claude-adapter.ts";
+import { projectRules, runClaudeChild } from "./claude-adapter.ts";
 import { changedFiles, changes, commit, createWorktree, diffFromBase, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
 import {
 	appendEvent, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, type RecordedEvent, recordTokens, releaseLock,
@@ -91,7 +91,8 @@ export async function startTool(params: { flow?: string; task: string }, ctx: Ex
 	if (!yes) return "The user did not confirm; no flow was started.";
 	const words = task.split(/\s+/);
 	const id = await start(ctx, name ? [name, ...words] : words, signal);
-	return id ? `Flow run ${id} has ended; its messages are shown to the user. The record is in .pi/akit-flow/runs/${id}.` : "The flow did not start; the reason is shown to the user.";
+	if (!id) return "The flow did not start; the reason is shown to the user.";
+	return summaries.get(id) ?? `Flow run ${id} has paused (a gate, a question or STOP); /flow resume ${id} goes on. The record is in .pi/akit-flow/runs/${id}.`;
 }
 
 function mainCheckout(cwd: string): string {
@@ -229,10 +230,48 @@ async function start(ctx: ExtensionContext, words: string[], signal?: AbortSigna
 	}
 	const folder = createRunFolder(project, id);
 	takeLock(folder);
+	// The run keeps its own copy of the flow: a later edit doesn't change a run under way (resume asks).
+	writeFileSync(join(folder, "flow.json"), `${JSON.stringify(flow, null, 2)}\n`);
 	const run: Run = { folder, id, flow, task, project, info: pi.info, newer: pi.newer, started: new Date().toISOString(), worktree };
 	appendEvent(folder, "run-start", { run: id, flow: flow.name, task, pi: pi.info.version, worktree: worktree.path, branch: worktree.branch, base: worktree.base });
 	await loop(ctx, run, firstStep(flow), undefined, signal);
 	return id;
+}
+
+/** The flow a resumed run goes on with: its own copy from the start, unless the flow file changed
+ * since and the user takes the change (only when the changed flow still has every step the run
+ * used). Runs from before the copy go on with the file. Undefined: the user cancelled. */
+async function runFlow(ctx: ExtensionContext, folder: string, current: Flow | undefined, events: RecordedEvent[]): Promise<Flow | undefined> {
+	const path = join(folder, "flow.json");
+	let kept: Flow | undefined;
+	try {
+		kept = existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Flow) : undefined;
+	} catch {
+		kept = undefined;
+	}
+	if (!kept) return current;
+	if (!current || JSON.stringify(current) === JSON.stringify(kept)) return kept;
+	const used = new Set(events.filter((e) => (e.type === "step-start" || e.type === "step-end") && typeof e.step === "string").map((e) => String(e.step)));
+	const fits = [...used].every((id) => current.steps.some((s) => s.id === id));
+	if (fits && ctx.hasUI && typeof ctx.ui?.select === "function") {
+		const keep = "Go on with the flow as this run started it";
+		const take = "Use the changed flow from here on";
+		const answer = await ctx.ui.select(`The flow ${kept.name} changed since this run started`, [keep, take]);
+		if (answer === undefined) {
+			say(ctx, "Resume cancelled.", "info");
+			return undefined;
+		}
+		if (answer === take) {
+			writeFileSync(path, `${JSON.stringify(current, null, 2)}\n`);
+			appendEvent(folder, "flow-changed", { taken: true });
+			return current;
+		}
+		return kept;
+	}
+	appendEvent(folder, "flow-changed", { taken: false });
+	say(ctx, fits ? "The flow changed since this run started; the run goes on with its own copy."
+		: "The flow changed since this run started and lost steps this run used; the run goes on with its own copy.", "warning");
+	return kept;
 }
 
 /** The handoff file a step attempt wrote, read back for the next step's prompt. */
@@ -359,7 +398,7 @@ async function resumeLocked(ctx: ExtensionContext, project: string, folder: stri
 		say(ctx, `The run's worktree ${worktree.path} is gone; it can't resume.`, "error");
 		return;
 	}
-	const flow = await loadFlow(ctx, project, name);
+	const flow = await runFlow(ctx, folder, await loadFlow(ctx, project, name), events);
 	const pi = flow ? await checkPi(ctx, flow) : undefined;
 	if (!flow || !pi) return;
 	addGrants(flow, grantedLoops(events));
@@ -549,15 +588,25 @@ interface Previous {
 	noteTitle?: string;
 }
 
+/** A step's tools: its own, else the flow's, else Pi's built-ins. The prompt names them, the
+ * child gets exactly these (-t, or Claude's --tools) and the guard allows only these. */
+export function stepTools(flow: Flow, step: FlowStep | undefined): string[] {
+	return step?.tools?.length ? step.tools : flow.tools?.length ? flow.tools : DEFAULT_TOOLS;
+}
+
+/** On Claude Code every command that would need a permission is denied (--permission-prompts none). */
+export const CLAUDE_BASH = "On Claude Code, bash runs only commands that read (git log, git diff, cat, ls); anything that writes or runs a program, tests included, is denied. The runner runs the step's checks itself.";
+
 function prompt(run: Run, stepId: string, agent: string, previous: Previous | undefined, claude = false, attempt = 1): string {
 	const step = run.flow.steps.find((s) => s.id === stepId);
-	const tools = step?.tools?.length ? step.tools : run.flow.tools?.length ? run.flow.tools : DEFAULT_TOOLS;
+	const tools = stepTools(run.flow, step);
 	const lines = [
 		`You are the ${agent} step "${stepId}" of the AKit flow "${run.flow.name}" (run ${run.id}).`,
 		`Task: ${run.task}`,
 		// A step without bash can't run git: naming the diff would only make it ask for a tool it lacks.
 		...(tools.includes("bash") ? [`The run's changes: git diff ${run.worktree.base}`] : []),
 		`Your tools: ${tools.join(", ")}. Work with these; a tool you don't have is not a reason to end blocked.`,
+		...(claude && tools.includes("bash") ? [CLAUDE_BASH] : []),
 	];
 	if (step?.prompt) lines.push("", step.prompt);
 	lines.push("", PRECEDENCE);
@@ -676,13 +725,13 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 				rmSync(partPath, { force: true });
 				const options = {
 					cwd: run.worktree.path, sessionDir, model: step.model, thinking: step.thinking, skills,
-					tools: step.tools ?? [], extensions: childExtensions(run.project, step.extensions ?? []),
+					tools: stepTools(run.flow, step), extensions: childExtensions(run.project, step.extensions ?? []),
 					prompt: prompt(run, step.id, step.agent, previous, claude, attempt), info: run.info, env: { AKIT_FLOW_HANDOFF: partPath, AKIT_FLOW_GUARD: guardPath }, signal,
 					onEvent: (event: Record<string, unknown>) => {
 						if (shown && viewEvent(shown, event)) refresh(ctx, run);
 					},
 				};
-				result = claude ? await runClaudeChild({ ...options, sessionId: randomUUID() }) : await runChild(options);
+				result = claude ? await runClaudeChild({ ...options, sessionId: randomUUID(), rules: projectRules(run.worktree.path) }) : await runChild(options);
 				if (result.aborted || result.spawnError) {
 					appendEvent(run.folder, "step-end", { step: step.id, attempt, outcome: "failed", reason: result.aborted ? "aborted" : "spawn", tokens: recordTokens(result.tokens), exit: result.code });
 				setStep(ctx, run, step.id, "failed");
@@ -866,7 +915,7 @@ async function atStop(ctx: ExtensionContext, run: Run, decision: Decision, from:
 	const ended = `${from.outcome}${from.reason ? `:${from.reason}` : ""}`;
 	const more = `One more round of ${target}`, accept = "Accept as is and go on", back = `Send ${from.step} back with a note`, stop = "Stop";
 	if (previous && typeof ctx.ui.editor === "function") await ctx.ui.editor(`What ${from.step} said (read only)`, readable(previous.handoff));
-	const choice = await ctx.ui.select(capped ? `${from.step} ended ${ended}, but ${target} reached its max loops (${limit})`
+	const choice = await ctx.ui.select(capped ? `${from.step} ended ${ended}, but ${target} reached its max rounds (${limit})`
 		: `${from.step} ended ${ended}, and it has no route for that`, capped ? [more, accept, stop] : [accept, back, stop]);
 	const log = (answer: string, extra: Record<string, unknown> = {}) =>
 		appendEvent(run.folder, "decision", { step: from.step, stop: decision.stop, answer, ...extra });
@@ -940,9 +989,37 @@ function finish(ctx: ExtensionContext, run: Run, decision: Decision, message?: s
 	refresh(ctx, run);
 	writeRunJson(run, { status: decision.stop === "done" ? "done" : "stopped", stop: decision.stop, state: { step: decision.step ?? null, visits: decision.visits } });
 	status(ctx, undefined);
-	const text = message ?? (decision.stop === "done" ? `Flow ${run.flow.name} done (run ${run.id}).`
-		: decision.stop === "visit-cap" ? `Flow ${run.flow.name} stopped: step ${decision.step} reached its max loops.`
+	const head = message ?? (decision.stop === "done" ? `Flow ${run.flow.name} done (run ${run.id}).`
+		: decision.stop === "visit-cap" ? `Flow ${run.flow.name} stopped: step ${decision.step} reached its max rounds.`
 		: decision.stop === "no-route" ? `Flow ${run.flow.name} stopped: step ${decision.step} has no route for its outcome.`
 		: `Flow ${run.flow.name} stopped: unknown step ${decision.step}.`);
+	const text = [head, ...outcomeLines(run)].join("\n");
+	summaries.set(run.id, text);
 	say(ctx, text, decision.stop === "done" ? "info" : "error");
+}
+
+/** How each run ended, for the tool that started it (akit_flow answers the model with it). */
+const summaries = new Map<string, string>();
+
+/** What the run left: the last handoff's goal, what it did and its notes, and where the work is,
+ * with the command that takes it, so the user and the session that started the run can go on. */
+export function outcomeLines(run: { folder: string; flow: Flow; project: string; id: string; worktree: Worktree }): string[] {
+	const last = [...readEvents(run.folder)].reverse().find((e) => e.type === "step-end" && typeof e.step === "string");
+	const index = last ? run.flow.steps.findIndex((s) => s.id === last.step) : -1;
+	const h = last && index >= 0 ? readHandoff(run.folder, index, String(last.step), typeof last.attempt === "number" ? last.attempt : 1) : undefined;
+	const lines: string[] = [];
+	if (h) {
+		lines.push(`Last step: ${last?.step} (${last?.outcome ?? "?"}${last?.reason ? `:${last.reason}` : ""})${typeof h.goal === "string" && h.goal ? ` · ${h.goal}` : ""}`);
+		const done = strings(h.done);
+		if (done.length) lines.push(`Done: ${done.slice(0, 5).join("; ")}${done.length > 5 ? ` (+${done.length - 5})` : ""}`);
+		if (typeof h.notes === "string" && h.notes.trim()) lines.push(`Notes: ${h.notes.trim().slice(0, 600)}${h.notes.length > 600 ? "…" : ""}`);
+		const questions = strings(h.open_questions);
+		if (questions.length) lines.push(`Open questions: ${questions.join("; ")}`);
+	}
+	const commits = flowCommits(run.worktree.path, run.id, run.worktree.base).length;
+	lines.push(commits > 0
+		? `The work is on branch ${run.worktree.branch} (${commits} commit${commits === 1 ? "" : "s"} since ${run.worktree.base.slice(0, 7)}; worktree ${run.worktree.path}). To take it, in ${run.project}: git merge ${run.worktree.branch}`
+		: `No commits on branch ${run.worktree.branch}.`);
+	lines.push(`The record: .pi/akit-flow/runs/${run.id}`);
+	return lines;
 }

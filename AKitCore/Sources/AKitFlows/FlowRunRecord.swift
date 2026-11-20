@@ -38,6 +38,8 @@ public struct FlowEvent: Equatable, Sendable {
         case decision
         /// The user settled a step's dispute with a rejection: maker, judge or note.
         case dispute
+        /// `/flow resume` met a flow changed since the run started: `taken` says whether the run took it.
+        case flowChanged = "flow-changed"
     }
 
     public var kind: Kind
