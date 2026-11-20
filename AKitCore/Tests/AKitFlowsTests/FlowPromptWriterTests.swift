@@ -52,8 +52,11 @@ struct FlowClaudeStepTests {
     }
 
     @Test func aClaudeStepIsReadOnlyAndItsModelIsNotPis() {
-        let ok = FlowCheck.check(flow(tools: ["read", "grep", "bash"]), knownModels: ["m/a"], knownSkills: [], pi: nil)
+        let ok = FlowCheck.check(flow(tools: ["read", "grep"]), knownModels: ["m/a"], knownSkills: [], pi: nil)
         #expect(!ok.contains { $0.step == "architect" })
+        // bash is allowed, with a warning that it only reads there.
+        let bash = FlowCheck.check(flow(tools: ["read", "grep", "bash"]), knownModels: ["m/a"], knownSkills: [], pi: nil)
+        #expect(bash.filter { $0.step == "architect" }.map(\.code) == [.claudeBashReadOnly])
         let writes = FlowCheck.check(flow(tools: ["read", "edit"]), knownModels: ["m/a"], knownSkills: [], pi: nil)
         #expect(writes.contains { $0.code == .claudeStepWrites && $0.severity == .error && $0.message.contains("drop edit") })
         // No tools of its own: the flow's tools, which include edit.
@@ -159,5 +162,21 @@ struct FlowClaudeSkillTests {
                                              env: HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path]), issues: [], runner: []).text
         #expect(text.contains("Claude Code's own setup is off") && text.contains("House rules.") && text.contains("architect (Claude Code)"))
         #expect(text.contains("lint.sh") && text.contains("without Bash"))
+    }
+}
+
+/// A Claude Code step: its bash only reads, and the sending policy decides whether it may run.
+struct FlowClaudeCheckTests {
+    let flow = Flow(name: "f", tools: ["read", "grep", "bash"], steps: [
+        FlowStep(id: "plan", agent: "planner", model: "m/a"),
+        FlowStep(id: "architect", harness: FlowStep.claudeCode, agent: "architect", model: "opus"),
+    ])
+
+    @Test func bashOnClaudeIsReadOnlyAndThePolicyCanRefuseIt() {
+        let plain = FlowCheck.check(flow, knownModels: nil, knownSkills: nil, pi: nil)
+        #expect(plain.contains { $0.code == .claudeBashReadOnly && $0.step == "architect" && $0.severity == .warning })
+        #expect(!plain.contains { $0.code == .claudeStepNotAllowed })
+        let refused = FlowCheck.check(flow, knownModels: nil, knownSkills: nil, pi: nil, claudeBlocked: "not on the allowed list")
+        #expect(refused.contains { $0.code == .claudeStepNotAllowed && $0.severity == .error && $0.message.hasSuffix("not on the allowed list") })
     }
 }

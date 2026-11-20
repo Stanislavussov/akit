@@ -312,6 +312,17 @@ public enum SendAccounts {
         }
     }
 
+    /// Why the sending policy refuses a flow step on Claude Code (F21), or nil when it allows it.
+    /// Such a step gets the repository's code and the Pi steps' handoffs, which AKit's gate and
+    /// scrub never see: the runner sends them itself. So Claude Code must be allowed for code
+    /// worked on with Pi, as for any other send.
+    public static func flowClaudeBlocker(isWork: Bool, env: HarnessEnvironment) -> String? {
+        switch blocker(of: LabAgent(harness: .claudeCode, model: "", effort: ""), origin: .code(.pi), isWork: isWork, env: env) {
+        case .policy(let reason, _), .settings(let reason): reason
+        case .noPiProvider, nil: nil
+        }
+    }
+
     /// The Pi account entered for a provider, with its login and plan/org filled in.
     static func piEntry(provider: String, settings: LabSettings) -> PiAccount? {
         settings.piAccounts.first {

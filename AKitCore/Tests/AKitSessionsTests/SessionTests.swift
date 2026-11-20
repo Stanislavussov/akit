@@ -546,3 +546,30 @@ struct SessionTests {
         #expect((exported["tokens"] as? [String: Any])?["output"] as? Int == 12)
     }
 }
+
+/// A flow step on Claude Code keeps its session in Claude's folder, under the run's worktree:
+/// it is a flow step's session, not one of the user's (D27, F21).
+struct FlowStepClaudeSessionTests {
+    let home = FileManager.default.temporaryDirectory.appending(path: "akit-flow-claude-\(UUID().uuidString)")
+
+    @Test func aSessionInARunsWorktreeIsAFlowStep() throws {
+        let env = HarnessEnvironment(homeDirectory: home)
+        let worktree = home.appending(path: ".akit/local/flows/runs/20261120-1335-0ee8/worktree").path
+        for (folder, cwd) in [("-work-app", "/work/app"), ("-flow", worktree)] {
+            let url = home.appending(path: ".claude/projects/\(folder)/1111.jsonl")
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("""
+                {"type":"user","cwd":"\(cwd)","timestamp":"2026-11-20T10:00:00.000Z","message":{"role":"user","content":"Review the plan"}}
+
+                """.utf8).write(to: url)
+        }
+        let installation = HarnessInstallation(id: .claudeCode, displayName: "Claude Code", executableURL: nil,
+                                               configRoot: home.appending(path: ".claude"), locations: [])
+        let split = SessionScanner.split(installations: [installation], in: env)
+        #expect(split.sessions.map(\.project?.path) == ["/work/app"])
+        #expect(split.flowSteps.map(\.project?.path) == [worktree])
+        let steps = SessionScanner.flowSessions(projects: [], steps: split.flowSteps)
+        #expect(steps.count == 1 && steps.allSatisfy { $0.origin == SessionSummary.flowOrigin })
+        #expect(SessionScanner.scan(installations: [installation], in: env).count == 1)
+    }
+}

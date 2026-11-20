@@ -313,7 +313,8 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
 A flow is a column of Pi steps (agent, model, skills, tools, routes on done/failed/blocked,
 gate, max rounds); a read-only step may run on Claude Code instead (`harness: claude-code`, its
 answer is the handoff; it has no skills of its own, only its step's, from Pi's or Claude Code's
-skill folders). Pi runs it with `/flow [name] <task>`; akit reads and checks the files Pi runs
+skill folders, plus the project's AGENTS.md; its bash only reads; the check refuses it unless the
+sending policy allows Claude Code for code worked on with Pi). Pi runs it with `/flow [name] <task>`; akit reads and checks the files Pi runs
 (the project's `.pi/flows/*.yaml`, then `~/.pi/agent/flows/`) and edits the brain's flows.
 There is no `akit flow run`.
 
