@@ -36,6 +36,13 @@ struct RunsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .task(id: model.revealFlowRun) {
+            // Attention → Open: that run, read again so a new one is in the list.
+            guard let run = model.revealFlowRun else { return }
+            reload()
+            selection = run
+            model.revealFlowRun = nil
+        }
         .task(id: model.projects) {
             reload()
             let env = env

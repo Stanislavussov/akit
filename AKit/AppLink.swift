@@ -1,3 +1,4 @@
+import AKitAttention
 import Foundation
 
 /// `akit://<screen>[/<tab>]` links (2026-10-26, the user's request: open the notebook from
@@ -10,6 +11,8 @@ import Foundation
 /// opens the screen; `akit://meetings/record`, `/stop` and `/toggle` start or stop a recording
 /// without showing it; `akit://meetings/open?id=<day>/<time>&tab=transcript` shows one meeting
 /// (the link a summary note in Knowledge has to its transcript).
+/// Attention (2026-11-20): `akit://<screen>?tab=…&item=…&folder=…`, the link `akit attention` prints,
+/// shows one item's place (`AppModel.open(_:review:knowledge:)`), as Open on the Attention screen.
 struct AppLink: Equatable {
     static let scheme = "akit"
 
@@ -23,6 +26,9 @@ struct AppLink: Equatable {
     /// Meetings: `akit://meetings/open?id=<day>/<time>&tab=transcript` shows that meeting.
     var meetingID: String?
     var meetingTab: String?
+    /// An Attention item's place; nil without `tab`, `item` or `folder` (and for the notebook,
+    /// work log and meetings, whose links mean something else).
+    var place: AttentionLink?
 
     init?(_ url: URL) {
         guard url.scheme?.lowercased() == Self.scheme, let host = url.host(percentEncoded: false)?.lowercased(),
@@ -37,6 +43,10 @@ struct AppLink: Equatable {
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             meetingID = items.first { $0.name == "id" }?.value.flatMap { $0.isEmpty ? nil : $0 }
             meetingTab = items.first { $0.name == "tab" }?.value
+        }
+        if ![.notebook, .worklog, .meetings].contains(section), let place = AttentionLink(url: url),
+           place.tab != nil || place.item != nil || place.folder != nil {
+            self.place = place
         }
         if section == .worklog {
             let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []

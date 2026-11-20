@@ -74,6 +74,12 @@ struct ErrorAnalysisView: View {
             tab = .reports
             model.revealBatch = nil
         }
+        .task(id: model.revealAnalysisTab) {
+            // Attention → Open: candidate modes on Review, a tab without an item.
+            guard let name = model.revealAnalysisTab else { return }
+            if let wanted = Tab(rawValue: name) { tab = wanted }
+            model.revealAnalysisTab = nil
+        }
         .task(id: model.revealLayerSet) {
             // Brain → Show in Error Analysis: the layer's set on the Evals tab.
             guard let layer = model.revealLayerSet else { return }

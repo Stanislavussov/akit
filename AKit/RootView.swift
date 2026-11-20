@@ -4,8 +4,9 @@ import SwiftUI
 
 /// Sidebar groups, by the question their screens answer. The screens guide has one section
 /// per group and per screen (`docs/guides/screens.ru.md`), ordered from simple to complex:
-/// On This Mac, Activity, Setup, Improve.
+/// Now, then On This Mac, Activity, Setup, Improve.
 enum SidebarGroup: String, CaseIterable, Identifiable {
+    case now
     case installed
     case setup
     case activity
@@ -15,6 +16,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .now: "Now"
         case .installed: "On This Mac"
         case .setup: "Setup"
         case .activity: "Activity"
@@ -25,6 +27,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
 
     var summary: String {
         switch self {
+        case .now: "What needs you now, gathered from every screen, each with a link to its place"
         case .installed: "What the agents have on this Mac right now: harnesses, skills, MCP servers"
         case .setup: "What the agents should have: your brain of skills and layers, rendered into projects"
         case .activity: "How the agents worked: their saved sessions, tokens and cost"
@@ -35,6 +38,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
 
     var sections: [SidebarSection] {
         switch self {
+        case .now: [.attention]
         case .installed: [.overview, .skills, .skillsSh, .mcp, .instructions]
         case .setup: [.brain, .flows]
         case .activity: [.sessions, .usage, .runs]
@@ -46,6 +50,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
 
 /// Sidebar sections. Their order on screen comes from `SidebarGroup`.
 enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
+    case attention
     case overview
     case skills
     case skillsSh
@@ -68,6 +73,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .attention: "Attention"
         case .overview: "Overview"
         case .skills: "Skills"
         case .skillsSh: "skills.sh"
@@ -92,6 +98,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     /// The sidebar tooltip: what the screen is for and where it leads.
     var summary: String {
         switch self {
+        case .attention: "Failed runs, code reviews, reports and eval verdicts ready to read, MCP servers that don't connect, inbox proposals: Open shows each one's place"
         case .overview: "Installed harnesses, their versions and config folders"
         case .skills: "Every skill the agents see now, by where it lives. Brain skills are edited in Brain"
         case .skillsSh: "Find a public skill on skills.sh and install it into a folder; Import Skills… in Brain adds it to your library"
@@ -115,6 +122,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .attention: "bell.badge"
         case .overview: "square.grid.2x2"
         case .skills: "book.closed"
         case .skillsSh: "sparkle.magnifyingglass"
@@ -202,7 +210,8 @@ struct RootView: View {
                 }
             }
         } detail: {
-            switch model.section ?? .overview {
+            switch model.section ?? .attention {
+            case .attention: AttentionView()
             case .overview: OverviewView()
             case .skills: SkillsView()
             case .skillsSh: SkillsShView()
@@ -238,10 +247,15 @@ struct RootView: View {
                     .help("Ask what something on this screen means or how to use it (⌥⌘/)")
             }
         }
-        .onChange(of: model.section ?? .overview, initial: true) { _, section in ask.section = section }
+        .onChange(of: model.section ?? .attention, initial: true) { _, section in ask.section = section }
         // `akit://notebook/Inbox` from Raycast or a browser: this window shows the screen and tab.
         .onOpenURL { url in
             guard let link = AppLink(url) else { return }
+            // `akit://lab?item=…` from `akit attention`: the place of one item.
+            if let place = link.place {
+                model.open(place, review: review, knowledge: knowledge)
+                return
+            }
             if let action = link.meetingAction {
                 Task { await MeetingsScreen.perform(action) }
                 return
@@ -273,6 +287,10 @@ struct RootView: View {
         }
         // Lab runs start and end outside AKit: keep the badge and the queue current.
         .task { if DebugSnapshot.options == nil { await model.watchLab() } else { await model.reloadLab() } }
+        // Attention: runs, reviews and checks end outside AKit; its badge stays current.
+        .task { if DebugSnapshot.options == nil { await model.watchAttention() } else { await model.reloadAttention() } }
+        // A scan gives the projects (their flow runs) and the brain (its layers' verdicts).
+        .onChange(of: model.lastScan) { Task { await model.reloadAttention() } }
         // Review runs unused for 14 days give their worktrees back (R61).
         .task { if DebugSnapshot.options == nil { await review.watchCleanup() } }
         .overlay(alignment: .bottom) {
@@ -309,6 +327,7 @@ struct RootView: View {
 
     private func badge(for section: SidebarSection) -> Int {
         switch section {
+        case .attention: model.attentionShown.filter { $0.level != .ready }.count
         case .skills: model.skills.count
         case .mcp: model.mcpServers.count
         case .lab: model.labRuns.filter { $0.status == .running || $0.status == .queued }.count

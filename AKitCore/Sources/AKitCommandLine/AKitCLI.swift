@@ -362,6 +362,10 @@ public enum AKitCLI {
                                           sections it gets twice (twice) or in two versions (differs)
 
         This Mac (~/.akit/machine.json, never in the brain):
+          akit attention [--all] [--json] What needs you now, from every screen: failed runs, code
+                                          reviews and evals ready to read, MCP servers that don't
+                                          connect, inbox proposals; each with an akit:// link that
+                                          opens its place in AKit (the Attention screen). Reads only
           akit doctor                     What AKit sees on this Mac and what is wrong (lines with !,
                                           each with what to do). Only reads, never shows a secret.
                                           Run it first when AKit doesn't behave
@@ -443,6 +447,9 @@ public enum AKitCLI {
             if arguments.first == "kb" {
                 return try await knowledge(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, trash: trash,
                                             input: input)
+            }
+            if arguments.first == "attention" {
+                return try attention(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
             }
             if arguments.first == "flow" {
                 return try flow(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out)
