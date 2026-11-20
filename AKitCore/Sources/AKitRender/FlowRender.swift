@@ -20,6 +20,7 @@ public enum FlowRender {
         ("akit-flow.ts", Data(FlowTemplateSources.akit_flow_ts.utf8)),
         ("akit-flow-guard.ts", Data(FlowTemplateSources.akit_flow_guard_ts.utf8)),
         ("akit-flow-handoff.ts", Data(FlowTemplateSources.akit_flow_handoff_ts.utf8)),
+        ("claude-adapter.ts", Data(FlowTemplateSources.claude_adapter_ts.utf8)),
         ("flow-core.ts", Data(FlowTemplateSources.flow_core_ts.utf8)),
         ("flow-git.ts", Data(FlowTemplateSources.flow_git_ts.utf8)),
         ("flow-record.ts", Data(FlowTemplateSources.flow_record_ts.utf8)),

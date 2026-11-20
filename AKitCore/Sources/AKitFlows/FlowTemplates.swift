@@ -392,8 +392,10 @@ public enum FlowTemplates {
             and run no command that changes files. Go through the risks that apply: the plan's invariants, states and \
             their transitions, a crash halfway, repeats and parallel calls, access and data. Look also for what the plan \
             asks and the diff does not do (or does differently, or does on top), correctness errors, missing or fake \
-            tests, security problems. Blocking is only what must be fixed before the change can be accepted; style and \
-            optional ideas are notes. Blocking problems: end failed with reason notes, each with file and line.
+            tests, security problems. The task and the plan are the contract: blocking is only what breaks them or must \
+            be fixed before the change can be accepted; inputs and cases they don't name, style and optional ideas are \
+            notes. When you reviewed before, check that your blocking notes were fixed and the fix broke nothing; \
+            don't raise new wishes. Blocking problems: end failed with reason notes, each with file and line.
             """,
         "committer": """
             The user accepted the change. Write a short summary of the diff for them: what changed in behaviour (2-4 \

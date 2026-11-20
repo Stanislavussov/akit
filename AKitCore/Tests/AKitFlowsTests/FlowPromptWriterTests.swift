@@ -32,3 +32,32 @@ struct FlowPromptWriterTests {
         #expect(throws: FlowPromptWriter.Failure.self) { try FlowPromptWriter.result("{\"prompt\": \"  \"}") }
     }
 }
+
+/// F21: a step on Claude Code.
+struct FlowClaudeStepTests {
+    func flow(tools: [String], skills: [String] = []) -> Flow {
+        Flow(name: "f", tools: ["read", "grep", "bash", "edit"], steps: [
+            FlowStep(id: "plan", agent: "planner", model: "m/a"),
+            FlowStep(id: "architect", harness: FlowStep.claudeCode, agent: "architect", model: "opus", skills: skills, tools: tools),
+        ])
+    }
+
+    @Test func harnessIsWrittenOnlyWhenSetAndReadBack() throws {
+        let yaml = try flow(tools: ["read"]).yaml()
+        #expect(yaml.components(separatedBy: "harness: claude-code").count == 2)
+        let back = try Flow.decode(yaml: yaml)
+        #expect(back.steps[1].isClaudeCode && !back.steps[0].isClaudeCode && back.steps[0].harness == nil)
+    }
+
+    @Test func aClaudeStepIsReadOnlyAndItsModelIsNotPis() {
+        let ok = FlowCheck.check(flow(tools: ["read", "grep", "bash"]), knownModels: ["m/a"], knownSkills: [], pi: nil)
+        #expect(!ok.contains { $0.step == "architect" })
+        let writes = FlowCheck.check(flow(tools: ["read", "edit"]), knownModels: ["m/a"], knownSkills: [], pi: nil)
+        #expect(writes.contains { $0.code == .claudeStepWrites && $0.severity == .error && $0.message.contains("drop edit") })
+        // No tools of its own: the flow's tools, which include edit.
+        #expect(FlowCheck.check(flow(tools: []), knownModels: ["m/a"], knownSkills: [], pi: nil).contains { $0.code == .claudeStepWrites })
+        let skills = FlowCheck.check(flow(tools: ["read"], skills: ["tdd"]), knownModels: ["m/a"], knownSkills: [], pi: nil)
+        #expect(skills.contains { $0.code == .claudeStepPiOnly && $0.severity == .warning })
+        #expect(!skills.contains { $0.code == .unknownSkill })
+    }
+}

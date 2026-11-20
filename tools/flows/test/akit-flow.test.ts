@@ -37,7 +37,8 @@ beforeEach(() => {
 	const bin = join(root, "bin");
 	for (const d of [home, project, piDir, bin]) mkdirSync(d, { recursive: true });
 	cpSync(join(import.meta.dirname, "fake-pi.mjs"), join(bin, "pi"));
-	execFileSync("chmod", ["+x", join(bin, "pi")]);
+	cpSync(join(import.meta.dirname, "fake-claude.mjs"), join(bin, "claude"));
+	execFileSync("chmod", ["+x", join(bin, "pi"), join(bin, "claude")]);
 	execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project });
 	execFileSync("git", ["commit", "-q", "--allow-empty", "-m", "init"], { cwd: project });
 	mkdirSync(join(project, ".pi", "skills", "tdd"), { recursive: true });
@@ -379,6 +380,78 @@ test("later steps get the plan and a slim handoff; a code-only checks step passe
 	assert.doesNotMatch(review, /"tokens"|"session"|"schema"/);
 	// The step right after the plan gets it once, as the previous handoff.
 	assert.equal((calls()[1].args.at(-1) ?? "").match(/notes of plan/g)?.length, 1);
+});
+
+function claudeCalls(): { step: string; args: string[]; cwd: string }[] {
+	const path = join(piDir, "claude-calls.jsonl");
+	return existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+}
+
+const architectOnClaude = () => [
+	{ id: "plan", agent: "planner", model: "m/a" },
+	{ id: "architect", harness: "claude-code", agent: "architect", model: "opus", thinking: "high", tools: ["read", "grep", "bash"], routes: { "failed:*": "plan" } },
+	{ id: "implement", agent: "implementer", model: "m/a" },
+];
+
+test("a claude-code step runs claude -p read only, and its structured output is the handoff", async () => {
+	flow(architectOnClaude());
+	await flowCommand("feature add CSV export", ctx());
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "implement"]);
+	const [call] = claudeCalls();
+	assert.equal(call.step, "architect");
+	const a = call.args;
+	const flag = (name: string) => a[a.indexOf(name) + 1];
+	assert.equal(flag("--model"), "opus");
+	assert.equal(flag("--tools"), "Read,Grep,Bash");
+	assert.equal(flag("--effort"), "high");
+	assert.equal(flag("--permission-prompts"), "none");
+	assert.equal(flag("--output-format"), "json");
+	assert.ok(a.includes("--safe-mode") && a.includes("--strict-mcp-config"));
+	assert.deepEqual(JSON.parse(flag("--json-schema")).required, ["goal", "done", "files", "open_questions", "notes", "outcome", "reason"]);
+	assert.match(flag("-p"), /The plan|Handoff from the step "plan"/);
+	assert.match(flag("-p"), /answer with the handoff in the JSON schema/);
+	assert.match(flag("-p"), /Your tools: read, grep, bash\. Work with these/);
+	assert.match(flag("-p"), /The run's changes: git diff [0-9a-f]{40}/);
+	const run = onlyRun();
+	assert.equal(call.cwd, realpathSync(worktreeOf(run)));
+	const h = JSON.parse(readFileSync(join(run, "handoffs", `02-architect-a1-${flag("--session-id")}.json`), "utf8"));
+	assert.deepEqual(h.done, ["claude did architect"]);
+	assert.deepEqual(h.tokens, { input: 300, output: 40, cache_read: 200, cost: 0.02 });
+	assert.ok(!existsSync(join(run, "guard", "02-architect-a1.json")), "no guard rules: Claude's own tool list holds the step");
+	// The next Pi step gets Claude's handoff.
+	assert.match(calls()[1].args.at(-1) ?? "", /notes of architect from claude/);
+	assert.equal(events(run).at(-1)?.stop, "done");
+});
+
+test("a step without bash is told its tools and not sent to git", async () => {
+	flow([{ id: "plan", agent: "planner", model: "m/a", tools: ["read", "grep"] }]);
+	await flowCommand("feature x", ctx());
+	const text = calls()[0].args.at(-1) ?? "";
+	assert.match(text, /Your tools: read, grep\. Work with these; a tool you don't have is not a reason to end blocked\./);
+	assert.doesNotMatch(text, /git diff/);
+});
+
+test("a claude-code step without structured output reruns once, then the run stops", async () => {
+	flow(architectOnClaude());
+	pi({ claude: ["error"] });
+	await flowCommand("feature x", ctx());
+	assert.equal(claudeCalls().length, 2);
+	const run = onlyRun();
+	assert.deepEqual(deviations(run).map((d) => d.rule), ["handoff-missing", "handoff-missing"]);
+	assert.equal(events(run).at(-1)?.stop, "no-handoff");
+});
+
+test("a claude-code step's failed outcome routes back like any step", async () => {
+	flow(architectOnClaude());
+	pi({ claude: ["failed:notes", "done"] });
+	await flowCommand("feature x", ctx());
+	assert.deepEqual(claudeCalls().map((c) => c.step), ["architect", "architect"]);
+	assert.deepEqual(calls().map((c) => c.step), ["plan", "plan", "implement"]);
+	assert.match(calls()[1].args.at(-1) ?? "", /Handoff from the step "architect" \(failed:notes\)/);
+	// The second architect sees its own first verdict, to check it rather than start over.
+	const second = claudeCalls()[1].args;
+	assert.match(second[second.indexOf("-p") + 1], /Your own result last time \(attempt 1\)[\s\S]*notes of architect from claude/);
+	assert.doesNotMatch(claudeCalls()[0].args[claudeCalls()[0].args.indexOf("-p") + 1], /Your own result last time/);
 });
 
 test("checks count as green only with an evidence file", () => {

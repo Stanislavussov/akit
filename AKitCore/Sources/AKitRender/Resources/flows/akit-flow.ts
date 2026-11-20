@@ -4,7 +4,7 @@
 // ~/.pi/agent/flows.
 
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -14,6 +14,7 @@ import {
 	type FlowStep, type Outcome, parseOutcome, redact, requiredPi, runId, TESTED_PI, type Visits,
 } from "./flow-core.ts";
 import { DEFAULT_TOOLS, type GuardRules } from "./akit-flow-guard.ts";
+import { runClaudeChild } from "./claude-adapter.ts";
 import { changes, commit, createWorktree, diffFromBase, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
 import {
 	appendEvent, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, type RecordedEvent, recordTokens, releaseLock,
@@ -451,19 +452,26 @@ const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filt
 function readPart(path: string): HandoffPart | undefined {
 	if (!existsSync(path)) return undefined;
 	try {
-		const v = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-		if (!isOutcome(v.outcome)) return undefined;
-		const files = Array.isArray(v.files) ? v.files.filter((f): f is { path: string; change: string } => typeof f?.path === "string")
-			.map((f) => ({ path: f.path, change: typeof f.change === "string" ? f.change : "" })) : [];
-		return {
-			goal: typeof v.goal === "string" ? v.goal : "", done: strings(v.done), files, open_questions: strings(v.open_questions),
-			notes: typeof v.notes === "string" ? v.notes : "", outcome: v.outcome, reason: typeof v.reason === "string" ? v.reason : "",
-		};
+		return partFrom(JSON.parse(readFileSync(path, "utf8")));
 	} catch {
 		return undefined;
 	} finally {
 		rmSync(path, { force: true });
 	}
+}
+
+/** The model's part of a handoff from `flow_handoff`'s file or Claude Code's structured output;
+ * undefined without a valid outcome. */
+export function partFrom(value: unknown): HandoffPart | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const v = value as Record<string, unknown>;
+	if (!isOutcome(v.outcome)) return undefined;
+	const files = Array.isArray(v.files) ? v.files.filter((f): f is { path: string; change: string } => typeof f?.path === "string")
+		.map((f) => ({ path: f.path, change: typeof f.change === "string" ? f.change : "" })) : [];
+	return {
+		goal: typeof v.goal === "string" ? v.goal : "", done: strings(v.done), files, open_questions: strings(v.open_questions),
+		notes: typeof v.notes === "string" ? v.notes : "", outcome: v.outcome, reason: typeof v.reason === "string" ? v.reason : "",
+	};
 }
 
 interface Previous {
@@ -477,17 +485,26 @@ interface Previous {
 	note?: string;
 }
 
-function prompt(run: Run, stepId: string, agent: string, previous: Previous | undefined): string {
+function prompt(run: Run, stepId: string, agent: string, previous: Previous | undefined, claude = false, attempt = 1): string {
+	const step = run.flow.steps.find((s) => s.id === stepId);
+	const tools = step?.tools?.length ? step.tools : run.flow.tools?.length ? run.flow.tools : DEFAULT_TOOLS;
 	const lines = [
 		`You are the ${agent} step "${stepId}" of the AKit flow "${run.flow.name}" (run ${run.id}).`,
 		`Task: ${run.task}`,
-		`The run's changes: git diff ${run.worktree.base}`,
+		// A step without bash can't run git: naming the diff would only make it ask for a tool it lacks.
+		...(tools.includes("bash") ? [`The run's changes: git diff ${run.worktree.base}`] : []),
+		`Your tools: ${tools.join(", ")}. Work with these; a tool you don't have is not a reason to end blocked.`,
 	];
-	const own = run.flow.steps.find((s) => s.id === stepId)?.prompt;
-	if (own) lines.push("", own);
+	if (step?.prompt) lines.push("", step.prompt);
 	const plan = agent === "planner" ? undefined : planHandoff(run.folder, run.flow, stepId);
 	if (plan && plan.step !== previous?.step) {
 		lines.push("", `The plan (handoff of the step "${plan.step}"):`, JSON.stringify(handoffForPrompt(plan.handoff), null, 2));
+	}
+	// A step that runs again sees its own last result, so a judge checks its earlier notes
+	// instead of finding new ones each round, and a maker knows what it tried.
+	const own = attempt > 1 ? readHandoff(run.folder, run.flow.steps.findIndex((s) => s.id === stepId), stepId, attempt - 1) : undefined;
+	if (own && previous?.step !== stepId) {
+		lines.push("", `Your own result last time (attempt ${attempt - 1}): build on it; don't start over.`, JSON.stringify(handoffForPrompt(own), null, 2));
 	}
 	if (previous) {
 		lines.push("", `Handoff from the step "${previous.step}" (${previous.outcome}${previous.reason ? `:${previous.reason}` : ""}):`,
@@ -497,7 +514,9 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 			lines.push("", `The check \`${check.command}\` exited ${check.exit}. Its last lines:`, ...check.tail);
 		}
 	}
-	lines.push("", "When the step is finished, call the tool flow_handoff once with what you did and the outcome: done, failed or blocked (with a reason).");
+	lines.push("", claude
+		? "When the step is finished, answer with the handoff in the JSON schema you were given: what you did and the outcome: done, failed or blocked (with a reason)."
+		: "When the step is finished, call the tool flow_handoff once with what you did and the outcome: done, failed or blocked (with a reason).");
 	return lines.join("\n");
 }
 
@@ -556,7 +575,9 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			}
 			const sessionDir = join(run.folder, "sessions");
 			const partPath = join(run.folder, "handoffs", `${key}-a${attempt}.part`);
-			const guardPath = codeOnly(step) ? "" : writeGuardRules(run, step, key, attempt);
+			// A Claude Code step has no guard: Claude's tool list and permission rules hold it (F21).
+			const claude = step.harness === "claude-code";
+			const guardPath = codeOnly(step) || claude ? "" : writeGuardRules(run, step, key, attempt);
 			let result: ChildResult | undefined;
 			let part: HandoffPart | undefined;
 			let deviations = 0;
@@ -575,22 +596,23 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			// No valid flow_handoff: the step reruns once, then the run stops (F4).
 			for (let round = 1; round <= 2 && !part; round++) {
 				rmSync(partPath, { force: true });
-				result = await runChild({
+				const options = {
 					cwd: run.worktree.path, sessionDir, model: step.model, thinking: step.thinking, skills,
 					tools: step.tools ?? [], extensions: childExtensions(run.project, step.extensions ?? []),
-					prompt: prompt(run, step.id, step.agent, previous), info: run.info, env: { AKIT_FLOW_HANDOFF: partPath, AKIT_FLOW_GUARD: guardPath }, signal,
-					onEvent: (event) => {
+					prompt: prompt(run, step.id, step.agent, previous, claude, attempt), info: run.info, env: { AKIT_FLOW_HANDOFF: partPath, AKIT_FLOW_GUARD: guardPath }, signal,
+					onEvent: (event: Record<string, unknown>) => {
 						if (shown && viewEvent(shown, event)) refresh(ctx, run);
 					},
-				});
+				};
+				result = claude ? await runClaudeChild({ ...options, sessionId: randomUUID() }) : await runChild(options);
 				if (result.aborted || result.spawnError) {
 					appendEvent(run.folder, "step-end", { step: step.id, attempt, outcome: "failed", reason: result.aborted ? "aborted" : "spawn", tokens: recordTokens(result.tokens), exit: result.code });
 				setStep(ctx, run, step.id, "failed");
 					writeRunJson(run, { status: "stopped", state: { step: step.id, visits } });
-					say(ctx, result.aborted ? `Flow ${run.flow.name} aborted in step ${step.id}; /flow resume continues.` : `Can't start pi: ${result.spawnError}`, "error");
+					say(ctx, result.aborted ? `Flow ${run.flow.name} aborted in step ${step.id}; /flow resume continues.` : `Can't start ${claude ? "claude" : "pi"}: ${result.spawnError}`, "error");
 					return;
 				}
-				part = readPart(partPath);
+				part = claude ? partFrom(result.structured) : readPart(partPath);
 				if (part) break;
 				const line = parseOutcome(result.text);
 				deviations++;

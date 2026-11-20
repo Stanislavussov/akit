@@ -128,6 +128,8 @@ export interface ChildResult {
 	/** The last assistant text. */
 	text: string;
 	tokens: Tokens;
+	/** Claude Code's structured output: the handoff part of a claude-code step (F21). */
+	structured?: unknown;
 	/** Event types this runner does not know, counted. */
 	unknownEvents: number;
 	badLines: number;
@@ -194,10 +196,13 @@ const KNOWN_EVENTS = new Set([
 	"auto_compaction_end", "auto_retry_start", "auto_retry_end",
 ]);
 
-/** Starts one child in its own process group; stdin is /dev/null; abort kills the whole group. */
-export function runChild(o: ChildOptions): Promise<ChildResult> {
+/** Starts one child in its own process group; stdin is /dev/null; abort kills the whole group.
+ * Pi by default; a Claude Code step passes its own command, arguments and line reader (F21). */
+export function runChild(o: ChildOptions, command = PI, args = childArgs(o),
+	reader?: (line: string, result: ChildResult) => void): Promise<ChildResult> {
 	const result: ChildResult = { code: null, signal: null, aborted: false, text: "", tokens: {}, unknownEvents: 0, badLines: 0, stderr: "" };
 	const seen = { assistant: false };
+	const read = reader ?? ((line: string, r: ChildResult) => readEvent(line, r, seen, o.onEvent));
 	return new Promise((resolve) => {
 		let buffer = "";
 		let settled = false;
@@ -209,7 +214,7 @@ export function runChild(o: ChildOptions): Promise<ChildResult> {
 			o.signal?.removeEventListener("abort", abort);
 			resolve(result);
 		};
-		const proc = spawn(PI, childArgs(o), {
+		const proc = spawn(command, args, {
 			cwd: o.cwd, shell: false, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...o.env },
 		});
 		result.pid = proc.pid;
@@ -231,13 +236,13 @@ export function runChild(o: ChildOptions): Promise<ChildResult> {
 			buffer += data.toString();
 			const lines = buffer.split("\n");
 			buffer = lines.pop() ?? "";
-			for (const line of lines) readEvent(line, result, seen, o.onEvent);
+			for (const line of lines) read(line, result);
 		});
 		proc.stderr.on("data", (data: Buffer) => {
 			result.stderr = (result.stderr + data.toString()).slice(-8000);
 		});
 		proc.on("close", (code, signal) => {
-			if (buffer.trim()) readEvent(buffer, result, seen, o.onEvent);
+			if (buffer.trim()) read(buffer, result);
 			result.code = code;
 			result.signal = signal;
 			finish();

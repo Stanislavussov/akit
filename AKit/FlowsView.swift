@@ -289,11 +289,40 @@ struct FlowsView: View {
                 } label: { RequiredLabel("Agent") }
                     .fixedSize()
                     .help("The role of the step; implementer and reviewer must use different models (F6)")
-                PiModelPicker(selection: stepBinding(index, \.model), models: piModels, empty: "Choose a model",
-                              help: "Models Pi has credentials for (pi --list-models)", allowsOther: false) {
-                    RequiredLabel("Model")
+                if step.isClaudeCode {
+                    Picker(selection: stepBinding(index, \.model)) {
+                        ForEach(Array(Set(FlowStep.claudeModels + [step.model])).filter { !$0.isEmpty }.sorted(), id: \.self) { Text($0).tag($0) }
+                    } label: { RequiredLabel("Model") }
+                        .fixedSize()
+                        .help("Claude Code's model (claude --model)")
+                } else {
+                    PiModelPicker(selection: stepBinding(index, \.model), models: piModels, empty: "Choose a model",
+                                  help: "Models Pi has credentials for (pi --list-models)", allowsOther: false) {
+                        RequiredLabel("Model")
+                    }
                 }
             }
+            Picker("Runs on", selection: Binding(get: { step.isClaudeCode }, set: { claude in
+                updateStep(index) { step in
+                    guard claude != step.isClaudeCode else { return }
+                    step.harness = claude ? FlowStep.claudeCode : nil
+                    if claude {
+                        // Read-only on Claude Code (F21): its tools lose edit and write, Pi's skills go.
+                        let tools = (step.tools.isEmpty ? flow.tools : step.tools).filter { FlowStep.claudeTools.contains($0) }
+                        step.tools = tools.isEmpty ? ["read", "grep", "find", "ls"] : tools
+                        step.skills = []
+                        step.model = FlowStep.claudeModels[0]
+                    } else {
+                        step.model = piModels.first ?? ""
+                    }
+                }
+            })) {
+                Text("Pi").tag(false)
+                Text("Claude Code").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .help("Claude Code: the runner starts claude -p for this step, read only, and its answer is the handoff. Good for a judge on another model family")
             promptEditor(step, index: index, flow: flow)
             if step.agent == "checker" || !step.checks.isEmpty { checksPicker(step, index: index) }
             HStack(spacing: 18) {
@@ -369,25 +398,9 @@ struct FlowsView: View {
             }
             .fixedSize()
             .help("How much the model thinks in this step (pi --thinking); Model default leaves it to Pi")
-            LabeledContent("Skills") {
-                HStack {
-                    Text("\(step.skills.count) chosen").foregroundStyle(.secondary)
-                    Button("Choose…") { choosingSkills = step.id }
-                        .disabled(skills.isEmpty && step.skills.isEmpty)
-                        .popover(isPresented: Binding(get: { choosingSkills == step.id }, set: { if !$0 { choosingSkills = nil } })) {
-                            SkillChooser(all: Array(Set(skills + step.skills)), selected: step.skills) { skill, on in
-                                updateStep(index) { $0.skills = on ? $0.skills + [skill] : $0.skills.filter { $0 != skill } }
-                            }
-                        }
-                    if skills.isEmpty && step.skills.isEmpty { Text("No Pi skills found").foregroundStyle(.secondary) }
-                    if let reason = missing(.skill), !step.skills.isEmpty {
-                        Label(reason, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
-                    }
-                }
-            }
-            .help("Only these skills reach the step (Pi runs it with -ns --skill)")
+            if !step.isClaudeCode { skillsRow(step, index: index) }
             LabeledContent("Tools") {
-                checkboxes(flow.tools, selected: step.tools) { tool, on in
+                checkboxes(step.isClaudeCode ? flow.tools.filter { FlowStep.claudeTools.contains($0) } : flow.tools, selected: step.tools) { tool, on in
                     updateStep(index) { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }
                 }
             }
@@ -401,6 +414,26 @@ struct FlowsView: View {
                 .fixedSize()
                 .help("How often the run may come back to this step before it stops")
         }
+    }
+
+    private func skillsRow(_ step: FlowStep, index: Int) -> some View {
+        LabeledContent("Skills") {
+            HStack {
+                Text("\(step.skills.count) chosen").foregroundStyle(.secondary)
+                Button("Choose…") { choosingSkills = step.id }
+                    .disabled(skills.isEmpty && step.skills.isEmpty)
+                    .popover(isPresented: Binding(get: { choosingSkills == step.id }, set: { if !$0 { choosingSkills = nil } })) {
+                        SkillChooser(all: Array(Set(skills + step.skills)), selected: step.skills) { skill, on in
+                            updateStep(index) { $0.skills = on ? $0.skills + [skill] : $0.skills.filter { $0 != skill } }
+                        }
+                    }
+                if skills.isEmpty && step.skills.isEmpty { Text("No Pi skills found").foregroundStyle(.secondary) }
+                if let reason = missing(.skill), !step.skills.isEmpty {
+                    Label(reason, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
+                }
+            }
+        }
+        .help("Only these skills reach the step (Pi runs it with -ns --skill)")
     }
 
     /// This Mac's Pi (from `akit doctor`) next to the newest Pi the runner was tested on (F20).

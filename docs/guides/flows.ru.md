@@ -93,6 +93,7 @@
 Открытая карточка показывает главное:
 
 - **Agent** и **Model** — роль шага и модель из списка Pi (`pi --list-models`).
+- **Runs on** — где работает шаг: **Pi** или **Claude Code**. Шаг на Claude Code Pi-runner запускает как `claude -p` без ваших настроек Claude (CLAUDE.md, скиллы, хуки, MCP выключены). Такой шаг только читает: правка и запись файлов ему недоступны, вопросы о разрешениях получают отказ. Итог шага Claude отдаёт как JSON по схеме handoff, и следующий шаг Pi получает его как обычный handoff. Подходит для проверяющих шагов (architect, critic, reviewer, verifier): проверку делает модель другого семейства. Модель — `opus`, `sonnet` или `haiku`; на строке карточки метка «Claude Code».
 - **Prompt** — текст задания шага, всегда на виду. Runner ставит его после задачи и плана.
 - **Generate…** — Pi пишет или правит подсказку по вашей просьбе. В окне напишите, что шаг должен делать или что поменять (пусто — «сделай короче и яснее»), выберите модель и нажмите **Generate**. Новый текст встаёт в карточку; **Undo** возвращает прежний, **Save** сохраняет. Вызов идёт через правила отправки (Settings → Sending policy) и пишется в журнал отправок.
 - **Checks** — у шага checker: команды проверки проекта (`make test`, `npm test` …). Pi запускает их в конце шага. Красная проверка делает «done» → «failed». Шаг checker с командами модель не запускает.
@@ -113,7 +114,7 @@
 
 **Пример.** Щёлкните строку **5. review**, нажмите **Generate…** и напишите «обращай особое внимание на безопасность». Проверьте текст и нажмите **Save**.
 
-![Открытая карточка 2. plan: Agent planner и Model demo/coder-large в одной строке, Prompt с текстом и кнопкой Generate…, Gate включён, стрелки и корзина; раскрытый блок More Settings: Thinking high, Skills «0 chosen» с кнопкой Choose…, Tools, пути On done, On failed, On blocked и Max loops](images/flows-card.png)
+![Открытая карточка 2. plan: Agent planner и Model demo/coder-large в одной строке, переключатель Runs on (Pi, Claude Code), Prompt с текстом и кнопкой Generate…, Gate включён, стрелки и корзина; раскрытый блок More Settings: Thinking high, Skills «0 chosen» с кнопкой Choose…, Tools, пути On done, On failed, On blocked и Max loops](images/flows-card.png)
 
 **Порядок шагов:**
 

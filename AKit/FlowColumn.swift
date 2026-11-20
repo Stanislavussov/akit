@@ -73,6 +73,11 @@ struct FlowStepLine: View {
         HStack(spacing: 8) {
             Text("\(index + 1). \(step.id)").font(.headline).lineLimit(1)
             Text(step.agent).foregroundStyle(.secondary).lineLimit(1)
+            if step.isClaudeCode {
+                Text("Claude Code").font(.caption).padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.orange.opacity(0.15), in: Capsule())
+                    .help("This step runs on Claude Code (claude -p), read only")
+            }
             Text(step.model.isEmpty ? "no model" : String(step.model.split(separator: "/").last ?? ""))
                 .font(.callout.monospaced()).foregroundStyle(step.model.isEmpty ? .red : .secondary).lineLimit(1)
                 .help(step.model)

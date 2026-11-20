@@ -142,7 +142,8 @@ reads run records and writes a `STOP` file.
   ends without a valid `flow_handoff` reruns once, then the run stops (a deviation).
   `outcome` is one of `done`, `failed`, `blocked`; the runner turns it into the next step by
   F19's route table. The next step gets the previous handoff as its input, not the whole
-  output, and (2026-11-20) the newest done handoff of the last planner step before it, so a fix
+  output; a step that runs again also gets its own last result (so a judge checks its notes
+  instead of raising new ones each round), and (2026-11-20) the newest done handoff of the last planner step before it, so a fix
   after red checks or the review still sees the plan; both without the record's ids, tokens and
   paths. Every prompt names the base commit (`git diff <base>` shows the run's changes). The handoff holds the run id and the child's session id, and that session file
   exists in `<run>/sessions`.
@@ -296,6 +297,19 @@ reads run records and writes a `STOP` file.
   | Tests | `make check-pi` runs the TS tests and the e2e test against each Pi version in a list (`npm pack` of `minPi` and the newest release, in a fake home). Passing raises `testedPi`. The vendored `.d.ts` stays at `minPi`. |
   | Pi updates | AKit's About / Update view shows the installed Pi version next to `testedPi`; when Pi is newer, it links the Pi changelog lines that mention extensions or the CLI. |
   | Plugins | Flows depends on no Pi plugin (`pi-subagents` and the like): children run with `-ne` and only the per-step `-e` list. |
+
+- **F21 A step on Claude Code (2026-11-20, the user's request).** A step may set
+  `harness: claude-code`: the runner starts `claude -p` in the run's worktree instead of a Pi
+  child (`claude-adapter.ts`), with `--safe-mode --strict-mcp-config` (no CLAUDE.md, skills,
+  hooks, plugins or MCP, like Pi's `-ns -ne`), `--permission-prompts none` (anything that would
+  ask is denied), `--tools` mapped from the step's tools (read → Read, grep → Grep, find and ls →
+  Glob, bash → Bash), `--effort` from the thinking level and a `--session-id` the handoff keeps.
+  The handoff comes back as the structured output of `--json-schema` with `flow_handoff`'s
+  schema, so the rest of the run treats it like any handoff; tokens and cost come from the
+  result line. Pi's guard can't watch a Claude child, so a Claude step is read-only: AKit's check
+  refuses `edit` and `write` on it, and the judge steps (architect, critic, reviewer, verifier)
+  are the ones it fits. It gives a judge another model family than the makers' (F6). Its session
+  stays in `~/.claude/projects`; Runs shows the step without a session link.
 
 ## Operations
 
