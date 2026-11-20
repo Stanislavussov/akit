@@ -127,36 +127,53 @@ struct AgentReportsTests {
         #expect(AgentReports.plan(collection).calls == 1)
     }
 
-    @Test func aFocusOpensTheReportAndLeadsEveryHeading() {
+    @Test func aFocusIsAskedOnlyWhenGiven() {
         let plain = AgentReports.system(sections: sections, language: .english)
-        #expect(!plain.contains("## Focus") && !plain.contains("focus on"))
+        #expect(plain.contains("- focus: \"\".") && !plain.contains("look first at"))
         let focused = AgentReports.system(sections: sections, language: .english, focus: "  flaky tests\n and CI ")
-        #expect(focused.contains("## Focus\n") && focused.contains("focus on: \"flaky tests and CI\""))
-        #expect(focused.range(of: "## In short")!.lowerBound < focused.range(of: "## Focus")!.lowerBound)
-        #expect(focused.range(of: "## Focus")!.lowerBound < focused.range(of: "## What the agent worked on")!.lowerBound)
-        #expect(plain.contains("## Unknown unknowns\nUp to 5 bullets") && plain.contains("## What to change\nUp to 3 bullets"))
-        #expect(AgentReports.mergeSystem(sections: sections, language: .english, focus: "CI").contains("focus on: \"CI\""))
+        #expect(focused.contains("look first at \"flaky tests and CI\""))
+        #expect(plain.contains("one of Agent decisions, Autonomy improvements, Unknown unknowns"))
+        #expect(AgentReports.mergeSystem(sections: sections, language: .russian, focus: "CI").contains("look first at \"CI\"") )
+        #expect(AgentReports.mergeSystem(sections: sections, language: .russian).contains("in Russian"))
     }
 
-    @Test func theAnswerAndTheSavedFile() throws {
-        #expect(try AgentReports.markdown(fromAnswer: "```markdown\n## Main work themes\n- x\n```") == "## Main work themes\n- x")
-        #expect(throws: AgentReports.Failure.self) { try AgentReports.markdown(fromAnswer: "Sorry, no.") }
-        #expect(try AgentReports.markdown(fromAnswer: ###"{"report":"## Main work themes\n- y"}"###) == "## Main work themes\n- y")
-        // A stray "} after the object.
-        #expect(try AgentReports.markdown(fromAnswer: ###"{"report":"## Focus\n- z"}"}"###) == "## Focus\n- z")
+    @Test func theAnswerIsCheckedAndSortedBySeverity() throws {
+        let answer = ###"Here: {"summary": "Mostly  fine.", "focus": "", "findings": ["###
+            + ###"{"severity": "low", "title": "Small thing", "detail": "x", "section": "Agent decisions", "count": 1, "reports": [2], "prompt": "Do a."},"###
+            + ###"{"severity": "HIGH", "title": "Never checks\nthe screen", "detail": "y", "section": "Unknown unknowns", "count": 2, "reports": ["R1", 3, 99, 3], "prompt": "Add a rule."},"###
+            + ###"{"severity": "urgent", "title": "Odd severity", "detail": "", "section": "", "count": 5, "reports": [], "prompt": ""},"###
+            + ###"{"severity": "high", "title": "", "detail": "no title", "section": "", "count": 1, "reports": [], "prompt": ""}]}"}"###
+        let analysis = try AgentReports.analysis(fromAnswer: answer, reports: 3)
+        #expect(analysis.summary == "Mostly fine.")
+        #expect(analysis.findings.map(\.title) == ["Never checks the screen", "Odd severity", "Small thing"])
+        #expect(analysis.findings[0].severity == .high && analysis.findings[0].reports == [1, 3] && analysis.findings[0].count == 2)
+        #expect(analysis.findings[1].severity == .medium)
+        #expect(throws: AgentReports.Failure.self) { try AgentReports.analysis(fromAnswer: "Sorry, no.", reports: 3) }
+        let prompts = AgentReports.allPrompts(analysis, period: "p")
+        #expect(prompts.contains("1. [High] Never checks the screen\nAdd a rule.") && prompts.contains("2. [Low] Small thing\nDo a."))
+    }
+
+    @Test func theSavedReportKeepsItsFindings() throws {
         let home = FileManager.default.temporaryDirectory.appending(path: "akit-reports-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: home) }
         let day = Date(timeIntervalSince1970: 1_800_000_000)
         let report = AgentReports.Report(harness: "pi", session: "/s/a.jsonl", item: 1, title: "a | b", project: "col-fe", time: day, task: nil,
                                          parts: [.init(section: "Unknown unknowns", items: ["Hermes"])])
         let collection = AgentReports.Collection(from: day, to: day, sections: sections, sessionsRead: 3, reports: [report])
-        let document = AgentReports.document(collection, body: "## Main work themes\n- x", model: "m", focus: "CI\nruns", created: day)
+        let analysis = AgentReports.Analysis(summary: "Fine.", focus: "CI was never run.", findings: [
+            .init(severity: .high, title: "Never runs CI", detail: "Seen twice.", section: "Unknown unknowns", count: 2, reports: [1], prompt: "Run CI."),
+        ])
+        let document = AgentReports.document(collection, analysis: analysis, model: "m", focus: "CI\nruns", created: day)
         #expect(document.contains("| R1 | ") && document.contains("| a / b | `/s/a.jsonl` |"))
+        #expect(document.contains("### 🔴 High · Never runs CI\n\nSeen twice. (2 reports: R1 · Unknown unknowns)\n\nPrompt:\n\n```text\nRun CI.\n```"))
+        #expect(document.contains("**Focus:** CI was never run."))
         let store = AgentReportStore(env: HarnessEnvironment(homeDirectory: home))
-        let file = try store.save(.init(markdown: document, model: "m", calls: 1), now: day)
-        try store.save(.init(markdown: document, model: "m", calls: 1), now: day)
+        let summary = AgentReports.Summary(markdown: document, analysis: analysis, model: "m", calls: 1)
+        let file = try store.save(summary, now: day)
+        try store.save(summary, now: day)
         let saved = store.list()
         #expect(saved.count == 2)
         #expect(saved.contains { $0.file == file && $0.model == "m" && $0.reports == 1 && $0.from == AgentReports.stamp(day) && $0.focus == "CI runs" })
+        #expect(store.analysis(of: file) == analysis)
     }
 }

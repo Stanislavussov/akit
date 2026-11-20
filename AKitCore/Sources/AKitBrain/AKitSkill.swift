@@ -206,8 +206,10 @@ time, project and session; `--markdown` as a document. It only reads. Use it whe
 what the agent decided, missed or would improve over some days. `akit reports summarize`
 (same period flags, `--focus TEXT` for what to look at first, `--language`, `--model`,
 `--thinking`) prints what would be sent; `--show` the text; ask before `--yes`: it sends the found
-sections to a Pi model and saves a short report (In short, each section, What to change) in
-~/.akit/lab/agent-reports. `akit reports list` and `akit reports show [FILE|latest]` read the saved ones.
+sections to a Pi model and saves a short report in ~/.akit/lab/agent-reports: up to 8 findings,
+each with a severity (high, medium, low) and a prompt that fixes it (`--json` has them). `akit
+reports list` and `akit reports show [FILE|latest]` read the saved ones; `show --prompts` prints
+every prompt as one message; offer it when the user wants to act on the report.
 
 ## Recommendations
 

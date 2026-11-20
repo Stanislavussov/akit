@@ -132,9 +132,11 @@ struct ErrorAnalysisView: View {
 
     private func bar(_ text: String, icon: String, tint: Color, close: @escaping () -> Void) -> some View {
         HStack {
+            // A line limit, not fixedSize: a selectable label with a fixed height pushed the whole
+            // window's content up under the toolbar.
             Label(text, systemImage: icon)
                 .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(4)
             Spacer()
             Button("Dismiss", systemImage: "xmark", action: close)
                 .labelStyle(.iconOnly)

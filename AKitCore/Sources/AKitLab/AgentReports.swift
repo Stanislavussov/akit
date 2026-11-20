@@ -362,112 +362,179 @@ public enum AgentReports {
         focus.replacing(/\s+/, with: " ").trimmingCharacters(in: .whitespaces)
     }
 
-    /// The report's headings, short on purpose: the person reads it in two minutes.
-    static func structure(_ sections: [Section], focus: String = "") -> String {
-        """
-        ## In short
-        Exactly 3 bullets: what goes well, the biggest risk, the first thing to change.
+    /// How much a finding matters: High can make the agent's work wrong or harmful, Medium costs
+    /// time or the person's attention, Low is minor.
+    public enum Severity: String, Codable, Sendable, CaseIterable, Comparable {
+        case high, medium, low
 
-        """ + (folded(focus).isEmpty ? "" : """
-        ## Focus
-        Up to 4 bullets on the focus below; "Nothing in the reports" when none bears on it.
+        public var title: String { rawValue.capitalized }
+        /// For Markdown, where there are no colors.
+        public var mark: String {
+            switch self {
+            case .high: "🔴"
+            case .medium: "🟠"
+            case .low: "🔵"
+            }
+        }
 
-        """) + """
-        ## What the agent worked on
-        Up to 4 bullets.
-
-        \(sections.map { "## \($0.name)\nUp to 5 bullets: the points that repeat, the most frequent first; a point seen once only when it is serious." }.joined(separator: "\n\n"))
-
-        ## What to change
-        Up to 3 bullets: the change to the agent's instructions, skills or checks, then why in a few words.
-        """
+        public static func < (a: Severity, b: Severity) -> Bool {
+            allCases.firstIndex(of: a)! < allCases.firstIndex(of: b)!
+        }
     }
 
-    /// The person's focus: what to look for first. Empty: none.
-    static func focusRule(_ focus: String) -> String {
+    /// One finding: what repeats in the reports, how much it matters, and a prompt that fixes it.
+    public struct Finding: Codable, Sendable, Hashable {
+        public var severity: Severity
+        /// One short sentence.
+        public var title: String
+        /// One sentence: what the reports show.
+        public var detail: String
+        /// The section it comes from (one of the gathered ones), or "".
+        public var section: String
+        /// How many reports show it.
+        public var count: Int
+        /// Up to five report numbers (R12 → 12).
+        public var reports: [Int]
+        /// A prompt to paste into the coding agent to make the change.
+        public var prompt: String
+
+        public init(severity: Severity, title: String, detail: String, section: String, count: Int, reports: [Int], prompt: String) {
+            (self.severity, self.title, self.detail, self.section, self.count, self.reports, self.prompt) =
+                (severity, title, detail, section, count, reports, prompt)
+        }
+    }
+
+    /// The model's report: one or two sentences, the answer to the focus, the findings.
+    public struct Analysis: Codable, Sendable, Hashable {
+        public var summary: String
+        public var focus: String
+        public var findings: [Finding]
+
+        public init(summary: String, focus: String = "", findings: [Finding]) {
+            (self.summary, self.focus, self.findings) = (summary, focus, findings)
+        }
+    }
+
+    /// At most this many findings, the most severe and frequent first.
+    public static let maxFindings = 8
+
+    static func rules(_ sections: [Section], language: LabLanguage, focus: String) -> String {
         let focus = folded(focus)
-        guard !focus.isEmpty else { return "" }
-        return "\n\nThe person asks you to focus on: \"\(focus)\". Answer it under Focus, and under every other heading put " +
-            "the points that bear on it first. The focus says what to look for, not what is true: still write only what the reports support."
+        return """
+        Answer with JSON only: {"summary": "...", "focus": "...", "findings": [{"severity": "high|medium|low", \
+        "title": "...", "detail": "...", "section": "...", "count": 4, "reports": [3, 9, 17], "prompt": "..."}]}.
+
+        - summary: one or two plain sentences on how the agent's work went in this period.
+        - findings: at most \(maxFindings), the most important first. Each is a point that repeats across reports, \
+        or one that is serious even once. Merge points that say the same thing in other words.
+        - severity: high when it can make the agent's work wrong, unsafe or unverified and the person may not notice; \
+        medium when it costs time or needs the person's attention; low when it is minor.
+        - title: one short sentence (at most 15 words) a person understands without the reports.
+        - detail: one sentence (at most 25 words): what the reports show.
+        - section: the section it comes from, one of \(sections.map(\.name).joined(separator: ", ")).
+        - count: how many reports show it; reports: up to five of their numbers (R12 → 12).
+        - prompt: a prompt the person pastes into their coding agent to fix it, 2 to 4 sentences: what to change \
+        (the global AGENTS.md, a skill or a check), the rule to add in the imperative, and how to tell it works. \
+        No project names, secrets or personal data.
+        """ + (focus.isEmpty ? "\n- focus: \"\"." : """
+
+        - focus: the person asks you to look first at "\(focus)": answer it in one to three sentences from the \
+        reports ("Nothing in the reports" when none bears on it), and put the findings that bear on it first.
+        """) + """
+
+        Write only what the reports support: no guesses. Plain words, no jargon. Write every text in \(language.name), \
+        keeping code, file names and commands as they are.
+        """
     }
 
     public static func system(sections: [Section], language: LabLanguage, focus: String = "") -> String {
         """
-        You read the final task reports a coding agent wrote over a period. Each report has a number \
-        (R12), its time, project and session, the user's task, and the agent's own sections: \
-        \(sections.map(\.name).joined(separator: ", ")). The person who runs the agent can't read every \
-        session; write them one report in Markdown with exactly these headings:
+        You read the final task reports a coding agent wrote over a period. Each report has a number (R12), its \
+        time, project and session, the user's task, and the agent's own sections: \
+        \(sections.map(\.name).joined(separator: ", ")). The person who runs the agent can't read every session; give \
+        them a short, simple report of what to improve.
 
-        \(structure(sections, focus: focus))
-
-        Keep it simple and clear for a person who reads it in two minutes: plain words, one short \
-        sentence per bullet (at most 25 words), no jargon or abbreviations the reports don't use. Merge \
-        points that say the same thing in other words; end each bullet with how many reports show it and \
-        up to three of their numbers, as "(4 reports: R3, R9, R17)". Write only what the reports support; \
-        no guesses, no advice the reports don't back. Never put secrets, tokens or personal data in the report. Write in \(language.name); keep \
-        code, file names, commands and quoted headings as they are. Answer with the Markdown only.
-        """ + focusRule(focus)
+        """ + rules(sections, language: language, focus: focus)
     }
 
     public static func mergeSystem(sections: [Section], language: LabLanguage, focus: String = "") -> String {
         """
-        You merge partial reports about a coding agent's final task reports over one period into one \
-        report. Each partial report covers some of the reports (numbered R1, R2, …; the numbers are the \
-        same across parts). Write one report in Markdown with exactly these headings:
+        You merge partial reports about a coding agent's final task reports over one period into one report. Each \
+        part covers some of the reports (numbered R1, R2, …; the numbers are the same across parts). Merge findings \
+        that say the same thing: add up their counts, keep up to five report numbers, keep the highest severity and \
+        the clearest prompt.
 
-        \(structure(sections, focus: focus))
-
-        Merge bullets that say the same thing; add up their counts and keep up to three report numbers \
-        per bullet, as "(4 reports: R3, R9, R17)"; the most frequent first. Keep it simple and clear: plain \
-        words, one short sentence per bullet (at most 25 words), and no more bullets than each heading \
-        allows. Keep only what the parts say. Write in \(language.name). Answer with the Markdown only.
-        """ + focusRule(focus)
+        """ + rules(sections, language: language, focus: focus)
     }
 
-    /// The answer's shape: the Markdown in one string (Pi answers JSON when a schema is given).
-    public static let schema = #"{"type":"object","properties":{"report":{"type":"string"}},"required":["report"]}"#
+    public static let schema = #"{"type":"object","properties":{"summary":{"type":"string"},"focus":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["high","medium","low"]},"title":{"type":"string"},"detail":{"type":"string"},"section":{"type":"string"},"count":{"type":"integer"},"reports":{"type":"array","items":{"type":"integer"}},"prompt":{"type":"string"}},"required":["severity","title","detail","section","count","reports","prompt"]}}},"required":["summary","focus","findings"]}"#
 
-    /// `report` of a JSON object in the answer. Models sometimes add a stray `"}` after it, so the
+    /// The first JSON object of an answer. Models sometimes add a stray `"}` after it, so the
     /// object may end at an earlier `}` than the last one.
-    static func reportField(_ text: String) -> String? {
+    static func jsonObject(_ text: String) -> [String: Any]? {
         guard let start = text.firstIndex(of: "{") else { return nil }
         var end = text.endIndex
         for _ in 0..<5 {
             guard let close = text[start..<end].lastIndex(of: "}") else { return nil }
-            if let object = try? JSONSerialization.jsonObject(with: Data(text[start...close].utf8)) as? [String: Any] {
-                return object["report"] as? String
-            }
+            if let object = try? JSONSerialization.jsonObject(with: Data(text[start...close].utf8)) as? [String: Any] { return object }
             end = close
         }
         return nil
     }
 
-    /// The answer's Markdown: `report` of the JSON asked for, else the answer itself, a
-    /// ```` ```markdown ```` fence around it taken off.
-    static func markdown(fromAnswer answer: String) throws(Failure) -> String {
-        var text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let report = reportField(text) { text = report.trimmingCharacters(in: .whitespacesAndNewlines) }
-        if let fenced = text.wholeMatch(of: /```(?:markdown|md)?\s*\n([\s\S]*?)\n```/) { text = String(fenced.output.1) }
-        guard text.contains("## ") else {
-            throw Failure(message: "The model's answer isn't the Markdown report asked for; try again or pick another model.")
+    /// The model's answer, checked: a known severity (else medium), one-line texts, report numbers
+    /// that exist (`reports` of them), a count no lower than the numbers kept; the most severe and
+    /// frequent first, at most `maxFindings`. Throws when it isn't the JSON asked for.
+    static func analysis(fromAnswer answer: String, reports: Int) throws(Failure) -> Analysis {
+        guard let object = jsonObject(answer), let items = object["findings"] as? [[String: Any]] else {
+            throw Failure(message: "The model's answer isn't the report asked for; try again or pick another model.")
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        func line(_ value: Any?) -> String { ((value as? String) ?? "").replacing(/\s+/, with: " ").trimmingCharacters(in: .whitespaces) }
+        let findings = items.compactMap { item -> Finding? in
+            let title = line(item["title"])
+            guard !title.isEmpty else { return nil }
+            let numbers = ((item["reports"] as? [Any]) ?? []).compactMap { ($0 as? Int) ?? Int(line($0).trimmingCharacters(in: CharacterSet(charactersIn: "Rr"))) }
+            var kept: [Int] = []
+            for number in numbers where (1...max(1, reports)).contains(number) && !kept.contains(number) { kept.append(number) }
+            let prompt = ((item["prompt"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return Finding(severity: Severity(rawValue: line(item["severity"]).lowercased()) ?? .medium, title: title, detail: line(item["detail"]),
+                           section: line(item["section"]), count: max((item["count"] as? Int) ?? 0, kept.count, 1),
+                           reports: Array(kept.prefix(5)), prompt: prompt)
+        }
+        let sorted = findings.enumerated().sorted { a, b in
+            (a.element.severity, -a.element.count, a.offset) < (b.element.severity, -b.element.count, b.offset)
+        }.map(\.element)
+        return Analysis(summary: line(object["summary"]), focus: line(object["focus"]), findings: Array(sorted.prefix(maxFindings)))
+    }
+
+    /// Every finding's prompt as one message to paste into the coding agent.
+    public static func allPrompts(_ analysis: Analysis, period: String) -> String {
+        let list = analysis.findings.filter { !$0.prompt.isEmpty }.enumerated().map { index, finding in
+            "\(index + 1). [\(finding.severity.title)] \(finding.title)\n\(finding.prompt)"
+        }
+        return """
+        My coding agent's own end-of-task reports (\(period)) show what to improve in its setup. Make these changes \
+        one at a time, most severe first; show me each diff before you write it.
+
+        \(list.joined(separator: "\n\n"))
+        """
     }
 
     public static func defaultModel(available: [String]) -> String? { WorkLogFill.defaultModel(available: available) }
     public static let defaultThinking = "low"
 
-    /// A finished summary: the report as Markdown with the period, the counts and the reports it cites.
+    /// A finished summary: the report as Markdown (for the file) and as data (for the screen).
     public struct Summary: Sendable {
         public let markdown: String
+        public let analysis: Analysis
         public let model: String
         public let calls: Int
     }
 
     /// Sends the reports with items to the model (in parts when they are long, then a merge) and
-    /// returns the whole report: title, period, counts, the model's text and the list of the
-    /// reports its numbers name. `focus` (optional) is what the person wants looked at first; it goes
-    /// in the instructions. `progress` gets "Part 2 of 4…". Nothing is written here.
+    /// returns the report: the findings with severity and prompt, and the same as Markdown with the
+    /// period, the counts and the reports its numbers name. `focus` (optional) is what the person
+    /// wants looked at first. `progress` gets "Part 2 of 4…". Nothing is written here.
     public static func summarize(_ collection: Collection, model: String, thinking: String = defaultThinking,
                                  language: LabLanguage = .english, focus: String = "", env: HarnessEnvironment,
                                  progress: (@Sendable (String) -> Void)? = nil) async throws(Failure) -> Summary {
@@ -475,6 +542,7 @@ public enum AgentReports {
         guard !inputs.isEmpty else {
             throw Failure(message: "No report in this period has anything but “none”, so there is nothing to summarize.")
         }
+        let total = numbered(collection).count
         do {
             let available = await LabRuns.models(for: .pi, env: env)
             let agent = try KnowledgeCheckModel.resolved(LabAgent(harness: .pi, model: model.isEmpty ? (defaultModel(available: available) ?? "") : model,
@@ -487,23 +555,27 @@ public enum AgentReports {
             let gate = try await SendGate.open(agent: agent, env: env)
             let folder = FileManager.default.temporaryDirectory.appending(path: "akit-agent-reports-\(UUID().uuidString)", directoryHint: .isDirectory)
             defer { try? FileManager.default.removeItem(at: folder) }
-            func call(_ system: String, _ input: String) async throws -> String {
+            func call(_ system: String, _ input: String) async throws -> Analysis {
                 let request = ModelCall.Request(agent: agent, purpose: purpose, system: system, input: input, schema: schema, origins: origins)
-                return try markdown(fromAnswer: try await ModelCall.run(request, gate: gate, folder: folder, env: env).text)
+                return try analysis(fromAnswer: try await ModelCall.run(request, gate: gate, folder: folder, env: env).text, reports: total)
             }
-            var parts: [String] = []
+            var parts: [Analysis] = []
             for (index, input) in inputs.enumerated() {
                 progress?(inputs.count > 1 ? "Part \(index + 1) of \(inputs.count)…" : "Waiting for the model…")
                 parts.append(try await call(system(sections: collection.sections, language: language, focus: focus), input))
             }
-            var body = parts[0]
+            var result = parts[0]
             if parts.count > 1 {
                 progress?("Merging \(parts.count) parts…")
-                let merged = parts.enumerated().map { "# Part \($0.offset + 1) of \(parts.count)\n\n\($0.element)" }.joined(separator: "\n\n")
-                body = try await call(mergeSystem(sections: collection.sections, language: language, focus: focus), merged)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+                let merged = parts.enumerated().map { index, part in
+                    "# Part \(index + 1) of \(parts.count)\n\n" + String(decoding: (try? encoder.encode(part)) ?? Data(), as: UTF8.self)
+                }.joined(separator: "\n\n")
+                result = try await call(mergeSystem(sections: collection.sections, language: language, focus: focus), merged)
             }
-            return Summary(markdown: document(collection, body: body, model: agent.model, focus: focus), model: agent.model,
-                           calls: parts.count + (parts.count > 1 ? 1 : 0))
+            return Summary(markdown: document(collection, analysis: result, model: agent.model, focus: focus), analysis: result,
+                           model: agent.model, calls: parts.count + (parts.count > 1 ? 1 : 0))
         } catch let failure as Failure {
             throw failure
         } catch let error as KnowledgeCheckModel.Failure {
@@ -513,11 +585,20 @@ public enum AgentReports {
         }
     }
 
-    /// The saved report: front matter, title, counts, the model's text and the reports cited.
-    static func document(_ collection: Collection, body: String, model: String, focus: String = "", created: Date = .now) -> String {
+    /// The saved report: front matter, title, counts, the summary, the findings with their prompts,
+    /// and the reports cited.
+    static func document(_ collection: Collection, analysis: Analysis, model: String, focus: String = "", created: Date = .now) -> String {
         let focus = folded(focus)
         let refs = numbered(collection).map { number, report in
             "| R\(number) | \(stamp(report.time)) | \(report.project) | \(report.title.prefix(80).replacingOccurrences(of: "|", with: "/")) | `\(report.session)` |"
+        }
+        let findings = analysis.findings.map { finding in
+            var lines = ["### \(finding.severity.mark) \(finding.severity.title) · \(finding.title)", ""]
+            let seen = "\(finding.count) report\(finding.count == 1 ? "" : "s")"
+                + (finding.reports.isEmpty ? "" : ": " + finding.reports.map { "R\($0)" }.joined(separator: ", "))
+            lines.append([finding.detail, "(\(seen)\(finding.section.isEmpty ? "" : " · \(finding.section)"))"].filter { !$0.isEmpty }.joined(separator: " "))
+            if !finding.prompt.isEmpty { lines += ["", "Prompt:", "", "```text", finding.prompt, "```"] }
+            return lines.joined(separator: "\n")
         }
         return """
         ---
@@ -534,7 +615,11 @@ public enum AgentReports {
 
         \(counts(collection)) Model: \(model).\(focus.isEmpty ? "" : " Focus: \(focus)")
 
-        \(body)
+        \(analysis.summary)
+        \(focus.isEmpty || analysis.focus.isEmpty ? "" : "\n**Focus:** \(analysis.focus)\n")
+        ## Findings
+
+        \(findings.isEmpty ? "No findings." : findings.joined(separator: "\n\n"))
 
         ## Reports cited
 
@@ -578,7 +663,17 @@ public struct AgentReportStore: Sendable {
             suffix += 1
         }
         try Data(summary.markdown.utf8).write(to: file, options: .atomic)
+        // The findings as data beside it, for the screen's colors and Copy Prompt.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try encoder.encode(summary.analysis).write(to: file.deletingPathExtension().appendingPathExtension("json"), options: .atomic)
         return file
+    }
+
+    /// The findings saved beside a report; nil for a report saved before findings had their own file.
+    public func analysis(of file: URL) -> AgentReports.Analysis? {
+        (try? Data(contentsOf: file.deletingPathExtension().appendingPathExtension("json")))
+            .flatMap { try? JSONDecoder().decode(AgentReports.Analysis.self, from: $0) }
     }
 
     /// The saved reports, newest first.

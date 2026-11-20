@@ -24,10 +24,11 @@ extension AKitCLI {
                                         parts: [{section, items}]}]}
       akit reports summarize [PERIOD] [--harness …] [--section …] [--model M] [--thinking LEVEL]
                              [--language en] [--focus TEXT] [--show | --yes] [--json]
-                                        One report by a Pi model (default GPT-6 Luna) of the
-                                        reports with items: themes, each section's repeated points
-                                        with counts and report numbers (R12), single serious items,
-                                        what to change in the setup. Without --yes: what would be
+                                        One short report by a Pi model (default GPT-6 Luna) of the
+                                        reports with items: a summary and up to 8 findings, each
+                                        with a severity (high, medium, low), how many reports show
+                                        it (R12 numbers) and a prompt to paste into the agent that
+                                        fixes it. Without --yes: what would be
                                         sent (reports, calls, characters); --show prints the input
                                         after the scrub. --yes sends it under the sending policy and
                                         the send log (agent-reports) and saves the report in
@@ -35,12 +36,16 @@ extension AKitCLI {
                                         ≤ 60,000 characters and one call merges them. --language:
                                         the report's language (default en). --focus (optional):
                                         what to look at first, as "flaky tests and CI"; the
-                                        report opens with a Focus section and puts what bears on
-                                        it first under every heading. --json (with --yes):
-                                        {file, model, calls, markdown}; without: {reports, calls,
+                                        report answers it and puts its findings first.
+                                        --json (with --yes): {file, model, calls, summary, focus,
+                                        findings: [{severity, title, detail, section, count,
+                                        reports, prompt}], markdown}; without: {reports, calls,
                                         characters}
       akit reports list [--json]        The saved reports, newest first: file, period, model, focus.
-      akit reports show [FILE|latest]   A saved report's Markdown (default the newest).
+      akit reports show [FILE|latest] [--prompts]
+                                        A saved report's Markdown (default the newest).
+                                        --prompts: only its findings' prompts as one message
+                                        to paste into the agent.
 
     PERIOD: --days N (default 7: from N days ago until now), or --from WHEN [--to WHEN] with WHEN
     YYYY-MM-DD, "YYYY-MM-DD HH:MM", today or yesterday. A day alone in --from starts at 00:00,
@@ -80,6 +85,9 @@ extension AKitCLI {
         let file: String
         let model: String
         let calls: Int
+        let summary: String
+        let focus: String
+        let findings: [AgentReports.Finding]
         let markdown: String
     }
 
@@ -100,6 +108,7 @@ extension AKitCLI {
             return 0
         }
         let json = args.flag("--json"), markdown = args.flag("--markdown"), show = args.flag("--show"), yes = args.flag("--yes")
+        let prompts = args.flag("--prompts")
         let fromText = args.value("--from"), toText = args.value("--to"), daysText = args.value("--days")
         let harnessText = args.value("--harness"), sectionTexts = args.values("--section")
         let model = args.value("--model"), thinking = args.value("--thinking"), languageCode = args.value("--language")
@@ -117,7 +126,7 @@ extension AKitCLI {
                     (command != "summarize" && (model != nil || thinking != nil || languageCode != nil || focus != nil || show || yes),
                      "--model, --thinking, --language, --focus, --show and --yes"),
                     (show && yes, "--show and --yes; --show"), (show && json, "--show and --json; --show"),
-                    (json && command == "show", "--json")], command: "reports \(command ?? "")")
+                    (json && command == "show", "--json"), (prompts && command != "show", "--prompts")], command: "reports \(command ?? "")")
         let store = AgentReportStore(env: env)
         switch command {
         case "list":
@@ -141,6 +150,14 @@ extension AKitCLI {
             }
             guard let chosen, let text = try? String(contentsOf: chosen, encoding: .utf8) else {
                 throw Failure(message: saved.isEmpty ? "No saved reports yet: akit reports summarize --yes writes one." : "No saved report “\(file ?? "")”; akit reports list names them.")
+            }
+            if prompts {
+                guard let analysis = store.analysis(of: chosen) else {
+                    throw Failure(message: "\(chosen.lastPathComponent) was saved before reports had findings with prompts; summarize again.")
+                }
+                let entry = saved.first { $0.file == chosen }
+                out(SecretFilter.masked(AgentReports.allPrompts(analysis, period: entry.map { "\($0.from) – \($0.to)" } ?? "")))
+                return 0
             }
             out(SecretFilter.masked(text))
             return 0
@@ -221,7 +238,9 @@ extension AKitCLI {
         }
         let saved = try store.save(summary)
         if json {
-            out(SecretFilter.masked(encode(ReportsSummaryAnswer(file: saved.path, model: summary.model, calls: summary.calls, markdown: summary.markdown))))
+            out(SecretFilter.masked(encode(ReportsSummaryAnswer(file: saved.path, model: summary.model, calls: summary.calls,
+                                                                summary: summary.analysis.summary, focus: summary.analysis.focus,
+                                                                findings: summary.analysis.findings, markdown: summary.markdown))))
         } else {
             out(SecretFilter.masked(summary.markdown) + "\nSaved to \(saved.path).")
         }
