@@ -345,15 +345,18 @@ public enum FlowTemplates {
     /// its handoff (the runner gives it to every later step), so the planner writes no file.
     public static func feature(model: String, reviewModel: String, checks: [String] = []) -> Flow {
         func step(_ id: String, _ agent: String, model: String = model, tools: [String], gate: Bool = false,
-                  checks: [String] = [], thinking: String? = nil, routes: [String: String] = [:]) -> FlowStep {
-            var step = Self.step(id, agent, model: model, tools: tools, gate: gate, checks: checks, routes: routes)
+                  checks: [String] = [], thinking: String? = nil, maxLoops: Int = FlowStep.defaultMaxLoops,
+                  routes: [String: String] = [:]) -> FlowStep {
+            var step = Self.step(id, agent, model: model, tools: tools, gate: gate, checks: checks, maxLoops: maxLoops, routes: routes)
             step.thinking = thinking
             return step
         }
         return Flow(name: "feature", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], steps: [
             step("clarify", "clarifier", tools: read, thinking: "low"),
             step("plan", "planner", tools: read, gate: true, thinking: "high", routes: ["blocked:*": "clarify"]),
-            step("implement", "implementer", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], routes: ["blocked:*": "plan"]),
+            // Red checks and review notes share implement's visits: 5 leaves room for both.
+            step("implement", "implementer", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], maxLoops: 5,
+                 routes: ["blocked:*": "plan"]),
             step("checks", "checker", tools: read + ["bash"], checks: checks, routes: ["failed:*": "implement", "blocked:*": "plan"]),
             step("review", "reviewer", model: reviewModel, tools: read + ["bash"], gate: true, thinking: "high",
                  routes: ["failed:*": "implement", "blocked:*": "plan"]),

@@ -103,8 +103,9 @@ public enum FlowCheck {
         return issues
     }
 
+    /// `claudeSkills`: the skills in Claude Code's own folders, which a Claude Code step may load too.
     public static func check(_ flow: Flow, knownModels: Set<String>?, knownSkills: Set<String>?,
-                             pi: PiCapabilities?) -> [FlowIssue] {
+                             pi: PiCapabilities?, claudeSkills: Set<String> = []) -> [FlowIssue] {
         var issues: [FlowIssue] = []
         if flow.format > Flow.currentFormat {
             issues.append(.init(.error, .newerFormat, "akit-flow-format \(flow.format) is newer than this AKit (\(Flow.currentFormat)); update AKit."))
@@ -133,8 +134,11 @@ public enum FlowCheck {
                 issues.append(.init(.error, .unknownModel, step: step.id, "Model \(step.model) of step \(step.id) is not one Pi knows."))
             }
             if let knownSkills {
-                for skill in step.skills where !knownSkills.contains(skill) {
-                    issues.append(.init(.error, .unknownSkill, step: step.id, "Skill \(skill) of step \(step.id) is not installed for Pi."))
+                let known = step.isClaudeCode ? knownSkills.union(claudeSkills) : knownSkills
+                for skill in step.skills where !known.contains(skill) {
+                    issues.append(.init(.error, .unknownSkill, step: step.id, step.isClaudeCode
+                        ? "Skill \(skill) of step \(step.id) is in neither Pi's nor Claude Code's skill folders."
+                        : "Skill \(skill) of step \(step.id) is not installed for Pi."))
                 }
             }
         }

@@ -328,7 +328,9 @@ async function resume(ctx: ExtensionContext, id: string | undefined, signal?: Ab
 		return;
 	}
 	const events = readEvents(folder);
-	if (events.some((e) => e.type === "run-end")) {
+	// A stop at a loop limit or a missing route is the user's question, not the end: resume asks it.
+	const ended = [...events].reverse().find((e) => e.type === "run-end" || e.type === "resume");
+	if (ended?.type === "run-end" && ended.stop !== "visit-cap" && ended.stop !== "no-route") {
 		say(ctx, `Run ${folder.split("/").pop()} has finished.`, "info");
 		return;
 	}
@@ -360,6 +362,7 @@ async function resumeLocked(ctx: ExtensionContext, project: string, folder: stri
 	const flow = await loadFlow(ctx, project, name);
 	const pi = flow ? await checkPi(ctx, flow) : undefined;
 	if (!flow || !pi) return;
+	addGrants(flow, grantedLoops(events));
 	const run: Run = {
 		folder, id: folder.split("/").pop() ?? "", flow, task: startEvent.task ?? "", project, info: pi.info, newer: pi.newer,
 		started: typeof startEvent.time === "string" ? startEvent.time : new Date().toISOString(), worktree,
@@ -412,11 +415,24 @@ async function resumeLocked(ctx: ExtensionContext, project: string, folder: stri
 		if (sentBack && previous) {
 			decision = nextStep(flow, { step: last.step, visits }, "failed", "sent-back");
 			previous = { ...previous, outcome: "failed", reason: "sent-back", note: typeof sentBack.note === "string" ? sentBack.note : "" };
+		} else if (last.outcome === "blocked" && last.reason === "disputed" && previous && !after.some((e) => e.type === "dispute")) {
+			// Halted at a dispute: the user is asked again, with the rejection the step disputed.
+			const before = events.slice(0, events.lastIndexOf(last)).reverse().find((e) => e.type === "step-end" && e.step !== last.step);
+			const judge = before?.step ? previousFrom(folder, flow, before.step, before.attempt ?? 1) : undefined;
+			const step = flow.steps.find((s) => s.id === last.step);
+			if (judge && step && disputes(step, "blocked", "disputed", judge)) {
+				const settled = await atDispute(ctx, run, last.step, attempt, visits, judge, previous);
+				if (!settled) return;
+				({ decision, previous } = settled);
+			}
 		} else if (flow.steps.find((s) => s.id === last.step)?.gate && last.outcome === "done" && previous && !after.some((e) => e.type === "gate")) {
 			const answered = await atGate(ctx, run, last.step, attempt, visits, decision, previous);
 			if (!answered) return;
 			({ decision, previous } = answered);
 		}
+		// A run that stopped at a loop limit or a missing route asks again instead of stopping again.
+		({ decision, previous } = await atStop(ctx, run, decision,
+			{ step: last.step, visits, outcome: (last.outcome ?? "failed") as Outcome, reason: last.reason ?? "" }, previous));
 	}
 	// Resume is the user's word to go on: a STOP left from the halt is removed.
 	const stopped = existsSync(join(folder, "STOP"));
@@ -425,11 +441,14 @@ async function resumeLocked(ctx: ExtensionContext, project: string, folder: stri
 	await loop(ctx, run, decision, previous, signal);
 }
 
-function resolveSkill(project: string, name: string): string | undefined {
+/** Where a step's skill is: Pi's folders, and for a Claude Code step Claude's own after them
+ * (--safe-mode turns those off in the child, so the step gets them only this way). */
+export function resolveSkill(project: string, name: string, claude = false): string | undefined {
 	if (isAbsolute(name)) return existsSync(name) ? name : undefined;
 	const home = homedir();
 	return [join(project, ".pi", "skills", name), join(home, ".pi", "agent", "skills", name), join(project, ".agents", "skills", name),
-		join(home, ".agents", "skills", name)].find((p) => existsSync(p));
+		join(home, ".agents", "skills", name),
+		...(claude ? [join(project, ".claude", "skills", name), join(home, ".claude", "skills", name)] : [])].find((p) => existsSync(p));
 }
 
 /** A checker step with check commands: the runner runs them and no model is started. */
@@ -523,8 +542,11 @@ interface Previous {
 	/** The previous step's handoff file, as written. */
 	handoff: Record<string, unknown>;
 	/** Failed checks of the previous step: command, exit code, last lines. */
-	failedChecks?: { command: string; exit: number | null; tail: string[] }[];	/** The user's note when a gate sent the work back. */
+	failedChecks?: { command: string; exit: number | null; tail: string[] }[];
+	/** The user's note when a gate sent the work back. */
 	note?: string;
+	/** What the note is, when not a Send Back at a gate (a decision at a stop, a dispute). */
+	noteTitle?: string;
 }
 
 function prompt(run: Run, stepId: string, agent: string, previous: Previous | undefined, claude = false, attempt = 1): string {
@@ -555,7 +577,13 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 	if (previous) {
 		lines.push("", `Most recent: the handoff from the step "${previous.step}" (${previous.outcome}${previous.reason ? `:${previous.reason}` : ""}); it weighs most for where things stand:`,
 			JSON.stringify(handoffForPrompt(previous.handoff), null, 2));
-		if (previous.note !== undefined) lines.push("", `The user sent the work back at the gate after the step "${previous.step}". Their note:`, previous.note || "(no note)");
+		if (previous.note !== undefined) {
+			lines.push("", previous.noteTitle ?? `The user sent the work back at the gate after the step "${previous.step}". Their note:`, previous.note || "(no note)");
+		}
+		// A rejection from another step may be wrong: the step may dispute it instead of complying.
+		if (previous.outcome !== "done" && previous.step !== stepId && previous.note === undefined && !previous.failedChecks?.length) {
+			lines.push("", `If you are sure "${previous.step}" is wrong, don't comply: end blocked with reason disputed and give your arguments in notes; the user decides.`);
+		}
 		for (const check of previous.failedChecks ?? []) {
 			lines.push("", `The check \`${check.command}\` exited ${check.exit}. Its last lines:`, ...check.tail);
 		}
@@ -616,7 +644,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			}
 			const skills: string[] = [];
 			for (const name of step.skills ?? []) {
-				const path = resolveSkill(run.project, name);
+				const path = resolveSkill(run.project, name, step.harness === "claude-code");
 				if (!path) {
 					appendEvent(run.folder, "deviation", { step: step.id, rule: "skill-missing", detail: name });
 					return finish(ctx, run, { stop: "no-route", step: step.id, visits }, `The skill ${name} of step ${step.id} is not installed.`);
@@ -732,12 +760,18 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 				...(result.unknownEvents ? { unknownEvents: result.unknownEvents } : {}),
 			});
 			setStep(ctx, run, step.id, outcome === "done" ? "done" : "failed");
+			const given = previous;
 			previous = { step: step.id, outcome, reason, handoff, failedChecks };
-			if (step.gate && outcome === "done") {
+			if (disputes(step, outcome, reason, given)) {
+				const settled = await atDispute(ctx, run, step.id, attempt, visits, given as Previous, previous);
+				if (!settled) return;
+				({ decision, previous } = settled);
+			} else if (step.gate && outcome === "done") {
 				const answered = await atGate(ctx, run, step.id, attempt, visits, decision, previous);
 				if (!answered) return;
 				({ decision, previous } = answered);
 			}
+			({ decision, previous } = await atStop(ctx, run, decision, { step: step.id, visits, outcome, reason }, previous));
 		}
 		finish(ctx, run, decision);
 	} finally {
@@ -783,6 +817,111 @@ async function atGate(ctx: ExtensionContext, run: Run, step: string, attempt: nu
 		decision: nextStep(run.flow, { step, visits }, "failed", "sent-back"),
 		previous: { ...previous, outcome: "failed", reason: "sent-back", note: answer.note },
 	};
+}
+
+/** A step disputes a rejection from another step: it ended blocked:disputed right after one,
+ * and the flow has no route of its own for that. */
+function disputes(step: { routes?: Record<string, string> }, outcome: Outcome, reason: string, given: Previous | undefined): boolean {
+	return outcome === "blocked" && reason === "disputed" && !!given && given.outcome !== "done" && !(step.routes ?? {})["blocked:disputed"];
+}
+
+/** The step once more, unless that passes its loop limit (then atStop asks). */
+function again(flow: Flow, step: string, visits: Visits): Decision {
+	const count = (visits[step] ?? 0) + 1;
+	const max = flow.steps.find((s) => s.id === step)?.maxLoops ?? DEFAULT_MAX_LOOPS;
+	return count > max ? { stop: "visit-cap", step, visits } : { next: step, visits: { ...visits, [step]: count } };
+}
+
+/** Extra rounds the user granted at a step's loop limit, from the run's events; resume adds them
+ * to the flow's limits again. */
+export function grantedLoops(events: RecordedEvent[]): Record<string, number> {
+	const grants: Record<string, number> = {};
+	for (const e of events) {
+		if (e.type === "decision" && e.answer === "more" && typeof e.target === "string") grants[e.target] = (grants[e.target] ?? 0) + 1;
+	}
+	return grants;
+}
+
+function addGrants(flow: Flow, grants: Record<string, number>): void {
+	for (const step of flow.steps) if (grants[step.id]) step.maxLoops = (step.maxLoops ?? DEFAULT_MAX_LOOPS) + grants[step.id];
+}
+
+/** A handoff as the user reads it at a stop or a dispute. */
+function readable(h: Record<string, unknown>): string {
+	const from = (h.from ?? {}) as { outcome?: string; reason?: string };
+	return [`Outcome: ${from.outcome ?? "?"}${from.reason ? `:${from.reason}` : ""}`, typeof h.goal === "string" ? `Goal: ${h.goal}` : "",
+		...strings(h.done).map((d) => `- ${d}`), "", typeof h.notes === "string" ? h.notes : ""].filter((l, i, a) => l || a[i - 1]).join("\n");
+}
+
+/** "Stop and ask", for real: at a step's loop limit or an outcome with no route, the user picks how
+ * to go on instead of the run ending in a dead end. No UI, or Stop: the run stops; /flow resume
+ * asks again, and rounds granted before still count. */
+async function atStop(ctx: ExtensionContext, run: Run, decision: Decision, from: { step: string; visits: Visits; outcome: Outcome; reason: string },
+	previous: Previous | undefined): Promise<{ decision: Decision; previous: Previous | undefined }> {
+	if ("next" in decision || (decision.stop !== "visit-cap" && decision.stop !== "no-route")) return { decision, previous };
+	if (!ctx.hasUI || typeof ctx.ui?.select !== "function") return { decision, previous };
+	const capped = decision.stop === "visit-cap";
+	const target = decision.step ?? from.step;
+	const limit = run.flow.steps.find((s) => s.id === target)?.maxLoops ?? DEFAULT_MAX_LOOPS;
+	const ended = `${from.outcome}${from.reason ? `:${from.reason}` : ""}`;
+	const more = `One more round of ${target}`, accept = "Accept as is and go on", back = `Send ${from.step} back with a note`, stop = "Stop";
+	if (previous && typeof ctx.ui.editor === "function") await ctx.ui.editor(`What ${from.step} said (read only)`, readable(previous.handoff));
+	const choice = await ctx.ui.select(capped ? `${from.step} ended ${ended}, but ${target} reached its max loops (${limit})`
+		: `${from.step} ended ${ended}, and it has no route for that`, capped ? [more, accept, stop] : [accept, back, stop]);
+	const log = (answer: string, extra: Record<string, unknown> = {}) =>
+		appendEvent(run.folder, "decision", { step: from.step, stop: decision.stop, answer, ...extra });
+	if (choice === more) {
+		const step = run.flow.steps.find((s) => s.id === target);
+		if (step) step.maxLoops = limit + 1;
+		log("more", { target });
+		return atStop(ctx, run, nextStep(run.flow, from, from.outcome, from.reason), from, previous);
+	}
+	if (choice === accept) {
+		log("accept");
+		const accepted = previous && { ...previous, note: `The user accepted the work of "${from.step}" as it is, despite its ${ended}.`, noteTitle: "The user's decision:" };
+		return atStop(ctx, run, nextStep(run.flow, { step: from.step, visits: from.visits }, "done", ""), { ...from, outcome: "done", reason: "" }, accepted);
+	}
+	if (choice === back && typeof ctx.ui.editor === "function") {
+		const note = ((await ctx.ui.editor(`A note for ${from.step}`, "")) ?? "").trim();
+		log("again", { note });
+		return { decision: { next: from.step, visits: { ...from.visits, [from.step]: (from.visits[from.step] ?? 0) + 1 } },
+			previous: previous && { ...previous, note, noteTitle: `The user sent "${from.step}" back to itself. Their note:` } };
+	}
+	log("stop");
+	return { decision, previous };
+}
+
+/** A step disputes the rejection it got: the user reads both sides and decides. The maker wins: the
+ * run goes on as if the judge had passed the work. The judge wins: the maker reruns and must do it.
+ * No UI or no answer: the run halts; /flow resume asks again. */
+async function atDispute(ctx: ExtensionContext, run: Run, step: string, attempt: number, visits: Visits, judge: Previous,
+	maker: Previous): Promise<{ decision: Decision; previous: Previous } | undefined> {
+	appendEvent(run.folder, "deviation", { step, attempt, rule: "disputed", detail: `${step} disputes ${judge.step}` });
+	const ask = ctx.hasUI && typeof ctx.ui?.select === "function" && typeof ctx.ui?.editor === "function";
+	if (ask) {
+		await ctx.ui.editor(`Dispute: ${step} disagrees with ${judge.step} (read only)`,
+			`${judge.step} said:\n${readable(judge.handoff)}\n\n${step} answers:\n${readable(maker.handoff)}`);
+	}
+	const forMaker = `${step} is right: go on`, forJudge = `${judge.step} is right: ${step} does it`, withNote = "Decide with a note";
+	const choice = ask ? await ctx.ui.select(`Dispute: ${step} or ${judge.step}?`, [forMaker, forJudge, withNote]) : undefined;
+	if (choice === forMaker) {
+		appendEvent(run.folder, "dispute", { step, judge: judge.step, attempt, answer: "maker" });
+		return {
+			decision: nextStep(run.flow, { step: judge.step, visits }, "done", ""),
+			previous: { ...maker, outcome: "done", reason: "", note: `The user sided with "${step}" against the objection of "${judge.step}".`, noteTitle: "The user's decision on a dispute:" },
+		};
+	}
+	if (choice === forJudge || choice === withNote) {
+		const note = choice === withNote ? ((await ctx.ui.editor(`Your decision for ${step}`, "")) ?? "").trim()
+			: `The user sided with "${judge.step}": do what it asks; don't dispute it again.`;
+		appendEvent(run.folder, "dispute", { step, judge: judge.step, attempt, answer: choice === forJudge ? "judge" : "note", note });
+		return { decision: again(run.flow, step, visits), previous: { ...judge, note, noteTitle: "The user's decision on a dispute:" } };
+	}
+	appendEvent(run.folder, "halted", { reason: "dispute", step });
+	writeRunJson(run, { status: "stopped", state: { step, visits } });
+	status(ctx, undefined);
+	say(ctx, `Flow ${run.flow.name} waits for your decision: ${step} disputes ${judge.step}; /flow resume asks again.`, "warning");
+	return undefined;
 }
 
 /** Visits before the step that was about to start: a halt leaves that visit uncounted. */

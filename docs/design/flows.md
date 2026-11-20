@@ -309,6 +309,34 @@ reads run records and writes a `STOP` file.
   | Pi updates | AKit's About / Update view shows the installed Pi version next to `testedPi`; when Pi is newer, it links the Pi changelog lines that mention extensions or the CLI. |
   | Plugins | Flows depends on no Pi plugin (`pi-subagents` and the like): children run with `-ne` and only the per-step `-e` list. |
 
+- **F23 Review from outside, edits from the terminal (2026-11-20, the user's request).** Export
+  (Copy for Review, Save for Review…; `akit flow export NAME`) writes one Markdown pack for an
+  agent with a fresh context: a request for per-step changes, the runner's rules, the flow at a
+  glance with defaults resolved, the check, and per step its settings, routes, child command,
+  instructions and the first-round prompt in the runner's layout (`FlowReviewExport`; a test
+  keeps its fixed sentences equal to `akit-flow.ts`), then each skill's full text once, the flow
+  file and exact runner excerpts (`FlowRender.reviewExcerpts`). The whole text goes through the
+  send scrub. The answer comes back through `akit flow set | set-flow | route | add-step |
+  remove-step | move-step` (`FlowEdit`): each shows the YAML diff and the check, writes the
+  brain's `flows/NAME.yaml` and commits only with `--yes`, and refuses a change that adds a
+  check error. The Flows screen's Generate… popover became an inline Rewrite with Pi under
+  the instructions, and Max loops is called Max rounds (entries into a step, not agent turns).
+  A Claude Code step has no skills of its own in a flow (`--safe-mode`); it may now load
+  skills from Claude Code's folders (`~/.claude/skills`, the project's `.claude/skills`) after
+  Pi's: the runner, the check and the chooser look there for Claude steps only.
+- **F22 Stop and ask, and disputes (2026-11-20).** A loop limit or an outcome without a route
+  no longer ends the run in a dead end. With a screen, Pi shows what the step said and asks:
+  at the limit, one more round of the capped step (logged as a `decision` event; resume adds
+  granted rounds to the limit again), accept as is (the step counts as done, and the next step
+  is told so) or stop; with no route, accept as is, send the step back to itself with a note,
+  or stop. Without a screen, or after Stop, the run ends as before, and `/flow resume` asks
+  again instead of refusing a finished run (only `visit-cap` and `no-route` ends resume). A
+  step that got a rejection from another step (not red checks, not a gate note) is told it may
+  end `blocked:disputed` with its arguments; the runner then shows both handoffs and asks: the
+  maker is right (the run goes on as if the judge had passed it), the judge is right (the maker
+  reruns and must comply) or a note. No answer halts the run (`halted: dispute`); resume asks
+  again. A flow's own `blocked:disputed` route wins over this. Disputes are deviations and
+  `dispute` events. Feature's implement has 5 loops: red checks and review notes share them.
 - **F21 A step on Claude Code (2026-11-20, the user's request).** A step may set
   `harness: claude-code`: the runner starts `claude -p` in the run's worktree instead of a Pi
   child (`claude-adapter.ts`), with `--safe-mode --strict-mcp-config` (no CLAUDE.md, skills,

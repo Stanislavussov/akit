@@ -98,6 +98,11 @@ renders a layer's flows from `ProjectBundle.flows` (JSON text from `AKitBrain`) 
 templates embedded in `AKitRender`; `AKitRender` still doesn't import `AKitFlows`. The app imports it
 for the Flows screen (`project.yml`): `App → AKitFlows`. 2026-11-17 (step 5): `AKitDoctor → AKitFlows` (`akit doctor` writes `pi-capabilities.json`, checks the run-records exclude, names kept run worktrees).
 
+2026-11-20 (flows F23, `flows.md`): `AKitRender` becomes a library product, so the app and
+`AKitCommandLine → AKitRender` read the runner's code for the review export
+(`FlowRender.reviewExcerpts`); `AKitRender` still doesn't import `AKitFlows` (only its tests do,
+to hold the export's sentences to the runner's source).
+
 2026-11-20 (attention, `attention.md`): new module `AKitAttention` (22 library targets now), on
 Foundation, Brain, Lab, Review, ErrorAnalysis, Flows, MCP and Knowledge: it reads what those
 screens keep and lists what needs the person, with a link to its place. Nothing below needs it;

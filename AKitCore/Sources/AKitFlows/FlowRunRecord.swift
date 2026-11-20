@@ -34,6 +34,10 @@ public struct FlowEvent: Equatable, Sendable {
         case gateEdits = "gate-edits"
         /// `/flow resume` picked the run up again (and removed `STOP`).
         case resume
+        /// The user's answer at a loop limit or a missing route: more, accept, again or stop.
+        case decision
+        /// The user settled a step's dispute with a rejection: maker, judge or note.
+        case dispute
     }
 
     public var kind: Kind

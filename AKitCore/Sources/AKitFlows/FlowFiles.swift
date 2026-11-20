@@ -65,6 +65,21 @@ public struct FlowFile: Sendable {
         return names
     }
 
+    /// Names of the skills in Claude Code's own folders (`~/.claude/skills`, the project's
+    /// `.claude/skills`): a Claude Code step may load them too (the runner looks there after
+    /// Pi's folders). Plugin skills are left out: the runner finds a skill by its folder name.
+    public static func claudeSkills(project: URL?, env: HarnessEnvironment) -> Set<String> {
+        let roots = [env.homeDirectory.appending(path: ".claude/skills")] + (project.map { [$0.appending(path: ".claude/skills")] } ?? [])
+        var names = Set<String>()
+        for root in roots {
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+            where FileManager.default.fileExists(atPath: root.appending(path: "\(name)/SKILL.md").path) {
+                names.insert(name)
+            }
+        }
+        return names
+    }
+
     /// `~/.akit/local/pi-capabilities.json` (written by `akit doctor` later, F20); nil when missing.
     public static func capabilities(env: HarnessEnvironment) -> PiCapabilities? {
         let url = env.homeDirectory.appending(path: ".akit/local/pi-capabilities.json")

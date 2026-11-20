@@ -80,6 +80,8 @@ targets:
       - package: AKitCore
         product: AKitFlows
       - package: AKitCore
+        product: AKitRender
+      - package: AKitCore
         product: AKitAttention
       - package: Meetings
         product: MeetingsCore
