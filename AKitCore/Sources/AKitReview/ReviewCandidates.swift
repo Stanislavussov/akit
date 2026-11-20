@@ -28,6 +28,7 @@ public enum ReviewCandidates {
                 // Below the role's own floor: the role said it shouldn't comment on it.
                 if finding.kind == .finding, finding.severity < role.minSeverity { continue }
                 anchor(&finding, worktree: worktree)
+                checkTrace(&finding, worktree: worktree)
                 (finding.fingerprint, finding.previousFingerprint) = fingerprints(finding, worktree: worktree)
                 if let same = result.firstIndex(where: { $0.fingerprint == finding.fingerprint && $0.kind == finding.kind }) {
                     let note = "\(finding.role):\(finding.title)"
@@ -58,7 +59,62 @@ public enum ReviewCandidates {
                              suggestion: (raw["suggestion"] as? String).map { ReviewNotes.defused(SecretFilter.masked($0)) }.flatMap { $0.isEmpty ? nil : $0 },
                              related: (raw["related"] as? [String]) ?? [])
         if raw["preExisting"] as? Bool == true { finding.preExisting = true }
+        finding.trace = trace(raw["trace"])
         return finding
+    }
+
+    /// The steps of a trace from the tool's JSON, masked like the rest; nil when there are none.
+    /// A step without a file or a quote can't be checked, so it isn't one.
+    static func trace(_ value: Any?) -> [ReviewFinding.TraceStep]? {
+        let steps = (value as? [[String: Any]] ?? []).prefix(maxTraceSteps).compactMap { raw -> ReviewFinding.TraceStep? in
+            guard let file = (raw["file"] as? String).map({ $0.hasPrefix("./") ? String($0.dropFirst(2)) : $0 }), !file.isEmpty,
+                  let quote = raw["quote"] as? String, !quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return ReviewFinding.TraceStep(file: file, line: (raw["line"] as? NSNumber).flatMap { $0.intValue >= 1 ? $0.intValue : nil },
+                                           quote: ReviewNotes.defused(SecretFilter.masked(quote)),
+                                           note: ReviewNotes.defused(SecretFilter.masked(raw["note"] as? String ?? "")))
+        }
+        return steps.isEmpty ? nil : Array(steps)
+    }
+
+    static let maxTraceSteps = 8
+
+    /// R68: a finding is traced when a step of its trace (the role's or the verifier's) quotes
+    /// code AKit finds beyond the anchored line: the caller, where the value comes from, the
+    /// consumer. A trace is more than the finding's own quote. Each step's `found` is set, and its line moves to the quote like the anchor's.
+    /// Without a worktree AKit can't tell; a carried finding from before R68 keeps its say.
+    static func checkTrace(_ finding: inout ReviewFinding, worktree: URL?) {
+        guard finding.kind == .finding, worktree != nil else { return }
+        if finding.carriedFrom != nil, finding.trace == nil, finding.verifier?.trace == nil { return }
+        var beyond = false
+        let anchored = finding
+        func check(_ steps: [ReviewFinding.TraceStep]?) -> [ReviewFinding.TraceStep]? {
+            steps.map { steps in
+                steps.map { step in
+                    var step = step
+                    // A short piece like `null` is on many lines: it counts only as the whole line.
+                    guard let lines = fileLines(step.file, worktree: worktree),
+                          let hits = quoteHits(step.quote, in: lines, minimum: 12) else { return step }
+                    step.found = !hits.isEmpty
+                    let given = step.line ?? 0
+                    if !hits.contains(given - 1), let nearest = hits.min(by: { abs($0 + 1 - given) < abs($1 + 1 - given) }) {
+                        step.line = nearest + 1
+                    }
+                    if step.found == true, isBeyondAnchor(step, of: anchored) { beyond = true }
+                    return step
+                }
+            }
+        }
+        finding.trace = check(anchored.trace)
+        if finding.verifier != nil { finding.verifier?.trace = check(anchored.verifier?.trace) }
+        finding.traced = beyond
+    }
+
+    /// A step on another line than the anchor's, in another file, or any found step of a finding
+    /// on a removed line (the new code is another version of the file).
+    static func isBeyondAnchor(_ step: ReviewFinding.TraceStep, of finding: ReviewFinding) -> Bool {
+        guard finding.side == .new, let file = finding.file, step.file == file, let anchor = finding.line else { return true }
+        guard let line = step.line else { return false }
+        return line != anchor
     }
 
     /// Models misnumber lines. When the evidence isn't within ±3 lines of the anchor but is on
@@ -160,6 +216,14 @@ public enum ReviewCandidates {
             }
             if !finding.evidence.isEmpty { text += "- Evidence: `\(finding.evidence.replacingOccurrences(of: "`", with: "'"))`\n" }
             if finding.evidenceFound == false { text += "- AKit: this quote is not in the file at the reviewed commit.\n" }
+            if let trace = finding.trace {
+                text += "- Trace:\n" + trace.enumerated().map { index, step in
+                    "  \(index + 1). `\(step.file)\(step.line.map { ":\($0)" } ?? "")` \(step.note): `\(step.quote.replacingOccurrences(of: "`", with: "'"))`"
+                        + (step.found == false ? " (AKit: this quote is not in the file)" : "")
+                }.joined(separator: "\n") + "\n"
+            } else if finding.traced == false {
+                text += "- Trace: none. The role named no code beyond the anchored lines.\n"
+            }
             if let suggestion = finding.suggestion { text += "- Suggestion: `\(suggestion.replacingOccurrences(of: "`", with: "'"))`\n" }
             if let path = finding.file, let line = finding.line, finding.side == .new, let lines = fileLines(path, worktree: worktree) {
                 let start = max(1, line - 5)
@@ -177,7 +241,8 @@ public enum ReviewCandidates {
     /// unverified, which never goes inline.
     /// `keepingUnmentioned`: a candidate without a verdict in the file keeps the one it has (a
     /// discussion changes some findings, not all).
-    static func apply(verdictsFile: URL, to candidates: [ReviewFinding], keepingUnmentioned: Bool = false) -> [ReviewFinding] {
+    /// `worktree`: checks the verifier's traces (R68); nil leaves `traced` as it is.
+    static func apply(verdictsFile: URL, to candidates: [ReviewFinding], keepingUnmentioned: Bool = false, worktree: URL? = nil) -> [ReviewFinding] {
         guard let object = (try? Data(contentsOf: verdictsFile)).flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else {
             return candidates
         }
@@ -190,14 +255,16 @@ public enum ReviewCandidates {
             byID[id] = ReviewFinding.Verdict(verdict: value, note: ReviewNotes.defused(SecretFilter.masked(raw["note"] as? String ?? "")), into: into,
                                              severity: (raw["severity"] as? String).flatMap(ReviewSeverity.init),
                                              confidence: (raw["confidence"] as? NSNumber).flatMap { (0...1).contains($0.doubleValue) ? $0.doubleValue : nil },
-                                             preExisting: raw["preExisting"] as? Bool)
+                                             preExisting: raw["preExisting"] as? Bool, trace: trace(raw["trace"]))
         }
         return candidates.map { finding in
             var finding = finding
             if var verdict = byID[finding.id] {
                 // A discussion that only changes a severity keeps the earlier say on "before this change".
                 if keepingUnmentioned, verdict.preExisting == nil { verdict.preExisting = finding.verifier?.preExisting }
+                if keepingUnmentioned, verdict.trace == nil { verdict.trace = finding.verifier?.trace }
                 finding.verifier = verdict
+                checkTrace(&finding, worktree: worktree)
             } else if !keepingUnmentioned { finding.verifier = nil }
             if let verdict = byID[finding.id], verdict.verdict == .merged, let into = verdict.into, !finding.related.contains(into) {
                 finding.related.append(into)

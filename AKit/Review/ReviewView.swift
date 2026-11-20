@@ -595,6 +595,7 @@ struct ReviewRunDetail: View {
                                          + String(format: "%.2f", finding.finalConfidence))
                                         .font(.caption).foregroundStyle(.secondary)
                                     Text(placement.reason).font(.caption).foregroundStyle(.secondary)
+                                    ReviewTraceView(finding: finding)
                                 }
                                 Spacer()
                                 if run.spec.local == nil {
@@ -704,6 +705,43 @@ struct ReviewRunDetail: View {
     }
 }
 
+/// R68: the path a finding claims, from the cause to the harm: the verifier's when it gave one,
+/// else the role's. A step whose quote AKit didn't find in the file is marked.
+struct ReviewTraceView: View {
+    let finding: ReviewFinding
+
+    var body: some View {
+        let byVerifier = finding.verifier?.trace != nil
+        let steps = finding.verifier?.trace ?? finding.trace ?? []
+        if !steps.isEmpty {
+            DisclosureGroup("Trace (\(steps.count) \(steps.count == 1 ? "step" : "steps")\(byVerifier ? ", by the verifier" : ""))") {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 6) {
+                                Text("\(index + 1). \(step.file)\(step.line.map { ":\($0)" } ?? "")").font(.caption.monospaced())
+                                if step.found == false {
+                                    Label("Not in the file", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                                }
+                            }
+                            if !step.note.isEmpty { Text(step.note).font(.caption) }
+                            Text(step.quote).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(3)
+                        }
+                    }
+                }
+                .textSelection(.enabled)
+                .padding(.top, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.caption)
+            .help("The path from the cause to the harm the finding claims; AKit checked each quote against the code")
+        } else if finding.traced == false {
+            Label("No trace: the finding names no code beyond its own lines", systemImage: "arrow.triangle.branch")
+                .font(.caption).foregroundStyle(.orange)
+        }
+    }
+}
+
 /// One request: what AKit wants to write, where, and your decision.
 struct ReviewRequestCard: View {
     @Environment(ReviewModel.self) private var model
@@ -761,6 +799,7 @@ struct ReviewRequestCard: View {
                 Text("Verifier: \(verdict.verdict.rawValue)" + (verdict.note.isEmpty ? "" : " — \(verdict.note)"))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if let finding { ReviewTraceView(finding: finding) }
             if !request.isSent, request.sent?.error == nil, request.kind != .delete,
                !ReviewLanguage.isCzech(request.text, marker: run.spec.posting.marker.value) {
                 Label("Not in Czech: Send won't send it. AKit sends only Czech comments to GitLab; edit it into Czech.",

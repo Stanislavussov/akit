@@ -106,13 +106,14 @@ struct ReviewRunFixture {
         fake("role-bug-hunter", """
         {"findings":[
           {"file":"src/Auth.swift","line":9,"side":"new","title":"Hlavička se celá zapisuje do logu","evidence":"log(\\"Auth: \\\\(header)\\")",
-           "why":"Token se dostane do logu, kde ho přečte každý, kdo má k logům přístup","severity":"high","confidence":0.9,"suggestion":"log(\\"Auth header present\\")"},
+           "why":"Token se dostane do logu, kde ho přečte každý, kdo má k logům přístup","severity":"high","confidence":0.9,"suggestion":"log(\\"Auth header present\\")",
+           "trace":[{"file":"src/Auth.swift","line":2,"quote":"func auth(header: String) {","note":"hlavička přichází jako parametr"}]},
           {"file":"src/Auth.swift","line":2,"title":"Přejmenovat auth","evidence":"func auth","why":"Pojmenování","severity":"low","confidence":0.9}
         ]}
         """)
         fake("role-tests", """
         {"findings":[{"file":"src/Auth.swift","line":3,"title":"hlavička se CELÁ zapisuje do logu!","evidence":"log(\\"Auth: \\\\(header)\\")",
-          "why":"Totéž","severity":"medium","confidence":0.7}]}
+          "why":"Totéž","severity":"medium","confidence":0.7,"trace":[{"file":"src/Auth.swift","line":2,"quote":"func auth(header: String) {","note":"hlavička přichází jako parametr"}]}]}
         """)
         fake("role-requirements", """
         {"findings":[{"kind":"ac","file":null,"line":null,"title":"Žádný tajný údaj se nedostane do logu","evidence":"","why":"nesplněno: hlavička se zapisuje do logu",

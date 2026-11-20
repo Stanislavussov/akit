@@ -1,6 +1,6 @@
 # AKit Review: AI review of merge requests
 
-Status: 2026-10-15, built on branch `akit-review`; R53 (Debug… and the full log) built 2026-10-28; R54–R56 (log details, recall first, Markdown for the eye) built 2026-10-30; R57–R60 (AKit's own clone, setup commands, git before MCP) built 2026-11-01; R61 (old worktrees removed, restored on use) built 2026-11-02; R62 (Why Missed?) built 2026-11-02; R63 (a scenario's roles without YAML) built 2026-11-02; R64 (criteria from the text, no diff versions with a clone) built 2026-11-02; R65 (a new run takes the earlier worktree) built 2026-11-02; R66 (publish at once when the GitLab MCP server has no drafts) built 2026-11-02; MCP change (R2, R3 revised, below) on branch
+Status: 2026-10-15, built on branch `akit-review`; R53 (Debug… and the full log) built 2026-10-28; R54–R56 (log details, recall first, Markdown for the eye) built 2026-10-30; R57–R60 (AKit's own clone, setup commands, git before MCP) built 2026-11-01; R61 (old worktrees removed, restored on use) built 2026-11-02; R62 (Why Missed?) built 2026-11-02; R63 (a scenario's roles without YAML) built 2026-11-02; R64 (criteria from the text, no diff versions with a clone) built 2026-11-02; R65 (a new run takes the earlier worktree) built 2026-11-02; R66 (publish at once when the GitLab MCP server has no drafts) built 2026-11-02; R68 (causes, not symptoms: a checked trace on every finding) built 2026-11-20 on branch `review-trace`; MCP change (R2, R3 revised, below) on branch
 `review-mcp`. Grilled with the user on 2026-10-15 from a
 research plan (Pi with the `github-copilot` provider, GitLab, Azure DevOps). The decisions
 below are agreed. The user's employer allows both parts: Copilot from a third-party harness
@@ -15,6 +15,10 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 `akit-review:v1` is still read. The fingerprint drops the title (Findings, below). AC rows
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. 2026-11-09 (R67): stricter review: a `regressions` role (required in Feature, Bugfix and Dependency upgrade), a harder `bug-hunter` (10 findings, no drop for a missing triggering input), an adversarial check before an empty list, a "where it can break" list in the brief; missing acceptance criteria are never a gap or a finding. Mermaid diagrams of a run under One run.
+
+Added 2026-11-20 (branch `review-trace`, the user's request: "it finds strange results and doesn't look for
+the cause"): R68, every finding carries the path from its cause to its harm, AKit checks it against the code,
+and a finding without one stays in AKit (section "Causes, not symptoms").
 
 Added 2026-11-02 (branch `review-send-publish`): R66, publishing at once, after the user's
 confirmation, when the GitLab MCP server has no draft notes (GitLab's own MCP server); the send
@@ -476,6 +480,46 @@ Not taken: CI layers (Danger, reviewdog, SAST, a `.gitlab-ci.yml` template) are 
 repository set-up, and a team set-up is not a goal; the team agreement on 🤖 comments is the
 user's. Automatic choice of a verifier model of another family (R25: the user wants it explicit).
 
+## Causes, not symptoms (2026-11-20, R68)
+
+The user: the review "finds strange results and doesn't look for the cause of the problem". The runs on the
+personal Mac (52 runs, 140 findings, 46 rejected by the verifier) showed why:
+
+- **The roles hardly read code.** In run `…-7726` `bug-hunter`, `requirements` and `domain` called no
+  `read` or `grep` at all; `bug-hunter` submitted a `high` finding with confidence 0.95, and the verifier,
+  after 21 reads, rejected it. `requirements` marked three criteria `not found` that the code met outside the
+  diff. Other runs show `tests`, `requirements` and `observability` with no tool call. The prompt of 6
+  (2026-11-06, fewer tokens) said "Files read earlier in this session are already in it: use them, don't
+  read them again"; a light model read it as "read nothing" and worked from what the brief had opened.
+- **Thinking went to the wrong pass.** The roles ran on Pi's default thinking (`thinking: passes` empty), the
+  verifier on `xhigh`: the pass that only judges did the reasoning.
+- **Pressure for numbers.** "A change with no finding at all is rare" and "a review that finds nothing … most
+  likely missed something" made a light model fill the list: guesses, and "no test for X" findings that are
+  true and useless (the verifier confirms them, because they are true).
+- **Nothing asks for the cause.** "Is the cause fixed, not the symptom?" was one line of a checklist; a
+  finding was one quoted line and a `why`. Confidence 1 means "traced end to end", but no one asked for the
+  trace.
+
+Decisions:
+
+| # | Question | Decision |
+|---|---|---|
+| R68a | What must a finding show? | Its `trace`: 2–6 steps in order from the cause to the harm, each a file, a line, the exact code (`quote`) and what happens there (`note`). At least one step on another line than the anchor: the caller, where the value comes from, the consumer. Required by `akit_submit_findings` for `kind: "finding"` (not for `ac` and `question`) |
+| R68b | Who checks it? | AKit, without a model (`ReviewCandidates.checkTrace`): each step's quote must be in its file at the reviewed commit (a piece under 12 characters counts only as the whole line), a misnumbered step moves to its quote, and `traced` is true when a found step lies beyond the anchored line. Without a worktree AKit can't tell (`traced` nil); a finding carried from a run before R68 keeps nil |
+| R68c | What does an untraced finding do? | It stays in AKit: "No traced path: …" (after the quote check). Move Inline still posts it. It is still listed with its trace, so recall is kept (R55) and precision is the posting rules' job |
+| R68d | The verifier? | It checks each trace step by step (a step that doesn't lead to the next is a reason to reject) and, when it confirms a finding whose trace is missing or not found, gives its own `trace` in the verdict; AKit checks that one the same way. A discussion's verdict without a trace keeps the earlier one |
+| R68e | Where does the cause come from? | The brief gets a "Cause and mechanism" part: in Bugfix, the bug's mechanism at the base commit (where the wrong value is born, the steps to what the user saw) and whether the diff cuts it at the cause or hides the symptom; otherwise where the code decides each behaviour the change is about, also outside the diff. 550 words instead of 400 |
+| R68f | How do the roles work? | The system text says how to check a suspicion: as a claim, back to its cause, forward to its harm, anchored where it starts, one more look for what disproves it. The role's tail no longer says "don't read again": files already in the session aren't read again, but before each finding the role opens what it depends on. "A change with no finding is rare" is gone; the three likeliest breaks, refuted with code, stay before an empty list (R67) |
+| R68g | Roles | `requirements` searches the repository before `not found` and says what it searched for; code outside the diff that meets a criterion is `code`. `tests`: a missing test alone is a finding only on a path a risk points to (the brief's "Where it can break", another role's finding, a bug's repro), otherwise `nit` (under every role's floor). `bug-hunter` starts a bugfix from the brief's mechanism |
+| R68h | Thinking | Built-in `thinking: passes: high` (the brief and the roles); a brain, a profile or a run still sets its own. A run takes longer |
+| R68i | A bug on the way | `do_not_comment: - pure speculation: nothing …` was a one-key YAML map and reached the prompt as `[AnyHashable(…)]`. The built-in roles quote their items, and `ReviewYAML.strings` reads a one-key map as `key: value` |
+
+Prompts are version 8, the extension v16 (the findings' and verdicts' `trace`). The Review screen shows
+a finding's trace under its request and under Only in AKit (Trace (N steps), a step AKit didn't find is
+marked), or "No trace". Not done here: a cause pass of its own before the roles, and measuring the change
+on the eval set (`eval-set.json`) and past merge requests: the share of findings the verifier rejects, the
+share with a trace, reads per finding.
+
 ## Change map and impact on other repositories (2026-10-24)
 
 Asked by the user on 2026-10-24: "a graphic view of the merge request for me: the links, what
@@ -888,7 +932,9 @@ flowchart LR
     TH -- "no" --> O
     TH -- "yes" --> EV{"quote in the file,<br/>no person's open thread<br/>on these lines?"}
     EV -- "no" --> O
-    EV -- "yes" --> IG{"path not ignored?"}
+    EV -- "yes" --> TR{"a trace step AKit found<br/>beyond the anchored line?"}
+    TR -- "no" --> O
+    TR -- "yes" --> IG{"path not ignored?"}
     IG -- "no" --> O
     IG -- "yes" --> POS{"GitLab can hold a comment there,<br/>on a line the change touches?"}
     POS -- "no" --> MF["summary: more findings"]
@@ -1120,9 +1166,10 @@ Added 2026-10-22 (branch `review-audit-2`). The code decides these, not a pass:
 | A person's open thread on the same lines (±2, not AKit's, on the reviewed commit: an older version's line numbers point elsewhere) | `ReviewPlanner.personThread` | Plan: only in AKit, "… already has an open thread on these lines". Resolved threads stay with the prompt and the verifier |
 | Inline only on lines the change touches | `DiffPositions.isInDiff` (added, removed, or a context line GitLab shows) | Plan: a line in the summary |
 | Secrets in added lines | Gather writes `<run>/scan.json` (`ReviewScan`): the file, the line and the masked line cut to ±80 characters around the mask, never the value; ignored files and diffs over GitLab's limits (when git made them) are scanned too, at most 20; a file that usually holds secrets (`.env`, credentials) is one secret by path, unread; a match of only the password rules is weaker (`high`) and skipped in test, fixture and example paths | After the verifier: a finding of role `secret-scan`, `critical` (`high` for a password), confirmed by AKit. A role's finding on the same lines is merged into it, so the secret keeps its own text. The person's-thread and ignored-path rules don't hold it back |
+| A trace beyond the anchor (R68) | `ReviewCandidates.checkTrace` sets each trace step's `found` (its quote in its file, a piece under 12 characters only as the whole line; the line moves to the quote) and `traced`: a found step on another line than the anchor's, in another file, or of a finding on a removed line; the verifier's trace counts too. nil without a worktree, for `ac` and `question`, and for a carried finding from before R68 | Plan: only in AKit, "No traced path: …" |
 | The size of the change | `scan.json` `changedLines` (added + removed lines of files not ignored; a local rename counts as removed and added); `cost: max_changed_lines`, default 6000 (1500 before R37; over it the review alerts and goes on), per run in New Review… → This run only or `--max-changed-lines` | Before the passes, before the credit question: **A big change** (Run Anyway / Stop); the command line goes on with `--over-cap` |
 
-The first three don't apply to a finding the user moved inline. Existing runs without
+The first three and the trace don't apply to a finding the user moved inline. Existing runs without
 `scan.json` skip the last two.
 
 ## Pi steps
@@ -1188,6 +1235,13 @@ pi:                                    # review.yaml, a profile, or one run (New
   "severity": "high", "confidence": 0.86,
   "suggestion": "_logger.LogDebug(\"Auth header present: {Present}\", header is not null);",
   "related": ["f5"],
+  "trace": [
+    { "file": "src/Auth/AuthMiddleware.cs", "line": 31, "quote": "var header = context.Request.Headers[\"Authorization\"];",
+      "note": "The bearer token comes from the request", "found": true },
+    { "file": "src/Auth/AuthMiddleware.cs", "line": 42, "quote": "logger.LogInformation(\"Auth: {Header}\", header)",
+      "note": "It is logged in full", "found": true }
+  ],
+  "traced": true,
   "verifier": { "verdict": "confirmed", "note": "…" }
 }
 ```

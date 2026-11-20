@@ -143,9 +143,10 @@ extension ReviewProcessTests {
             run.fake("role-bug-hunter", """
             {"findings":[
               {"file":"src/Auth.swift","line":3,"side":"new","title":"Hlavička se celá zapisuje do logu","evidence":"log(\\"Auth: \\\\(header)\\")",
-               "why":"Token se dostane do logu","severity":"high","confidence":0.9},
+               "why":"Token se dostane do logu","severity":"high","confidence":0.9,"trace":[{"file":"src/Auth.swift","line":2,"quote":"func auth(header: String) {","note":"hlavička přichází jako parametr"}]},
               {"file":"@api/src/routes.ts","line":2,"side":"new","title":"Frontend volá starou cestu","evidence":"orders: \\"/v2/orders\\",",
-               "why":"Aplikace stále volá /v1/orders, které API už nemá","severity":"high","confidence":0.9}
+               "why":"Aplikace stále volá /v1/orders, které API už nemá","severity":"high","confidence":0.9,
+               "trace":[{"file":"@api/src/routes.ts","line":1,"quote":"export const routes = {","note":"API vystavuje jen nové cesty"}]}
             ]}
             """)
             run.fake("verifier", """

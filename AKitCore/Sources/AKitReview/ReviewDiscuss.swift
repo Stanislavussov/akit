@@ -133,7 +133,7 @@ public enum ReviewDiscuss {
             // Verdicts first: a finding the discussion rejects no longer holds its place. So a verdict
             // can only name a finding of an earlier version, not one this file adds.
             let before = current.findings
-            current.findings = ReviewCandidates.apply(verdictsFile: file, to: current.findings, keepingUnmentioned: true)
+            current.findings = ReviewCandidates.apply(verdictsFile: file, to: current.findings, keepingUnmentioned: true, worktree: run.worktree)
             for (old, new) in zip(before, current.findings) where old.verifier != new.verifier {
                 changes.changed.append("\(new.id): \(old.verifier?.verdict.rawValue ?? "unverified") → \(new.verifier?.verdict.rawValue ?? "unverified")")
             }

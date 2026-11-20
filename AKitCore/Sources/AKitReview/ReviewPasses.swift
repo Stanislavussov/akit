@@ -566,7 +566,7 @@ public enum ReviewPasses {
                 log.verifierSession = verified.session
                 log.verifierSessionFile = verified.session.flatMap { sessionFile(id: $0, in: folder.appending(path: "sessions")) }?.path
                 try ReviewJSON.write(log, to: logFile)
-                candidates = ReviewCandidates.apply(verdictsFile: folder.appending(path: "passes/verifier.json"), to: candidates)
+                candidates = ReviewCandidates.apply(verdictsFile: folder.appending(path: "passes/verifier.json"), to: candidates, worktree: readable)
             }
             for var finding in carried {
                 finding.id = "f\(candidates.count + 1)"

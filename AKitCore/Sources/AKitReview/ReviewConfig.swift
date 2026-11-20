@@ -445,7 +445,13 @@ public enum ReviewYAML {
     }
 
     static func strings(_ value: Any?) -> [String] {
-        if let list = value as? [Any] { return list.compactMap { $0 as? String ?? ($0 as? CustomStringConvertible)?.description } }
+        // `- a: b` without quotes is a one-key map in YAML: the writer meant the text "a: b".
+        if let list = value as? [Any] {
+            return list.compactMap { item in
+                if let map = item as? [String: Any], map.count == 1, let (key, inner) = map.first, let text = inner as? String { return "\(key): \(text)" }
+                return item as? String ?? (item as? CustomStringConvertible)?.description
+            }
+        }
         if let one = value as? String { return [one] }
         return []
     }
