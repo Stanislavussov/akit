@@ -307,8 +307,18 @@ reads run records and writes a `STOP` file.
   | Machine facts | `akit doctor` runs `tools/pi-flow-probe.sh` logic and stores `~/.akit/local/pi-capabilities.json` per Mac. The Flows screen greys out what this Mac's Pi can't do (and says why); `akit flow check` uses the same file. |
   | Tests | `make check-pi` runs the TS tests and the e2e test against each Pi version in a list (`npm pack` of `minPi` and the newest release, in a fake home). Passing raises `testedPi`. The vendored `.d.ts` stays at `minPi`. |
   | Pi updates | AKit's About / Update view shows the installed Pi version next to `testedPi`; when Pi is newer, it links the Pi changelog lines that mention extensions or the CLI. |
-  | Plugins | Flows depends on no Pi plugin (`pi-subagents` and the like): children run with `-ne` and only the per-step `-e` list. |
+  | Plugins | Flows depends on no Pi plugin (`pi-subagents` and the like). Since F25 a Pi child has the user's whole Pi setup; the guard blocks the tools that start agents or flows. |
 
+- **F25 A Pi step has the user's Pi setup (2026-11-21, the user's decision).** Clarify and plan
+  read Azure DevOps, Figma and the like through the user's MCP servers and extensions, which
+  `-ns -ne` cut off. A Pi child now starts without them: it has the user's extensions, MCP
+  servers, skills and AGENTS.md, plus the guard, the handoff tool and the step's `-e` list.
+  `-t` only turns Pi's built-in tools on or off (`+grep`, `-edit` …) to match the step's, so a
+  read-only step still can't edit while its MCP and extension tools stay; the guard checks only
+  built-ins against the step's list and still blocks tools that start agents or flows (D28).
+  The runner and AKit's session recorder see `AKIT_FLOW_HANDOFF` in a step's child and do
+  nothing there. Tried live: a read-only step listed Azure DevOps projects through the guard.
+  This replaces the isolation part of F15; a Claude Code step stays isolated (F21).
 - **F24 Where the parts meet (2026-11-20, from a review of the edges).** A step gets exactly
   the tools its prompt names: `-t` (Pi) and `--tools` (Claude) always carry the step's, else the
   flow's, else the built-ins (Pi alone turns on only read, bash, edit, write). A Claude Code step

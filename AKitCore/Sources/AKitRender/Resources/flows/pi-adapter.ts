@@ -85,7 +85,7 @@ export interface ChildOptions {
 	thinking?: string;
 	skills: string[];
 	tools: string[];
-	/** `-e` paths: the guard, akit-record, the step's own list (F15). */
+	/** `-e` paths: the guard, the handoff tool, the step's own list (F15). */
 	extensions: string[];
 	prompt: string;
 	info: PiInfo;
@@ -96,16 +96,21 @@ export interface ChildOptions {
 	onEvent?: (event: Record<string, unknown>) => void;
 }
 
-/** The child command (flows.md, "Child command form"); no `-p`, the task is the prompt argument. */
+/** Pi's built-in tools, and the ones it turns on by default. */
+const BUILT_IN = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const ON_BY_DEFAULT = ["read", "bash", "edit", "write"];
+
+/** The child command (flows.md, "Child command form"); no `-p`, the task is the prompt argument.
+ * The child has the user's whole Pi setup (extensions, MCP servers, skills, AGENTS.md); `-t`
+ * only turns Pi's built-in tools on or off to match the step's, so the rest stays. */
 export function childArgs(o: ChildOptions): string[] {
-	const args = ["--mode", "json", "--session-dir", o.sessionDir, "-ns"];
+	const args = ["--mode", "json", "--session-dir", o.sessionDir];
 	for (const skill of o.skills) args.push("--skill", skill);
-	args.push("-ne");
 	for (const ext of o.extensions) args.push("-e", ext);
 	if (o.thinking && o.info.features["--thinking"]) args.push("--model", o.model, "--thinking", o.thinking);
 	else args.push("--model", o.thinking ? `${o.model}:${o.thinking}` : o.model);
-	// `-t` is a hint (the guard enforces); it would also hide the runner's own flow_handoff.
-	if (o.tools.length > 0 && o.info.features["--tools"]) args.push("-t", [...o.tools, "flow_handoff"].join(","));
+	const change = BUILT_IN.flatMap((t) => (o.tools.includes(t) === ON_BY_DEFAULT.includes(t) ? [] : [`${o.tools.includes(t) ? "+" : "-"}${t}`]));
+	if (change.length > 0 && o.info.features["--tools"]) args.push("-t", change.join(","));
 	args.push("--", o.prompt);
 	return args;
 }

@@ -37,8 +37,9 @@ public enum FlowReviewExport {
     public static let piEnd = "When the step is finished, call the tool flow_handoff once with what you did and the outcome: done, failed or blocked (with a reason)."
     public static let claudeEnd = "When the step is finished, answer with the handoff in the JSON schema you were given: what you did and the outcome: done, failed or blocked (with a reason)."
     public static let claudeBash = "On Claude Code, bash runs only commands that read (git log, git diff, cat, ls); anything that writes or runs a program, tests included, is denied. The runner runs the step's checks itself."
+    public static let piSetup = "Your Pi setup adds its own tools too (MCP servers, extensions): use them when the task needs them."
     /// Every fixed sentence above, for the test against the runner's source.
-    public static let runnerPhrases = [precedence, toolsLine, earlierTitle, questionsTitle, mostRecentEnd, ownResult, disputeLine, piEnd, claudeEnd, claudeBash]
+    public static let runnerPhrases = [precedence, toolsLine, earlierTitle, questionsTitle, mostRecentEnd, ownResult, disputeLine, piEnd, claudeEnd, claudeBash, piSetup]
 
     /// The guard's tools when neither the step nor the flow names any (akit-flow-guard.ts DEFAULT_TOOLS).
     static let defaultTools = ["read", "bash", "edit", "write", "grep", "find", "ls"]
@@ -105,7 +106,7 @@ public enum FlowReviewExport {
 
     private static let runnerRules = [
         "## How the runner works", "",
-        "- Every step is a fresh child process: `pi` (the default) or `claude -p` (a step that runs on Claude Code, read-only). The run has its own git worktree; the runner commits after every step.",
+        "- Every step is a fresh child process: `pi` (the default) or `claude -p` (a step that runs on Claude Code, read-only). A Pi step has the user's whole Pi setup (extensions, MCP servers, skills, AGENTS.md); only its built-in tools follow the step's list, and tools that start agents or flows are blocked. The run has its own git worktree; the runner commits after every step.",
         "- A step ends with a handoff (schema below: goal, done, files, open_questions, notes, plan, outcome, reason). The runner adds what git saw (`changed`), which wins over the files the model named. No valid handoff: the step runs once more, then the run stops.",
         "- Prompt order, the same every time so Pi's cache keeps the start: role and step, task, the diff command (steps with bash), the tools line, the step's instructions, how to weigh inputs, one line per earlier step, open questions, the plan (from the last planner step), the step's own last result (on a rerun), the most recent handoff in full, the user's note, the dispute line, the tail of failed checks, the closing line. Notes are cut at 4000 characters in prompts.",
         "- Routes: `outcome:reason` or `outcome:*` → a step id or `end`. Without a route, done goes on to the next step (or ends after the last); failed and blocked stop and ask the user.",
@@ -243,7 +244,7 @@ public enum FlowReviewExport {
         var lines = ["You are the \(step.agent) step \"\(step.id)\" of the AKit flow \"\(flow.name)\" (run <run id>).", "Task: <the task given to /flow>"]
         if tools.contains("bash") { lines.append("The run's changes: git diff <base commit>") }
         lines.append("Your tools: \(tools.joined(separator: ", ")). \(toolsLine)")
-        if step.isClaudeCode, tools.contains("bash") { lines.append(claudeBash) }
+        if step.isClaudeCode { if tools.contains("bash") { lines.append(claudeBash) } } else { lines.append(piSetup) }
         if let prompt = step.prompt, !prompt.isEmpty { lines += ["", prompt] }
         lines += ["", precedence]
         let previous = index > 0 ? flow.steps[index - 1] : nil
@@ -282,11 +283,14 @@ public enum FlowReviewExport {
             for name in step.skills { parts.append("--add-dir <\(name) folder>") }
             return parts.joined(separator: " \\\n  ")
         }
-        var parts = ["pi --mode json --session-dir <run>/sessions", "-ns"]
+        var parts = ["pi --mode json --session-dir <run>/sessions"]
         parts += step.skills.map { "--skill <\($0) folder>" }
-        parts += ["-ne", "-e akit-flow-guard.ts", "-e akit-flow-handoff.ts"] + step.extensions.map { "-e \($0)" }
+        parts += ["-e akit-flow-guard.ts", "-e akit-flow-handoff.ts"] + step.extensions.map { "-e \($0)" }
         parts.append("--model \(step.model.isEmpty ? "<none>" : step.model)" + (step.thinking.map { " --thinking \($0)" } ?? ""))
-        parts.append("-t \((effectiveTools(step, flow: flow) + ["flow_handoff"]).joined(separator: ","))")
+        // Only Pi's built-in tools change; the user's Pi setup (extensions, MCP, skills) stays.
+        let tools = effectiveTools(step, flow: flow), onByDefault = ["read", "bash", "edit", "write"]
+        let change = defaultTools.filter { tools.contains($0) != onByDefault.contains($0) }.map { (tools.contains($0) ? "+" : "-") + $0 }
+        if !change.isEmpty { parts.append("-t \(change.joined(separator: ","))") }
         parts.append("-- \"<the prompt below>\"")
         return parts.joined(separator: " \\\n  ")
     }

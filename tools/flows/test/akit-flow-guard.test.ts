@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import akitFlowGuard, { type GuardRules, guardHandler } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow-guard.ts";
+import akitFlowGuard, { forbidden, type GuardRules, guardHandler } from "../../../AKitCore/Sources/AKitRender/Resources/flows/akit-flow-guard.ts";
 import { redact } from "../../../AKitCore/Sources/AKitRender/Resources/flows/flow-core.ts";
 import type { ExtensionAPI } from "../../../AKitCore/Sources/AKitRender/Resources/flows/pi-adapter.ts";
 
@@ -48,9 +48,10 @@ test("a built-in tool not in the step's list is blocked with a deviation", () =>
 	blocked(rules({ tools: ["read"] }), "write", { path: "a.ts", content: "x" }, "tool-not-allowed");
 });
 
-test("an mcp__ tool not in the list is blocked", () => {
-	const line = blocked(rules(), "mcp__gitlab__create_mr", { title: "t", token: "secret-value" }, "tool-not-allowed");
-	assert.equal(line?.input, "title, token", "only the input's keys, never its values");
+test("tools of the user's Pi setup (MCP, extensions) are allowed; only built-ins follow the list", () => {
+	for (const tool of ["mcp__azuredeps__wit_work_item", "codemode", "ffgrep"]) assert.equal(forbidden(rules({ tools: ["read"] }), tool, {}), undefined, tool);
+	const line = blocked(rules({ tools: ["read"] }), "bash", { command: "ls" }, "tool-not-allowed");
+	assert.equal(line?.input, "ls");
 });
 
 test("subagent tools are blocked even when listed", () => {

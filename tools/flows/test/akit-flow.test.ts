@@ -92,6 +92,18 @@ function events(run: string): Record<string, unknown>[] {
 	return readFileSync(join(run, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 }
 
+test("in a flow step's child the extension registers nothing: a step never runs flows", () => {
+	const seen: string[] = [];
+	const record = (what: string) => () => seen.push(what);
+	process.env.AKIT_FLOW_HANDOFF = "/tmp/part";
+	try {
+		akitFlow({ registerCommand: record("command"), registerTool: record("tool"), on: record("on"), registerShortcut: record("shortcut") } as never);
+	} finally {
+		delete process.env.AKIT_FLOW_HANDOFF;
+	}
+	assert.deepEqual(seen, []);
+});
+
 test("the extension registers /flow and the tool akit_flow", () => {
 	const names: string[] = [];
 	const tools: { name: string; parameters: { required: string[] } }[] = [];
@@ -112,15 +124,17 @@ test("a 4-step flow runs in order and is recorded", async () => {
 	const run = onlyRun();
 	const first = calls()[0];
 	const a = first.args;
-	assert.deepEqual(a.slice(0, 5), ["--mode", "json", "--session-dir", join(run, "sessions"), "-ns"]);
+	assert.deepEqual(a.slice(0, 4), ["--mode", "json", "--session-dir", join(run, "sessions")]);
+	// The user's whole Pi setup: no -ns or -ne.
+	assert.ok(!a.includes("-ns") && !a.includes("-ne"));
 	assert.equal(a[a.indexOf("--skill") + 1], join(project, ".pi", "skills", "tdd"));
-	assert.ok(a.includes("-ne") && a.includes("--model") && !a.includes("-p"));
+	assert.ok(a.includes("--model") && !a.includes("-p"));
 	assert.match(a[a.length - 1], /Task: add CSV export/);
 	assert.ok(first.stdinNull, "stdin is /dev/null");
 	const impl = calls()[1].args;
 	assert.equal(impl[impl.indexOf("--thinking") + 1], "high");
 	const chk = calls()[2].args;
-	assert.equal(chk[chk.indexOf("-t") + 1], "read,bash,flow_handoff");
+	assert.equal(chk[chk.indexOf("-t") + 1], "-edit,-write", "only built-ins change; extension and MCP tools stay");
 	const ev = events(run);
 	assert.ok(ev.every((e) => e.schema === "akit-flow-event/1"));
 	assert.deepEqual(ev.map((e) => e.type), ["run-start", "step-start", "step-end", "step-start", "step-end", "step-start", "step-end", "step-start", "step-end", "run-end"]);
@@ -439,12 +453,12 @@ test("a claude-code step also finds Claude Code's own skills; a Pi step doesn't"
 	assert.equal(resolveSkill(project, "tdd", true), join(project, ".pi", "skills", "tdd"));
 });
 
-test("a step without its own tools gets the flow's, named in its prompt and given to Pi with -t", async () => {
+test("a step without its own tools gets the flow's, named in its prompt; -t turns only Pi's built-ins on or off", async () => {
 	flow([{ id: "plan", agent: "planner", model: "m/a" }], { tools: ["read", "grep", "bash"] });
 	await flowCommand("feature x", ctx());
 	const a = calls()[0].args;
-	assert.equal(a[a.indexOf("-t") + 1], "read,grep,bash,flow_handoff");
-	assert.match(a.at(-1) ?? "", /Your tools: read, grep, bash\./);
+	assert.equal(a[a.indexOf("-t") + 1], "-edit,-write,+grep");
+	assert.match(a.at(-1) ?? "", /Your tools: read, grep, bash\. .*\nYour Pi setup adds its own tools too/);
 });
 
 test("a claude-code step gets the project's AGENTS.md and is told its bash only reads", async () => {
@@ -1088,7 +1102,7 @@ test("akit_flow with a yes runs the flow", async () => {
 	assert.match(calls()[0].args.at(-1) ?? "", /Task: add CSV export/);
 });
 
-test("a child loads only the guard, the handoff tool and the step's named extensions, with its rules", async () => {
+test("a child loads the guard, the handoff tool and the step's named extensions besides the user's own, with its rules", async () => {
 	flow([
 		{ id: "plan", agent: "planner", model: "m/a", extensions: ["gitlab.ts"] },
 		{ id: "review", agent: "reviewer", model: "m/b", paths: ["docs/**"] },
@@ -1097,7 +1111,7 @@ test("a child loads only the guard, the handoff tool and the step's named extens
 	const flows = join(repo, "AKitCore", "Sources", "AKitRender", "Resources", "flows");
 	const ext = (args: string[]) => args.flatMap((a, i) => (args[i - 1] === "-e" ? [a] : []));
 	const [plan, review] = calls().map((c) => c.args);
-	assert.ok(plan.indexOf("-ne") < plan.indexOf("-e"), "-ne comes before the -e list");
+	assert.ok(!plan.includes("-ne"), "the user's own extensions load as well");
 	assert.deepEqual(ext(plan), [join(flows, "akit-flow-guard.ts"), join(flows, "akit-flow-handoff.ts"), join(project, ".pi", "extensions", "gitlab.ts")]);
 	assert.deepEqual(ext(review), [join(flows, "akit-flow-guard.ts"), join(flows, "akit-flow-handoff.ts")]);
 	const run = onlyRun();

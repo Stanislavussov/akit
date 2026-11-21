@@ -16,7 +16,8 @@ export interface GuardRules {
 	run: string;
 	step: string;
 	attempt: number;
-	/** Allowed tool names; any other tool, built-in, extension or `mcp__`, is blocked. */
+	/** The step's built-in tools; another built-in is blocked. Tools of the user's Pi setup
+	 * (extensions, MCP servers) are allowed, except the ones that start agents or flows. */
 	tools: string[];
 	/** Paths `edit` / `write` may touch, relative to the worktree; empty: anywhere in the worktree. */
 	paths: string[];
@@ -128,7 +129,7 @@ export function inputSummary(tool: string, input: Record<string, unknown>): stri
 export function forbidden(rules: GuardRules, tool: string, input: Record<string, unknown>): { rule: string; reason: string } | undefined {
 	if (tool === HANDOFF_TOOL) return undefined;
 	if (isSubagentTool(tool)) return { rule: "subagent", reason: `Step ${rules.step} may not start other agents (${tool}); another agent is another step of the flow.` };
-	if (!rules.tools.includes(tool)) return { rule: "tool-not-allowed", reason: `The tool ${tool} is not in step ${rules.step}'s tools (${rules.tools.join(", ") || "none"}).` };
+	if (DEFAULT_TOOLS.includes(tool) && !rules.tools.includes(tool)) return { rule: "tool-not-allowed", reason: `The tool ${tool} is not in step ${rules.step}'s tools (${rules.tools.join(", ") || "none"}).` };
 	if (tool === "bash" && !rules.bash) return { rule: "bash", reason: `Step ${rules.step} may not run bash: its writes are limited to ${rules.paths.join(", ")}.` };
 	if (WRITE_TOOLS.has(tool)) {
 		if (rules.records && inRecords(rules.records, rules.root, filePath(input)))
@@ -285,6 +286,8 @@ let keys: string[] = [];
 const listeners = new Set<() => void>();
 
 export default function akitFlow(pi: ExtensionAPI): void {
+	// A flow step's child loads the user's extensions, this one too: a step never runs flows.
+	if (process.env.AKIT_FLOW_HANDOFF) return;
 	const controller = new AbortController();
 	keys = pickShortcuts(9, userKeys());
 	registerStepShortcuts(pi, keys, showStep);
@@ -845,6 +848,9 @@ export function stepTools(flow: Flow, step: FlowStep | undefined): string[] {
 	return step?.tools?.length ? step.tools : flow.tools?.length ? flow.tools : DEFAULT_TOOLS;
 }
 
+/** A Pi step has the user's Pi setup besides its built-in tools. */
+export const PI_SETUP = "Your Pi setup adds its own tools too (MCP servers, extensions): use them when the task needs them.";
+
 /** On Claude Code every command that would need a permission is denied (--permission-prompts none). */
 export const CLAUDE_BASH = "On Claude Code, bash runs only commands that read (git log, git diff, cat, ls); anything that writes or runs a program, tests included, is denied. The runner runs the step's checks itself.";
 
@@ -857,7 +863,7 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 		// A step without bash can't run git: naming the diff would only make it ask for a tool it lacks.
 		...(tools.includes("bash") ? [`The run's changes: git diff ${run.worktree.base}`] : []),
 		`Your tools: ${tools.join(", ")}. Work with these; a tool you don't have is not a reason to end blocked.`,
-		...(claude && tools.includes("bash") ? [CLAUDE_BASH] : []),
+		...(claude ? (tools.includes("bash") ? [CLAUDE_BASH] : []) : [PI_SETUP]),
 	];
 	if (step?.prompt) lines.push("", step.prompt);
 	lines.push("", PRECEDENCE);
@@ -2044,7 +2050,7 @@ export interface ChildOptions {
 	thinking?: string;
 	skills: string[];
 	tools: string[];
-	/** `-e` paths: the guard, akit-record, the step's own list (F15). */
+	/** `-e` paths: the guard, the handoff tool, the step's own list (F15). */
 	extensions: string[];
 	prompt: string;
 	info: PiInfo;
@@ -2055,16 +2061,21 @@ export interface ChildOptions {
 	onEvent?: (event: Record<string, unknown>) => void;
 }
 
-/** The child command (flows.md, "Child command form"); no `-p`, the task is the prompt argument. */
+/** Pi's built-in tools, and the ones it turns on by default. */
+const BUILT_IN = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const ON_BY_DEFAULT = ["read", "bash", "edit", "write"];
+
+/** The child command (flows.md, "Child command form"); no `-p`, the task is the prompt argument.
+ * The child has the user's whole Pi setup (extensions, MCP servers, skills, AGENTS.md); `-t`
+ * only turns Pi's built-in tools on or off to match the step's, so the rest stays. */
 export function childArgs(o: ChildOptions): string[] {
-	const args = ["--mode", "json", "--session-dir", o.sessionDir, "-ns"];
+	const args = ["--mode", "json", "--session-dir", o.sessionDir];
 	for (const skill of o.skills) args.push("--skill", skill);
-	args.push("-ne");
 	for (const ext of o.extensions) args.push("-e", ext);
 	if (o.thinking && o.info.features["--thinking"]) args.push("--model", o.model, "--thinking", o.thinking);
 	else args.push("--model", o.thinking ? `${o.model}:${o.thinking}` : o.model);
-	// `-t` is a hint (the guard enforces); it would also hide the runner's own flow_handoff.
-	if (o.tools.length > 0 && o.info.features["--tools"]) args.push("-t", [...o.tools, "flow_handoff"].join(","));
+	const change = BUILT_IN.flatMap((t) => (o.tools.includes(t) === ON_BY_DEFAULT.includes(t) ? [] : [`${o.tools.includes(t) ? "+" : "-"}${t}`]));
+	if (change.length > 0 && o.info.features["--tools"]) args.push("-t", change.join(","));
 	args.push("--", o.prompt);
 	return args;
 }
