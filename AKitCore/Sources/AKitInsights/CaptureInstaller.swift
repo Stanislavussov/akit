@@ -256,6 +256,8 @@ public struct CaptureInstaller {
         const short = (text: string) => (Array.from(text).length > 40 ? `${cut(text, 39)}…` : text);
 
         export default function (pi: any) {
+          // A flow step's child (AKit flows) is not the user's session: its record is the run's.
+          if (process.env.AKIT_FLOW_HANDOFF) return;
           // The run that just ended, until the next prompt. Unrated: `pending`; rated: `rated`,
           // with what it was rated, so ⌥G / ⌥X / ⌥R change it and ⌥U takes it back.
           let pending: { anchor?: string } | undefined;

@@ -13,7 +13,8 @@ export interface GuardRules {
 	run: string;
 	step: string;
 	attempt: number;
-	/** Allowed tool names; any other tool, built-in, extension or `mcp__`, is blocked. */
+	/** The step's built-in tools; another built-in is blocked. Tools of the user's Pi setup
+	 * (extensions, MCP servers) are allowed, except the ones that start agents or flows. */
 	tools: string[];
 	/** Paths `edit` / `write` may touch, relative to the worktree; empty: anywhere in the worktree. */
 	paths: string[];
@@ -125,7 +126,7 @@ export function inputSummary(tool: string, input: Record<string, unknown>): stri
 export function forbidden(rules: GuardRules, tool: string, input: Record<string, unknown>): { rule: string; reason: string } | undefined {
 	if (tool === HANDOFF_TOOL) return undefined;
 	if (isSubagentTool(tool)) return { rule: "subagent", reason: `Step ${rules.step} may not start other agents (${tool}); another agent is another step of the flow.` };
-	if (!rules.tools.includes(tool)) return { rule: "tool-not-allowed", reason: `The tool ${tool} is not in step ${rules.step}'s tools (${rules.tools.join(", ") || "none"}).` };
+	if (DEFAULT_TOOLS.includes(tool) && !rules.tools.includes(tool)) return { rule: "tool-not-allowed", reason: `The tool ${tool} is not in step ${rules.step}'s tools (${rules.tools.join(", ") || "none"}).` };
 	if (tool === "bash" && !rules.bash) return { rule: "bash", reason: `Step ${rules.step} may not run bash: its writes are limited to ${rules.paths.join(", ")}.` };
 	if (WRITE_TOOLS.has(tool)) {
 		if (rules.records && inRecords(rules.records, rules.root, filePath(input)))

@@ -34,6 +34,8 @@ let keys: string[] = [];
 const listeners = new Set<() => void>();
 
 export default function akitFlow(pi: ExtensionAPI): void {
+	// A flow step's child loads the user's extensions, this one too: a step never runs flows.
+	if (process.env.AKIT_FLOW_HANDOFF) return;
 	const controller = new AbortController();
 	keys = pickShortcuts(9, userKeys());
 	registerStepShortcuts(pi, keys, showStep);
@@ -594,6 +596,9 @@ export function stepTools(flow: Flow, step: FlowStep | undefined): string[] {
 	return step?.tools?.length ? step.tools : flow.tools?.length ? flow.tools : DEFAULT_TOOLS;
 }
 
+/** A Pi step has the user's Pi setup besides its built-in tools. */
+export const PI_SETUP = "Your Pi setup adds its own tools too (MCP servers, extensions): use them when the task needs them.";
+
 /** On Claude Code every command that would need a permission is denied (--permission-prompts none). */
 export const CLAUDE_BASH = "On Claude Code, bash runs only commands that read (git log, git diff, cat, ls); anything that writes or runs a program, tests included, is denied. The runner runs the step's checks itself.";
 
@@ -606,7 +611,7 @@ function prompt(run: Run, stepId: string, agent: string, previous: Previous | un
 		// A step without bash can't run git: naming the diff would only make it ask for a tool it lacks.
 		...(tools.includes("bash") ? [`The run's changes: git diff ${run.worktree.base}`] : []),
 		`Your tools: ${tools.join(", ")}. Work with these; a tool you don't have is not a reason to end blocked.`,
-		...(claude && tools.includes("bash") ? [CLAUDE_BASH] : []),
+		...(claude ? (tools.includes("bash") ? [CLAUDE_BASH] : []) : [PI_SETUP]),
 	];
 	if (step?.prompt) lines.push("", step.prompt);
 	lines.push("", PRECEDENCE);

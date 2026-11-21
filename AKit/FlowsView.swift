@@ -475,7 +475,7 @@ struct FlowsView: View {
                     updateStep(index) { $0.tools = on ? $0.tools + [tool] : $0.tools.filter { $0 != tool } }
                 }
             }
-            .help("The step's tool allow-list; the guard blocks every other tool. None checked: the flow's tools")
+            .help("The step's built-in tools; the guard blocks the other built-ins. Tools of your Pi setup (MCP servers, extensions) stay, except ones that start agents or flows. None checked: the flow's tools")
             // One row when it fits, else one picker per row: the card never grows past the window.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) { routePickers(index: index, flow: flow) }
@@ -506,7 +506,7 @@ struct FlowsView: View {
                 }
             }
         }
-        .help("Only these skills reach the step (Pi: -ns --skill). A Claude Code step has none of its own in a flow (--safe-mode): it gets only these, from Pi's or Claude Code's skill folders, listed in its system prompt and read with Read")
+        .help("A Pi step has all your Pi skills; these are loaded for it too (--skill), from any folder. A Claude Code step has none of its own in a flow (--safe-mode): it gets only these, from Pi's or Claude Code's skill folders, listed in its system prompt and read with Read")
     }
 
     /// This Mac's Pi (from `akit doctor`) next to the newest Pi the runner was tested on (F20).
