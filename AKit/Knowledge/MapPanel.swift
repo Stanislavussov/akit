@@ -16,10 +16,9 @@ struct MapPanel: View {
                 tabBar
                 Divider()
                 HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(KnowledgeModel.mapName(id)).font(.headline).lineLimit(1)
-                        Text("areas/\(id).excalidraw").font(.caption).foregroundStyle(.secondary).lineLimit(1).textSelection(.enabled)
-                    }
+                    Text(KnowledgeModel.mapName(id)).font(.headline).lineLimit(1)
+                        .help("areas/\(id).excalidraw")
+                        .layoutPriority(2)
                     Spacer()
                     if let notice = model.notice {
                         Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -29,6 +28,8 @@ struct MapPanel: View {
                         .help(model.mapEditing
                             ? "Back to viewing: a click on a block opens its note. Your changes are saved already"
                             : "Edit the map. Every change is saved to the file at once and committed when you close the map, after 5 minutes without edits, or when AKit quits")
+                    Button("History", systemImage: "clock.arrow.circlepath") { model.historyRequest = id }
+                        .help("Every version of the map from the base's git, with the blocks and arrows that changed; restore any of them")
                     Button("Show in Finder", systemImage: "folder") {
                         if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.mapFile(id)]) }
                     }
@@ -43,6 +44,7 @@ struct MapPanel: View {
                 .labelStyle(.titleAndIcon)
                 .controlSize(.small)
                 .padding(8)
+                HistoryLine(id: id, path: "areas/\(id).excalidraw")
                 Divider()
                 if let plan = model.arrowRequest, plan.map == id {
                     AddArrowBanner(plan: plan)

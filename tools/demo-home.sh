@@ -1283,7 +1283,29 @@ file "$LOCAL/docs/export.md" <<<"Orders export as CSV: id and total."
 # Knowledge base (Knowledge screen, guide knowledge.ru.md): the work world built from the sample
 # base's content (KnowledgeSeed.swift, one source of made-up notes): two spaces with their
 # settings, a note of every kind and maps, committed.
-"$AKIT" kb seed --world work >/dev/null
+GIT_AUTHOR_DATE="$(rago 20d)" GIT_COMMITTER_DATE="$(rago 20d)" "$AKIT" kb seed --world work >/dev/null
+# History of orders-api (K40): two made-up edits after the seed; the last one puts the seed's
+# text back, so every other screen shows the note as seeded.
+kbedit() { # age, text of the ## blocks
+    GIT_AUTHOR_DATE="$(rago "$1")" GIT_COMMITTER_DATE="$(rago "$1")" "$AKIT" kb edit payments/orders-api --stdin --yes --base work >/dev/null <<<"$2"
+}
+kbedit 9d '## Events
+
+- order created: sent once the order is saved; see [[order-to-billing]].
+
+## Owners
+
+The payments team.
+'
+kbedit 2d '## Events
+
+- order created: sent once the order is saved; see [[order-to-billing]].
+- retry: a failed publish is retried three times, then the order waits in the outbox.
+
+## Owners
+
+The checkout team.
+'
 
 # The repo that orders-api's note points at (repo: and files:), found under ~/Projects.
 ORDERS="$DEMO/Projects/orders-api"

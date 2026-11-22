@@ -274,6 +274,8 @@ shot review-local-find   $MAIN --section review --query "$DEMO/work/orders-servi
 shot knowledge           $MAIN --section knowledge --select payments/orders-api
 shot knowledge-groups    $MAIN --section knowledge --select payments/flows/order-to-billing
 shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
+# History of orders-api: the made-up edits of tools/demo-home.sh, the version before the last selected.
+shot knowledge-history   $MAIN --section knowledge --select payments/orders-api --tab history
 # Ask Pi about the note: the panel under it with a made-up chat (no Pi runs), the second question about a section.
 shot knowledge-ask       $MAIN --section knowledge --select payments/orders-api --tab knowledge-ask
 # Log… of the made-up chat: how Pi was called and its steps (a made-up log; no Pi runs).

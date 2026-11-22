@@ -20,6 +20,7 @@ struct NotePanel: View {
             }
             if let entry = model.noteEntry {
                 toolbar(entry)
+                HistoryLine(id: entry.id, path: entry.path, words: KnowledgeModel.wordCount(model.text))
                 NoteTagsRow(entry: entry).id(entry.id)
                 Divider()
                 if model.showingProperties {
@@ -146,11 +147,9 @@ struct NotePanel: View {
     private func toolbar(_ entry: KnowledgeBase.NoteEntry) -> some View {
         @Bindable var model = model
         return HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(entry.title).font(.headline).lineLimit(1)
-                Text(entry.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).textSelection(.enabled)
-            }
-            .help(entry.path)
+            Text(entry.title).font(.headline).lineLimit(1)
+                .help(entry.path)
+                .layoutPriority(2)
             Spacer(minLength: 4)
             if let notice = model.notice {
                 Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -163,6 +162,9 @@ struct NotePanel: View {
                 .toggleStyle(.button)
                 .fixedSize()
                 .help("Change the note's kind and fields (its frontmatter), one line each; saved at once, committed with your other edits")
+            Button("History", systemImage: "clock.arrow.circlepath") { model.historyRequest = entry.id }
+                .fixedSize()
+                .help("Every version of the note from the base's git, with what changed; restore any of them")
             Button("Ask Pi", systemImage: "bubble.left.and.text.bubble.right") {
                 if model.ask.isOpen, selectedText == nil { model.ask.isOpen = false } else { model.showAsk(passage: selectedText) }
             }
@@ -190,6 +192,30 @@ struct NotePanel: View {
         .labelStyle(.titleAndIcon)
         .controlSize(.small)
         .padding(8)
+    }
+}
+
+/// The line under a panel's buttons (K40): the file's path, then changed, created, the number
+/// of versions, edits not committed yet and a note's words, from the base's git; the last
+/// commit's message on hover. Long lines wrap rather than cut.
+struct HistoryLine: View {
+    @Environment(KnowledgeModel.self) private var model
+    let id: String
+    let path: String
+    var words: Int?
+
+    var body: some View {
+        let history = model.histories[id]
+        Text(([path] + [history.map(KnowledgeModel.summary(of:)), words.map { $0 == 1 ? "1 word" : "\($0) words" }].compactMap(\.self))
+            .joined(separator: " · "))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 4)
+            .help(history?.versions.first.map { "Last commit: \($0.message) (\($0.short)). History shows every version" } ?? path)
     }
 }
 

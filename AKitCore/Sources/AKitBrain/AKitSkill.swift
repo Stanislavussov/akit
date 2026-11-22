@@ -641,6 +641,16 @@ akit kb add-folder FOLDER --area AREA [--name N] [--description T] [--yes] [--js
                                                    # line; without --yes it shows the note, --yes
                                                    # writes and commits it. Only when the user asked
                                                    # for it; otherwise propose the note
+akit kb history NOTE|MAP [REV] [--limit N] [--json]
+                                                   # every version from the base's git, renames
+                                                   # followed, newest first; with REV (a hash from
+                                                   # the list) that version's text; a removed note
+                                                   # or map by its id
+akit kb restore NOTE|MAP REV [--yes] [--json]      # put a version back (a removed one too): without
+                                                   # --yes the diff; --yes backs up, writes and
+                                                   # commits "Restore …", a new version, so it can
+                                                   # be undone the same way. Only when the user
+                                                   # asked for this rollback
 akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
                                                    # commit; without --yes it only shows what goes
 akit kb pi-template [--yes] [--json]               # the core layer's section about the base, for Pi
