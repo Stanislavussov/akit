@@ -34,7 +34,7 @@
 - «Где код этого сервиса?» → поле `repo:` в начале заметки, например `repo: git@example.com:shop/orders-api.git`.
 - «Как данные идут от заказа до счёта?» → заметка вида `flow` в папке `flows/`.
 
-![Экран Knowledge: слева одна колонка — список заметок с развёрнутыми пространствами lint-examples (число заметок 8), logistics (4) и payments (6); в payments карта overview и заметки: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Ask Pi, Copy, Paste и остальные кнопки заметки (часть из них — в меню More, если не хватает места); ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service, path ~/Projects/orders-api и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева одна колонка — список заметок с развёрнутыми пространствами lint-examples (число заметок 8), logistics (4) и payments (6); в payments карта overview и заметки: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и кнопки Edit, Properties, History, Ask Pi и меню More с остальными кнопками заметки; под ними строка с путём areas/payments/orders-api.md, датой Changed, датой created, числом версий (3 versions) и слов; ниже метки, часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service, path ~/Projects/orders-api и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
 
 ### Главные слова
 <!-- section: overview-terms -->
@@ -390,7 +390,7 @@ shop/wiki  wiki: How we deploy.  [~/Documents/wiki]
 ## Читать и править заметку
 <!-- section: note -->
 
-Панель заметки показывает заголовок и путь файла, например `areas/payments/orders-api.md`. Если панель узкая, **Export PDF…**, **Open in Obsidian**, **Rename…** и **Delete…** (а ещё уже — и **Copy**, **Paste**) уходят в меню **More** (значок ⋯); **Edit**, **Properties** и **Ask Pi** видны всегда. Ниже — поля из начала заметки (`kind`, `repo`, `files`) таблицей и текст заметки, оформленный как в Obsidian: заголовки, списки и задачи `- [ ]`, таблицы, цитаты и выноски `> [!note]`, блоки кода. Блок ```` ```mermaid ```` показан диаграммой; кнопки над ней открывают её крупно и копируют её текст. Ссылка `[[…]]` показана коротким именем; нажмите её, и откроется заметка (на нужном разделе, если в ссылке есть `#раздел`) или карта. Сломанная ссылка серая.
+Панель заметки показывает заголовок, а под кнопками — строку о файле: путь (например `areas/payments/orders-api.md`), когда заметку меняли последний раз (**Changed**), когда создали (**created**), сколько у неё версий в истории и сколько в ней слов. Если есть правки, которые ещё не попали в историю, там же написано **edits not committed yet**. Наведите мышь на строку — увидите, каким был последний коммит. Если панель узкая, **Export PDF…**, **Open in Obsidian**, **Rename…** и **Delete…** (а ещё уже — и **Copy**, **Paste**) уходят в меню **More** (значок ⋯); **Edit**, **Properties**, **History** и **Ask Pi** видны всегда. Ниже — поля из начала заметки (`kind`, `repo`, `files`) таблицей и текст заметки, оформленный как в Obsidian: заголовки, списки и задачи `- [ ]`, таблицы, цитаты и выноски `> [!note]`, блоки кода. Блок ```` ```mermaid ```` показан диаграммой; кнопки над ней открывают её крупно и копируют её текст. Ссылка `[[…]]` показана коротким именем; нажмите её, и откроется заметка (на нужном разделе, если в ссылке есть `#раздел`) или карта. Сломанная ссылка серая.
 
 **Export PDF…** сохраняет заметку в файл PDF: заголовок, таблица полей и текст, как на экране, на страницах A4. AKit спрашивает, куда сохранить (по умолчанию папка «Загрузки»), и показывает файл в Finder. Диаграмма Mermaid в PDF остаётся текстом блока.
 
@@ -403,7 +403,23 @@ shop/wiki  wiki: How we deploy.  [~/Documents/wiki]
 
 AKit пишет файл целиком и атомарно: сначала во временный файл, потом подменяет. Байты, которые вы не меняли, остаются как были: переносы строк, начало заметки, порядок полей.
 
-![Панель заметки orders-api в режиме Edit: нажатая кнопка Edit, рядом Properties, Ask Pi и остальные кнопки заметки (часть — в меню More); ниже часть Relations и Markdown заметки моноширинным шрифтом: строки kind: service, repo: git@example.com:shop/orders-api.git, path: ~/Projects/orders-api, files: [src/events/order-created.ts] между линиями ---, заголовок # orders-api и раздел ## Events со строками order created и retry](images/knowledge-note.png)
+![Панель заметки orders-api в режиме Edit: нажатая кнопка Edit, рядом Properties, History, Ask Pi и остальные кнопки заметки (часть — в меню More); ниже часть Relations и Markdown заметки моноширинным шрифтом: строки kind: service, repo: git@example.com:shop/orders-api.git, path: ~/Projects/orders-api, files: [src/events/order-created.ts] между линиями ---, заголовок # orders-api и раздел ## Events со строками order created и retry](images/knowledge-note.png)
+
+### Просто: история изменений: History
+<!-- section: note-history -->
+
+AKit хранит каждую версию каждой заметки и карты: база — это git-репозиторий, и каждое изменение попадает в коммит. Правка из терминала коммитится сразу. Правки на экране и в Obsidian — когда вы закрываете вкладку, через 5 минут без правок или когда AKit закрывается; правки, сделанные при закрытом AKit, — при следующем запуске. Если заметку переименовали, её история не теряется.
+
+1. Нажмите **History** над заметкой или картой. Или щёлкните заметку или карту в списке правой кнопкой и выберите **History…**.
+2. Слева — версии, сверху самая новая: дата, что сделали (например `Edit payments/orders-api`), короткий хеш коммита. У первой версии написано **Created**.
+3. Выберите версию. **Changes** показывает, что поменяет откат: строки с `-` уйдут, с `+` вернутся. **Text** показывает заметку целиком такой, какой она была.
+4. **Restore This Version…** спрашивает ещё раз, потом пишет эту версию и делает коммит. Текущая версия не пропадает: она остаётся в истории, а её копия лежит в `~/.akit/local/backups/knowledge`. Передумали — откройте **History** и верните её так же.
+
+У карты **Changes** показывает блоки и стрелки, а не текст файла.
+
+![Окно History of orders-api: строка Changed, created, 3 versions; слева три версии — две Edit payments/orders-api и первая Seed: sample base с пометкой Created, выбрана средняя; справа переключатель Changes и Text и разница: строка retry уйдёт, The checkout team сменится на The payments team; внизу кнопки Close и Restore This Version…](images/knowledge-history.png)
+
+В терминале: `akit kb history payments/orders-api` — список версий, `akit kb history payments/orders-api 4e19b81` — текст версии, `akit kb restore payments/orders-api 4e19b81` — показать разницу, с `--yes` — вернуть. Так же возвращается удалённая заметка: `akit kb history payments/old-api` находит её историю по имени.
 
 ### Средне: править из терминала: akit kb edit
 <!-- section: note-edit-cli -->

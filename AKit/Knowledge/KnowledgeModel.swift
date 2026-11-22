@@ -95,6 +95,10 @@ final class KnowledgeModel {
     var deleteRequest: String?
     /// What the last write did, under the panel's buttons.
     var notice: String?
+    /// The histories (K40) of the open note and map, by id: their dates in the panel headers.
+    var histories: [String: KnowledgeHistory] = [:]
+    /// History…: the note or map whose versions the sheet shows. Snapshots: `--tab history`.
+    var historyRequest: String?
     private(set) var loaded = false
     /// The screen's tabs: Notes (spaces, notes, maps), Inbox (agents' proposals, 5.3), Lint (4.1).
     enum ScreenTab: String { case notes = "Notes", inbox = "Inbox", lint = "Lint" }
@@ -241,6 +245,7 @@ final class KnowledgeModel {
         if let select, allNotes.contains(where: { $0.id == select }) {
             open(select)
             if DebugSnapshot.options?.tab == "delete" { deleteRequest = select }
+            if DebugSnapshot.options?.tab == "history" { historyRequest = select }
             if DebugSnapshot.options?.tab == "obsidian-setup", let base { obsidianSetup = base.root }
         } else if let select, targets.maps.contains(select) {
             open(map: select)
@@ -459,6 +464,7 @@ final class KnowledgeModel {
         if !mapTabs.contains(id) { mapTabs.append(id) }
         map = id
         noteBesideMap = false
+        refreshHistory(of: id)
     }
 
     /// Whether a map file has no element left (an unreadable one is not empty: Lint reports it).
@@ -573,6 +579,7 @@ final class KnowledgeModel {
                 mapHashes[id] = hash
                 if id == map { mapIsEmpty = Self.isEmpty(map: bytes) }
                 enqueue(path, in: base)
+                if histories[id]?.pending == false { refreshHistory(of: id) }
                 if let note { noteRelations = (try? base.mapGraph().relations(of: note)) ?? [] }
             case .conflict:
                 mapConflict = MapConflict(id: id, bytes: bytes)
@@ -839,6 +846,7 @@ final class KnowledgeModel {
         }
         noteRelations = (try? base.mapGraph().relations(of: note)) ?? []
         if ask.isOpen, let askNote { ask.show(askNote) }
+        refreshHistory(of: note)
     }
 
     // MARK: - Writes
@@ -851,6 +859,7 @@ final class KnowledgeModel {
             text = newText
             noteHashes[note] = KnowledgeWrite.hash(of: base.noteFile(note))
             enqueue(path, in: base)
+            if histories[note]?.pending == false { refreshHistory(of: note) }
             if let index = allNotes.firstIndex(where: { $0.id == note }), let title = KnowledgeNote(text: newText).title,
                title != allNotes[index].title {
                 reload()
@@ -1441,7 +1450,10 @@ final class KnowledgeModel {
             return (await queue.flush(), true)
         }.value
         if result.1 { unqueued.subtract(retry) }
-        if case .committed(let paths) = result.0 { notice = paths.count == 1 ? "Committed 1 edit." : "Committed \(paths.count) edits." }
+        if case .committed(let paths) = result.0 {
+            notice = paths.count == 1 ? "Committed 1 edit." : "Committed \(paths.count) edits."
+            for id in [note, map].compactMap(\.self) { refreshHistory(of: id) }
+        }
     }
 
     /// Before AKit quits or rebuilds: the model's own pending work, then every base of this Mac.

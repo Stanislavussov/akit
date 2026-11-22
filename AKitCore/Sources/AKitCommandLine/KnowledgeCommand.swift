@@ -70,6 +70,14 @@ extension AKitCLI {
                                         ~/ paths that don't exist; hints for a kind not in kb.yaml
                                         and a block of an unrelated area. --json: {base, findings:
                                         [{rule, severity, file, element, link, message, fix}], counts}
+      akit kb history NOTE|MAP [REV] [--limit N] [--json] [--base PATH|WORLD]
+                                        Every version of a note or a map from the base's git,
+                                        renames followed, newest first: hash, date, the commit's
+                                        message; created, changed, edits not committed yet. A
+                                        removed one by its id. With REV (a hash from the list),
+                                        that version's text. --json: {base, history: {kind, id,
+                                        path, exists, pending, created, changed, versions:
+                                        [{commit, short, date, message, path, change, from}]}}
       akit kb inbox [--json] [--base PATH|WORLD]
                                         The proposals waiting in inbox/ for the person: id, kind
                                         (note, arrow or map), target, reason, created, author, and the
@@ -202,6 +210,13 @@ extension AKitCLI {
                                         the Trash and commit the removal at once. Without --yes it
                                         only shows what would go. Proposals in inbox/ are rejected,
                                         not removed
+      akit kb restore NOTE|MAP REV [--yes] [--json] [--base PATH|WORLD]
+                                        For a person only. Put a note or a map back as it was in
+                                        the version REV (kb history), a removed one too. Without
+                                        --yes it shows the diff; --yes commits the pending edits,
+                                        backs the file up (~/.akit/local/backups/knowledge/),
+                                        writes it and commits "Restore …": a new version, so a
+                                        restore is undone the same way
       akit kb pi-template [--yes] [--json] [--brain PATH]
                                         For a person only. Add a short section about the base to
                                         the brain's core layer for Pi only (templates/kb-pi.md,
@@ -361,6 +376,8 @@ extension AKitCLI {
             return try await knowledgeKinds(&args, json: json, base: chosen, env: env, out: out)
         case "set":
             return try await knowledgeSet(&args, json: json, base: chosen, env: env, out: out)
+        case "history", "restore":
+            return try await knowledgeHistory(command!, &args, json: json, base: chosen, env: env, out: out)
         case "edit":
             return try await knowledgeEdit(&args, json: json, base: chosen, cwd: cwd, env: env, out: out, input: input)
         case "area":
@@ -1046,6 +1063,30 @@ extension AKitCLI {
         }
     }
 
+    struct HistoryAnswer: Encodable {
+        let base: String
+        let history: KnowledgeHistory
+    }
+
+    struct VersionAnswer: Encodable {
+        let base: String
+        let id: String
+        let version: KnowledgeHistory.Version
+        let text: String
+    }
+
+    struct RestoreAnswer: Encodable {
+        let base: String
+        let id: String
+        let path: String
+        let version: KnowledgeHistory.Version
+        let changed: Bool
+        /// false without --yes, and when nothing changes.
+        let restored: Bool
+        let backup: String?
+        let diff: String
+    }
+
     struct EditAnswer: Encodable {
         let base: String
         let note: String
@@ -1161,6 +1202,79 @@ extension AKitCLI {
     }
 
     /// `kb set NOTE KEY=VALUE… [--unset KEY]…` (person only).
+    /// `kb history NOTE|MAP [REV]` (read) and `kb restore NOTE|MAP REV [--yes]` (person only, K40).
+    private static func knowledgeHistory(_ command: String, _ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
+                                         env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+        let yes = command == "restore" && args.flag("--yes")
+        let limit = try command == "history" ? args.value("--limit").map { value in
+            guard let number = Int(value), number > 0 else { throw Failure(message: "--limit takes a number above 0.") }
+            return number
+        } : nil
+        let usage = command == "history" ? "Use: akit kb history NOTE|MAP [REV] [--limit N] [--json] [--base PATH|WORLD]"
+            : "Use: akit kb restore NOTE|MAP REV [--yes] [--json] [--base PATH|WORLD]"
+        guard let name = args.positional() else { throw Failure(message: usage) }
+        let rev = args.positional()
+        try args.finish()
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        if command == "history" {
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
+            do {
+                let history = try await base.history(name, limit: rev == nil ? limit : nil, env: env)
+                if let rev {
+                    let version = try history.version(rev)
+                    let text = String(decoding: try await base.contents(of: version, env: env), as: UTF8.self)
+                    out(json ? encode(VersionAnswer(base: base.root.path, id: history.id, version: version, text: text)) : text)
+                    return 0
+                }
+                if json {
+                    out(encode(HistoryAnswer(base: base.root.path, history: history)))
+                    return 0
+                }
+                var head = [history.created.map { "Created \(formatter.string(from: $0))" }, history.changed.map { "changed \(formatter.string(from: $0))" },
+                            count(history.versions.count, "version")].compactMap(\.self).joined(separator: " · ")
+                if history.pending { head += " · edits not committed yet (they are with the next commit)" }
+                if !history.exists { head += " · removed now (akit kb restore \(history.id) REV brings a version back)" }
+                out(([history.id + "  " + history.path, head] + history.versions.map { version in
+                    let change = switch version.change {
+                    case .added: "  (added)"
+                    case .deleted: "  (removed)"
+                    case .renamed: "  (renamed from \(version.from ?? "?"))"
+                    case .changed: ""
+                    }
+                    return "\(version.short)  \(formatter.string(from: version.date))  \(version.message)\(change)"
+                }).joined(separator: "\n"))
+            } catch {
+                throw Failure(message: error.message)
+            }
+            return 0
+        }
+        guard let rev else { throw Failure(message: usage) }
+        let base = try await writable(chosen)
+        let plan: KnowledgeRestorePlan
+        var backup: URL?
+        do {
+            plan = try await base.planRestore(name, to: rev, env: env)
+            if yes { backup = try await base.restore(plan, env: env) }
+        } catch {
+            throw Failure(message: error.message)
+        }
+        let what = "\(plan.history.id) to \(plan.version.short) (\(formatter.string(from: plan.version.date)), \(plan.version.message))"
+        if json {
+            out(encode(RestoreAnswer(base: base.root.path, id: plan.history.id, path: plan.path, version: plan.version, changed: plan.changes,
+                                     restored: yes && plan.changes, backup: backup?.path, diff: plan.diff)))
+        } else if !plan.changes {
+            out("Nothing changed: \(plan.history.id) is the same as \(plan.version.short) already.")
+        } else if yes {
+            out("Restored \(what), committed." + (backup.map { " Backup: \(FileWalk.tilde($0, home: env.homeDirectory))." } ?? "")
+                + "\n" + plan.diff)
+        } else {
+            out("Would restore \(what) and commit it. Run again with --yes to do it:\n" + plan.diff)
+        }
+        return 0
+    }
+
     /// `kb edit NOTE (--file F | --stdin) [--set KEY=VALUE]… [--yes]` (person only, K39): an
     /// existing note changed at once, the diff shown first.
     private static func knowledgeEdit(_ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,

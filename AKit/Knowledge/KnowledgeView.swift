@@ -135,6 +135,9 @@ struct KnowledgeView: View {
             Text("The .excalidraw file goes to the Trash, and its removal is committed in the base's git. Notes stay as they are.")
         }
         .modifier(InboxDialogs())
+        .sheet(isPresented: Binding(get: { model.historyRequest != nil }, set: { if !$0 { model.historyRequest = nil } })) {
+            if let id = model.historyRequest { HistorySheet(id: id) }
+        }
         .sheet(isPresented: Binding(get: { model.renameRequest != nil }, set: { if !$0 { model.renameRequest = nil } })) {
             if let id = model.renameRequest { RenameSheet(id: id) }
         }
@@ -502,6 +505,7 @@ struct KnowledgeView: View {
                 Button("Show in Finder") {
                     if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.mapFile(id)]) }
                 }
+                Button("History…") { model.historyRequest = id }
                 Button("Rename…") { model.renameRequest = id }
                 Button("Delete…", role: .destructive) { model.mapDeleteRequest = id }
             }
@@ -567,6 +571,7 @@ struct KnowledgeView: View {
             Button("Show in Finder") {
                 if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(note.id)]) }
             }
+            Button("History…") { model.historyRequest = note.id }
             Button("Rename…") { model.renameRequest = note.id }
             if !model.groups(in: note.area).isEmpty || note.group != nil {
                 Menu("Move to Group") {
