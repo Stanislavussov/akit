@@ -597,6 +597,14 @@ commit per command:
 akit kb init [--world NAME]                        # create a base
 akit kb new-note AREA NAME [--group G] [--kind K]  # a new note (--group: in the folder G of the area)
 akit kb new-map AREA NAME                          # a new, empty map areas/AREA/maps/NAME.excalidraw
+akit kb edit NOTE (--file F | --stdin) [--set KEY=VALUE]… [--yes] [--json]
+                                                   # change an existing note at once, no proposal:
+                                                   # ## Heading blocks or the whole note, as propose
+                                                   # takes them; without --yes it shows the diff,
+                                                   # --yes backs the note up, writes and commits it.
+                                                   # Only when the user asked you to edit the note;
+                                                   # otherwise propose. --json: {base, note, path,
+                                                   # changed, written, backup, diff}
 akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json]
                                                    # note properties (kind=flow, owner=team-a,
                                                    # files=[a.ts, b.ts]); one frontmatter line each
