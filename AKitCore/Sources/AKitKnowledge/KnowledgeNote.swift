@@ -300,6 +300,11 @@ public struct KnowledgeNote: Sendable, Equatable {
     /// The text after the frontmatter.
     public var body: Substring { text[bodyStart...] }
 
+    /// The body's first line that isn't blank is a `# ` heading: the text is a whole note.
+    public var startsWithTitle: Bool {
+        body.split(whereSeparator: \.isNewline).first { !$0.allSatisfy(\.isWhitespace) }?.hasPrefix("# ") == true
+    }
+
     // MARK: - Sections
 
     /// The `##` sections in order; headings inside fenced code blocks don't count.

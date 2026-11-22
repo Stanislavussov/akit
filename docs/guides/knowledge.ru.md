@@ -405,6 +405,16 @@ AKit пишет файл целиком и атомарно: сначала во
 
 ![Панель заметки orders-api в режиме Edit: нажатая кнопка Edit, рядом Properties, Ask Pi и остальные кнопки заметки (часть — в меню More); ниже часть Relations и Markdown заметки моноширинным шрифтом: строки kind: service, repo: git@example.com:shop/orders-api.git, path: ~/Projects/orders-api, files: [src/events/order-created.ts] между линиями ---, заголовок # orders-api и раздел ## Events со строками order created и retry](images/knowledge-note.png)
 
+### Средне: править из терминала: akit kb edit
+<!-- section: note-edit-cli -->
+
+`akit kb edit` меняет заметку сразу, без предложения во **Inbox**. Текст — либо разделы `## Заголовок` (каждый заменяет раздел с тем же заголовком или добавляется в конец), либо вся заметка целиком, с `# заголовком` в начале. Если во всей заметке нет полей `---` в начале, поля заметки остаются как были.
+
+1. `akit kb edit payments/billing --file billing.md` показывает разницу и ничего не пишет.
+2. `akit kb edit payments/billing --file billing.md --yes` сохраняет копию старой заметки в `~/.akit/local/backups/knowledge/`, пишет новую и делает коммит. Поля можно поменять тут же: `--set owner=team-a`.
+
+Агент запускает `akit kb edit`, только если вы сами попросили его поправить заметку. Иначе он делает предложение `akit kb propose`: оно тоже принимает заметку целиком и сразу печатает разницу, которую запишет **Accept**.
+
 ### Просто: метки: Add Tag
 <!-- section: note-tags -->
 

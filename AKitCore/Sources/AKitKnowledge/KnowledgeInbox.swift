@@ -30,7 +30,8 @@ import Foundation
 ///
 /// A note proposal's body is a whole new note when the target doesn't exist (a `# title` is added
 /// when it has none; a new area is created on Accept, K23), else `## Heading` blocks: each
-/// replaces the section with the same heading, or is appended. An arrow proposal changes no file:
+/// replaces the section with the same heading, or is appended; or the existing note's whole text
+/// (its frontmatter or `# title` first, K39), which replaces it. An arrow proposal changes no file:
 /// the person draws it on the map in the app. A map proposal (5.4, K21) has its draft beside it,
 /// `inbox/<id>.excalidraw`, and a body that lists the draft's blocks and arrows; the person
 /// accepts it in the app, which links the blocks to their notes and saves Excalidraw's own bytes.
@@ -256,6 +257,9 @@ public enum KnowledgeInbox {
         public let planned: String
         /// The area folder doesn't exist yet: Accept creates it (K23).
         public let newArea: Bool
+
+        /// The planned text differs from the note's bytes now (always for a new note).
+        public var changes: Bool { original != Data(planned.utf8) }
 
         /// `diff -u` style lines, the path first.
         public var diff: String {
@@ -616,8 +620,9 @@ extension KnowledgeBase {
 
     /// What Accept of a note proposal would write (nothing is written). Refused for an arrow (the
     /// person draws it in the app), for a proposal whose checks fail now, and for a body that
-    /// doesn't fit the note: an existing note takes only `## Heading` blocks (no frontmatter, no
-    /// `# title`; properties come with `set`).
+    /// doesn't fit the note. An existing note takes `## Heading` blocks (each replaces its section
+    /// or is appended) or its whole text (frontmatter or a `# title` first): that replaces the
+    /// note, whose frontmatter stays when the text has none. Properties come with `set`.
     public func planAccept(_ proposal: Proposal) throws(Failure) -> KnowledgeInbox.Plan {
         guard proposal.kind == .note else {
             throw Failure(message: proposal.kind == .map ? KnowledgeInbox.mapMessage : KnowledgeInbox.arrowMessage(proposal))
@@ -639,11 +644,17 @@ extension KnowledgeBase {
                 note = KnowledgeNote(text: text)
                 let sections = draft.sections
                 let lead = sections.first.map { draft.text[..<$0.headingRange.lowerBound] } ?? draft.text[...]
-                guard draft.body.startIndex == draft.text.startIndex, draft.title == nil,
-                      lead.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    throw Failure(message: "\(target.id) exists, so the proposal's text must be ## Heading blocks (each replaces that section or is added); properties go with --set KEY=VALUE.")
+                let hasFrontmatter = draft.body.startIndex != draft.text.startIndex
+                let whole = hasFrontmatter || draft.startsWithTitle
+                if whole {
+                    // The whole note: it replaces the text; without its own frontmatter the note's stays.
+                    var replacement = proposal.body
+                    if !replacement.isEmpty, replacement.last?.isNewline != true { replacement += "\n" }
+                    note = KnowledgeNote(text: hasFrontmatter ? replacement : String(note.text[..<note.body.startIndex]) + replacement)
+                } else if !lead.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    throw Failure(message: "\(target.id) exists, so the proposal's text is either the whole note (starting with its # title or frontmatter) or ## Heading blocks (each replaces that section or is added); properties go with --set KEY=VALUE.")
                 }
-                for section in sections {
+                for section in sections where !whole {
                     var body = String(draft.text[section.bodyRange])
                     if let old = note.section(section.heading) {
                         // Keep the note's blank line after the heading.

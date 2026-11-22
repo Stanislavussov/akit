@@ -99,8 +99,7 @@ final class KnowledgeInboxTests {
             (note("payments/maps/x", body: "x"), "maps/ folder"),
             (note("helpdesk", body: "x"), "Name the area"),
             (note("payments/billing", body: ""), "Nothing to propose"),
-            (note("payments/billing", body: "# billing\n\n## New\nx\n"), "## Heading blocks"),
-            (note("payments/billing", body: "Loose text.\n## New\nx\n"), "## Heading blocks"),
+            (note("payments/billing", body: "Loose text.\n## New\nx\n"), "the whole note"),
             (.init(.arrow("orders-api -events-> nowhere", map: nil)), "is no note"),
             (.init(.arrow("orders-api events billing", map: nil)), "not an arrow"),
             (.init(.arrow("orders-api -events-> billing", map: "nope")), "no map"),
@@ -111,6 +110,59 @@ final class KnowledgeInboxTests {
         }
         #expect(base.proposals().isEmpty)
         #expect(try await git("status", "--porcelain", in: base.root).isEmpty)
+    }
+
+    @Test func theWholeNoteReplacesAnExistingOne() async throws {
+        let base = try await makeBase()
+        // A # title first: the whole text replaces the body, the note's frontmatter stays.
+        let (titled, _) = try base.propose(note("payments/billing", body: "# billing\n\nInvoices and refunds.\n\n## Refunds\nWithin 14 days."), now: now)
+        let plan = try base.planAccept(titled)
+        #expect(plan.planned == "---\nkind: service\n---\n# billing\n\nInvoices and refunds.\n\n## Refunds\nWithin 14 days.\n")
+        #expect(plan.diff.contains("- ## Invoices") && plan.diff.contains("+ ## Refunds"))
+        // Its own frontmatter replaces the note's; --set comes on top.
+        let (fronted, _) = try base.propose(note("payments/billing", body: "---\nkind: flow\n---\n# billing\n",
+                                                 set: [.init(key: "owner", value: "team-a")]), now: now)
+        #expect(try base.planAccept(fronted).planned == "---\nkind: flow\nowner: team-a\n---\n# billing\n")
+    }
+
+    @Test func editWritesAnExistingNoteAtOnceWithABackup() async throws {
+        let base = try await makeBase()
+        let original = try Data(contentsOf: base.noteFile("payments/billing"))
+        let plan = try base.planEdit("billing", body: "## Invoices\nTwo per order.\n", set: [.init(key: "owner", value: "team-a")])
+        #expect(plan.changes && plan.note == "payments/billing")
+        #expect(plan.planned == "---\nkind: service\nowner: team-a\n---\n# billing\n\n## Invoices\n\nTwo per order.\n")
+        #expect(try Data(contentsOf: base.noteFile("payments/billing")) == original) // a plan writes nothing
+        let backup = try #require(try await base.edit(plan, env: env))
+        #expect(try Data(contentsOf: backup) == original)
+        #expect(try String(contentsOf: base.noteFile("payments/billing"), encoding: .utf8) == plan.planned)
+        #expect(try await git("status", "--porcelain", in: base.root).isEmpty)
+        #expect(try await git("log", "-1", "--format=%s", in: base.root) == "Edit payments/billing")
+        #expect(base.proposals().isEmpty)
+        // The same text again changes nothing and commits nothing.
+        let again = try base.planEdit("billing", body: "## Invoices\nTwo per order.\n", set: [])
+        #expect(!again.changes)
+        #expect(try await base.edit(again, env: env) == nil)
+        // A note changed since the plan is not overwritten.
+        let stale = try base.planEdit("billing", body: "## Invoices\nThree.\n", set: [])
+        try base.save(note: "payments/billing", text: "# billing\n\nChanged elsewhere.\n")
+        await #expect(throws: KnowledgeBase.Failure.self) { try await base.edit(stale, env: env) }
+        #expect(try String(contentsOf: base.noteFile("payments/billing"), encoding: .utf8) == "# billing\n\nChanged elsewhere.\n")
+    }
+
+    @Test func editRefusesWhatAProposalWould() async throws {
+        let base = try await makeBase()
+        let refused: [(String, String, String)] = [
+            ("payments/helpdesk", "# helpdesk\n", "No note"),
+            ("payments/billing", "## Keys\nGITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n", "secret"),
+            ("payments/billing", "## Links\nSee [[nowhere]].\n", "Broken link"),
+            ("payments/billing", "", "Nothing to change"),
+            ("../kb", "# kb\n", "never a path that leaves it"),
+        ]
+        for (name, body, reason) in refused {
+            do { _ = try base.planEdit(name, body: body, set: []); Issue.record("\(name) was planned") } catch {
+                #expect(error.message.contains(reason), "\(name): \(error.message)")
+            }
+        }
     }
 
     @Test func aNewNoteMayLinkItselfAndOpensANewArea() async throws {

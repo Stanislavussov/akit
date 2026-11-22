@@ -90,12 +90,15 @@ extension AKitCLI {
                       [--author NAME] [--json] [--base PATH|WORLD]
                                         Propose a change of a note, written only to
                                         inbox/<date>-<slug>.md (never committed). For an existing
-                                        note the text is ## Heading blocks: each replaces that
-                                        section or is added at the end. A note that doesn't exist
-                                        yet gets the whole text, in a new area too (created on
-                                        Accept). --set changes frontmatter properties. Refused:
+                                        note the text is ## Heading blocks (each replaces that
+                                        section or is added at the end) or the whole note, starting
+                                        with its # title or frontmatter (it replaces the note; the
+                                        note's frontmatter stays when the text has none). A note
+                                        that doesn't exist yet gets the whole text, in a new area
+                                        too (created on Accept). --set changes frontmatter
+                                        properties. Prints the diff Accept would write. Refused:
                                         a path outside areas/, a secret, a broken [[link]].
-                                        --json: {id, path, kind, target, checks}
+                                        --json: {id, path, kind, target, checks, diff}
       akit kb propose --arrow "A -kind-> B" [--map MAP] [--reason T] [--author NAME] [--json]
                                         Propose an arrow between two notes (on the map MAP): the
                                         person draws it on the map in the app
@@ -140,6 +143,15 @@ extension AKitCLI {
       akit kb new-map AREA NAME [--base PATH|WORLD]
                                         For a person only. Create areas/AREA/maps/NAME.excalidraw
                                         (an empty map) and commit it at once
+      akit kb edit NOTE (--file F | --stdin) [--set KEY=VALUE]… [--yes] [--json] [--base PATH|WORLD]
+                                        For a person only. Change an existing note at once, without
+                                        a proposal: the text is what kb propose takes (## Heading
+                                        blocks, or the whole note). Without --yes it shows the
+                                        diff; --yes commits the pending edits, backs the note up
+                                        (~/.akit/local/backups/knowledge/), writes it and commits.
+                                        Refused: a note that doesn't exist, a secret, a broken
+                                        [[link]]. --json: {base, note, path, changed, written,
+                                        backup, diff}
       akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json] [--base PATH|WORLD]
                                         For a person only. Set or remove frontmatter properties of a
                                         note (kind=flow, owner=team-a, files=[a.ts, b.ts]), one line
@@ -349,6 +361,8 @@ extension AKitCLI {
             return try await knowledgeKinds(&args, json: json, base: chosen, env: env, out: out)
         case "set":
             return try await knowledgeSet(&args, json: json, base: chosen, env: env, out: out)
+        case "edit":
+            return try await knowledgeEdit(&args, json: json, base: chosen, cwd: cwd, env: env, out: out, input: input)
         case "area":
             return try await knowledgeArea(&args, json: json, base: chosen, env: env, out: out)
         case "rm":
@@ -822,39 +836,24 @@ extension AKitCLI {
                 change = .arrow(arrow, map: map)
             } else {
                 if map != nil { throw Failure(message: "--map goes with --arrow.") }
-                var body = ""
-                if let file {
-                    let url = resolve(file, cwd: cwd, env: env)
-                    guard let data = try? Data(contentsOf: url) else { throw Failure(message: "Can't read \(url.path).") }
-                    guard let text = String(data: data, encoding: .utf8) else { throw Failure(message: "\(url.path) isn't UTF-8 text.") }
-                    body = text
-                } else if stdin {
-                    guard let text = String(data: input(), encoding: .utf8) else { throw Failure(message: "The text on stdin isn't UTF-8.") }
-                    body = text
-                }
-                var settings: [KnowledgeProposal.Setting] = []
-                for pair in sets {
-                    guard let equals = pair.firstIndex(of: "="), equals != pair.startIndex,
-                          !pair[pair.index(after: equals)...].trimmingCharacters(in: .whitespaces).isEmpty else {
-                        throw Failure(message: "--set \(pair) is not KEY=VALUE (like owner=team-a, or files=[a.ts, b.ts]).")
-                    }
-                    settings.append(.init(key: String(pair[..<equals]).trimmingCharacters(in: .whitespaces),
-                                          value: String(pair[pair.index(after: equals)...]).trimmingCharacters(in: .whitespaces)))
-                }
-                change = .note(note!, body: body, set: settings)
+                change = .note(note!, body: try noteText(file: file, stdin: stdin, cwd: cwd, env: env, input: input),
+                               set: try settings(sets))
             }
             // The harness, when the agent didn't name itself: Claude Code sets CLAUDECODE.
             let harness = author ?? (env.variables["CLAUDECODE"].flatMap { $0.isEmpty ? nil : "claude" })
             let base = try await writable(chosen)
             let proposal: KnowledgeProposal, checks: [KnowledgeInbox.Check]
             do { (proposal, checks) = try base.propose(.init(change, reason: reason, author: harness)) } catch { throw Failure(message: error.message) }
+            // A note proposal shows what Accept would write (K39).
+            let diff = proposal.kind == .note ? (try? base.planAccept(proposal))?.diff : nil
             if json {
                 out(encode(ProposeAnswer(id: proposal.id, path: proposal.path, kind: proposal.kind.rawValue, target: proposal.target, checks: checks,
-                                         draft: proposal.kind == .map ? KnowledgeInbox.draftPath(of: proposal.id) : nil)))
+                                         draft: proposal.kind == .map ? KnowledgeInbox.draftPath(of: proposal.id) : nil, diff: diff)))
             } else {
                 let marks = checks.filter { $0.status != .passed || $0.message != nil }.map { "  \($0.name): \($0.message ?? $0.status.rawValue)" }
                 let draft = proposal.kind == .map ? " The draft is \(KnowledgeInbox.draftPath(of: proposal.id)); the person accepts it in Knowledge → Inbox." : ""
-                out(([proposal.id, "Proposed in \(proposal.path), for the person to accept or reject (not committed).\(draft)"] + marks).joined(separator: "\n"))
+                out(([proposal.id, "Proposed in \(proposal.path), for the person to accept or reject (not committed).\(draft)"] + marks
+                    + (diff.map { ["Accept would write:", $0] } ?? [])).joined(separator: "\n"))
             }
             return 0
         case "inbox":
@@ -1030,8 +1029,10 @@ extension AKitCLI {
         let checks: [KnowledgeInbox.Check]
         /// A map proposal's draft (5.4); left out for the other kinds.
         var draft: String? = nil
+        /// A note proposal's diff, what Accept would write (K39); left out for the other kinds.
+        var diff: String? = nil
 
-        private enum CodingKeys: String, CodingKey { case id, path, kind, target, checks, draft }
+        private enum CodingKeys: String, CodingKey { case id, path, kind, target, checks, draft, diff }
 
         func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
@@ -1041,7 +1042,19 @@ extension AKitCLI {
             try container.encode(target, forKey: .target) // null for an arrow on no named map
             try container.encode(checks, forKey: .checks)
             try container.encodeIfPresent(draft, forKey: .draft)
+            try container.encodeIfPresent(diff, forKey: .diff)
         }
+    }
+
+    struct EditAnswer: Encodable {
+        let base: String
+        let note: String
+        let path: String
+        let changed: Bool
+        /// false without --yes, and when nothing changes.
+        let written: Bool
+        let backup: String?
+        let diff: String
     }
 
     struct InboxAnswer: Encodable {
@@ -1148,6 +1161,70 @@ extension AKitCLI {
     }
 
     /// `kb set NOTE KEY=VALUE… [--unset KEY]…` (person only).
+    /// `kb edit NOTE (--file F | --stdin) [--set KEY=VALUE]… [--yes]` (person only, K39): an
+    /// existing note changed at once, the diff shown first.
+    private static func knowledgeEdit(_ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
+                                      cwd: URL, env: HarnessEnvironment, out: (String) -> Void, input: () -> Data) async throws -> Int32 {
+        let file = args.value("--file"), stdin = args.flag("--stdin"), yes = args.flag("--yes")
+        let sets = args.values("--set")
+        guard let name = args.positional() else {
+            throw Failure(message: "Use: akit kb edit NOTE (--file F | --stdin) [--set KEY=VALUE]… [--yes] [--json] [--base PATH|WORLD]")
+        }
+        try args.finish()
+        if file != nil, stdin { throw Failure(message: "Use --file F or --stdin, not both.") }
+        let body = try noteText(file: file, stdin: stdin, cwd: cwd, env: env, input: input)
+        let settings = try settings(sets)
+        let base = try await writable(chosen)
+        let plan: KnowledgeInbox.Plan
+        var backup: URL?
+        do {
+            plan = try base.planEdit(name, body: body, set: settings)
+            if yes { backup = try await base.edit(plan, env: env) }
+        } catch {
+            throw Failure(message: error.message)
+        }
+        let written = yes && plan.changes
+        if json {
+            out(encode(EditAnswer(base: base.root.path, note: plan.note, path: plan.notePath, changed: plan.changes, written: written,
+                                  backup: backup?.path, diff: plan.diff)))
+        } else if !plan.changes {
+            out("Nothing changed in \(plan.note): it has this text already.")
+        } else if yes {
+            out("Wrote \(plan.notePath), committed." + (backup.map { " Backup: \(FileWalk.tilde($0, home: env.homeDirectory))." } ?? "")
+                + "\n" + plan.diff)
+        } else {
+            out("Would write \(plan.notePath) and commit it. Run again with --yes to do it:\n" + plan.diff)
+        }
+        return 0
+    }
+
+    /// The text of `--file F` or `--stdin`; empty without either.
+    private static func noteText(file: String?, stdin: Bool, cwd: URL, env: HarnessEnvironment, input: () -> Data) throws -> String {
+        if let file {
+            let url = resolve(file, cwd: cwd, env: env)
+            guard let data = try? Data(contentsOf: url) else { throw Failure(message: "Can't read \(url.path).") }
+            guard let text = String(data: data, encoding: .utf8) else { throw Failure(message: "\(url.path) isn't UTF-8 text.") }
+            return text
+        }
+        if stdin {
+            guard let text = String(data: input(), encoding: .utf8) else { throw Failure(message: "The text on stdin isn't UTF-8.") }
+            return text
+        }
+        return ""
+    }
+
+    /// `--set KEY=VALUE` pairs.
+    private static func settings(_ pairs: [String]) throws -> [KnowledgeProposal.Setting] {
+        try pairs.map { pair in
+            guard let equals = pair.firstIndex(of: "="), equals != pair.startIndex,
+                  !pair[pair.index(after: equals)...].trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw Failure(message: "--set \(pair) is not KEY=VALUE (like owner=team-a, or files=[a.ts, b.ts]).")
+            }
+            return .init(key: String(pair[..<equals]).trimmingCharacters(in: .whitespaces),
+                         value: String(pair[pair.index(after: equals)...]).trimmingCharacters(in: .whitespaces))
+        }
+    }
+
     private static func knowledgeSet(_ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
                                      env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
         let unset = args.values("--unset")

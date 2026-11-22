@@ -56,7 +56,7 @@ struct KnowledgeCLITests {
         let help = await akit("kb", "--help")
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
-        for command in ["akit kb init", "akit kb new-note", "akit kb add-folder", "akit kb new-map", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
+        for command in ["akit kb init", "akit kb new-note", "akit kb add-folder", "akit kb new-map", "akit kb edit", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
                         "akit kb rm", "akit kb rename", "akit kb accept", "akit kb reject", "akit kb check-model", "akit kb pi-template", "akit kb seed [", "akit kb seed --remove", "akit kb focus [FOLDER] --set"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
@@ -561,7 +561,8 @@ struct KnowledgeCLITests {
                                   stdin: "## Retries\nThree tries with backoff.\n")
         #expect(proposed.code == 0, "\(proposed.err)")
         let answer = try json(proposed.out)
-        #expect(Set(answer.keys) == ["id", "path", "kind", "target", "checks"])
+        #expect(Set(answer.keys) == ["id", "path", "kind", "target", "checks", "diff"])
+        #expect((answer["diff"] as? String)?.contains("+ Three tries with backoff.") == true)
         let id = try #require(answer["id"] as? String)
         #expect(answer["path"] as? String == "inbox/\(id).md" && answer["kind"] as? String == "note" && answer["target"] as? String == "payments/billing")
         #expect((answer["checks"] as? [[String: Any]])?.map { $0["name"] as? String } == ["secret", "target", "links"])
@@ -610,6 +611,39 @@ struct KnowledgeCLITests {
         #expect(Int(try await git("rev-list", "--count", "HEAD")) == Int(commits)! + 1)
         #expect(try await git("status", "--porcelain").hasPrefix("?? inbox/"))
         #expect(await akit("kb", "accept", "nope").err.contains("No proposal nope"))
+    }
+
+    /// K39: kb edit shows the diff without --yes and writes nothing; --yes backs the note up,
+    /// writes it and commits it at once, no proposal; a whole note through propose shows its diff.
+    @Test func editChangesAnExistingNoteAtOnce() async throws {
+        #expect(await akit("kb", "init", "--world", "work").code == 0)
+        #expect(await akit("kb", "new-note", "payments", "billing", "--kind", "service").code == 0)
+        let file = base.appending(path: "areas/payments/billing.md")
+        let original = try String(contentsOf: file, encoding: .utf8)
+
+        let asked = await akit(["kb", "edit", "billing", "--stdin"], stdin: "# billing\n\nInvoices per order.\n")
+        #expect(asked.code == 0 && asked.out.contains("Run again with --yes to do it:") && asked.out.contains("+ Invoices per order."), "\(asked.err)")
+        #expect(try String(contentsOf: file, encoding: .utf8) == original)
+
+        let commits = try await git("rev-list", "--count", "HEAD")
+        let edited = await akit(["kb", "edit", "payments/billing", "--stdin", "--set", "owner=team-a", "--yes", "--json"],
+                                stdin: "# billing\n\nInvoices per order.\n")
+        let answer = try json(edited.out)
+        #expect(answer["written"] as? Bool == true && answer["changed"] as? Bool == true && answer["note"] as? String == "payments/billing")
+        #expect((answer["backup"] as? String)?.hasPrefix(home.appending(path: ".akit/local/backups/knowledge/work/").path) == true)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "---\nkind: service\nowner: team-a\n---\n# billing\n\nInvoices per order.\n")
+        #expect(Int(try await git("rev-list", "--count", "HEAD")) == Int(commits)! + 1)
+        #expect(try await git("status", "--porcelain").isEmpty)
+        #expect(await akit(["kb", "edit", "billing", "--stdin", "--yes"], stdin: "# billing\n\nInvoices per order.\n").out.hasPrefix("Nothing changed"))
+
+        // Refused: no note, no text, a secret.
+        #expect(await akit(["kb", "edit", "payments/nope", "--stdin"], stdin: "# nope\n").err.contains("No note"))
+        #expect(await akit("kb", "edit", "billing").err.contains("Nothing to change"))
+        #expect(await akit(["kb", "edit", "billing", "--stdin", "--yes"], stdin: "## Keys\nghp_abcdefghijklmnopqrstuvwxyz0123456789\n").code == 2)
+
+        // A whole note proposed for an existing one: the output shows what Accept would write.
+        let proposed = await akit(["kb", "propose", "--note", "billing", "--stdin"], stdin: "# billing\n\nInvoices and refunds.\n")
+        #expect(proposed.code == 0 && proposed.out.contains("Accept would write:") && proposed.out.contains("- Invoices per order."), "\(proposed.err)")
     }
 
     /// 5.4: propose --map copies an excalidraw-cli draft into inbox/ beside its proposal (from a file

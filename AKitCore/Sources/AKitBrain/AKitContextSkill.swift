@@ -84,13 +84,16 @@ have one); the marks never accept or reject anything.
 
 ```
 akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--reason T] [--json]
-                                                   # existing note: the text is ## Heading blocks
-                                                   # (each replaces that section or is added); new
-                                                   # note: its whole text. --set: properties
+                                                   # existing note: ## Heading blocks (each
+                                                   # replaces that section or is added), or the
+                                                   # whole note starting with its # title (it
+                                                   # replaces the note; prefer blocks); new note:
+                                                   # its whole text. --set: properties
                                                    # (kind=service, owner=team-a). Writes only
-                                                   # inbox/<id>.md; refused for a secret, a broken
+                                                   # inbox/<id>.md and prints the diff Accept
+                                                   # would write; refused for a secret, a broken
                                                    # [[link]], a path outside areas/.
-                                                   # --json: {id, path, kind, target, checks}
+                                                   # --json: {id, path, kind, target, checks, diff}
 akit kb propose --arrow "A -kind-> B" [--map MAP] [--reason T] [--json]
                                                    # a relation between two notes (kind = what
                                                    # flows); the user draws it on the map
