@@ -203,6 +203,17 @@ final class KnowledgeIndexTests {
         #expect(try index.search("").results.isEmpty)
     }
 
+    @Test func aPrefixSearchFindsTheWordsAWordBegins() throws {
+        #expect(KnowledgeIndex.ftsQuery("orde re-try", prefix: true) == #""orde"* "re-try"*"#)
+        #expect(try index.search("retr").results.isEmpty)
+        #expect(try index.search("retr", prefix: true).results.first.map { "\($0.note) \($0.heading ?? "-")" } == "payments/orders-api Events")
+        try write("areas/payments/заказ.md", "# заказ\n\nЗаказ создан и оплачен.\n")
+        #expect(notes(try index.search("зака созд", prefix: true)) == ["payments/заказ"])
+        for query in ["-", ":", "\"", "*", "a\"b", "NOT", "AND OR"] {
+            _ = try index.search(query, prefix: true) // never an FTS5 syntax error
+        }
+    }
+
     @Test func aMissWritesOneLine() throws {
         let log = root.appending(path: KnowledgeIndex.missesName)
         func lines() -> [String] { ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init) }

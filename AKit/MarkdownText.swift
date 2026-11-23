@@ -20,10 +20,19 @@ struct MarkdownText: View {
     /// Inline text other than `inline(_:)`.
     var inlineText: ((String) -> AttributedString)?
 
+    /// Find in a note: its matches marked, the current one brighter, with the scroll id
+    /// `TextMarks.currentID` on its block.
+    var marks: TextMarks?
+
     var body: some View {
+        let blocks = MarkdownBlock.parse(text)
+        let drawn = drawn(blocks)
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(MarkdownBlock.parse(text).enumerated()), id: \.offset) { _, block in
-                view(block)
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                view(block, drawn[index].texts)
+                    .overlay(alignment: .topLeading) {
+                        if drawn[index].current { Color.clear.frame(width: 1, height: 1).id(TextMarks.currentID) }
+                    }
             }
         }
         .font(font)
@@ -32,31 +41,75 @@ struct MarkdownText: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    @ViewBuilder private func view(_ block: MarkdownBlock) -> some View {
+    /// How many matches of `query` the text shows, as Find counts them (not in the Markdown's marks
+    /// or a link's target).
+    func matches(of query: String) -> Int {
+        MarkdownBlock.parse(text).reduce(0) { sum, block in
+            sum + texts(block).reduce(0) { $0 + TextFind.ranges(of: query, in: $1).count }
+        }
+    }
+
+    /// Each block's texts with Find's marks, and whether the current match is in it.
+    private func drawn(_ blocks: [MarkdownBlock]) -> [(texts: [AttributedString], current: Bool)] {
+        var ordinal = 0
+        return blocks.map { block in
+            let start = ordinal
+            let texts = texts(block).map { text in
+                guard let marks else { return text }
+                var text = text
+                ordinal += marks.shifted(by: ordinal).mark(&text)
+                return text
+            }
+            let current = marks?.current.map { $0 >= start && $0 < ordinal } ?? false
+            return (texts, current)
+        }
+    }
+
+    /// The texts a block shows, in reading order: a callout's title and body, a table's cells row by
+    /// row (the header first, short rows filled with ""). A rule and a diagram show none.
+    private func texts(_ block: MarkdownBlock) -> [AttributedString] {
+        switch block {
+        case .heading(_, let text), .paragraph(let text), .small(let text), .bullet(_, let text), .numbered(_, _, let text):
+            return [inline(text)]
+        case .quote(let text):
+            let callout = Self.callout(text)
+            let body = callout?.body ?? text
+            return (callout.map { [inline($0.title)] } ?? []) + (body.isEmpty ? [] : [inline(body)])
+        case .code(let language, let text):
+            return diagrams && language.lowercased() == "mermaid" ? [] : [AttributedString(text)]
+        case .table(let header, let rows):
+            let columns = max(header.count, rows.map(\.count).max() ?? 0)
+            return ([header] + rows).flatMap { row in (0..<columns).map { inline($0 < row.count ? row[$0] : "") } }
+        case .rule:
+            return []
+        }
+    }
+
+    @ViewBuilder private func view(_ block: MarkdownBlock, _ texts: [AttributedString]) -> some View {
         switch block {
         case .heading(let level, let text):
-            Text(inline(text))
+            Text(texts[0])
                 .font(headingFont(level))
                 .padding(.top, large ? (level == 1 ? 2 : 8) : 4)
                 .id(headingID?(text) ?? "")
-        case .paragraph(let text):
-            Text(inline(text))
-        case .small(let text):
-            Text(inline(text)).font(.caption).foregroundStyle(.secondary)
-        case .bullet(let level, let text):
-            item(level == 0 ? "•" : "◦", text, level: level)
-        case .numbered(let number, let level, let text):
-            item(number, text, level: level)
+        case .paragraph:
+            Text(texts[0])
+        case .small:
+            Text(texts[0]).font(.caption).foregroundStyle(.secondary)
+        case .bullet(let level, _):
+            item(level == 0 ? "•" : "◦", texts[0], level: level)
+        case .numbered(let number, let level, _):
+            item(number, texts[0], level: level)
         case .quote(let text):
-            quote(text)
+            quote(text, texts)
         case .code(let language, let text):
             if diagrams, language.lowercased() == "mermaid" {
                 MarkdownMermaid(source: text)
             } else {
-                code(language, text)
+                code(language, texts[0])
             }
         case .table(let header, let rows):
-            table(header, rows)
+            table(columns: max(header.count, rows.map(\.count).max() ?? 0), rows: rows.count, texts)
         case .rule:
             Divider()
         }
@@ -71,21 +124,21 @@ struct MarkdownText: View {
 
     private func inline(_ text: String) -> AttributedString { inlineText?(text) ?? Self.inline(text) }
 
-    private func item(_ mark: String, _ text: String, level: Int) -> some View {
+    private func item(_ mark: String, _ text: AttributedString, level: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(mark).foregroundStyle(.secondary).frame(minWidth: 14, alignment: .trailing)
-            Text(inline(text))
+            Text(text)
         }
         .padding(.leading, CGFloat(level) * 18)
     }
 
     /// A quote; an Obsidian callout (`> [!note] Title`) gets its kind or title in bold on top.
-    private func quote(_ text: String) -> some View {
+    /// `texts`: the title's and the body's, as `texts(_:)` gives them.
+    private func quote(_ text: String, _ texts: [AttributedString]) -> some View {
         let callout = Self.callout(text)
-        let body = callout?.body ?? text
         return VStack(alignment: .leading, spacing: 2) {
-            if let title = callout?.title { Text(inline(title)).fontWeight(.semibold) }
-            if !body.isEmpty { Text(inline(body)) }
+            if callout != nil { Text(texts[0]).fontWeight(.semibold) }
+            if let body = texts.dropFirst(callout == nil ? 0 : 1).first { Text(body) }
         }
         .foregroundStyle(callout == nil ? .secondary : .primary)
         .padding(.leading, 10)
@@ -102,7 +155,7 @@ struct MarkdownText: View {
         return (title.isEmpty ? match.output.1.capitalized : title, String(text[match.range.upperBound...]))
     }
 
-    private func code(_ language: String, _ text: String) -> some View {
+    private func code(_ language: String, _ text: AttributedString) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if !language.isEmpty {
                 // GitLab shows a `suggestion` block as a change the author can apply.
@@ -123,19 +176,19 @@ struct MarkdownText: View {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
     }
 
-    private func table(_ header: [String], _ rows: [[String]]) -> some View {
-        let columns = max(header.count, rows.map(\.count).max() ?? 0)
-        return Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: 6) {
+    /// `texts`: the cells row by row, the header first.
+    private func table(columns: Int, rows: Int, _ texts: [AttributedString]) -> some View {
+        Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: 6) {
             GridRow {
                 ForEach(0..<columns, id: \.self) { column in
-                    Text(inline(column < header.count ? header[column] : "")).fontWeight(.semibold)
+                    Text(texts[column]).fontWeight(.semibold)
                 }
             }
             Divider().gridCellUnsizedAxes(.horizontal)
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+            ForEach(1..<(rows + 1), id: \.self) { row in
                 GridRow {
                     ForEach(0..<columns, id: \.self) { column in
-                        Text(inline(column < row.count ? row[column] : ""))
+                        Text(texts[row * columns + column])
                     }
                 }
             }
@@ -182,5 +235,30 @@ struct MarkdownMermaid: View {
             MermaidView(source: source)
         }
         .sheet(isPresented: $showLarge) { MermaidLargeView(title: "Diagram", source: source) }
+    }
+}
+
+/// What Find marks in a drawn text: every match of `query` on a yellow ground, the current one on
+/// an orange one. `current` counts matches from this text's first; a text further down a note gets
+/// it `shifted` by the matches above it.
+struct TextMarks: Equatable {
+    var query: String
+    var current: Int?
+
+    /// The scroll id of the block that holds the current match.
+    static let currentID = "find:current"
+
+    func shifted(by count: Int) -> TextMarks { TextMarks(query: query, current: current.map { $0 - count }) }
+
+    /// Marks the matches in `text`; returns how many there are.
+    @discardableResult
+    func mark(_ text: inout AttributedString) -> Int {
+        let ranges = TextFind.ranges(of: query, in: text)
+        for (index, range) in ranges.enumerated() {
+            text[range].backgroundColor = index == current ? Color.orange : Color.yellow.opacity(0.45)
+            // Dark text on the marks in Dark Mode too, as Safari's Find shows it.
+            text[range].foregroundColor = Color.black
+        }
+        return ranges.count
     }
 }

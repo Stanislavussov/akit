@@ -1,11 +1,12 @@
+import AKitFoundation
 import AKitKnowledge
 import AKitLab
 import AppKit
 import SwiftUI
 
 /// The open note tabs and the note in view: read (frontmatter and Markdown) or Edit, which saves
-/// the file at once; Properties (kind and fields), Copy, Paste, Export PDF…, Open in Obsidian and Delete….
-/// Ask Pi (K30) opens a chat about the note under it.
+/// the file at once; Find in Note (⌘F), Properties (kind and fields), Copy, Paste, Export PDF…,
+/// Open in Obsidian and Delete…. Ask Pi (K30) opens a chat about the note under it.
 struct NotePanel: View {
     @Environment(KnowledgeModel.self) private var model
     @State private var draft = ""
@@ -36,6 +37,10 @@ struct NotePanel: View {
                     NoteChecksView(findings: checks)
                     Divider()
                 }
+                if model.findShown, !model.editing {
+                    NoteFindBar(count: model.findCount)
+                    Divider()
+                }
                 if model.ask.isOpen {
                     VSplitView {
                         noteText(checks)
@@ -50,7 +55,10 @@ struct NotePanel: View {
                                        description: Text("Pick a note in the list, or New Note… to write one."))
             }
         }
-        .onChange(of: model.note, initial: true) { draft = model.text }
+        .onChange(of: model.note, initial: true) {
+            draft = model.text
+            model.findCurrent = 0
+        }
         .confirmationDialog("Move the note \(model.deleteRequest ?? "") to the Trash?",
                             isPresented: Binding(get: { model.deleteRequest != nil }, set: { if !$0 { model.deleteRequest = nil } })) {
             Button("Move to Trash", role: .destructive) {
@@ -80,8 +88,15 @@ struct NotePanel: View {
                 .onChange(of: model.text) { _, text in if text != draft { draft = text } }
         } else {
             NoteReadView(text: model.text, section: model.sectionTarget, grey: Set(checks.compactMap(\.link)),
-                         askAbout: { model.showAsk(passage: $0) }) { model.follow(link: $0) }
+                         askAbout: { model.showAsk(passage: $0) }, marks: findMarks) { model.follow(link: $0) }
         }
+    }
+
+    /// What the read view marks while the Find bar is open.
+    private var findMarks: TextMarks? {
+        guard model.findShown, !model.findText.allSatisfy(\.isWhitespace) else { return nil }
+        let count = model.findCount
+        return TextMarks(query: model.findText, current: count == 0 ? nil : min(model.findCurrent, count - 1))
     }
 
     @ViewBuilder private var copyButtons: some View {
@@ -154,6 +169,11 @@ struct NotePanel: View {
             if let notice = model.notice {
                 Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            Button("Find in Note", systemImage: "magnifyingglass") { model.showFind() }
+                .labelStyle(.iconOnly)
+                .keyboardShortcut("f")
+                .fixedSize()
+                .help("Find text in this note (⌘F): every match is marked; Return or ⌘G goes to the next, ⇧⌘G to the one before. In Edit it shows the note to read first")
             Toggle("Edit", systemImage: "pencil", isOn: $model.editing)
                 .toggleStyle(.button)
                 .fixedSize()
@@ -192,6 +212,63 @@ struct NotePanel: View {
         .labelStyle(.titleAndIcon)
         .controlSize(.small)
         .padding(8)
+    }
+}
+
+/// Find in Note (⌘F) over the note's read view: the text to find (case and accents ignored), which
+/// match is in view of how many, Previous (⇧⌘G, ⇧Return) and Next (⌘G, Return), Done (Esc). Every
+/// match is marked, the current one brighter and scrolled into view.
+struct NoteFindBar: View {
+    @Environment(KnowledgeModel.self) private var model
+    let count: Int
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        @Bindable var model = model
+        HStack(spacing: 6) {
+            TextField("Find in Note", text: $model.findText, prompt: Text("Find in note"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 260)
+                .focused($focused)
+                .onSubmit { model.findStep(1, count: count) }
+                .onKeyPress(.return, phases: .down) { press in
+                    guard press.modifiers.contains(.shift) else { return .ignored }
+                    model.findStep(-1, count: count)
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    model.findShown = false
+                    return .handled
+                }
+            Text(status)
+                .foregroundStyle(count == 0 && !model.findText.isEmpty ? .orange : .secondary)
+                .monospacedDigit()
+                .lineLimit(1)
+            Button("Previous Match", systemImage: "chevron.up") { model.findStep(-1, count: count) }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(count == 0)
+                .help("The match before (⇧⌘G)")
+            Button("Next Match", systemImage: "chevron.down") { model.findStep(1, count: count) }
+                .keyboardShortcut("g")
+                .disabled(count == 0)
+                .help("The next match (⌘G)")
+            Spacer(minLength: 4)
+            Button("Done") { model.findShown = false }
+                .help("Close Find; the marks go (Esc)")
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .onChange(of: model.findFocus, initial: true) { focused = true }
+    }
+
+    private var status: String {
+        if model.findText.isEmpty { return "" }
+        if count == 0 { return "No matches" }
+        return "\(min(model.findCurrent, count - 1) + 1) of \(count)"
     }
 }
 
@@ -335,23 +412,35 @@ struct NoteReadView: View {
     var grey: Set<String> = []
     /// Ask Pi About This Section: the section's Markdown. nil: no menu.
     var askAbout: ((String) -> Void)?
+    /// Find in the note: the matches to mark, `current` counted over the whole note (its
+    /// properties first, then its text).
+    var marks: TextMarks?
     /// A clicked `[[link]]` or `akit:` link, as written.
     var follow: (String) -> Void = { _ in }
 
     var body: some View {
         let note = KnowledgeNote(text: text)
+        let front = note.frontmatter.sorted { $0.key < $1.key }.map { ($0.key, Self.describe($0.value)) }
+        let chunks = Self.chunks(note)
+        // Where each value's and each section's matches start in the whole note's count.
+        let starts = marks.map { Self.starts(front: front.map(\.1), chunks: chunks, grey: grey, query: $0.query) }
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    let front = note.frontmatter.sorted { $0.key < $1.key }
                     if !front.isEmpty {
                         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 3) {
-                            ForEach(front, id: \.key) { key, value in
+                            ForEach(Array(front.enumerated()), id: \.offset) { index, item in
                                 GridRow {
-                                    Text(key).foregroundStyle(.secondary)
-                                    let shown = Self.describe(value)
-                                    Text(shown).textSelection(.enabled)
+                                    Text(item.0).foregroundStyle(.secondary)
+                                    let shown = item.1
+                                    let marks = marks?.shifted(by: starts?.front[index] ?? 0)
+                                    Text(Self.marked(shown, marks)).textSelection(.enabled)
                                         .foregroundStyle(grey.contains { shown.contains($0) } ? .secondary : .primary)
+                                        .overlay(alignment: .topLeading) {
+                                            if let current = marks?.current, current >= 0, current < TextFind.ranges(of: marks?.query ?? "", in: shown).count {
+                                                Color.clear.frame(width: 1, height: 1).id(TextMarks.currentID)
+                                            }
+                                        }
                                 }
                             }
                         }
@@ -360,8 +449,8 @@ struct NoteReadView: View {
                         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                     }
                     // One block per `##` section, so a right-click can ask about that section (K30).
-                    ForEach(Array(Self.chunks(note).enumerated()), id: \.offset) { _, chunk in
-                        NoteChunkView(text: chunk, grey: grey, askAbout: askAbout)
+                    ForEach(Array(chunks.enumerated()), id: \.offset) { index, chunk in
+                        NoteChunkView(text: chunk, grey: grey, marks: marks?.shifted(by: starts?.chunks[index] ?? 0), askAbout: askAbout)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -377,7 +466,42 @@ struct NoteReadView: View {
                 guard let section else { return }
                 Task { @MainActor in proxy.scrollTo(Self.anchor(section), anchor: .top) }
             }
+            // Find: the block of the current match comes into view.
+            .onChange(of: marks) {
+                guard marks?.current != nil else { return }
+                Task { @MainActor in proxy.scrollTo(TextMarks.currentID, anchor: .center) }
+            }
         }
+    }
+
+    /// How many matches of `query` Find counts in the note: in its properties' values, then in its
+    /// text as drawn.
+    static func matches(of query: String, in text: String, grey: Set<String>) -> Int {
+        let note = KnowledgeNote(text: text)
+        let front = note.frontmatter.map { describe($0.value) }
+        let starts = starts(front: front, chunks: chunks(note), grey: grey, query: query)
+        return starts.total
+    }
+
+    /// The count of matches before each property value and each section, and in all.
+    private static func starts(front: [String], chunks: [String], grey: Set<String>, query: String)
+        -> (front: [Int], chunks: [Int], total: Int) {
+        var total = 0
+        let front = front.map { value in
+            defer { total += TextFind.ranges(of: query, in: value).count }
+            return total
+        }
+        let chunks = chunks.map { chunk in
+            defer { total += NoteChunkView.text(chunk, grey: grey).matches(of: query) }
+            return total
+        }
+        return (front, chunks, total)
+    }
+
+    private static func marked(_ text: String, _ marks: TextMarks?) -> AttributedString {
+        var attributed = AttributedString(text)
+        marks?.mark(&attributed)
+        return attributed
     }
 
     /// The note's body cut at its section headings: the text before the first, then each section
@@ -489,12 +613,18 @@ struct NoteReadView: View {
 private struct NoteChunkView: View {
     let text: String
     let grey: Set<String>
+    var marks: TextMarks?
     let askAbout: ((String) -> Void)?
     @State private var hovering = DebugSnapshot.options?.tab == "knowledge-ask-section"
 
-    var body: some View {
+    /// A section drawn as the read view draws it.
+    static func text(_ text: String, grey: Set<String>, marks: TextMarks? = nil) -> MarkdownText {
         MarkdownText(text: text, font: .body, large: true, diagrams: true, headingID: NoteReadView.anchor,
-                     inlineText: { [grey] in NoteReadView.inline($0, grey: grey) })
+                     inlineText: { NoteReadView.inline($0, grey: grey) }, marks: marks)
+    }
+
+    var body: some View {
+        Self.text(text, grey: grey, marks: marks)
             .padding(.trailing, askAbout == nil ? 0 : 22)
             .contentShape(Rectangle())
             .onHover { hovering = $0 || DebugSnapshot.options?.tab == "knowledge-ask-section" }
