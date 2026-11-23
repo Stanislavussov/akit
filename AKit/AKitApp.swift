@@ -76,6 +76,12 @@ struct AKitApp: App {
                           : "Look for new commits on this build's branch in its source folder")
             }
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .textEditing) {
+                Divider()
+                Button("Search Knowledge…") { model.knowledgeSearchShown = true }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                    .help("Search the whole knowledge base from any screen and open the note at the section found")
+            }
             CommandGroup(after: .toolbar) {
                 Button("Refresh") { Task { await model.refresh() } }
                     .keyboardShortcut("r")

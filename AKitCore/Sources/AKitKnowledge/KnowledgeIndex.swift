@@ -151,14 +151,15 @@ public struct KnowledgeIndex {
     /// The best chunks for `query` (every word must be there, BM25 order), at most `limit`, then
     /// cut from the end to stay under `maxTokens`. A miss (no result, or a best score at or above
     /// `missScore`) adds a line to `.akit-misses.log`; AKit's search field passes `logMisses: false`,
-    /// so a person's typing doesn't count as an agent's miss.
+    /// so a person's typing doesn't count as an agent's miss. With `prefix` every word also matches
+    /// the words it begins (`orde` finds `orders`): AKit's search fields, which search as you type.
     public func search(_ query: String, area: String? = nil, limit: Int = 10,
-                       maxTokens: Int = Budget.defaultTokens, logMisses: Bool = true) throws(Failure) -> SearchAnswer {
+                       maxTokens: Int = Budget.defaultTokens, logMisses: Bool = true, prefix: Bool = false) throws(Failure) -> SearchAnswer {
         let area = area.map(KnowledgeBase.nfc)
         if let area, !base.areas().contains(where: { $0.name == area }) {
             throw Failure(message: "No area “\(area)” in \(base.root.path). Areas: \(base.areas().map(\.name).joined(separator: ", ")).")
         }
-        let match = Self.ftsQuery(query)
+        let match = Self.ftsQuery(query, prefix: prefix)
         let opened = try prepare(rebuild: false)
         var hits: [Hit] = []
         if let database = opened.database, !match.isEmpty, limit > 0 {
@@ -234,10 +235,11 @@ public struct KnowledgeIndex {
 
     /// The FTS5 query of a search: each word quoted (an inner `"` doubled), so `-`, `:` or `*`
     /// are text, never syntax; words with no letter or digit are left out. Empty → "" (no result).
-    public static func ftsQuery(_ text: String) -> String {
+    /// `prefix`: each word a prefix query (`"orde"*`).
+    public static func ftsQuery(_ text: String, prefix: Bool = false) -> String {
         KnowledgeBase.nfc(text).split(whereSeparator: \.isWhitespace)
             .filter { $0.unicodeScalars.contains(where: CharacterSet.alphanumerics.contains) }
-            .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+            .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"" + (prefix ? "*" : "") }
             .joined(separator: " ")
     }
 

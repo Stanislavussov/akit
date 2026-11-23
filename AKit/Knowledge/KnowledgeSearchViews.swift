@@ -3,8 +3,8 @@ import AKitKnowledge
 import AppKit
 import SwiftUI
 
-/// The toolbar search's hits (`akit kb search`): the note, the section and a snippet; a click opens
-/// the note at that section.
+/// The toolbar search's hits (`akit kb search`, each word also finding the words it begins): the
+/// note, the section and a snippet; a click opens the note at that section.
 struct SearchResultsList: View {
     @Environment(KnowledgeModel.self) private var model
 
@@ -16,15 +16,9 @@ struct SearchResultsList: View {
                         Button {
                             Task { await model.open(hit: hit) }
                         } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(hit.note).fontWeight(.medium).lineLimit(1)
-                                if let heading = hit.heading {
-                                    Text("## \(heading)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                                Text(hit.snippet).font(.callout).foregroundStyle(.secondary).lineLimit(3)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                            SearchHitRow(hit: hit, query: model.searchText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .padding(.vertical, 2)
@@ -39,6 +33,163 @@ struct SearchResultsList: View {
                                        description: Text("No section of a note has every word of “\(model.searchText)”."))
             }
         }
+    }
+}
+
+/// One search hit: the note, its section, and the snippet with the words searched marked.
+struct SearchHitRow: View {
+    let hit: KnowledgeIndex.Hit
+    let query: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(hit.note).fontWeight(.medium).lineLimit(1)
+            if let heading = hit.heading {
+                Text("## \(heading)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Text(Self.marked(hit.snippet, query: query)).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+        }
+    }
+
+    static func marked(_ snippet: String, query: String) -> AttributedString {
+        var text = AttributedString(snippet)
+        for word in Set(query.split(whereSeparator: \.isWhitespace).map(String.init)) {
+            TextMarks(query: word).mark(&text)
+        }
+        return text
+    }
+}
+
+/// Search Knowledge… (⇧⌘F, or the magnifier in the toolbar of every other screen): the whole
+/// base's sections for the words typed, found as the Knowledge screen's search field finds them.
+/// ↑ ↓ choose, Return or a click opens the note at that section on the Knowledge screen, Esc closes.
+struct KnowledgeQuickSearch: View {
+    @Environment(KnowledgeModel.self) private var knowledge
+    @Environment(AppModel.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    /// Snapshots: `--tab knowledge-search --query <words>`; `--capture` opens the first hit.
+    @State private var query = DebugSnapshot.options?.tab == "knowledge-search" ? DebugSnapshot.options?.query ?? "" : ""
+    @State private var answer: KnowledgeIndex.SearchAnswer?
+    @State private var failure: String?
+    @State private var selected = 0
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var hits: [KnowledgeIndex.Hit] { trimmed.isEmpty ? [] : answer?.results ?? [] }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "text.magnifyingglass").font(.title3).foregroundStyle(.secondary)
+                TextField("Search Knowledge", text: $query, prompt: Text("Search the knowledge base"))
+                    .textFieldStyle(.plain)
+                    .font(.title3)
+                    .focused($focused)
+                    .onSubmit { open(at: selected) }
+                    .onKeyPress(.downArrow) { move(1) }
+                    .onKeyPress(.upArrow) { move(-1) }
+                if let base = knowledge.base {
+                    Text(base.name).font(.caption).foregroundStyle(.secondary)
+                        .help("The base searched: \(base.root.tildePath). The Knowledge screen's Base picker chooses another")
+                }
+            }
+            .padding(12)
+            Divider()
+            results.frame(maxHeight: .infinity)
+            Divider()
+            HStack {
+                Text("↑ ↓ choose · Return opens the note at the section · Esc closes")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if knowledge.indexing || answer?.stale == true {
+                    Text("Index updating").font(.caption).foregroundStyle(.orange)
+                        .help("The search index is catching up with the files: the hits follow when it is done")
+                }
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .controlSize(.small)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .frame(width: 640, height: 460)
+        .onAppear { focused = true }
+        .task {
+            guard !knowledge.loaded else { return }
+            (knowledge.projectsRoot, knowledge.brainRoot) = (app.projectsRoot, app.brainRoot)
+            await knowledge.load()
+        }
+        // The hits follow a short pause in typing, and the base and its index once they are read.
+        .task(id: "\(trimmed)\n\(knowledge.base?.root.path ?? "")\n\(knowledge.indexing)") {
+            guard let base = knowledge.base, !trimmed.isEmpty else { return }
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            let query = trimmed
+            let result = await KnowledgeModel.search(query, in: base)
+            guard query == trimmed else { return }
+            switch result {
+            case .success(let found): (answer, failure, selected) = (found, nil, 0)
+            case .failure(let error): (answer, failure) = (nil, error.localizedDescription)
+            }
+            if DebugSnapshot.options?.tab == "knowledge-search" { print(Self.describe(query, answer)) }
+            if DebugSnapshot.options?.capture == true, !hits.isEmpty { open(at: 0) }
+        }
+    }
+
+    @ViewBuilder private var results: some View {
+        if knowledge.loaded, knowledge.base == nil {
+            ContentUnavailableView("No knowledge base", systemImage: "books.vertical",
+                                   description: Text("Create one on the Knowledge screen; then its notes are searched here."))
+        } else if let failure {
+            ContentUnavailableView("Search failed", systemImage: "exclamationmark.triangle", description: Text(failure))
+        } else if trimmed.isEmpty {
+            ContentUnavailableView("Search the knowledge base", systemImage: "text.magnifyingglass",
+                                   description: Text("Every section of every note that has all the words typed; a word also finds the words it begins."))
+        } else if let answer, answer.results.isEmpty {
+            ContentUnavailableView("No hits", systemImage: "magnifyingglass",
+                                   description: Text("No section of a note has every word of “\(trimmed)”."))
+        } else {
+            ScrollViewReader { proxy in
+                List {
+                    ForEach(Array(hits.enumerated()), id: \.offset) { index, hit in
+                        SearchHitRow(hit: hit, query: trimmed)
+                            .padding(.vertical, 3)
+                            .padding(.horizontal, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(index == selected ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                            .contentShape(Rectangle())
+                            .onTapGesture { open(at: index) }
+                            .help("Open \(hit.note)" + (hit.heading.map { " at ## \($0)" } ?? ""))
+                            .id(index)
+                    }
+                }
+                .listStyle(.plain)
+                .onChange(of: selected) { proxy.scrollTo(selected) }
+            }
+        }
+    }
+
+    private func move(_ by: Int) -> KeyPress.Result {
+        guard !hits.isEmpty else { return .ignored }
+        selected = min(max(selected + by, 0), hits.count - 1)
+        return .handled
+    }
+
+    /// The hit opens on the Knowledge screen, its note scrolled to the hit's section.
+    private func open(at index: Int) {
+        guard hits.indices.contains(index) else { return }
+        let hit = hits[index]
+        app.section = .knowledge
+        knowledge.screenTab = .notes
+        dismiss()
+        Task { await knowledge.open(hit: hit) }
+    }
+
+    static func describe(_ query: String, _ answer: KnowledgeIndex.SearchAnswer?) -> String {
+        guard let answer else { return "knowledge search: “\(query)”: failed" }
+        return (["knowledge search: “\(query)”, \(answer.results.count) hits"]
+            + answer.results.prefix(10).map { "hit: \($0.note)" + ($0.heading.map { " ## \($0)" } ?? "") + ": \($0.snippet)" })
+            .joined(separator: "\n")
     }
 }
 

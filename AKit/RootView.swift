@@ -246,6 +246,18 @@ struct RootView: View {
                 Button("Ask AKit", systemImage: "questionmark.bubble") { ask.toggle() }
                     .help("Ask what something on this screen means or how to use it (⌥⌘/)")
             }
+            // The Knowledge screen has its own search field.
+            if model.section != .knowledge {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Search Knowledge", systemImage: "text.magnifyingglass") { model.knowledgeSearchShown = true }
+                        .help("Search the whole knowledge base from here (⇧⌘F); Return opens the note at the section found")
+                }
+            }
+        }
+        // Search Knowledge… (⇧⌘F): the base's sections from any screen.
+        .sheet(isPresented: $model.knowledgeSearchShown) {
+            KnowledgeQuickSearch()
+                .environment(knowledge)
         }
         .onChange(of: model.section ?? .attention, initial: true) { _, section in ask.section = section }
         // `akit://notebook/Inbox` from Raycast or a browser: this window shows the screen and tab.

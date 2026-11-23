@@ -76,6 +76,8 @@ final class AppModel {
 
     /// Sidebar section shown in the window.
     var section: SidebarSection? = DebugSnapshot.options?.section ?? .attention
+    /// Search Knowledge… (⇧⌘F) is open over the screen. Snapshots: `--tab knowledge-search --query <words>`.
+    var knowledgeSearchShown = DebugSnapshot.options?.tab == "knowledge-search"
     /// A skill the Skills screen should select when it appears (set by "Show in Skills").
     var revealSkill: Skill.ID?
     /// A session the Sessions screen should select and scroll to (Insights → Stuck Loops → Show).

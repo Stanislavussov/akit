@@ -86,7 +86,18 @@ final class KnowledgeModel {
     /// sheet that says how to open it as a vault once.
     var obsidianSetup: URL?
     /// The note panel shows the Markdown to edit (Edit). Snapshots: `--tab edit` (and `watch-edit`).
-    var editing = ["edit", "watch-edit"].contains(DebugSnapshot.options?.tab)
+    var editing = ["edit", "watch-edit"].contains(DebugSnapshot.options?.tab) {
+        didSet { if editing { findShown = false } }
+    }
+    /// Find in Note (⌘F): the bar over the note's read view, its text and the current match (from
+    /// 0). Snapshots: `--tab find --query <text>`.
+    var findShown = DebugSnapshot.options?.tab == "find"
+    var findText = DebugSnapshot.options?.tab == "find" ? DebugSnapshot.options?.query ?? "" : "" {
+        didSet { if findText != oldValue { findCurrent = 0 } }
+    }
+    var findCurrent = 0
+    /// Raised by ⌘F, so the bar's field takes the keys again.
+    var findFocus = 0
     /// The note panel shows the Properties form (kind and fields). Snapshots: `--tab properties`.
     var showingProperties = DebugSnapshot.options?.tab == "properties"
     /// The base's kinds from `kb.yaml` (K24): the defaults without the file, or when it can't be read.
@@ -1124,6 +1135,28 @@ final class KnowledgeModel {
         }
     }
 
+    // MARK: - Find in Note
+
+    /// Find in Note (⌘F): the bar opens, or its field takes the keys again. It finds in the read
+    /// view, so Edit ends (its edits are saved already).
+    func showFind() {
+        editing = false
+        findShown = true
+        findFocus += 1
+    }
+
+    /// The matches of the Find bar's text in the note in view, as the read view draws it.
+    var findCount: Int {
+        guard findShown, let entry = noteEntry else { return 0 }
+        return NoteReadView.matches(of: findText, in: text, grey: Set(lintFindings(of: entry.id).compactMap(\.link)))
+    }
+
+    /// Next (`by` 1) or Previous (-1) match, round the note's end.
+    func findStep(_ by: Int, count: Int) {
+        guard count > 0 else { return }
+        findCurrent = ((min(findCurrent, count - 1) + by) % count + count) % count
+    }
+
     // MARK: - Search, index, watch (3.3)
 
     /// The search field changed: the hits follow after a short pause in typing (`kb search`).
@@ -1145,16 +1178,22 @@ final class KnowledgeModel {
             searchAnswer = nil
             return
         }
-        let result: Result<KnowledgeIndex.SearchAnswer, any Error> = await Task.detached {
-            do { return .success(try KnowledgeIndex(base: base).search(query, limit: 30, maxTokens: .max, logMisses: false)) } catch {
-                return .failure(error)
-            }
-        }.value
+        let result = await Self.search(query, in: base)
         guard query == searchText.trimmingCharacters(in: .whitespacesAndNewlines), base == self.base else { return }
         switch result {
         case .success(let answer): searchAnswer = answer
         case .failure(let error): problem = error.localizedDescription
         }
+    }
+
+    /// A person's search of the whole base, as they type: every word also finds the words it
+    /// begins, up to 30 sections (the toolbar field and Search Knowledge…).
+    nonisolated static func search(_ query: String, in base: KnowledgeBase) async -> Result<KnowledgeIndex.SearchAnswer, any Error> {
+        await Task.detached {
+            do { return .success(try KnowledgeIndex(base: base).search(query, limit: 30, maxTokens: .max, logMisses: false, prefix: true)) } catch {
+                return .failure(error)
+            }
+        }.value
     }
 
     /// A search hit: its note opens, scrolled to the hit's section.
@@ -1565,6 +1604,10 @@ final class KnowledgeModel {
             }
         }
         if let sectionTarget { lines.append("section: \(sectionTarget)") }
+        if findShown {
+            let count = findCount
+            lines.append("find: “\(findText)”, " + (count == 0 ? "no matches" : "\(min(findCurrent, count - 1) + 1) of \(count)"))
+        }
         if let noteConflict { lines.append("conflict: Changed on disk, note \(noteConflict): Reload / Keep Mine") }
         switch DebugSnapshot.options?.tab {
         case "focus":

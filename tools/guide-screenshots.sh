@@ -334,6 +334,9 @@ shot knowledge-relations $MAIN --section knowledge --tab map --select block:blk-
 shot knowledge-rename    $MAIN --section knowledge --tab rename --select payments/billing --query invoicing
 # The toolbar search for "order": its hits (note, section, snippet) instead of the note list.
 shot knowledge-search    $MAIN --section knowledge --query order
+# Find in Note (⌘F) over orders-api, and Search Knowledge… (⇧⌘F) over another screen.
+shot knowledge-find      $MAIN --section knowledge --select payments/orders-api --tab find --query order
+shot knowledge-search-anywhere $MAIN --section attention --tab knowledge-search --query "orde ret"
 # Preview Agent Context… for the project orders-api, with the note orders-api in view (its neighbors too).
 shot knowledge-context   $MAIN --section knowledge --tab context --project orders-api --select payments/orders-api
 # Pi Template…: the core layer's Pi-only section about the base, with the layer.yaml and template diff.
