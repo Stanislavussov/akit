@@ -268,14 +268,15 @@ struct KnowledgeView: View {
     /// or group isn't there to light; its note stays open beside the list all the same.
     private var selectedRow: String? { model.map.map { "map:" + $0 } ?? model.note }
 
-    /// One row of the note list (K29, K37): a space, a group in it, a map, a note, or the hint
-    /// of an empty space or group.
+    /// One row of the note list (K29, K37): a space, a group in it, a map, a note, the hint
+    /// of an empty space or group, or the line after a run of numbered notes (K42).
     private enum ListRow: Identifiable {
         case space(KnowledgeBase.Area)
         case group(area: String, name: String, count: Int)
         case map(String)
         case note(KnowledgeBase.NoteEntry)
         case hint(key: String, text: String, depth: Int)
+        case divider(key: String, depth: Int)
 
         /// A note's id, `map:<id>` for a map: what `selectedRow` holds.
         var id: String {
@@ -285,6 +286,7 @@ struct KnowledgeView: View {
             case .map(let id): "map:" + id
             case .note(let note): note.id
             case .hint(let key, _, _): "hint:" + key
+            case .divider(let key, _): "divider:" + key
             }
         }
 
@@ -294,7 +296,7 @@ struct KnowledgeView: View {
             case .space: 0
             case .group, .map: 1
             case .note(let note): note.group == nil ? 1 : 2
-            case .hint(_, _, let depth): depth
+            case .hint(_, _, let depth), .divider(_, let depth): depth
             }
         }
 
@@ -319,17 +321,29 @@ struct KnowledgeView: View {
                 let inGroup = notes.filter { $0.group == group }
                 rows.append(.group(area: area.name, name: group, count: inGroup.count))
                 guard !model.collapsedGroups.contains(area.name + "/" + group) else { continue }
-                rows += inGroup.map(ListRow.note)
+                rows += Self.noteRows(inGroup, key: area.name + "/" + group, depth: 2)
                 if inGroup.isEmpty {
                     rows.append(.hint(key: area.name + "/" + group, text: "Empty: New Note… here, or drop a note on the group", depth: 2))
                 }
             }
-            rows += notes.filter { $0.group == nil }.map(ListRow.note)
+            rows += Self.noteRows(notes.filter { $0.group == nil }, key: area.name, depth: 1)
             if maps.isEmpty, notes.isEmpty, groups.isEmpty {
                 rows.append(.hint(key: area.name, text: "No notes yet: New Note… writes one", depth: 1))
             }
             return rows
         }
+    }
+
+    /// The notes of a group or a space's top in list order (K42): a run of numbered notes first
+    /// (`(1) …`, `(2) …`), then a line, then the others by title.
+    private static func noteRows(_ notes: [KnowledgeBase.NoteEntry], key: String, depth: Int) -> [ListRow] {
+        let sorted = KnowledgeBase.NoteEntry.inListOrder(notes)
+        let numbered = sorted.prefix { $0.number != nil }
+        var rows = sorted.map(ListRow.note)
+        if !numbered.isEmpty, numbered.count < sorted.count {
+            rows.insert(.divider(key: key, depth: depth), at: numbered.count)
+        }
+        return rows
     }
 
     /// One column (K29): every space folds, with its note count, and in it the space's maps, then
@@ -373,6 +387,7 @@ struct KnowledgeView: View {
             case .map(let id): mapRow(id)
             case .note(let note): noteRow(note)
             case .hint(_, let text, _): Text(text).font(.callout).foregroundStyle(.secondary)
+            case .divider: Divider()
             }
         }
         .padding(.leading, CGFloat(row.depth) * Self.indent)
@@ -388,7 +403,7 @@ struct KnowledgeView: View {
             case .space(let area): model.toggle(area: area.name)
             case .group(let area, let name, _): model.toggle(group: name, in: area)
             case .map, .note: select(row)
-            case .hint: break
+            case .hint, .divider: break
             }
         }
     }
