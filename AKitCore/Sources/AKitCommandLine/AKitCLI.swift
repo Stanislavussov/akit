@@ -42,6 +42,32 @@ public enum AKitCLI {
                                           change; --yes writes it after a backup, only that entry,
                                           and refuses if the file changed meanwhile. --project picks
                                           a project's copy of the skill
+          akit skills mode [--project PATH] [--json]
+                                          Skill modes in this folder's project (Pi): each skill Pi loads
+                                          here with its mode (Auto, Manual, Off), from the project's
+                                          entry or its SKILL.md, and whose it is (yours, project,
+                                          package); my-NAME: your skill the project's NAME hides
+          akit skills mode NAME auto|manual|off [--project PATH] [--yes] [--json]
+                                          Set NAME's mode for the project (its git origin, so every
+                                          checkout and worktree): ~/.akit/local/skill-modes.json, never
+                                          a file in the repository. Auto: listed to the model; Manual:
+                                          only /skill:NAME; Off: left out, /skill:NAME refused. Shows the
+                                          change; --yes writes it after a backup
+          akit skills mode NAME --reset | --reset-project [--project PATH] [--yes] [--json]
+                                          Take NAME's entry out (its SKILL.md decides again), or every
+                                          entry of the project
+          akit skills mode NAME auto|manual --global [--yes]
+                                          The skill everywhere: its SKILL.md (Model invocation; a copy
+                                          AKit rendered changes in its layer). Off everywhere is akit
+                                          skills set NAME --harness pi --state off
+          akit skills extension install|status|uninstall [--yes] [--json]
+                                          The Pi extension that applies skill modes
+                                          (~/.pi/agent/extensions/akit-skill-modes.ts); install shows
+                                          the file first, uninstall moves it to the Trash (the modes
+                                          file stays)
+          akit skills resolve --harness pi --cwd DIR --json
+                                          For the extension: the skills Pi loaded on stdin, the
+                                          project's modes and renames as JSON. Reads only
           akit skills port SKILL [--to global|project PATH] [--model HARNESS[:MODEL]] [--no-model] [--json] [--yes]
                                           Port a Claude Code skill to Pi and check it (pass, warnings,
                                           fail); --yes installs it. --check-only PATH checks a Pi skill.
@@ -441,6 +467,10 @@ public enum AKitCLI {
             }
         }
         let projectsRoot = projectsRoot ?? env.homeDirectory.appending(path: "Projects")
+        // Run by the Pi skill modes extension before each run; the akit binary also runs it first (main.swift).
+        if arguments.first == "skills", arguments.dropFirst().first == "resolve" {
+            return skillsResolve(Array(arguments.dropFirst(2)), env: env, projectsRoot: projectsRoot, input: input, out: out, err: err)
+        }
         do {
             // Lab has its own options (--repo, --json, …); none of the brain's apply.
             if arguments.first == "lab" {
@@ -596,6 +626,19 @@ public enum AKitCLI {
                 _ = args.positional()
                 return try await skillPort(&args, json: options.json, yes: options.yes, env: env, cwd: cwd, projectsRoot: projectsRoot,
                                            out: out, trash: trash)
+            }
+            // Skill modes per project (skill-modes.md): no brain needed, except --global for a rendered copy.
+            if command == "skills", let subcommand = args.peek, subcommand == "mode" || subcommand == "extension" {
+                try refuseProjectOptions(options, command: "skills \(subcommand)")
+                _ = args.positional()
+                if subcommand == "extension" {
+                    return try skillModesExtension(&args, json: options.json, yes: options.yes, env: env, out: out, trash: trash)
+                }
+                return try await withoutActuallyEscaping(trash) { trash in
+                    try await skillModes(&args, json: options.json, yes: options.yes, brainRoot: brainRoot(options, cwd: cwd, env: env), env: env,
+                                         cwd: cwd, projectsRoot: projectsRoot, hostName: hostName, installedTargets: installedTargets,
+                                         out: out, trash: trash)
+                }
             }
             // Installed skills, switched per harness: no brain needed.
             if command == "skills", let subcommand = args.peek, subcommand == "state" || subcommand == "set" {

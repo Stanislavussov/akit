@@ -1,0 +1,6 @@
+{
+  "name": "akit-skill-modes-tests",
+  "private": true,
+  "description": "Tests of the Pi skill modes extension (make test-skill-modes). Uses tools/flows' pinned TypeScript and @types/node.",
+  "type": "module"
+}

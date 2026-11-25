@@ -19,10 +19,11 @@ restart: build   ## quit this checkout's AKit, rebuild and start it again (in th
 	sleep 1
 	open $(DERIVED)/Build/Products/Debug/AKit.app
 
-test:   ## core and Meetings tests (no UI), under the memory and time guard (tools/guarded-test.sh), then the Flows runner tests
+test:   ## core and Meetings tests (no UI), under the memory and time guard (tools/guarded-test.sh), then the Flows runner and skill modes extension tests
 	GUARD_MINUTES=25 tools/guarded-test.sh
 	GUARD_DIR=Meetings tools/guarded-test.sh
 	$(MAKE) test-flows
+	$(MAKE) test-skill-modes
 
 # Flows Pi runner (docs/design/flows.md F20). Node runs the .ts files directly (type stripping,
 # Node 22.18 or newer; tested on NODE_TESTED). TypeScript and @types/node are pinned in
@@ -46,6 +47,22 @@ test-flows: check-node   ## Flows runner: tsc --noEmit against the minimum Pi's 
 
 test-flows-e2e: check-node   ## Flows on the real installed Pi in a pty with a fake model server (before merge; not in make test)
 	python3 -I $(FLOWS)/e2e/flow-e2e.py
+
+# Pi skill modes extension (docs/design/skill-modes.md): AKitSkills/Resources/akit-skill-modes.ts, embedded in
+# the code by tools/gen-skill-modes-extension.sh. Uses the TypeScript and @types/node pinned in tools/flows.
+SKILL_MODES = tools/skill-modes
+
+skill-modes-extension:   ## regenerate AKitSkills/SkillModesExtensionSource.swift from Resources/akit-skill-modes.ts (after editing it)
+	tools/gen-skill-modes-extension.sh
+
+test-skill-modes: check-node   ## skill modes extension: tsc --noEmit, node --test with a fake pi and a fake akit
+	@$(FLOWS)/node_modules/.bin/tsc --version 2>/dev/null | grep -qx "Version $(TYPESCRIPT_VERSION)" || npm ci --prefix $(FLOWS) --no-audit --no-fund --silent
+	$(FLOWS)/node_modules/.bin/tsc --noEmit -p $(SKILL_MODES)/tsconfig.json
+	node --test $(SKILL_MODES)/test/*.test.ts
+
+test-skill-modes-pi: check-node   ## skill modes in the installed Pi: its SDK, pi-ai's faux model, a fake home, this checkout's akit (not in make test; skipped without Pi)
+	cd AKitCore && swift build --product akit
+	node $(SKILL_MODES)/e2e/modes-e2e.mjs "$$(cd AKitCore && swift build --show-bin-path)/akit"
 
 check-pi: check-node   ## the installed Pi against the runner's minPi / testedPi and the flags it needs
 	node $(FLOWS)/check-pi.ts
@@ -130,4 +147,4 @@ hooks:   ## turn on the git hooks in .githooks: gitleaks secret check before com
 secrets:   ## scan the whole git history for secrets (gitleaks, settings in .gitleaks.toml)
 	gitleaks git --redact --no-banner --config .gitleaks.toml .
 
-.PHONY: hooks secrets generate open build run restart test snapshot install install-cli install-dist installed-version icon release screenshots guide-screenshots banner
+.PHONY: hooks secrets generate open build run restart test test-skill-modes test-skill-modes-pi skill-modes-extension snapshot install install-cli install-dist installed-version icon release screenshots guide-screenshots banner
