@@ -148,6 +148,14 @@ struct AKitApp: App {
                 .environment(guides)
         }
         .defaultSize(width: 820, height: 860)
+
+        // Open Diff Window of an Inbox proposal: its diff, big enough to read. Not restored at
+        // launch: the proposal may be gone by then.
+        WindowGroup("Proposal Diff", id: ProposalDiffWindow.id, for: ProposalDiff.self) { $diff in
+            if let diff { ProposalDiffWindow(diff: diff) }
+        }
+        .defaultSize(width: 1100, height: 860)
+        .restorationBehavior(.disabled)
     }
 }
 

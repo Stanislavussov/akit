@@ -282,8 +282,7 @@ private struct AskProposalCard: View {
                 switch plan {
                 case .success(let plan)?:
                     ScrollView {
-                        Text(plan.diff).font(.caption.monospaced()).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ProposalDiffBox(title: plan.note, plan: plan, font: .caption.monospaced())
                     }
                     .frame(maxHeight: 160)
                 case .failure(let error)?:
