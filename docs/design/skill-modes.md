@@ -11,11 +11,11 @@ Built 2026-11-25, steps 1–5 (branch `skill-store`): `ProjectRecords.projectID(
 (`AKitCommandLine/SkillModesCommand.swift`); the extension (`AKitSkills/Resources/akit-skill-modes.ts`,
 embedded by `tools/gen-skill-modes-extension.sh`, installer `SkillModesExtension`, node tests in
 `make test` as `make test-skill-modes`, the end-to-end `make test-skill-modes-pi` passed on Pi 1.5.2 =
-`minPi`); Doctor's "Skill modes" lines (`AKitDoctor/DoctorSkillModes.swift`). Steps 6–7 built the same
-day: Pi-only projects get no skill copies and their modes as entries (`ProjectSetup.planSkillModes`,
-`ProjectBundle.resolve(homeSkills:)`, Forget takes the entries out), and **Mode Here** on the Skills
-screen (`AKit/SkillModeViews.swift`, Install… for the extension, the guide section `skills-mode-here`).
-Not done here: the user's copy of `/akit` (the template has the sections). Settled while building:
+`minPi`); Doctor's "Skill modes" lines (`AKitDoctor/DoctorSkillModes.swift`); step 7, **Mode Here** on
+the Skills screen (`AKit/SkillModeViews.swift`, Install… for the extension, the guide section
+`skills-mode-here`). Step 6 is not built: a first version was reverted after review (it coupled the
+home render to other projects' saved answers); it is a proposal below. Not done here: the user's copy
+of `/akit` (the template has the section). Settled while building:
 
 - `session_start` has no skill list, so the extension's first ask takes Pi's `/skill:` commands
   (`pi.getCommands()`, same names and paths); the cache key is the folder, the modes file's time and
@@ -302,10 +302,30 @@ finishes a step updates its row in `README.md` and the status note here.
    `make test-skill-modes-pi` with the SDK and the faux model (outside `make test`, skipped
    without Pi) that sets `minPi`.
 5. **Doctor** checks.
-6. **Projects stop getting skill copies for Pi.** For a project whose targets are only Pi,
-   Apply no longer renders skills into it; copies AKit wrote and nobody edited go to the
-   Trash, edited ones stay and are listed. The project's `answers.json` skill modes become
-   entries in `skill-modes.json` (one preview, one backup).
+6. **Projects stop getting skill copies for Pi** (proposal, not built; a first version was
+   reverted 2026-11-25). Direction:
+   - The home folder brings **every** brain skill, Manual unless the home folder's own layers or
+     answers say otherwise. Nothing depends on other projects' answers.
+   - A skill the user doesn't want at home is `off` in the home folder's own answers. Remove
+     Everywhere and Move to Project write that `off` instead of relying on the skill's absence from
+     core, so a later home Apply never brings it back.
+   - Then a Pi-only project needs no copies: Apply renders no skills into it (earlier copies go
+     through the usual removal, edited ones stay), and nothing else of its render changes.
+   - Project modes are only what the user sets (Mode Here, `akit skills mode`); Apply writes no
+     entries. Optionally a one-time migration of the modes in a project's `answers.json` into
+     entries, with a preview and a backup.
+
+   What the new design must avoid (found in review of the reverted version):
+   - an entry the user deleted coming back one Apply later;
+   - entries recorded as AKit's that were never written (an unreadable modes file), so AKit later
+     deletes the user's own entry;
+   - entries left forever when a project stops being Pi-only;
+   - the home render reading other projects' saved answers, so Remove Everywhere (which edits
+     answers before they are applied) leaves the home copy, and Move to Project into a Pi-only
+     project leaves the skill nowhere;
+   - a partial Apply (Move to Project, Model invocation) writing modes entries;
+   - a home mode that ignores the home folder's own answers;
+   - a core `off` skill that vanishes for Pi-only projects.
 7. **Skills screen**: Mode Here, Reset, the guide and its screenshot.
 
 ## Not doing
