@@ -138,6 +138,19 @@ extension ReviewProcessTests {
 }
 
 struct ReviewHarnessConfigTests {
+    /// AKit.app from the Dock has a short PATH; a `claude` only the login shell finds (a Homebrew
+    /// in the home folder) is found through the shell's PATH.
+    @Test func findsClaudeOnTheLoginShellsPath() async throws {
+        let home = TempHome()
+        home.write("homebrew/bin/claude", "#!/bin/sh\n", executable: true)
+        home.write(".zshrc", "export PATH=\"$HOME/homebrew/bin:$PATH\"\n")
+        let env = HarnessEnvironment(homeDirectory: home.url, variables: ["SHELL": "/bin/zsh", "HOME": home.url.path],
+                                     executableSearchPaths: [URL(filePath: "/usr/bin"), URL(filePath: "/bin")])
+        #expect(env.findExecutable("claude") == nil)
+        let found = await ReviewPasses.withShellPath(env).findExecutable("claude")
+        #expect(found?.standardizedFileURL.path == home.url.appending(path: "homebrew/bin/claude").standardizedFileURL.path)
+    }
+
     @Test func readsTheHarnessAndClaudesOwnModels() throws {
         let patch = try ReviewSettingsPatch.parse(ReviewYAML.map("""
         harness: claude-code

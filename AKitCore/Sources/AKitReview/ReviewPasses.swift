@@ -375,7 +375,8 @@ public enum ReviewPasses {
         guard var spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")), spec.headSHA != nil else {
             throw Failure(message: "\(folder.lastPathComponent) has no gathered run.json; gather it first.")
         }
-        // R69: the run's harness runs every pass.
+        // R69: the run's harness runs every pass. Claude Code may be only on the login shell's PATH.
+        let env = spec.onClaude ? await withShellPath(env) : env
         guard let pi = env.findExecutable(spec.onClaude ? "claude" : "pi") else {
             throw Failure(message: spec.onClaude ? "Claude Code (claude) is not installed." : "Pi (pi) is not installed.")
         }
@@ -776,6 +777,20 @@ public enum ReviewPasses {
 
     static func isRunnable(_ url: URL) -> Bool {
         url.path.hasPrefix("/") && FileWalk.isRegularFile(url) && FileManager.default.isExecutableFile(atPath: url.path)
+    }
+
+    /// AKit's environment with the login shell's PATH before its own, when `claude` isn't on
+    /// AKit's: AKit.app started from the Dock has a short PATH, and Claude Code may be where only
+    /// the shell looks (a Homebrew in the home folder, `~/homebrew/bin`). The account check and
+    /// every pass then find the same `claude` a terminal does.
+    static func withShellPath(_ env: HarnessEnvironment) async -> HarnessEnvironment {
+        guard env.findExecutable("claude") == nil else { return env }
+        let shell = await LoginShell.variables(in: env)
+        let paths = (shell.values["PATH"] ?? "").split(separator: ":").map { URL(filePath: String($0), directoryHint: .isDirectory) }
+        var seen = Set<String>()
+        var lookup = env
+        lookup.executableSearchPaths = (paths + env.executableSearchPaths).filter { seen.insert($0.standardizedFileURL.path).inserted }
+        return lookup
     }
 
     /// What a pass may read (`AKIT_REVIEW_ROOTS`): the worktree and the scrubbed parts of the run
