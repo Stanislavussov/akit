@@ -27,7 +27,7 @@ extension ReviewWorkflow.Run {
                 .map { OutputTranslation.Part(TranslationKey.overviewModule($0.offset), $0.element.why) }
         }
         parts += (plan?.requests ?? []).map { OutputTranslation.Part(TranslationKey.request($0.id), $0.text) }
-        return OutputTranslation.Source(parts: parts, origins: [.mergeRequest], cacheFolder: folder,
+        return OutputTranslation.Source(parts: parts, origins: [spec.onClaude ? .localReview : .mergeRequest], cacheFolder: folder,
                                         ownAgent: reviewAgent, ownAgentName: "the review's model")
     }
 
@@ -35,7 +35,8 @@ extension ReviewWorkflow.Run {
     /// default) and its thinking level, or `low` when it has none.
     public var reviewAgent: LabAgent {
         let choice = spec.passes.value
-        return LabAgent(harness: .pi, model: choice.model, effort: LabHarness.pi.efforts.contains(choice.thinking) ? choice.thinking : "low",
+        let harness: LabHarness = spec.onClaude ? .claudeCode : .pi
+        return LabAgent(harness: harness, model: choice.model, effort: harness.efforts.contains(choice.thinking) ? choice.thinking : "low",
                         mode: .call)
     }
 }

@@ -232,6 +232,12 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
 
     /// The overview's language (R46); nil in runs made before 2026-10-24.
     public var summaryLanguage: Sourced<LabLanguage>?
+    /// Who runs the passes (R69); nil in runs made before 2026-11-25, which ran on Pi.
+    public var harness: Sourced<ReviewHarness>?
+
+    /// The run's harness: Pi when the run predates the choice.
+    public var harnessValue: ReviewHarness { harness?.value ?? .pi }
+    public var onClaude: Bool { harnessValue == .claudeCode }
 
     /// The overview's language: the run's, or for an older run the Mac's preferred one, else English.
     public func overviewLanguage(preferred: [String] = Locale.preferredLanguages) -> LabLanguage {
@@ -270,8 +276,10 @@ extension ReviewRunSpec {
     public var verifierProblem: String? {
         // A run made before R25 had the passes' model (or Pi's default) as its verifier.
         guard verifier.value.model.isEmpty, version >= 2 else { return nil }
+        let key = onClaude ? "claude: { models: { verifier: … } }" : "models: { verifier: … }"
         return "No verifier model: set one for this run (Verifier model in New Review…, --verifier-model), in the project profile "
-            + "(review: { models: { verifier: … } }) or in review.yaml (models: verifier). Best a strong model of another family than the passes'."
+            + "(review: { \(key) }) or in review.yaml (\(onClaude ? "claude: models: verifier" : "models: verifier")). "
+            + "Best a strong model of another family than the passes'."
     }
 }
 
@@ -348,8 +356,38 @@ public enum ReviewResolver {
             }
             return Sourced(value, source)
         }
-        let verifier = model(\.verifier)
-        let passes = model(\.passes)
+        // R69: each harness has its own models; a run's choice is for the harness it runs on.
+        let harness = pick(\.harness, fallback: .pi)
+        let onClaude = harness.value == .claudeCode
+        func model(_ key: KeyPath<ReviewSettingsPatch, ReviewModelChoice?>, claude: KeyPath<ReviewSettingsPatch, ReviewModelChoice?>)
+            -> Sourced<ReviewModelChoice> {
+            guard onClaude else { return model(key) }
+            var value = ReviewModelChoice(model: "")
+            var source = ReviewSource.builtIn
+            for (choice, level) in [(builtIn[keyPath: claude], ReviewSource.builtIn), (brain[keyPath: claude], .brain),
+                                    (project[keyPath: claude], .project), (run[keyPath: key], .run)] {
+                guard let choice else { continue }
+                if !choice.model.isEmpty { value.model = choice.model; source = level }
+                if !choice.thinking.isEmpty { value.thinking = choice.thinking; source = level }
+            }
+            return Sourced(value, source)
+        }
+        let verifier = model(\.verifier, claude: \.claudeVerifier)
+        let passes = model(\.passes, claude: \.claudePasses)
+        if onClaude {
+            // Claude Code reads only the workspace and the context pack: nothing reaches an MCP server.
+            if !choices.links.isEmpty { throw Failure(message: "A review on Claude Code has no MCP server to read links (--link): run it on Pi.") }
+            if !choices.extraServers.isEmpty {
+                throw Failure(message: "A review on Claude Code has no MCP server (--extra-server): run it on Pi.")
+            }
+            if !choices.pi.flags.isEmpty || !choices.pi.steps.isEmpty {
+                throw Failure(message: "Pi flags and Pi steps (--pi-flag, --step) are for a review on Pi, not on Claude Code.")
+            }
+            let efforts = ReviewHarness.claudeCode.thinkingLevels
+            for choice in [run.passes, run.verifier].compactMap({ $0 }) where !choice.thinking.isEmpty && !efforts.contains(choice.thinking) {
+                throw Failure(message: "Thinking \(choice.thinking) is not a Claude Code effort: \(efforts.joined(separator: ", ")).")
+            }
+        }
         // The verifier's model is the user's choice (R25): an empty one stops the passes.
 
         // MCP servers: the profile's (or the defaults), plus context servers from the profile and the run.
@@ -403,6 +441,7 @@ public enum ReviewResolver {
         spec.maxChangedLines = pick(\.maxChangedLines, fallback: 6000)
         spec.impact = pick(\.impact, fallback: .auto)
         spec.summaryLanguage = pick(\.summaryLanguage, fallback: preferredLanguage(preferredLanguages))
+        spec.harness = harness
         // A deleted contracts role is never added back for other repositories' uses (R44).
         let turnedOff = Set(off.filter { !turnedOn.contains($0) } + (deleted("contracts") ? ["contracts"] : [])).sorted()
         spec.rolesOff = turnedOff.isEmpty ? nil : turnedOff
@@ -423,16 +462,21 @@ public enum ReviewResolver {
             if let problem = ReviewPiFlags.problem(extras.flags) { throw Failure(message: "Pi flags: \(problem)") }
         }
         let flags = levels.filter { !$0.0.flags.isEmpty }.map { Sourced($0.0.flags, $0.1) }
-        spec.piFlags = flags.isEmpty ? nil : flags
+        spec.piFlags = flags.isEmpty || onClaude ? nil : flags
         var steps: [ReviewRunSpec.Step] = []
-        for (extras, source) in levels {
+        for (extras, source) in levels where !onClaude {
             for config in extras.steps where !steps.contains(where: { $0.command == config.command }) {
                 steps.append(try step(config, number: steps.count + 1, source: source, library: pi, passes: passes.value,
                                       taken: Set(spec.roles.map(\.id) + steps.map(\.id))))
             }
         }
-        spec.steps = steps.isEmpty ? nil : steps
+        // The brain's and the project's Pi steps don't run on Claude Code, and no pass reaches MCP.
+        spec.steps = steps.isEmpty || onClaude ? nil : steps
         spec.skills = linkedSkills(scenario: definition, roles: roles, catalog: catalog)
+        if onClaude {
+            spec.mcp?.inPasses = false
+            spec.mcpServers = []
+        }
         return (spec, roles)
     }
 

@@ -297,6 +297,7 @@ public enum ReviewWhyMissed {
             throw Failure(message: "\(run.id) has no missed item \(id) (akit review show \(run.id) lists them).")
         }
         guard run.passes != nil else { throw Failure(message: "\(run.id) has no passes yet: run them first, then ask why something was missed.") }
+        try ReviewDiscuss.refuseClaude(run.spec, "Why Missed?")
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         let body = question.trimmingCharacters(in: .whitespacesAndNewlines)
         let earlier = entries(folder)

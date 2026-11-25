@@ -43,7 +43,7 @@ extension AKitCLI {
       akit review local [PATH] [--base REF] [--head REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
                          [--verifier-model M] [--verifier-thinking L] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
-                         [--link URL]… [--extra-server NAME]… [--gather-only]
+                         [--link URL]… [--extra-server NAME]… [--harness pi|claude-code] [--gather-only]
                                         Review a local git workspace (an Orca or herdr worktree; PATH
                                         defaults to the current folder): the commits since the base
                                         branch (origin/HEAD, main or master; or --base) up to HEAD
@@ -51,7 +51,10 @@ extension AKitCLI {
                                         changes), the uncommitted changes, or both (--what, default:
                                         everything there is). Prints the range and the commits first; --show
                                         stops there. Pi reads a copy, never the workspace; nothing
-                                        goes to GitLab. With --link, a fetch pass reads the links
+                                        goes to GitLab. --harness claude-code runs the passes on
+                                        Claude Code instead (review.yaml or the profile: harness,
+                                        claude: models): Read, Grep and Glob only, no MCP server, so
+                                        no --link, --extra-server or Pi steps. With --link, a fetch pass reads the links
 
     Context for a run (both forms):
       --note TEXT, --note-file PATH     Your notes: what the change is for, what to focus on, decisions
@@ -200,6 +203,10 @@ extension AKitCLI {
         if args.value("--verifier-model") != nil || verifierThinking != nil {
             // Field by field: a level alone keeps the configured model, and the other way round.
             settings.verifier = ReviewModelChoice(model: args.value("--verifier-model") ?? "", thinking: verifierThinking ?? "")
+        }
+        if let text = args.value("--harness") {
+            guard let harness = ReviewHarness(rawValue: text) else { throw Failure(message: "--harness takes pi or claude-code, not \(text).") }
+            settings.harness = harness
         }
         if let cap = try positiveNumber(args.value("--cap"), "--cap") { settings.capCredits = cap }
         if let lines = try positiveNumber(args.value("--max-changed-lines"), "--max-changed-lines") { settings.maxChangedLines = lines }

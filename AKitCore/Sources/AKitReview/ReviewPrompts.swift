@@ -22,10 +22,17 @@ public enum ReviewPrompts {
         - 1: certain: you traced it end to end.
         """
 
-    static func system(spec: ReviewRunSpec, hasWorktree: Bool) -> String {
+    /// `folder`: the run folder, which a pass on Claude Code reads by absolute paths.
+    static func system(spec: ReviewRunSpec, hasWorktree: Bool, folder: URL? = nil) -> String {
         let code = spec.posting.languageCode
         let language = "\(ReviewLanguage.name(code)) (`\(code)`)"
-        let tools = spec.access.inPasses && !spec.access.allServers
+        let tools = spec.onClaude
+            ? """
+            You only read: you have Read, Grep and Glob. You answer each pass with one structured answer (JSON) that AKit \
+            checks: what the pass asks for (the brief, boundaries, the overview, findings or verdicts) and `gaps`, what you \
+            needed and couldn't read. You have no network, no shell and no MCP server.
+            """
+            : spec.access.inPasses && !spec.access.allServers
             ? """
             You only read: you have `read`, `grep`, `find`, `ls`, two AKit tools, `akit_submit_findings` and \
             `akit_report_context_gap`, and `codemode`, which calls your MCP tools (GitLab, the tracker, other systems) to read more \
@@ -108,7 +115,15 @@ public enum ReviewPrompts {
             """
         }
         // Descriptions first (K18): every note a pass opens costs context.
-        let knowledgeRule = spec.knowledgeBasePath == nil ? "" : """
+        let knowledgeRule = spec.knowledgeBasePath == nil ? "" : spec.onClaude ? """
+            - The knowledge base is the folder `\(spec.knowledgeBasePath ?? "")`: Markdown notes, one system, contract or \
+            decision each. Read the one-line descriptions first (the systems in knowledge-card.md). Search the notes with Grep \
+            in that folder and open a note with Read only when what you found says it holds what you need, and read the part \
+            you need: every note you open costs context. When the base has nothing on a system, a contract or a decision you \
+            needed, add a gap with `system: "knowledge"`: `needed` says what a note should hold, `how_to_get` names the area or \
+            the note it belongs to.
+
+            """ : """
             - The knowledge base: read the one-line descriptions first (the systems in knowledge-card.md, the snippets \
             `akit_kb_search` returns). Open a note with `akit_kb_show` only when its line says it holds what you need, and ask \
             for one `section` when you can: every note you open costs context. When the base has nothing on a system, a contract \
@@ -116,13 +131,13 @@ public enum ReviewPrompts {
             should hold, `how_to_get` names the area or the note it belongs to.
 
             """
-        return """
+        let text = """
         # AKit review
 
         You review \(subject) at commit \(spec.headSHA ?? "?") for a developer who checks every finding before anything \
         is done with it. \(tools)\(context)
 
-        \(hasWorktree ? "Your working folder is the repository at the reviewed commit. The context pack is in the run folder: read `../context/README.md` first." : "There is no checkout: your working folder is the run folder; read `context/README.md` first. Only the diff is available.")
+        \(where_(hasWorktree: hasWorktree, folder: spec.onClaude ? folder : nil))
 
         Be a strict reviewer and a careful one: assume the change hides problems and hunt for them, but find each problem's \
         cause, not its symptom. A suspicion becomes a finding only after you followed it through the code. Go through every changed file and every entity it adds or touches (a type, a function, a module, a file, a \
@@ -216,6 +231,46 @@ public enum ReviewPrompts {
                 : " This is about \(spec.mergeRequest.label) only: review the linked merge requests as their own lines below say.")
         } ?? "")
         """
+        return spec.onClaude ? forClaude(text) : text
+    }
+
+    /// Where a pass is and where the context pack is. A pass on Claude Code gets absolute paths:
+    /// its reading tools take them.
+    static func where_(hasWorktree: Bool, folder: URL?) -> String {
+        if let folder {
+            let pack = folder.appending(path: "context").path
+            return hasWorktree
+                ? "Your working folder is the repository at the reviewed commit. The context pack is in `\(pack)`: read `\(pack)/README.md` first."
+                : "There is no checkout: only the diff is available. The context pack is in `\(pack)`: read `\(pack)/README.md` first."
+        }
+        return hasWorktree
+            ? "Your working folder is the repository at the reviewed commit. The context pack is in the run folder: read `../context/README.md` first."
+            : "There is no checkout: your working folder is the run folder; read `context/README.md` first. Only the diff is available."
+    }
+
+    /// A pass's prompt for Claude Code (R69): it answers in a structured answer instead of
+    /// calling the extension's tools. Every sentence that names one is replaced; a test checks
+    /// that no prompt of a review on Claude Code names a Pi tool.
+    static func forClaude(_ text: String) -> String {
+        let replacements: [(String, String)] = [
+            ("Then answer with a short brief (at most 550 words) in this shape:",
+             "Then write a short brief (at most 550 words) into your answer's `brief`, in this shape:"),
+            ("Report each with akit_report_context_gap too.", "Report each in `gaps` too."),
+            ("Before you answer, call akit_submit_boundaries once with every boundary", "Before you answer, list in `boundaries` every boundary"),
+            ("Call akit_submit_overview once: an overview for the developer in AKit, never posted.",
+             "Answer with an overview for the developer in AKit, never posted."),
+            ("Then call akit_submit_findings once with your findings, the worst first, and answer \"done\".",
+             "Then answer with your findings in `findings`, the worst first."),
+            ("Then call akit_submit_findings once with your findings, the worst first (an empty list only when nothing is wrong), and answer \"done\".",
+             "Then answer with your findings in `findings`, the worst first (an empty list only when nothing is wrong)."),
+            ("Call akit_submit_findings once with `verdicts` covering every candidate id, then answer \"done\".",
+             "Answer with `verdicts` covering every candidate id."),
+            ("\nThen answer \"done\".", ""),
+            ("return findings through `akit_submit_findings`", "return findings in your structured answer"),
+            ("call `akit_report_context_gap` instead of guessing", "add a gap to `gaps` instead of guessing"),
+            ("call `akit_report_context_gap` with", "add a gap to `gaps` with"),
+        ]
+        return replacements.reduce(text) { $0.replacingOccurrences(of: $1.0, with: $1.1) }
     }
 
     static func brief(spec: ReviewRunSpec) -> String {

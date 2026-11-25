@@ -235,10 +235,18 @@ public enum SessionScanner {
         -> (sessions: [SessionSummary], flowSteps: [SessionSummary]) {
         let all = installations.flatMap { sessions(of: $0, in: env) }.sorted { $0.modified > $1.modified }
         var sessions: [SessionSummary] = [], flowSteps: [SessionSummary] = []
-        for session in all {
+        for session in all where !isReviewRun(session.project, env: env) {
             if isFlowWorktree(session.project, env: env) { flowSteps.append(session) } else { sessions.append(session) }
         }
         return (sessions, flowSteps)
+    }
+
+    /// A session started in an AKit Review run (`~/.akit/local/review/runs/<run>/…`): a pass on
+    /// Claude Code (R69) keeps its session in Claude's own folder, under that path. It is AKit's,
+    /// not the user's work, so no list counts it.
+    public static func isReviewRun(_ project: URL?, env: HarnessEnvironment) -> Bool {
+        guard let path = project?.standardizedFileURL.path else { return false }
+        return path.hasPrefix(env.homeDirectory.appending(path: ".akit/local/review/runs").standardizedFileURL.path + "/")
     }
 
     /// A session started in a flow run's worktree (`~/.akit/local/flows/runs/<run>/worktree`): a

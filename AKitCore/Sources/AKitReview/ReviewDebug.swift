@@ -410,6 +410,7 @@ public enum ReviewDebug {
     public static func run(_ folder: URL, env: HarnessEnvironment, timeout: TimeInterval = 15 * 60,
                            progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Report {
         let run = try ReviewWorkflow.load(folder)
+        try ReviewDiscuss.refuseClaude(run.spec, "Pi's analysis of the run")
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         let model = run.spec.verifier.value
         let gate = try await ReviewPasses.gate(model: model.model, env: env)

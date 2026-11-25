@@ -115,6 +115,20 @@ public struct ReviewModelChoice: Codable, Sendable, Hashable {
     public static let thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 }
 
+/// Who runs a review's passes (`harness:`): Pi, or Claude Code for a local workspace, with no
+/// MCP server and only reading tools (R69).
+public enum ReviewHarness: String, Codable, Sendable, CaseIterable {
+    case pi
+    case claudeCode = "claude-code"
+
+    public var title: String { self == .pi ? "Pi" : "Claude Code" }
+
+    /// The thinking levels of its passes: Pi's `--thinking`, Claude Code's `--effort`.
+    public var thinkingLevels: [String] {
+        self == .pi ? ReviewModelChoice.thinkingLevels : ["low", "medium", "high", "xhigh", "max"]
+    }
+}
+
 /// When a run looks for uses of the change in other GitLab repositories (R42, the `impact` pass):
 /// `auto` when the brief kept a boundary, `always` (the pass then finds the boundaries itself
 /// when the brief kept none), or `off`.
@@ -142,6 +156,12 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
     public var impact: ReviewImpact?
     /// The language of the overview AKit shows the user (`summary_language`, R46); never posted.
     public var summaryLanguage: LabLanguage?
+    /// Who runs the passes (`harness: pi|claude-code`, R69).
+    public var harness: ReviewHarness?
+    /// The models of a review on Claude Code (`claude: {models, thinking}`); `passes` and
+    /// `verifier` above are Pi's.
+    public var claudePasses: ReviewModelChoice?
+    public var claudeVerifier: ReviewModelChoice?
 
     public init(passes: ReviewModelChoice? = nil, verifier: ReviewModelChoice? = nil, marker: String? = nil,
                 severityThreshold: ReviewSeverity? = nil, confidenceThreshold: Double? = nil, maxInline: Int? = nil,
@@ -215,6 +235,29 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
                 throw ReviewRole.Failure(message: "\(where_): summary_language \(value) is not one of \(LabLanguage.codes).")
             }
             patch.summaryLanguage = language
+        }
+        if let value = map["harness"] {
+            guard let harness = (value as? String).flatMap(ReviewHarness.init) else {
+                throw ReviewRole.Failure(message: "\(where_): harness \(value) is not pi or claude-code.")
+            }
+            patch.harness = harness
+        }
+        if let value = map["claude"] {
+            guard let claude = value as? [String: Any] else { throw ReviewRole.Failure(message: "\(where_): claude must be a map (models, thinking).") }
+            let models = claude["models"] as? [String: Any] ?? [:]
+            let thinking = claude["thinking"] as? [String: Any] ?? [:]
+            func choice(_ key: String) throws -> ReviewModelChoice? {
+                let model = models[key] as? String
+                let level = thinking[key] as? String
+                if let level, !level.isEmpty, !ReviewHarness.claudeCode.thinkingLevels.contains(level) {
+                    throw ReviewRole.Failure(message: "\(where_): claude thinking \(key) \(level) is not one of "
+                                             + ReviewHarness.claudeCode.thinkingLevels.joined(separator: ", ") + ".")
+                }
+                guard model != nil || level != nil else { return nil }
+                return ReviewModelChoice(model: model ?? "", thinking: level ?? "")
+            }
+            patch.claudePasses = try choice("passes")
+            patch.claudeVerifier = try choice("verifier")
         }
         return patch
     }

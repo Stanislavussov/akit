@@ -75,6 +75,9 @@ public enum SendOrigin: Hashable, Sendable {
     /// AKit only runs Pi on it, as the user would: Pi reads it through its own MCP servers and
     /// sends it to the model it is set up with, so any Pi destination may get it.
     case mergeRequest
+    /// The changes of a local workspace with the context pack AKit made of them, reviewed on
+    /// Claude Code (AKit Review, R69): the user picked Claude Code for it on this Mac.
+    case localReview
     /// A proposal for a knowledge base and the notes and map arrows it is checked against
     /// (`akit kb check`, K15). The base describes systems the user gives Pi in daily work, and
     /// the check runs only through Pi, so any Pi destination may get it.
@@ -117,6 +120,10 @@ public enum SendPolicy {
         if origin == .mergeRequest, destination.harness == .pi {
             return Decision(allowed: true, reason: "AKit Review runs Pi, and Pi sends the merge request to the model it is set up with.")
         }
+        // A work Mac's code still goes only to its allowed list.
+        if origin == .localReview, destination.harness == .claudeCode, !isWork {
+            return Decision(allowed: true, reason: "AKit Review runs on Claude Code for a local workspace on this personal Mac.")
+        }
         if origin == .knowledgeBase, destination.harness == .pi {
             return Decision(allowed: true, reason: "Knowledge base data goes to Pi (the knowledge check, Ask Pi), and Pi sends it to the model it is set up with.")
         }
@@ -146,7 +153,7 @@ public enum SendPolicy {
                 && providers.first?.caseInsensitiveCompare(destination.provider) == .orderedSame
         case .code(let harness):
             return destination.harness == harness
-        case .mergeRequest, .knowledgeBase:
+        case .mergeRequest, .localReview, .knowledgeBase:
             return false
         }
     }
@@ -167,6 +174,7 @@ extension SendOrigin {
                 : "a Pi session through \(providers.sorted().joined(separator: ", "))"
         case .code(let harness): "repository code worked on with \(harness.title)"
         case .mergeRequest: "a merge request with its threads and work items"
+        case .localReview: "a local workspace's changes with their context pack"
         case .knowledgeBase: "a knowledge base proposal with the notes it is checked against"
         }
     }

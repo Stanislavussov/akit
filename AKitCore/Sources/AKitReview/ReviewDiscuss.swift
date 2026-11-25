@@ -44,9 +44,17 @@ public enum ReviewDiscuss {
         let variables: [(String, String)]
     }
 
+    /// R69: Discuss in Pi…, Ask, Why Missed? and Debug… go on in Pi with the run's models; a run
+    /// on Claude Code has neither a Pi session nor a Pi model.
+    static func refuseClaude(_ spec: ReviewRunSpec, _ what: String) throws {
+        guard spec.onClaude else { return }
+        throw Failure(message: "\(what) works with a review on Pi, and this one ran on Claude Code: run the review on Pi to use it.")
+    }
+
     /// Checks the sending policy first: the discussion sends the run's context again.
     static func setup(_ folder: URL, env: HarnessEnvironment, fork: String? = nil) async throws -> Setup {
         let run = try ReviewWorkflow.load(folder)
+        try refuseClaude(run.spec, "Discuss in Pi")
         guard let log = run.passes, let session = fork ?? log.verifierSessionFile ?? log.verifierSession.flatMap({
             ReviewPasses.sessionFile(id: $0, in: folder.appending(path: "sessions"))?.path
         }) ?? ReviewPasses.sessionFile(id: log.mainSession, in: folder.appending(path: "sessions"))?.path else {
