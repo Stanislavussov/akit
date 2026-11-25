@@ -299,10 +299,26 @@ finishes a step updates its row in `README.md` and the status note here.
    `make test-skill-modes-pi` with the SDK and the faux model (outside `make test`, skipped
    without Pi) that sets `minPi`.
 5. **Doctor** checks.
-6. **Projects stop getting skill copies for Pi.** For a project whose targets are only Pi,
-   Apply no longer renders skills into it; copies AKit wrote and nobody edited go to the
-   Trash, edited ones stay and are listed. The project's `answers.json` skill modes become
-   entries in `skill-modes.json` (one preview, one backup).
+6. **Projects stop getting skill copies for Pi** (refined 2026-11-25 by the lead):
+   - The home render (`ProjectSetup.plan(forHome:)`) also brings the brain skills the saved
+     Pi-only projects use (`ProjectBundle.resolve(homeSkills:)`): the core layer's keep their mode,
+     the others are Manual (`manualOnly`). Files AKit didn't write or that were edited by hand are
+     never overwritten, as before. (The lead's first rule was every brain skill; that would bring
+     back a skill Remove Everywhere or Move to Project took out of the home folder, so only the
+     skills a Pi-only project needs come.)
+   - A project whose targets are only Pi, in git: Apply renders no skills into it (no
+     `.agents/skills/<name>`, no `.claude/skills` link, so no exclude lines or worktree links for
+     them); everything else is unchanged. Copies an earlier Apply wrote go to the Trash through
+     the usual removal; edited ones stay and are listed. A Pi-only folder outside git keeps its
+     copies (no project id), and so does every project with another target.
+   - The project's modes go into `~/.akit/local/skill-modes.json` in the same Apply (preview
+     line, backup): an entry for each skill whose project mode differs from the home folder's
+     (core's mode, else Manual): Auto → `auto`, Off → `off`, Manual over a home Auto → `manual`.
+     An entry the user set stays (a note says so on a conflict); the lock keeps the entries AKit
+     wrote, which follow the layers and leave when the layers stop asking for them (unless changed
+     since). Project id: `ProjectRecords.projectID(ofFolder:)`.
+   - `akit plan` / `apply` and Set Up Project show it in plain lines (notes); Forget Project also
+     takes the project's entries out (preview first).
 7. **Skills screen**: Mode Here, Reset, the guide and its screenshot.
 
 ## Not doing

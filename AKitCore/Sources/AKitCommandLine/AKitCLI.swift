@@ -782,7 +782,7 @@ public enum AKitCLI {
                 }
                 let include = Set(options.include), exclude = Set(options.exclude)
                 let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: options.home,
-                                             piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], env: env)
+                                             piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], projectsRoot: projectsRoot, env: env)
                 out(planText(plan))
                 guard plan.canApply else { return 1 }
                 guard command == "apply" else { return 0 }
@@ -1815,7 +1815,8 @@ public enum AKitCLI {
                     : await ProjectRecords.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
                 guard let preview = ProjectForget.preview(id: id, folder: project, forHome: options.home, brain: brain, store: store,
-                                                          piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], env: env) else {
+                                                          piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], projectsRoot: projectsRoot,
+                                                          env: env) else {
                     out("Nothing is saved for \(id).")
                     return 1
                 }
@@ -1840,6 +1841,9 @@ public enum AKitCLI {
                     if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
                 }
                 if let file = preview.excludeTakenOut { lines.append("AKit's block comes out of \(file.path) (local only).") }
+                if let modes = preview.skillModes {
+                    lines.append("Its skill modes come out of ~/.akit/local/skill-modes.json (backup first): \(modes.summary).")
+                }
                 guard options.yes else { out((lines + [confirm]).joined(separator: "\n")); return 0 }
                 try await ProjectForget.run(preview, keepFiles: options.keepFiles, brain: brain, home: env.homeDirectory, env: env, trash: trash)
                 if preview.brainCopyLeft {

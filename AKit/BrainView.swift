@@ -412,6 +412,9 @@ struct BrainView: View {
         if let exclude = preview.excludeTakenOut {
             lines.append("AKit's block comes out of \(exclude.tildePath) (its files then show in git status), and its links out of the project's worktrees.")
         }
+        if let modes = preview.skillModes {
+            lines.append("Its skill modes come out of ~/.akit/local/skill-modes.json (backup first): \(modes.summary).")
+        }
         return lines.joined(separator: "\n\n")
     }
 

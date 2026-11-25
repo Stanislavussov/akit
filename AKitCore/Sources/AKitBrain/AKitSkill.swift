@@ -307,6 +307,12 @@ everywhere is `akit skills set NAME --harness pi --state off`. The modes live in
 `~/.akit/local/skill-modes.json` (one file per Mac); `akit skills resolve` is the
 extension's, not for you.
 
+A project whose targets are only Pi (`--targets pi`) gets no skill copies from `akit apply`:
+its layers' modes become entries in that file (shown as a note in the plan; your own entries
+win), copies an earlier Apply wrote go to the Trash (edited ones stay), and `akit apply --home`
+brings the skills such projects use into the home folder, Manual unless core says otherwise.
+After setting up a Pi-only project, run `akit plan --home` and, after a yes, `akit apply --home`.
+
 ## MCP servers
 
 When an MCP server doesn't work in Claude Code or Pi, ask the harness itself:

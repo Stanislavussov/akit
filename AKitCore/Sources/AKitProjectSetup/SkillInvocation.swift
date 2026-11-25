@@ -124,6 +124,9 @@ public enum SkillInvocation {
         guard let source = homePlan(brain).render.skills.first(where: { $0.name == name })?.source else {
             throw Failure(message: "No layer brings \(name) into the home folder now. Brain → core → Update Home Folder… first.")
         }
+        if source == ProjectBundle.brainSource {
+            throw Failure(message: "AKit brings \(name) to the home folder Manual because a Pi-only project uses it. To make it Auto everywhere, add it to the core layer; for one project: akit skills mode \(name) auto there.")
+        }
         guard source != ProjectBundle.projectSource, let layer = brain.layers.first(where: { $0.name == source }) else {
             throw Failure(message: "The home folder's own answers set the mode of \(name), not a layer. Change it on the Brain screen.")
         }

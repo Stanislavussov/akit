@@ -66,6 +66,36 @@ extension SkillModes {
                         summary: "\(project): \(count) entr\(count == 1 ? "y" : "ies") taken out; the skills' SKILL.md decide again", home: home)
     }
 
+    /// Several entries of one project at once (a Pi-only project's Apply, skill-modes.md step 6):
+    /// a mode sets the entry, nil takes it out (the project too when nothing is left in it).
+    /// Nothing to do when every entry is already so.
+    public static func plan(entries: [String: SkillMode?], project: String, home: URL) throws(Failure) -> Plan {
+        let file = file(home: home)
+        let current = try readForWrite(file, home: home)
+        let existing = current.value(at: ["projects", project])?.objectMembers ?? [:]
+        var edits: [SettingsFile.Edit] = []
+        var left = Set(existing.keys)
+        var lines: [String] = []
+        for (name, mode) in entries.sorted(by: { $0.key < $1.key }) {
+            try checkName(name)
+            if let mode {
+                guard existing[name] != .string(mode.rawValue) else { continue }
+                edits.append(.set(["projects", project, name], .string(mode.rawValue)))
+                left.insert(name)
+                lines.append("\(name) \(mode.rawValue)")
+            } else if existing[name] != nil {
+                edits.append(.remove(["projects", project, name]))
+                left.remove(name)
+                lines.append("\(name) out")
+            }
+        }
+        guard !edits.isEmpty else { return Plan(file: file, summary: "\(project): skill modes up to date.", diff: [], creates: false, change: nil) }
+        // The last entry out: the project's key goes too.
+        if left.isEmpty { edits = [.remove(["projects", project])] }
+        if current.value(at: ["version"]) == nil { edits.insert(.set(["version"], .number(String(version))), at: 0) }
+        return try plan(file, edits: edits, summary: "\(project): \(lines.joined(separator: ", "))", home: home)
+    }
+
     /// Writes the change (backup first). Refused when a value it touches changed since the plan.
     /// Returns the backup, nil for a new file or no change.
     @discardableResult

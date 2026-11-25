@@ -607,10 +607,10 @@ final class AppModel {
     func projectPlan(project: URL, id: String, answers: ProjectAnswers, forHome: Bool = false) async -> ProjectSetup.Plan? {
         guard let brain else { return nil }
         let store = projectStore
-        let piSetting = HarnessEnvironment.current.variables["PI_CODING_AGENT_DIR"]
+        let piSetting = HarnessEnvironment.current.variables["PI_CODING_AGENT_DIR"], root = projectsRoot
         return await Task.detached {
             ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: forHome, piAgentDirSetting: piSetting,
-                              rememberPiAgentDir: true)
+                              rememberPiAgentDir: true, projectsRoot: root)
         }.value
     }
 
@@ -618,10 +618,10 @@ final class AppModel {
     func forgetPreview(id: String, folder: URL?, forHome: Bool) async -> ProjectForget.Preview? {
         guard let brain else { return nil }
         let store = projectStore
-        let piSetting = HarnessEnvironment.current.variables["PI_CODING_AGENT_DIR"]
+        let piSetting = HarnessEnvironment.current.variables["PI_CODING_AGENT_DIR"], root = projectsRoot
         return await Task.detached {
             ProjectForget.preview(id: id, folder: folder, forHome: forHome, brain: brain, store: store, piAgentDirSetting: piSetting,
-                                  rememberPiAgentDir: true)
+                                  rememberPiAgentDir: true, projectsRoot: root)
         }.value
     }
 

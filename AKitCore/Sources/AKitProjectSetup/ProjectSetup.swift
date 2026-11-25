@@ -2,6 +2,7 @@ import AKitBrain
 import AKitFoundation
 import AKitInsights
 import AKitRender
+import AKitSkills
 import Foundation
 
 /// Applies a render to a project folder: what would change, then backup + write +
@@ -97,6 +98,13 @@ public enum ProjectSetup {
         public internal(set) var exclude: LocalOnly.Exclude?
         /// What Apply does besides the files, for the preview (local only, worktrees).
         public internal(set) var notes: [String] = []
+        /// A Pi-only project (skill-modes.md, step 6): it gets no skill copies; Pi takes the skills
+        /// from the home folder, with the project's modes as entries in `~/.akit/local/skill-modes.json`.
+        public internal(set) var piOnlySkills = false
+        /// The entries Apply writes (or takes out) in the modes file; nil when none change.
+        public internal(set) var skillModes: SkillModes.Plan?
+        /// The entries AKit owns for the project after Apply (kept in the lock).
+        var skillModeRecord: [String: String]?
 
         public var canApply: Bool { render.errors.isEmpty && blockers.isEmpty }
     }
@@ -134,13 +142,25 @@ public enum ProjectSetup {
     /// `rememberPiAgentDir`: the app, which doesn't see the shell's variables, uses the folder
     /// of the last home render when none is set; the command line takes its environment as is.
     /// `env`: finds git, which a local-only plan runs once (`git ls-files`) to leave tracked files out.
+    /// `projectsRoot`: the projects folder, for the modes-file id of a project without a remote.
     public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, store: ProjectStore,
                             forHome: Bool = false, piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false,
-                            env: HarnessEnvironment = .current) -> Plan {
+                            projectsRoot: URL? = nil, env: HarnessEnvironment = .current) -> Plan {
         let fm = FileManager.default
         let answers = ProjectBundle.pruned(answers, brain: brain, projectName: project.lastPathComponent)
-        var render = Render.render(ProjectBundle.resolve(answers, brain: brain, projectName: project.lastPathComponent), forHome: forHome)
+        // The home folder also gets the skills Pi-only projects use (Manual unless core says
+        // otherwise): those projects get no copies (skill-modes.md, step 6).
+        let bundle = ProjectBundle.resolve(answers, brain: brain, projectName: project.lastPathComponent,
+                                           homeSkills: forHome ? piOnlySkillNames(brain: brain, store: store) : [])
+        var render = Render.render(bundle, forHome: forHome)
         let previous = ProjectRecords.savedLock(id: id, in: store)
+        // A Pi-only project in git: no skill copies; its modes go into the modes file.
+        let modesID = forHome || answers.targets != ["pi"] ? nil
+            : ProjectRecords.projectID(ofFolder: project, projectsRoot: (projectsRoot ?? env.homeDirectory.appending(path: "Projects")).path)
+        var modeNotes: [String] = []
+        if !forHome, answers.targets == ["pi"], modesID == nil, !bundle.skills.isEmpty {
+            modeNotes.append("This Pi-only project is not in a git repository, so its skills are copied into it as before (skill modes need a project id).")
+        }
         // A skill the project has itself wins over the brain's copy with the same name. Only
         // with a lock: without one AKit can't tell its own earlier copies from the project's.
         // A folder that holds exactly what the brain renders is AKit's too.
@@ -159,7 +179,7 @@ public enum ProjectSetup {
             let current = try? Data(contentsOf: project.appending(path: "\(skillPrefix)\(folder)/SKILL.md"))
             if current != data { shadowed.insert(name) }
         }
-        var outputs = render.outputs.filter { output in skillName(output.path).map { !shadowed.contains($0) } ?? true }
+        var outputs = render.outputs.filter { output in skillName(output.path).map { !shadowed.contains($0) && modesID == nil } ?? true }
         // The home folder's AGENTS.md text goes into the harnesses' own files as a block, below.
         outputs.removeAll(where: \.instructionsBlock)
         var warnings = render.warnings + shadowed.sorted().map { "The project has its own \($0) skill in \(ProjectBundle.skillsFolder); the brain's is not written." }
@@ -386,7 +406,97 @@ public enum ProjectSetup {
             LocalOnly.preview(&plan, env: env)
             if let note = LocalOnly.flowNote(plan) { plan.notes.append(note) }
         }
+        plan.notes += modeNotes
+        if let modesID { planSkillModes(&plan, bundle: bundle, brain: brain, projectID: modesID, home: env.homeDirectory) }
         return plan
+    }
+
+    /// The skills the saved Pi-only projects of this store use (any mode but off): the home
+    /// folder brings them, since those projects get no copies.
+    static func piOnlySkillNames(brain: Brain, store: ProjectStore) -> Set<String> {
+        var names = Set<String>()
+        for project in brain.addingProjects(from: store).projects where !project.isHome {
+            guard let answers = ProjectRecords.savedAnswers(id: project.id, in: store) ?? Optional(project.answers),
+                  answers.targets == ["pi"] else { continue }
+            let bundle = ProjectBundle.resolve(answers, brain: brain, projectName: project.name)
+            names.formUnion(bundle.skills.map(\.name))
+        }
+        return names
+    }
+
+    /// A Pi-only project's skills: none copied (an earlier render's copies go, edited ones stay),
+    /// and for each skill its mode as an entry in the modes file when it differs from the home
+    /// folder's (the core layer's mode, else Manual). An entry the user set stays; one AKit wrote
+    /// earlier and nobody changed comes out when the layers stop asking for it.
+    static func planSkillModes(_ plan: inout Plan, bundle: ProjectBundle, brain: Brain, projectID: String, home: URL) {
+        plan.piOnlySkills = true
+        let core = brain.layers.first { $0.name == "core" }
+        func homeMode(_ name: String) -> LayerSkill.Mode {
+            switch core?.skills.first(where: { $0.name == name })?.mode {
+            case .auto?: .auto
+            case .off?: .off
+            default: .manual
+            }
+        }
+        var wanted: [String: SkillMode] = [:]
+        for (name, mode) in bundle.modes where mode != homeMode(name) {
+            switch mode {
+            case .auto: wanted[name] = .auto
+            case .off: wanted[name] = .off
+            case .manual: if homeMode(name) == .auto { wanted[name] = .manual }
+            }
+        }
+        let reading = SkillModes.read(SkillModes.file(home: home), home: home)
+        let existing = reading.usable ? reading.entries(for: projectID) : [:]
+        let written = plan.previous?.skillModes ?? [:]
+        var edits: [String: SkillMode?] = [:]
+        var record: [String: String] = [:]
+        for (name, mode) in wanted.sorted(by: { $0.key < $1.key }) {
+            if existing[name] == nil, written[name] == mode.rawValue {
+                plan.notes.append("\(name): AKit's entry (\(mode.title)) was taken out of the modes file since; it is not written again.")
+            } else if existing[name] == nil {
+                edits[name] = mode
+                record[name] = mode.rawValue
+            } else if existing[name] == mode {
+                // Already so: AKit's if it wrote it before, else the user's.
+                if written[name] == mode.rawValue { record[name] = mode.rawValue }
+            } else if let other = existing[name] {
+                if written[name] == other.rawValue {
+                    edits[name] = mode  // AKit's own earlier entry: follows the layers
+                    record[name] = mode.rawValue
+                } else {
+                    plan.notes.append("\(name): the layers make it \(mode.title) here, but your entry in the modes file says \(other.title); yours stays (akit skills mode \(name) --reset to take it out).")
+                }
+            }
+        }
+        // Entries AKit wrote that the layers no longer ask for, unchanged since.
+        for (name, mode) in written where wanted[name] == nil && existing[name]?.rawValue == mode { edits[name] = .some(nil) }
+        plan.skillModeRecord = record.isEmpty ? nil : record
+        let skills = bundle.skills.map(\.name)
+        if !skills.isEmpty {
+            plan.notes.append("Pi only: the skills (\(skills.joined(separator: ", "))) are not copied into the project; Pi takes them from the home folder: after this Apply, update the home folder (akit apply --home; Brain → core → Update Home Folder…), which brings the skills Pi-only projects use, Manual unless the core layer says otherwise.")
+        }
+        let removed = plan.changes.filter { $0.path.hasPrefix(ProjectBundle.skillsFolder + "/") || $0.path == ".claude/skills" }
+        if removed.contains(where: { $0.kind == .remove }) {
+            plan.notes.append("Skill copies an earlier Apply wrote go to the Trash; ones edited by hand since stay (listed as kept).")
+        }
+        if !reading.usable {
+            plan.notes.append("The skill modes file can't be read, so the project's modes are not written: \(reading.problems.first?.message ?? "")")
+            return
+        }
+        guard !edits.isEmpty else {
+            if !wanted.isEmpty { plan.notes.append("Skill modes for \(projectID) are up to date in ~/.akit/local/skill-modes.json.") }
+            return
+        }
+        do {
+            let modes = try SkillModes.plan(entries: edits, project: projectID, home: home)
+            if !modes.changesNothing {
+                plan.skillModes = modes
+                plan.notes.append("Skill modes in ~/.akit/local/skill-modes.json (backup first): \(modes.summary).")
+            }
+        } catch {
+            plan.notes.append("The project's skill modes can't be written: \(error.message)")
+        }
     }
 
     // MARK: - Apply
@@ -428,6 +538,14 @@ public enum ProjectSetup {
             }
         }
 
+        // A Pi-only project's modes first: if that is refused, nothing else changed.
+        if let modes = plan.skillModes {
+            do {
+                try SkillModes.apply(modes, home: home)
+            } catch {
+                throw Failure(message: "Nothing was written: \(error.message)")
+            }
+        }
         // Local only: the block lists the files before they are written.
         let previousBlock = plan.forHome ? nil : LocalOnly.beforeApply(plan)
         var backup: URL?
@@ -634,6 +752,7 @@ public enum ProjectSetup {
         }
         lock.blocks = blocks.isEmpty ? nil : blocks
         lock.piAgentDir = plan.piAgentDir
+        lock.skillModes = plan.piOnlySkills ? plan.skillModeRecord : plan.previous?.skillModes
         // A template the render no longer brings but that is left for later keeps its offer too.
         for path in deferring where lock.templates?[path] == nil {
             if let offered = plan.previous?.templates?[path] { lock.templates = (lock.templates ?? [:]).merging([path: offered]) { $1 } }
