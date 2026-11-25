@@ -74,6 +74,10 @@ final class AppModel {
     /// An MCP switch change shown in its sheet (with a project choice first for Off in Project…).
     var mcpSwitchRequest: MCPSwitchRequest?
 
+    /// What the Insights screen last loaded, by scope: shown at once when it comes back, while it
+    /// loads again. Not observed: only the screen reads it, when it loads.
+    @ObservationIgnored var insightsLoads: [InsightsScope: InsightsLoad] = [:]
+
     /// Sidebar section shown in the window.
     var section: SidebarSection? = DebugSnapshot.options?.section ?? .attention
     /// Search Knowledge… (⇧⌘F) is open over the screen. Snapshots: `--tab knowledge-search --query <words>`.

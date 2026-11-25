@@ -39,6 +39,8 @@ struct InsightsView: View {
     @State private var planning: PlanRequest?
     /// Counts the loads started, so a superseded one can tell.
     @State private var generation = 0
+    /// The scope `loaded` and `loops` belong to.
+    @State private var shownScope: InsightsScope?
     /// Session capture on this Mac (`akit insights status`); nil until checked.
     @State private var capture: CaptureInstaller.Status?
     /// Bumped after Install Capture…, so the status is read again.
@@ -574,8 +576,15 @@ struct InsightsView: View {
         generation += 1
         let mine = generation
         isLoading = true
-        // The old window's loops would show under the new window's label until the scan ends.
-        loops = nil
+        let scope = InsightsScope(project: project, days: days, range: range)
+        if let kept = model.insightsLoads[scope], loaded == nil || shownScope != scope {
+            // Back on the screen (or on a scope seen before): what was loaded last, at once, while it loads again.
+            (loaded, loops, problem) = (kept.loaded, kept.loops, nil)
+        } else if shownScope != scope {
+            // The old window's loops would show under the new window's label until the scan ends.
+            loops = nil
+        }
+        shownScope = scope
         do {
             let result = try await Recommender.load(env: env, brain: model.brain, project: project, days: days, range: range,
                                                     projectsRoot: model.projectsRoot, projectFolder: project.flatMap { model.brainProjectFolders[$0] })
@@ -587,6 +596,7 @@ struct InsightsView: View {
             let report = try? await Task.detached { try LoopsLoad.report(env: env, days: days, range: range, project: project) }.value
             guard mine == generation else { return }
             loops = report
+            model.insightsLoads[scope] = InsightsLoad(loaded: result, loops: report)
             // Snapshots: `--add` opens Apply… of the first layer patch.
             if DebugSnapshot.options?.add == true, patch == nil, let item = result.report.recommendations.first(where: \.isPatch) {
                 open(item, change: .manual)
@@ -1130,4 +1140,18 @@ struct CustomWindowPopover: View {
         let current = Int(text.trimmingCharacters(in: .whitespaces)) ?? 30
         text = String(min(max(current + by, 1), 365))
     }
+}
+
+/// The window and project the Insights screen counts over.
+struct InsightsScope: Hashable {
+    let project: String?
+    let days: Int
+    let range: DayRange?
+}
+
+/// What the Insights screen last loaded for one scope (`AppModel.insightsLoads`): a load takes
+/// seconds, and the screen is built again each time it is shown.
+struct InsightsLoad {
+    let loaded: Recommender.Loaded
+    let loops: LoopsReport?
 }
