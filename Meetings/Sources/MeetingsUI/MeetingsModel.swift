@@ -1301,6 +1301,24 @@ public final class MeetingsModel {
 
     // MARK: Settings (M9, M10)
 
+    /// M41: the settings file again, as the app that shows meetings saved it: the background
+    /// recorder runs from login and must record where the settings say now. A recording keeps
+    /// the folder it started in.
+    public func reloadSettings() {
+        var next = MeetingsSettings.load(from: settingsFile)
+        if isRecording { next.rootPath = settings.rootPath }
+        guard next != settings else { return }
+        let rootChanged = next.root != settings.root
+        settings = next
+        if rootChanged {
+            select(nil)
+            refresh()
+        }
+    }
+
+    /// The folder of the settings file, which the background recorder watches.
+    public var settingsFolder: URL { settingsFile.deletingLastPathComponent() }
+
     public func update(_ change: (inout MeetingsSettings) -> Void) {
         var next = settings
         change(&next)
