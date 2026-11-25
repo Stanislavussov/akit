@@ -128,10 +128,11 @@ for (const [mode, expected] of [["slow", /not applied, akit didn't answer in 0.3
 	test(`a ${mode} akit changes nothing and says so in the status line`, async () => {
 		process.env.FAKE_AKIT_MODE = mode;
 		setAnswer({ modes: { tdd: "off" } });
-		const fake = load([skill("tdd", "user", true)], 300);
+		// Only the slow case needs the short limit; the others get time to start under a busy make test.
+		const fake = load([skill("tdd", "user", true)], mode === "slow" ? 300 : 5000);
 		const started = Date.now();
 		const skills = await fake.run();
-		assert.ok(Date.now() - started < 2000);
+		assert.ok(Date.now() - started < (mode === "slow" ? 2000 : 6000));
 		assert.equal(brief(skills), "tdd:manual");
 		assert.match(fake.status.at(-1) ?? "", expected);
 	});

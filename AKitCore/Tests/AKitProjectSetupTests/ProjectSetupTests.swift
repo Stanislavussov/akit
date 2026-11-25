@@ -193,6 +193,22 @@ struct ProjectSetupTests {
         #expect(await ProjectRecords.projectID(for: project, projectsRoot: home.appending(path: "Projects"), env: env) == "local/task")
     }
 
+    @Test func finderFilesInTheBrainDontMakeItDirty() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        try write(".akit/registry/layers/.DS_Store", "x")
+        try write(".akit/registry/skills/tdd/.DS_Store", "x")
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
+        let outcome = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        #expect(ProjectRecords.savedLock(id: "local/task", in: .brain(brainRoot))?.brainDirty == false)
+        #expect(!outcome.notes.contains { $0.contains("uncommitted") })
+
+        try write(".akit/registry/skills/tdd/notes.md", "draft")
+        let again = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
+        _ = try await ProjectSetup.apply(again, brain: brain, home: home, env: env, trash: trash)
+        #expect(ProjectRecords.savedLock(id: "local/task", in: .brain(brainRoot))?.brainDirty == true)
+    }
+
     @Test func firstRenderWritesFilesBacksUpAndSavesAnswers() async throws {
         let brain = try await setUpBrain()
         try write("Projects/task/CLAUDE.md", "# My own rules\n")
