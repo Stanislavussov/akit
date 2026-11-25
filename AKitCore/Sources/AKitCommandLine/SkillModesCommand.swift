@@ -176,38 +176,11 @@ extension AKitCLI {
         return 0
     }
 
-    /// The skills Pi loads in `folder`, in Pi's order of precedence (project, yours, packages; the
-    /// first of a name wins), as the extension would report them.
-    static func piSkillsHere(folder: URL, env: HarnessEnvironment) -> [SkillModes.LoadedSkill] {
-        let installations = HarnessCatalog.detectAll(in: env).filter { $0.id == .pi }
-        guard !installations.isEmpty else { return [] }
-        let here = folder.standardizedFileURL.path
-        func isHere(_ url: URL?) -> Bool { url.map { $0.standardizedFileURL.path == here } ?? false }
-        var ranked: [(rank: Int, skill: SkillModes.LoadedSkill)] = []
-        for skill in SkillScanner.scan(installations: installations, projects: [folder], in: env) where skill.visibleTo.contains(.pi) {
-            let place = skill.places[.pi]
-            let path = (place?.file ?? skill.file).path
-            switch place?.scope ?? skill.scope {
-            case .project(let url) where isHere(url):
-                ranked.append((0, .init(name: skill.name, scope: "project", origin: "top-level", path: path)))
-            case .global:
-                ranked.append((1, .init(name: skill.name, scope: "user", origin: "top-level", path: path)))
-            case .package(_, let project) where project == nil || isHere(project):
-                ranked.append((2, .init(name: skill.name, scope: project == nil ? "user" : "project", origin: "package", path: path)))
-            default:
-                continue
-            }
-        }
-        var seen = Set<String>()
-        return ranked.enumerated().sorted { ($0.element.rank, $0.offset) < ($1.element.rank, $1.offset) }
-            .map(\.element.skill).filter { seen.insert($0.name).inserted }
-    }
-
     static func modeList(folder: URL, project: String?, env: HarnessEnvironment) -> ModeList {
         let home = env.homeDirectory
         let file = SkillModes.file(home: home)
         let reading = SkillModes.read(file, home: home)
-        let skills = piSkillsHere(folder: folder, env: env)
+        let skills = SkillModes.piSkills(in: folder, env: env)
         let resolution = SkillModes.resolve(file: reading, skills: skills, projectID: project, userFolders: SkillModes.piUserFolders(in: env))
         var rows: [ModeRow] = []
         for skill in skills {

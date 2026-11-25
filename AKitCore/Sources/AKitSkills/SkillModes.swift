@@ -1,4 +1,6 @@
 import AKitFoundation
+import AKitHarnesses
+import AKitModel
 import Foundation
 
 /// A skill's mode in one project (skill-modes.md): Auto (listed to the model), Manual (only
@@ -246,6 +248,34 @@ public enum SkillModes {
             result.modes[name] = mode
         }
         return result
+    }
+
+    /// The skills Pi loads in `folder`, in Pi's order of precedence (project, yours, packages; the
+    /// first of a name wins), as the extension would report them. Scans the skill folders, so it is
+    /// for the list and Doctor, not for `resolve`.
+    public static func piSkills(in folder: URL, env: HarnessEnvironment) -> [LoadedSkill] {
+        let installations = HarnessCatalog.detectAll(in: env).filter { $0.id == .pi }
+        guard !installations.isEmpty else { return [] }
+        let here = folder.standardizedFileURL.path
+        func isHere(_ url: URL?) -> Bool { url.map { $0.standardizedFileURL.path == here } ?? false }
+        var ranked: [(rank: Int, skill: LoadedSkill)] = []
+        for skill in SkillScanner.scan(installations: installations, projects: [folder], in: env) where skill.visibleTo.contains(.pi) {
+            let place = skill.places[.pi]
+            let path = (place?.file ?? skill.file).path
+            switch place?.scope ?? skill.scope {
+            case .project(let url) where isHere(url):
+                ranked.append((0, .init(name: skill.name, scope: "project", origin: "top-level", path: path)))
+            case .global:
+                ranked.append((1, .init(name: skill.name, scope: "user", origin: "top-level", path: path)))
+            case .package(_, let project) where project == nil || isHere(project):
+                ranked.append((2, .init(name: skill.name, scope: project == nil ? "user" : "project", origin: "package", path: path)))
+            default:
+                continue
+            }
+        }
+        var seen = Set<String>()
+        return ranked.enumerated().sorted { ($0.element.rank, $0.offset) < ($1.element.rank, $1.offset) }
+            .map(\.element.skill).filter { seen.insert($0.name).inserted }
     }
 
     /// Two paths name the same file (links resolved).

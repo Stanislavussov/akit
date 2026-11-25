@@ -173,6 +173,12 @@ public enum Doctor {
         lines += ["", "Flows"]
         lines += await flowLines(installations.first { $0.id == .pi }?.executableURL, projects: found, env: env, tilde: tilde)
 
+        // Skill modes
+        lines += ["", "Skill modes"]
+        let piIndex = installations.firstIndex { $0.id == .pi }
+        lines += skillModeLines(piFound: piIndex != nil, piVersion: piIndex.flatMap { versions[$0] }, projects: found,
+                                projectsRoot: input.projectRoots.first ?? home.appending(path: "Projects"), env: env, tilde: tilde)
+
         // Logs
         lines += ["", "Logs"]
         let reports = crashReports(in: home.appending(path: "Library/Logs/DiagnosticReports"))

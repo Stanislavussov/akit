@@ -2,7 +2,28 @@
 
 Status: 2026-11-25, agreed with the user, revised the same day after an architect and a
 critic review (the mechanism was checked end to end with Pi 1.5.2's SDK and a fake model).
-Nothing built yet. Open decisions are at the end.
+Open decisions are at the end.
+
+Built 2026-11-25, steps 1–5 (branch `skill-store`): `ProjectRecords.projectID(ofFolder:projectsRoot:)`
+(`AKitBrain/FolderProjectID.swift`, a parity test with `LiveFolderResolver`); the core
+(`AKitSkills/SkillModes.swift`, `SkillModesWrite.swift`); `akit skills mode`, `akit skills resolve`
+(fast path in `akit/main.swift`, ≈ 9 ms with a release build) and `akit skills extension`
+(`AKitCommandLine/SkillModesCommand.swift`); the extension (`AKitSkills/Resources/akit-skill-modes.ts`,
+embedded by `tools/gen-skill-modes-extension.sh`, installer `SkillModesExtension`, node tests in
+`make test` as `make test-skill-modes`, the end-to-end `make test-skill-modes-pi` passed on Pi 1.5.2 =
+`minPi`); Doctor's "Skill modes" lines (`AKitDoctor/DoctorSkillModes.swift`). Not built: steps 6–7, and
+the user's copy of `/akit` (the template has the section). Settled while building:
+
+- `session_start` has no skill list, so the extension's first ask takes Pi's `/skill:` commands
+  (`pi.getCommands()`, same names and paths); the cache key is the folder, the modes file's time and
+  size, and the skill list. `input` uses the same cached answer.
+- A rename is offered whether or not the project has entries: with none, its mode is the personal
+  file's own frontmatter (what its SKILL.md says). A rename whose `my-` name is loaded already is
+  left out and reported (`kind: rename`); `my-NAME: off` keeps it out of the list and refuses its `/skill:`.
+- `resolve` returns modes only for names a loaded, non-temporary skill has; a bad stdin is a
+  problem in the answer (exit 0), bad arguments exit 2.
+- `akit skills mode NAME MODE` for a name Pi doesn't load here writes the entry with a note (the
+  design keeps such names as "not found here"); outside git a write is refused.
 
 ## Question
 
