@@ -524,7 +524,9 @@ public enum ProjectSetup {
             lock.piAgentDir = plan.previous?.piAgentDir
         } else if isRepo {
             lock.brainCommit = try? await git(["rev-parse", "--short", "HEAD"], in: brain.root, env: env)
-            let dirty = (try? await git(["status", "--porcelain", "--", "skills", "layers"], in: brain.root, env: env)) ?? ""
+            // Finder's .DS_Store files are not a change to the render.
+            let dirty = (try? await git(["status", "--porcelain", "--", "skills", "layers", ":(exclude,glob)**/.DS_Store"],
+                                        in: brain.root, env: env)) ?? ""
             lock.brainDirty = !dirty.isEmpty
         }
         do {
