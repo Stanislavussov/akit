@@ -159,6 +159,18 @@ struct ReviewHarnessConfigTests {
         #expect(!SendPolicy.decide(origin: .localReview, destination: claude, isWork: true, allowed: []).allowed, "a work Mac's list decides")
         #expect(SendPolicy.decide(origin: .localReview, destination: claude, isWork: true, allowed: [claude]).allowed)
         #expect(!SendPolicy.decide(origin: .mergeRequest, destination: claude, isWork: false, allowed: []).allowed, "a merge request stays with Pi")
+        // An entry for local reviews only: Claude Code gets nothing else from this work Mac.
+        var reviewOnly = claude
+        reviewOnly.localReviewOnly = true
+        #expect(SendPolicy.decide(origin: .localReview, destination: claude, isWork: true, allowed: [reviewOnly]).allowed)
+        #expect(!SendPolicy.decide(origin: .code(.pi), destination: claude, isWork: true, allowed: [reviewOnly]).allowed)
+        #expect(!SendPolicy.decide(origin: .mergeRequest, destination: claude, isWork: true, allowed: [reviewOnly]).allowed)
+        #expect(reviewOnly.label.hasSuffix("· local reviews only"))
+        var settings = LabSettings(allowedDestinations: [reviewOnly])
+        _ = settings.allow(reviewOnly)
+        #expect(settings.allowedDestinations == [reviewOnly])
+        _ = settings.allow(claude)
+        #expect(settings.allowedDestinations.map(\.localReviewOnly) == [nil], "an entry for everything widens it")
     }
 
     @Test func translatesClaudesAnswerIntoTheExtensionsFiles() throws {

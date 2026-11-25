@@ -16,13 +16,20 @@ public struct SendDestination: Codable, Hashable, Sendable {
     public var account: String
     /// The plan or organization: Claude's organization, the GitHub org that grants Copilot.
     public var org: String
+    /// An allowed-list entry that lets through only AKit Review of a local workspace on Claude
+    /// Code (`.localReview`, R69): Read, Grep and Glob over the local changes, no MCP. nil = all.
+    public var localReviewOnly: Bool?
 
-    public init(harness: LabHarness, provider: String, account: String, org: String) {
+    public init(harness: LabHarness, provider: String, account: String, org: String, localReviewOnly: Bool? = nil) {
         self.harness = harness
         self.provider = provider
         self.account = account
         self.org = org
+        self.localReviewOnly = localReviewOnly
     }
+
+    /// Whether this allowed-list entry covers data of `origin`.
+    public func covers(_ origin: SendOrigin) -> Bool { localReviewOnly != true || origin == .localReview }
 
     /// Whether the account and plan/org are known: Pi can't tell them, so a Pi provider with no
     /// account entered goes out as the provider alone.
@@ -32,7 +39,8 @@ public struct SendDestination: Codable, Hashable, Sendable {
 
     /// "Pi · github-copilot · me@example.com · acme", or "Pi · github-copilot · account not entered".
     public var label: String {
-        isAccountKnown ? "\(harness.title) · \(provider) · \(account) · \(org)" : "\(harness.title) · \(provider) · account not entered"
+        (isAccountKnown ? "\(harness.title) · \(provider) · \(account) · \(org)" : "\(harness.title) · \(provider) · account not entered")
+            + (localReviewOnly == true ? " · local reviews only" : "")
     }
 
     /// The same destination, ignoring case and surrounding spaces. One whose account isn't
@@ -114,7 +122,7 @@ public enum SendPolicy {
     /// harness, not to every provider it can reach.
     public static func decide(origin: SendOrigin, destination: SendDestination, isWork: Bool, allowed: [SendDestination]) -> Decision {
         // Only entries with an account: an old entry with blank fields mustn't let anything through.
-        if allowed.contains(where: { $0.isAccountKnown && $0.matches(destination) }) {
+        if allowed.contains(where: { $0.isAccountKnown && $0.matches(destination) && $0.covers(origin) }) {
             return Decision(allowed: true, reason: "\(destination.label) is on the allowed list.")
         }
         if origin == .mergeRequest, destination.harness == .pi {
