@@ -6,7 +6,7 @@ import Foundation
 /// (W1, W2):
 ///
 /// ```
-/// - 09:14 #agent Review of COL-123 with Pi
+/// - 09:14 #agent Review of SHOP-123 with Pi
 /// - 09:40 #bug Login fails in Safari https://…
 /// - 10:05 #break
 /// ```
@@ -87,7 +87,7 @@ public struct KnowledgeWorkLog: Sendable {
         /// A block's end in minutes since midnight; nil for a plain entry.
         public var endMinute: Int? { end.flatMap(KnowledgeWorkLog.minute) }
         public var isBlock: Bool { end != nil }
-        /// The first ticket id in the text (`COL-123`), for the report.
+        /// The first ticket id in the text (`SHOP-123`), for the report.
         public var ticket: String? { text.firstMatch(of: /\b[A-Z][A-Z0-9]+-\d+\b/).map { String($0.output) } }
     }
 

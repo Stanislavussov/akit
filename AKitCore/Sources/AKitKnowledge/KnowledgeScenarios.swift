@@ -78,7 +78,7 @@ public enum KnowledgeScenarios {
         public let rule: String?
         /// The ADO IDs the header's sources name.
         public let workItems: [String]
-        /// The header's other fields, as written: `ADO 123456 rev. 3 · Figma 3357:7208`.
+        /// The header's other fields, as written: `ADO 123456 rev. 3 · Figma 9:99`.
         public let sources: String
         /// Scenarios only: the tests that prove it.
         public let tests: [TestLink]
@@ -110,7 +110,7 @@ public enum KnowledgeScenarios {
         /(R|SC|OPEN)-([A-Z][A-Z0-9]*)-([0-9]+)(?![A-Za-z0-9-])/
     }
     /// `ADO 123456` and the numbers listed after it (`ADO 123456, 123457`); a number after other
-    /// words (`rev. 3`, `Figma 3101:11449`) is no work item.
+    /// words (`rev. 3`, `Figma 56:7890`) is no work item.
     static var adoList: Regex<(Substring, Substring)> { /ADO\s+([0-9]+(?:\s*,\s*[0-9]+(?![0-9:]))*)/ }
 
     /// The items of one note's gherkin blocks, in the order they are written.

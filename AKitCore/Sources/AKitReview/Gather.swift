@@ -162,7 +162,7 @@ public enum ReviewGather {
         // self-review limits (R33); a colleague's keeps the posting limits.
         spec.applyMode(own: local != nil || (!snapshot.user.isEmpty && snapshot.mergeRequest.author == snapshot.user))
 
-        // Work items: given by hand, plus the one the source branch names (`COL-317494`). Numbers in
+        // Work items: given by hand, plus the one the source branch names (`SHOP-123450`). Numbers in
         // the title or description don't count. With none, the review checks the code alone.
         var ids = spec.workItems
         let pattern = profile?.tracker?.wiRefRegex ?? ReviewProfile.Tracker.defaultRegex

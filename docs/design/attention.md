@@ -39,12 +39,12 @@ screen, which Open shows.
 ```
 ┌ Attention ─ 1 to fix · 8 to read ───── [Every Screen ▾] [👁] [⇩] [Guide] [⟳]
 │ ⊗ Needs a Fix (1)
-│   Review failed: fix(col-318561): show the backend's message      [Open] ✕
+│   Review failed: fix(shop-100561): show the backend's message      [Open] ✕
 │   Pass brief failed: terminated
 │   Review · last week
 │ ✓ Ready to Read (8)
-│   Code review ready: col-301313 restapi/common V2 upgrade         [Open] ✕
-│   1 comment waits for your approval · group/col-fe!7687
+│   Code review ready: shop-100313 orders-api V2 upgrade         [Open] ✕
+│   1 comment waits for your approval · group/shop-web!42
 └──────────────────────────────────────────────────────────────────────────
 ```
 

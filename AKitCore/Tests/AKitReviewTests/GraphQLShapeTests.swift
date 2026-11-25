@@ -8,7 +8,7 @@ struct GraphQLShapeTests {
     static let head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
     static let input = #"{"project_id":"team/app","merge_request_iid":7}"#
     static var base: [String: Any] { ["id": "gid://gitlab/MergeRequest/901", "iid": "7", "title": "Login", "description": "Adds login",
-                                      "state": "opened", "draft": false, "sourceBranch": "feature/COL-1-login", "targetBranch": "main",
+                                      "state": "opened", "draft": false, "sourceBranch": "feature/SHOP-1-login", "targetBranch": "main",
                                       "webUrl": "https://gitlab.example/team/app/-/merge_requests/7",
                                       "author": ["id": "gid://gitlab/User/5", "name": "Ann", "username": "ann"],
                                       "createdAt": "2026-10-20T10:00:00Z", "updatedAt": "2026-10-21T10:00:00Z", "mergedAt": NSNull(),
@@ -51,7 +51,7 @@ struct GraphQLShapeTests {
         let data = ReviewMCPData.read([Self.call([:]), Self.call(["diffs": stats]), Self.call(["diffs": diffs]), Self.call(["commits": commits]),
                                        Self.call(["discussions": discussions]), user], iid: 7, project: "team/app")
         let mr = try #require(data.mergeRequest)
-        #expect(mr.title == "Login" && mr.sourceBranch == "feature/COL-1-login" && mr.targetBranch == "main" && mr.author == "ann")
+        #expect(mr.title == "Login" && mr.sourceBranch == "feature/SHOP-1-login" && mr.targetBranch == "main" && mr.author == "ann")
         #expect(mr.draft == false)
         #expect(mr.diffRefs?.headSHA == Self.head, "the newest commit is the head without diff refs")
         #expect(data.diffs.count == 1 && data.diffs.first?.diff.contains("+b") == true, "the patch wins over the stats")
@@ -100,7 +100,7 @@ struct GraphQLShapeTests {
     }
 
     @Test func otherServersKeepTheirKeys() {
-        let item: [String: Any] = ["id": 305489, "fields": ["System.Title": "Login", "System.WorkItemType": "Task"]]
+        let item: [String: Any] = ["id": 123451, "fields": ["System.Title": "Login", "System.WorkItemType": "Task"]]
         #expect(GitLabJSON.restShape(item) as? NSDictionary == item as NSDictionary)
         #expect(GitLabJSON.snakeCase("sourceBranch") == "source_branch" && GitLabJSON.snakeCase("web_url") == "web_url")
     }

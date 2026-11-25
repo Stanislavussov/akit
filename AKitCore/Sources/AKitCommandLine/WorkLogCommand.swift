@@ -24,7 +24,7 @@ extension AKitCLI {
                                         "- 09:00-09:30 #meeting Standup".
       akit worklog report [week|month|last-week|last-month|DAY|DAY..DAY] [--csv] [--json]
                                         Hours per day of the week (default) or month: norm, work,
-                                        missing, break, per kind and per ticket (COL-123). The last
+                                        missing, break, per kind and per ticket (SHOP-123). The last
                                         entry of a past day without a block after it has no length
                                         and isn't counted. --csv: one row per day and a total.
                                         --json: {from, to, hours, norm_minutes, work_minutes,
@@ -45,7 +45,7 @@ extension AKitCLI {
       akit worklog fill [DAY|today|yesterday] [--slot 15|30] [--language cs] [--thinking LEVEL] [--harness claude|pi|all] [--model M] [--add] [--json]
                                         Auto-Fill: the user's prompts of that day in the harness's
                                         sessions (default all), in slots of --slot minutes (default
-                                        30) with the project, git branch and ticket (COL-123) of
+                                        30) with the project, git branch and ticket (SHOP-123) of
                                         each, go to a Pi model (default GPT-6 Luna,
                                         --model from pi --list-models) under the sending policy and
                                         the send log (worklog-fill); prints the proposed entries.

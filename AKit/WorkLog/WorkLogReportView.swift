@@ -184,7 +184,7 @@ private struct WorkLogReportParts: View {
     var body: some View {
         HStack(alignment: .top, spacing: 40) {
             list("Tickets", report.tickets.map { ($0.ticket.isEmpty ? "No ticket" : $0.ticket, $0.minutes) },
-                 note: "Work entries by the first ticket id in their text (COL-123)")
+                 note: "Work entries by the first ticket id in their text (SHOP-123)")
             list("Kinds", report.kinds.map { (KnowledgeWorkLog.kind($0.kind.isEmpty ? "other" : $0.kind).title, $0.minutes) },
                  note: "Breaks included")
         }

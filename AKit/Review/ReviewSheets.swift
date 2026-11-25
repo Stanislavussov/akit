@@ -148,7 +148,7 @@ struct NewReviewSheet: View {
                 } else {
                 Section {
                     mergeRequestsField
-                    TextField("Work items", text: $workItems, prompt: Text("e.g. 4512 (else the number in the branch: COL-4512)"))
+                    TextField("Work items", text: $workItems, prompt: Text("e.g. 4512 (else the number in the branch: SHOP-4512)"))
                 }
                 }
                 contextSection

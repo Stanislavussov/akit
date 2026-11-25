@@ -43,7 +43,7 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     public var piGitLab: Bool = false
     /// The Pi MCP server for GitLab; nil is the first whose name says GitLab.
     public var piGitLabServer: String?
-    /// The GitLab repositories to search (`col-fe`, `col-be`, `shell-fe` …); empty = the ones the
+    /// The GitLab repositories to search (`shop-web`, `shop-api`, `shell-web` …); empty = the ones the
     /// meeting or the work items name.
     public var piRepositories: [String] = []
     /// whisper's language code, `auto` to detect per piece.

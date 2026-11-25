@@ -560,7 +560,7 @@ public enum ReviewPrompts {
         let reused = spec.gatherReused
         let pattern = spec.tracker?.wiRefRegex ?? ReviewProfile.Tracker.defaultRegex
         var items = "Work items: take the number from the merge request's source branch only (pattern `\(pattern)`: "
-            + "`feature/COL-317494-login` names item 317494"
+            + "`feature/SHOP-123450-login` names item 123450"
         if let tracker = spec.tracker { items += "; tracker \(tracker.kind), organization \(tracker.org), project \(tracker.project)" }
         items += "). Numbers in the title, description or commits don't count: don't read those items"
         if !spec.workItems.isEmpty { items += ". Read \(spec.workItems.map { "#\($0)" }.joined(separator: ", ")) in any case" }

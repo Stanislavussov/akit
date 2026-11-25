@@ -273,7 +273,7 @@ struct MeetingsSettingsView: View {
                             ForEach(rows(model.piServers, chosen: model.settings.piGitLabServer), id: \.self) { Text($0).tag($0) }
                         }
                     }
-                    TextField("Repositories", text: $repositories, prompt: Text("col-fe, col-be, shell-fe"))
+                    TextField("Repositories", text: $repositories, prompt: Text("shop-web, shop-api, shell-web"))
                         .onSubmit { model.update { $0.piRepositories = MeetingsSettings.vocabulary(from: repositories) } }
                         .onChange(of: repositories) { _, text in model.update { $0.piRepositories = MeetingsSettings.vocabulary(from: text) } }
                         .onAppear { repositories = model.settings.piRepositories.joined(separator: ", ") }

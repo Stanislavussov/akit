@@ -29,7 +29,7 @@ export const HANDOFF_PARAMETERS = {
 			properties: {
 				steps: { type: "array", items: { type: "string" } },
 				check: { type: "string", description: "One plain command, such as python3 -m unittest test_stats; empty when there is none." },
-				work_item: { type: "string", description: "The ADO work item the task delivers, like 321319; empty for technical work." },
+				work_item: { type: "string", description: "The ADO work item the task delivers, like 123456; empty for technical work." },
 				scenarios: { type: "array", items: { type: "string" }, description: "The agreed scenario IDs (SC-…) the task proves, from akit kb scenarios --work-item <ID> --status agreed; empty for technical work." },
 			},
 			required: ["steps", "check", "work_item", "scenarios"],

@@ -134,7 +134,7 @@ struct ConfigTests {
         let home = TempHome()
         let folder = home.url.appending(path: "run")
         home.write("run/passes/gaps-role-requirements.jsonl", [
-            #"{"system":"other","needed":"Work item for COL-317494 with acceptance criteria","why":"none attached","reportedBy":"role-requirements"}"#,
+            #"{"system":"other","needed":"Work item for SHOP-123450 with acceptance criteria","why":"none attached","reportedBy":"role-requirements"}"#,
             #"{"system":"azure-devops","needed":"Úkol","why":"chybí","reportedBy":"brief"}"#,
             #"{"system":"other","needed":"Akceptační kritéria","why":"chybí","reportedBy":"brief"}"#,
             #"{"system":"repository","needed":"Testy modulu Orders","why":"nejsou v balíčku","reportedBy":"role-tests"}"#,
@@ -163,9 +163,10 @@ struct ConfigTests {
     @Test func workItemReferences() {
         #expect(AzureDevOpsJSON.references(in: ["AB#41 fix", "see WI-7 and AB#41", "feature/AB#9"], pattern: "(?:AB#|WI-)(\\d+)") == [41, 7, 9])
         let pattern = ReviewProfile.Tracker.defaultRegex
-        #expect(AzureDevOpsJSON.references(in: ["feature/COL-317494-login"], pattern: pattern) == [317494])
-        #expect(AzureDevOpsJSON.references(in: ["fix/col-12_typo"], pattern: pattern) == [12])
-        #expect(AzureDevOpsJSON.references(in: ["feature/login-form"], pattern: pattern).isEmpty)
+        #expect(AzureDevOpsJSON.references(in: ["feature/SHOP-123450-login"], pattern: pattern) == [123450])
+        #expect(AzureDevOpsJSON.references(in: ["fix/shop-12_typo"], pattern: pattern) == [12])
+        #expect(AzureDevOpsJSON.references(in: ["bugfix/AB2X-77-total"], pattern: pattern) == [77], "any team's key")
+        #expect(AzureDevOpsJSON.references(in: ["feature/login-form", "fix/api-v2-3"], pattern: pattern).isEmpty)
         #expect(HTMLText.plain("<p>A &amp; B</p><ul><li>one</li><li>two</li></ul>") == "A & B\n\n- one\n- two")
     }
 }
@@ -249,7 +250,7 @@ extension ReviewProcessTests {
             #expect(args.contains("akit_submit_context,akit_report_context_gap,codemode,tool_search,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
             #expect(!args.contains("--append-system-prompt") && !args.contains("--skill"))
             let prompt = try String(contentsOf: folder.appending(path: "prompts/fetch.md"), encoding: .utf8)
-            #expect(prompt.contains(FakeMergeRequest.ref.url) && prompt.contains("`(?i)(?:COL-|AB#|WI-)(\\d+)`") && prompt.contains("source branch only"))
+            #expect(prompt.contains(FakeMergeRequest.ref.url) && prompt.contains("`(?i)(?:\\b[A-Z][A-Z0-9]*[A-Z]-|AB#|WI-)(\\d+)`") && prompt.contains("source branch only"))
             #expect(args.contains { $0.hasPrefix("AKit review, step Gather.") })
             let env = try String(contentsOf: home.url.appending(path: "fake/env-fetch.txt"), encoding: .utf8)
             #expect(env.contains("AKIT_REVIEW_MODE=fetch"))

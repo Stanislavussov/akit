@@ -16,7 +16,7 @@ struct KnowledgeScenariosTests {
     # R-ORD-01 · ADO 123456, 123457 · status: agreed
     Rule: An order can be cancelled until it is shipped
 
-      # SC-ORD-001 · ADO 123456 rev. 3, ADO 123457 · Figma 3357:7208 · level: e2e · journey · status: agreed
+      # SC-ORD-001 · ADO 123456 rev. 3, ADO 123457 · Figma 9:99 · level: e2e · journey · status: agreed
       # test: shop-e2e · tests/orders/cancel.spec.ts · cancel › refunds a paid order (${DATA} data)
       # test: shop-web · src/orders/cancel.test.ts · shows the refund
       @smoke
@@ -45,9 +45,9 @@ struct KnowledgeScenariosTests {
         let journey = parsed.items[1]
         #expect(journey.kind == .scenario && journey.level == "e2e" && journey.journey && journey.rule == "R-ORD-01")
         #expect(journey.workItems == ["123456", "123457"], "rev. 3 and the Figma node are no work items")
-        let figma = KnowledgeScenarios.parse("```gherkin\n# OPEN-ORD-002 · ADO 321323 rev. 1, ADO 321325 rev. 3, Figma 3085:9434 and 3101:11449 · status: open\nQuestion: q\n```", note: "n")
-        #expect(figma.items.first?.workItems == ["321323", "321325"])
-        #expect(journey.sources == "ADO 123456 rev. 3, ADO 123457 · Figma 3357:7208")
+        let figma = KnowledgeScenarios.parse("```gherkin\n# OPEN-ORD-002 · ADO 100123 rev. 1, ADO 100125 rev. 3, Figma 12:34 and 56:7890 · status: open\nQuestion: q\n```", note: "n")
+        #expect(figma.items.first?.workItems == ["100123", "100125"])
+        #expect(journey.sources == "ADO 123456 rev. 3, ADO 123457 · Figma 9:99")
         #expect(journey.title == "The customer cancels a paid order before shipping", "test links and tags sit between header and title")
         #expect(journey.tests == [
             .init(repo: "shop-e2e", path: "tests/orders/cancel.spec.ts", names: ["cancel", "refunds a paid order (${DATA} data)"], line: 13),

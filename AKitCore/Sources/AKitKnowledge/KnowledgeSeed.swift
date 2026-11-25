@@ -590,12 +590,12 @@ public enum KnowledgeSeed {
         File(path: "worklog/2026-10-22.md", text: """
             - 08:45 #reply Mail and chat after the trip
             - 09:00-09:15 #meeting Standup
-            - 09:15 #bug COL-121 Refund total rounds wrong
-            - 11:00-12:00 #meeting COL-123 refinement
+            - 09:15 #bug SHOP-121 Refund total rounds wrong
+            - 11:00-12:00 #meeting SHOP-123 refinement
             - 12:00-12:30 #break Lunch
-            - 12:30 #agent COL-121 fix and tests with Pi
-            - 14:00-15:00 #review COL-118 review of the outbox change
-            - 15:00 #task COL-121 release notes
+            - 12:30 #agent SHOP-121 fix and tests with Pi
+            - 14:00-15:00 #review SHOP-118 review of the outbox change
+            - 15:00 #task SHOP-121 release notes
             - 16:30-16:45 #meeting Sync with billing
 
             """),
@@ -604,7 +604,7 @@ public enum KnowledgeSeed {
             - 09:00-09:15 #meeting Standup
             - 09:15 #research Retry policy of the warehouse API
             - 10:30-11:30 #meeting Checkout demo
-            - 11:30 #agent COL-123 first draft with Pi
+            - 11:30 #agent SHOP-123 first draft with Pi
             - 12:30-13:00 #break Lunch
 
             """),
@@ -621,9 +621,9 @@ public enum KnowledgeSeed {
             - 08:50 #reply Refunds question in billing
             - 09:20 #bug order-created arrives twice
               > The order-created event reached billing twice for some orders. The outbox wrote it again after a retry, so the fix is a unique key on the event id.
-            - 10:40 #agent Review of COL-123 with Pi
-              > Pi reviewed the merge request of COL-123 and found a missing null check in the refund path. Two comments went out as drafts.
-            - 11:30 #review COL-124: two comments sent
+            - 10:40 #agent Review of SHOP-123 with Pi
+              > Pi reviewed the merge request of SHOP-123 and found a missing null check in the refund path. Two comments went out as drafts.
+            - 11:30 #review SHOP-124: two comments sent
             - 12:15 #break
             - 13:00 #bug order-created: duplicate key in the outbox
             - 16:30 #task Release notes

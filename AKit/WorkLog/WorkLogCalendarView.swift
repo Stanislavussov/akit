@@ -483,7 +483,7 @@ private struct WorkLogBlockSheet: View {
                         Label(preset.title, systemImage: preset.symbol).tag(preset.id)
                     }
                 }
-                TextField("Text", text: $text, prompt: Text("Standup, Lunch, COL-123 planning"))
+                TextField("Text", text: $text, prompt: Text("Standup, Lunch, SHOP-123 planning"))
                     .focused($focused)
                     .onSubmit(add)
             }

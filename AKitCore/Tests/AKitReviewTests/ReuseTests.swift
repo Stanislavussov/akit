@@ -68,7 +68,7 @@ extension ReviewProcessTests {
             #expect(ReviewMCPData.calls(in: same, pass: "fetch").count == ReviewMCPData.calls(in: first, pass: "fetch").count)
 
             // The author pushes: git sees it, so the fetch pass runs, for the merge request only.
-            home.git(remote, "checkout", "-q", "fix/COL-41-auth-log")
+            home.git(remote, "checkout", "-q", "fix/SHOP-41-auth-log")
             home.write("remote/app/src/Auth.swift", "import Foundation\nfunc auth(header: String) {\n    log(\"Auth: \\(header)\")\n    check()\n}\n")
             home.git(remote, "commit", "-q", "-am", "Check auth")
             let pushed = home.git(remote, "rev-parse", "HEAD")

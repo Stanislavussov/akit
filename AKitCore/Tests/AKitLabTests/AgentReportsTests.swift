@@ -72,7 +72,7 @@ struct AgentReportsTests {
     }
 
     func summary(_ name: String, started: Date, modified: Date) -> SessionSummary {
-        SessionSummary(harness: .pi, file: URL(filePath: "/s/\(name).jsonl"), title: "task \(name)", project: URL(filePath: "/p/col-fe"),
+        SessionSummary(harness: .pi, file: URL(filePath: "/s/\(name).jsonl"), title: "task \(name)", project: URL(filePath: "/p/shop-web"),
                        started: started, modified: modified, size: 1)
     }
 
@@ -157,7 +157,7 @@ struct AgentReportsTests {
         let home = FileManager.default.temporaryDirectory.appending(path: "akit-reports-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: home) }
         let day = Date(timeIntervalSince1970: 1_800_000_000)
-        let report = AgentReports.Report(harness: "pi", session: "/s/a.jsonl", item: 1, title: "a | b", project: "col-fe", time: day, task: nil,
+        let report = AgentReports.Report(harness: "pi", session: "/s/a.jsonl", item: 1, title: "a | b", project: "shop-web", time: day, task: nil,
                                          parts: [.init(section: "Unknown unknowns", items: ["Hermes"])])
         let collection = AgentReports.Collection(from: day, to: day, sections: sections, sessionsRead: 3, reports: [report])
         let analysis = AgentReports.Analysis(summary: "Fine.", focus: "CI was never run.", findings: [

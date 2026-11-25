@@ -43,7 +43,7 @@ public enum ReviewTemplates {
     # clone_url: git@gitlab.example.com:group/my-service.git   # where AKit clones from (default: SSH, then HTTPS)
     # clone: false                         # no clone at all: the review reads only the diff
     setup: []                              # e.g. - "npm ci"; runs in each run's worktree before the review, the MR's own code
-    # tracker: { kind: azure-devops, org: my-org, project: MyProject, wi_ref_regex: "(?i)(?:COL-|AB#|WI-)(\\\\d+)" }
+    # tracker: { kind: azure-devops, org: my-org, project: MyProject, wi_ref_regex: "(?i)(?:\\\\b[A-Z][A-Z0-9]*[A-Z]-|AB#|WI-)(\\\\d+)" }
     # mcp:                                 # Pi's MCP servers review may use (pi mcp list); none = those named gitlab, azure, devops, ado
     #   servers: [gitlab, azure-devops]
     #   read: []                           # more reading tools, e.g. ["wit_get_*"]; get_/list_/search_… read anyway

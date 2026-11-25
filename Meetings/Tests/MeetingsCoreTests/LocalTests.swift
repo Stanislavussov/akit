@@ -378,7 +378,7 @@ struct LocalFixture {
         var settings = fixture.settings
         settings.piDevOps = true
         settings.piGitLab = true
-        settings.piRepositories = ["col-fe", "shell-fe"]
+        settings.piRepositories = ["shop-web", "shell-web"]
         let meeting = try await fixture.processor(LocalEnvironment(tick: .milliseconds(10)), settings: settings).run(fixture.meeting.id)
         #expect(meeting.tabs == [PiDevOpsResearch.tabName])
         let tab = try String(contentsOf: fixture.root.store.tabFile(meeting.id, PiDevOpsResearch.tabName), encoding: .utf8)
@@ -388,7 +388,7 @@ struct LocalFixture {
         #expect(args.contains("mcp__azure_devops__*create*"))
         #expect(args.contains("mcp__gitlab__*merge*"))
         #expect(!args.contains("playwright"))
-        #expect(args.contains("col-fe, shell-fe"))
+        #expect(args.contains("shop-web, shell-web"))
         #expect(args.contains("--no-extensions"))
         #expect(fixture.root.store.summary(meeting.id).contains("Krátce."))
     }
@@ -423,7 +423,7 @@ struct LocalFixture {
     @Test func devOpsApiLinksBecomePages() {
         let text = """
         - [#123](https://dev.azure.com/acme/Shop/_apis/wit/workItems/123?api-version=7.1) bug
-        - [!45](https://tfs.acme.cz/tfs/Main/Pay/_apis/git/repositories/col-fe/pullRequests/45) PR
+        - [!45](https://tfs.example.com/tfs/Main/Shop/_apis/git/repositories/shop-web/pullRequests/45) PR
         - [build](https://dev.azure.com/acme/Shop/_apis/build/Builds/678), [page](https://dev.azure.com/acme/Shop/_workitems/edit/9)
         ```json
         {"links": [{"line": 1, "items": [{"title": "#123", "url": "https://dev.azure.com/acme/_apis/wit/workitems/123"}]}]}
@@ -431,7 +431,7 @@ struct LocalFixture {
         """
         let pages = PiDevOpsResearch.webLinks(text)
         #expect(pages.contains("(https://dev.azure.com/acme/Shop/_workitems/edit/123)"))
-        #expect(pages.contains("(https://tfs.acme.cz/tfs/Main/Pay/_git/col-fe/pullrequest/45)"))
+        #expect(pages.contains("(https://tfs.example.com/tfs/Main/Shop/_git/shop-web/pullrequest/45)"))
         #expect(pages.contains("(https://dev.azure.com/acme/Shop/_build/results?buildId=678)"))
         #expect(pages.contains("(https://dev.azure.com/acme/Shop/_workitems/edit/9)"))
         #expect(PiDevOpsResearch.split(pages).links[1]?.first?.url == "https://dev.azure.com/acme/_workitems/edit/123")

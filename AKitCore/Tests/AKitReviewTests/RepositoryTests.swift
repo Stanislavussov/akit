@@ -103,7 +103,7 @@ extension ReviewProcessTests {
             home.write("remote/app/src/Auth.swift", "import Foundation\nfunc auth(header: String) {\n}\n")
             home.git(repo, "add", "src")
             home.git(repo, "commit", "-q", "-m", "Add auth\n\nSee merge request team/app!3")
-            home.git(repo, "checkout", "-q", "-b", "fix/COL-41-auth-log")
+            home.git(repo, "checkout", "-q", "-b", "fix/SHOP-41-auth-log")
             home.write("remote/app/src/Auth.swift", "import Foundation\nfunc auth(header: String) {\n    log(\"Auth: \\(header)\")\n}\n")
             home.git(repo, "commit", "-q", "-am", "Log auth")
             let head = home.git(repo, "rev-parse", "HEAD")
@@ -217,7 +217,7 @@ extension ReviewProcessTests {
             home.write(".akit/local/review/runs/\(first.spec.id)/worktree/node_modules.txt", "kept")
 
             // The author pushes once more: the next run pulls it.
-            home.git(remote, "checkout", "-q", "fix/COL-41-auth-log")
+            home.git(remote, "checkout", "-q", "fix/SHOP-41-auth-log")
             home.write("remote/app/src/Auth.swift", "import Foundation\nfunc auth(header: String) {\n    log(\"Auth: \\(header)\")\n    check()\n}\n")
             home.git(remote, "commit", "-q", "-am", "Check auth")
             let pushed = home.git(remote, "rev-parse", "HEAD")
@@ -252,7 +252,7 @@ extension ReviewProcessTests {
             let thirdTree = ReviewPaths(home: home.url).run(third.spec.id).appending(path: "worktree")
             #expect(third.spec.repository?.reusedFrom == second.spec.id)
             #expect(home.git(thirdTree, "rev-parse", "HEAD") == rewritten)
-            #expect(lines.value.contains { $0.contains("reset to origin/fix/COL-41-auth-log") }, "\(lines.value)")
+            #expect(lines.value.contains { $0.contains("reset to origin/fix/SHOP-41-auth-log") }, "\(lines.value)")
             #expect(home.git(thirdTree, "status", "--porcelain", "--untracked-files=no").isEmpty)
             #expect(FileManager.default.fileExists(atPath: thirdTree.appending(path: "node_modules.txt").path))
 

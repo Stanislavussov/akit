@@ -199,7 +199,7 @@ AKit не хранит токены. С GitLab, Azure DevOps и другими �
 project: orders-service
 gitlab: { host: https://gitlab.example.com, project_path: shop/orders-service }
 setup: ["npm ci"]
-tracker: { kind: azure-devops, org: acme, project: Orders, wi_ref_regex: "(?i)(?:COL-|AB#|WI-)(\\d+)" }
+tracker: { kind: azure-devops, org: acme, project: Orders, wi_ref_regex: "(?i)(?:\\b[A-Z][A-Z0-9]*[A-Z]-|AB#|WI-)(\\d+)" }
 mcp:
   servers: [gitlab, azure-devops]
   write: ["*draft_note*"]
@@ -286,7 +286,7 @@ Worktree с установленными пакетами (`node_modules` и т.
 - `clone_url` — откуда AKit клонирует проект. Пример: `git@gitlab.example.com:shop/orders-service.git`. Без него — SSH, потом HTTPS по `gitlab`.
 - `clone: false` — без клона: ревью видит только diff.
 - `setup` — команды установки, по одной строке: `["npm ci", "npm run codegen"]`. Или `{ name, run, timeout_s }`. По умолчанию 15 минут на команду. См. [репозиторий и установка](#setup-repository).
-- `tracker: { kind: azure-devops, org, project, wi_ref_regex }` — трекер задач. Это подсказка проходу `fetch`: где искать задачи. `wi_ref_regex` находит номер задачи только в ветке MR (source branch). Заголовок и описание не считаются. По умолчанию он находит `COL-`, `col-`, `AB#` и `WI-`. Пример: ветка `feature/COL-317494-login` даёт задачу 317494. Если в ветке номера нет, ревью проверяет только код: контракты и регрессии. Роль `requirements` тогда не работает, и пробела про задачу нет.
+- `tracker: { kind: azure-devops, org, project, wi_ref_regex }` — трекер задач. Это подсказка проходу `fetch`: где искать задачи. `wi_ref_regex` находит номер задачи только в ветке MR (source branch). Заголовок и описание не считаются. По умолчанию он находит ключ задачи вида `SHOP-123` (буквы, дефис и цифры, регистр не важен), `AB#` и `WI-`. Пример: ветка `feature/SHOP-123450-login` даёт задачу 123450. Если в ветке номера нет, ревью проверяет только код: контракты и регрессии. Роль `requirements` тогда не работает, и пробела про задачу нет.
 - `mcp` — MCP-серверы Pi и инструменты, которые может звать ревью этого проекта:
   - `servers: [gitlab, azure-devops]` — имена серверов в Pi. Нет списка — только серверы с `gitlab`, `azure`, `devops` в имени или `ado`. Трекер с другим именем (например, `jira`) впишите сюда явно.
   - `read: []` — ещё шаблоны инструментов чтения. Инструменты с пометкой «только чтение» и с глаголом чтения (`get_…`, `wit_get_…`) читают и без этого.
@@ -1631,7 +1631,7 @@ AKit при сборе пишет пробел, когда:
 
 - «Full files at …» → добавьте `checkout:` в профиль.
 - «Work item #N» или «Who you are on GitLab» → проверьте серверы в **Review Settings…** → **Check Servers** или `akit review check`.
-- Нет задачи в ветке → ревью проверяет только код. Чтобы проверить и критерии приёмки, впишите номер в **Work items** или назовите ветку с номером: `feature/COL-4512-…`.
+- Нет задачи в ветке → ревью проверяет только код. Чтобы проверить и критерии приёмки, впишите номер в **Work items** или назовите ветку с номером: `feature/SHOP-4512-…`.
 - «Output of tests» → проверьте команду в `gather`.
 - Не хватает знаний о проекте → положите заметки в Markdown в папку и добавьте её в `knowledge`.
 

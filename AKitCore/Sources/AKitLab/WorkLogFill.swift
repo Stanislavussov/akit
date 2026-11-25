@@ -36,7 +36,7 @@ public enum WorkLogFill {
             (self.time, self.harness, self.project, self.branch, self.text, self.source) = (time, harness, project, branch, text, source)
         }
 
-        /// A ticket like `COL-123`: from the branch first, else from the prompt.
+        /// A ticket like `SHOP-123`: from the branch first, else from the prompt.
         public var ticket: String? {
             for source in [branch ?? "", text] {
                 if let match = source.firstMatch(of: /[A-Z][A-Z0-9]{1,9}-\d{1,6}/) { return String(match.output) }
@@ -95,7 +95,7 @@ public enum WorkLogFill {
         public let time: String
         public let moments: [Moment]
 
-        /// The projects, branches and tickets of the slot, as `akit · work-log · COL-1`.
+        /// The projects, branches and tickets of the slot, as `akit · work-log · SHOP-1`.
         public var places: [String] {
             var seen: [String] = []
             for moment in moments {
@@ -157,7 +157,7 @@ public enum WorkLogFill {
     in time slots with the project, git branch and ticket of each slot. Make one entry per slot \
     that has prompts; join neighbouring slots only when they are clearly the same work. Each entry \
     has the slot's start time (HH:MM), a kind and a short text (at most 15 words) in the language \
-    named below: start with the ticket when there is one (COL-123), then what was solved or \
+    named below: start with the ticket when there is one (SHOP-123), then what was solved or \
     done, and the branch in parentheses when it is not the main branch. Kinds: agent (working with an agent on code), \
     task, bug, research, reply, meeting, review, break. Use break only for a gap of more than \
     45 minutes without prompts. Each entry also has a summary: 2 to 3 sentences, in the same \
