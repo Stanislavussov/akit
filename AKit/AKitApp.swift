@@ -1,4 +1,5 @@
 import AKitDoctor
+import MeetingsBackground
 import SwiftUI
 
 /// App entry point.
@@ -51,7 +52,11 @@ struct AKitApp: App {
                     FocusReturn.shared.start()
                     await model.refresh()
                     // Meetings: recordings cut by a quit are mixed and transcribed at launch.
-                    if DebugSnapshot.options == nil { await MeetingsScreen.shared.load() }
+                    if DebugSnapshot.options == nil {
+                        // M42: Background on but the recorder not running (it quit, or no login item): start it.
+                        Task.detached { BackgroundRecorder.startIfOn() }
+                        await MeetingsScreen.shared.load()
+                    }
                     if let snapshot = DebugSnapshot.options {
                         await DebugSnapshot.captureAndQuit(snapshot)
                     }
