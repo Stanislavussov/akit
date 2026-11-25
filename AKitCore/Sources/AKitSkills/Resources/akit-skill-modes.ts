@@ -128,11 +128,16 @@ export function ask(akit: string, cwd: string, skills: Loaded[], timeoutMs = TIM
 	});
 }
 
+/** `record[key]` only when the record has it itself (a skill named `constructor` is no mode). */
+export function own<T>(record: Record<string, T>, key: unknown): T | undefined {
+	return typeof key === "string" && Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
 /** The run's skill list: a new array of new objects (Pi's own are never changed). */
 export function applyModes(skills: any[], answer: Answer): any[] {
 	const next: any[] = [];
 	for (const skill of skills) {
-		const mode = skill?.sourceInfo?.scope === "temporary" ? undefined : answer.modes[skill?.name];
+		const mode = skill?.sourceInfo?.scope === "temporary" ? undefined : own(answer.modes, skill?.name);
 		if (mode === "off") continue;
 		next.push(mode ? { ...skill, disableModelInvocation: mode !== "auto" } : { ...skill });
 	}
@@ -189,9 +194,13 @@ export default function akitSkillModes(pi: any, options: { akit?: () => string |
 		let pending = cache.get(key);
 		if (!pending) {
 			const akit = locate();
-			pending = akit ? ask(akit, cwd, skills, timeoutMs) : Promise.reject(new Error("akit not found (make install-cli)"));
-			pending.catch(() => {});
-			cache.set(key, pending);
+			const asking = akit ? ask(akit, cwd, skills, timeoutMs) : Promise.reject(new Error("akit not found (make install-cli)"));
+			// A failed ask isn't kept: the next run asks again (akit installed meanwhile, a slow start).
+			asking.catch(() => {
+				if (cache.get(key) === asking) cache.delete(key);
+			});
+			cache.set(key, asking);
+			pending = asking;
 		}
 		return pending;
 	}
@@ -199,11 +208,21 @@ export default function akitSkillModes(pi: any, options: { akit?: () => string |
 	function report(ctx: any, result: Answer | undefined, error?: unknown) {
 		let text: string | undefined;
 		if (error !== undefined) text = `skill modes: not applied, ${reason(error)}`;
-		else {
-			const file = result?.problems.find((problem) => problem.kind === "file");
-			const skipped = result?.problems.filter((problem) => problem.kind === "entry").length ?? 0;
-			if (file) text = `skill modes: not applied, ${file.message}`;
-			else if (skipped > 0) text = `skill modes: ${skipped} entr${skipped === 1 ? "y" : "ies"} skipped (akit doctor)`;
+		else if (result) {
+			const problems = result.problems ?? [];
+			const blocking = problems.find((problem) => problem.kind === "file" || problem.kind === "input");
+			const renames = Object.keys(result.renames).length;
+			const parts: string[] = [];
+			if (blocking) {
+				// The project's modes don't apply; renames (from the skills' own files) still may.
+				parts.push(renames > 0 ? `project modes not applied, ${blocking.message}; ${renames} my- skill${renames === 1 ? "" : "s"} added`
+					: `not applied, ${blocking.message}`);
+			}
+			const skipped = problems.filter((problem) => problem.kind === "entry").length;
+			if (skipped > 0) parts.push(`${skipped} entr${skipped === 1 ? "y" : "ies"} skipped (akit doctor)`);
+			const left = problems.filter((problem) => problem.kind === "rename");
+			if (left.length > 0) parts.push(left.length === 1 ? left[0].message : `${left.length} of your skills not added as my- (akit skills mode)`);
+			if (parts.length > 0) text = `skill modes: ${parts.join("; ")}`;
 		}
 		try {
 			ctx?.ui?.setStatus?.(STATUS, text);
@@ -245,9 +264,9 @@ export default function akitSkillModes(pi: any, options: { akit?: () => string |
 			report(ctx, undefined, error);
 			return { action: "continue" };
 		}
-		const rename = result.renames[command.name];
+		const rename = own(result.renames, command.name);
 		const loadedSkill = skills.find((skill) => skill.name === command.name);
-		const off = rename ? rename.mode === "off" : loadedSkill?.scope !== "temporary" && result.modes[command.name] === "off";
+		const off = rename ? rename.mode === "off" : loadedSkill?.scope !== "temporary" && own(result.modes, command.name) === "off";
 		if (off) {
 			try {
 				ctx?.ui?.notify?.(`${command.name} is off in this project (akit skills mode ${command.name} --reset)`, "warning");

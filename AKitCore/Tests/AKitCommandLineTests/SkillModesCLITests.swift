@@ -93,6 +93,17 @@ struct SkillModesCLITests {
         #expect(projects() == [project: ["tdd": "auto"]])
     }
 
+    @Test func aMyEntrySetsYourSkillWherePiLoadsItUnderItsOwnName() async throws {
+        _ = await akit("skills", "mode", "my-tdd", "auto", "--yes")
+        let list = await akit("skills", "mode", "--json")
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(list.out.utf8)) as? [String: Any])
+        let rows = try #require(json["skills"] as? [[String: Any]])
+        let tdd = try #require(rows.first { $0["name"] as? String == "tdd" })
+        #expect(tdd["mode"] as? String == "auto" && tdd["from"] as? String == "project" && tdd["entry"] as? String == "my-tdd")
+        #expect((json["notFound"] as? [String: String])?.isEmpty == true)
+        #expect(await akit("skills", "mode").out.contains("(entry my-tdd: always your own tdd)"))
+    }
+
     @Test func outsideGitAWriteIsRefused() async throws {
         let plain = home.appending(path: "plain")
         try fm.createDirectory(at: plain, withIntermediateDirectories: true)

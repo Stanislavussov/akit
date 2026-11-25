@@ -54,8 +54,11 @@ extension Doctor {
         }
         for (id, folder) in folders.sorted(by: { $0.key < $1.key }) {
             let skills = SkillModes.piSkills(in: folder, env: env)
-            let resolution = SkillModes.resolve(file: reading, skills: skills, projectID: id, userFolders: SkillModes.piUserFolders(in: env))
+            let resolution = SkillModes.resolve(file: reading, skills: skills, projectID: id, userFolders: SkillModes.piUserFolders(in: env),
+                                                userEntries: SkillModes.piUserSkillEntries(in: env))
+            // `my-NAME` also sets your NAME where Pi loads it as NAME.
             let known = Set(skills.map(\.name)).union(resolution.renames.keys)
+                .union(skills.filter(\.isUsers).map { SkillModes.renamePrefix + $0.name })
             let missing = reading.entries(for: id).keys.filter { !known.contains($0) }.sorted()
             if !missing.isEmpty {
                 lines.append("  note: \(id): no skill named \(missing.joined(separator: ", ")) in \(tilde(folder)) (akit skills mode NAME --reset there takes an entry out)")

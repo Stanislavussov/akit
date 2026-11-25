@@ -73,8 +73,8 @@ extension SkillModes {
         guard let change = plan.change else { return nil }
         let folder = plan.file.deletingLastPathComponent()
         do {
+            // A new ~/.akit/local is the user's only (work project ids); an existing one is left as it is.
             if !FileManager.default.fileExists(atPath: folder.path) {
-                // ~/.akit/local holds work project ids: only the user reads it.
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             }
         } catch {
@@ -82,11 +82,15 @@ extension SkillModes {
         }
         // Checked again right before the write: a file someone broke since the plan stays as it is.
         _ = try readForWrite(plan.file, home: home)
+        let backup: URL?
         do {
-            return try SettingsFile.apply(change, home: home)
+            backup = try SettingsFile.apply(change, home: home)
         } catch {
             throw Failure(error.message)
         }
+        // Only the user reads it (work project ids); later writes keep the file's mode.
+        if change.creates { chmod(plan.file.path, 0o600) }
+        return backup
     }
 
     // MARK: - Pieces
@@ -94,7 +98,9 @@ extension SkillModes {
     static func plan(_ file: URL, edits: [SettingsFile.Edit], summary: String, home: URL) throws(Failure) -> Plan {
         do {
             let change = try SettingsFile.change(file, edits: edits, home: home, limit: limit)
-            return Plan(file: file, summary: summary, diff: change.diff, creates: change.creates, change: change)
+            // A new file: its whole text, not one excerpt per edit.
+            let diff = change.creates ? TextDiff.lines(from: "", to: change.text.hasSuffix("\n") ? String(change.text.dropLast()) : change.text) : change.diff
+            return Plan(file: file, summary: summary, diff: diff, creates: change.creates, change: change)
         } catch {
             throw Failure(error.message)
         }

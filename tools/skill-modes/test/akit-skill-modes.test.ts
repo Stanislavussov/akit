@@ -194,3 +194,50 @@ test("the body is cut as Pi cuts it", () => {
 	const rename = { original: "x", file: "/f/SKILL.md", baseDir: "/f", description: "", mode: "auto" as const, from: "skill" };
 	assert.equal(expand("my-x", rename, "", () => "---\na: b\n---\nB"), `<skill name="my-x" location="/f/SKILL.md">\nReferences are relative to /f.\n\nB\n</skill>`);
 });
+
+test("a failed ask isn't kept: the next run asks again without a new session", async () => {
+	setAnswer({ modes: { tdd: "auto" } });
+	const fake = fakePi([skill("tdd", "user", true)]);
+	let found = false;
+	akitSkillModes(fake.pi, { akit: () => (found ? akit : undefined) });
+	await fake.emit("session_start", { type: "session_start", reason: "startup" });
+	assert.equal(brief(await fake.run()), "tdd:manual");
+	assert.match(fake.status.at(-1) ?? "", /akit not found/);
+	found = true;
+	assert.equal(brief(await fake.run()), "tdd:auto");
+	assert.equal(fake.status.at(-1), undefined);
+	assert.equal(asked().length, 1);
+	// A slow akit too: the run after it asks again.
+	process.env.FAKE_AKIT_MODE = "slow";
+	writeFileSync(join(home, ".akit", "local", "skill-modes.json"), "{}");
+	const slow = load([skill("tdd", "user", true)], 300);
+	await slow.run();
+	process.env.FAKE_AKIT_MODE = "good";
+	assert.equal(brief(await slow.run()), "tdd:auto");
+});
+
+test("a skill named like an Object member is never given a mode", async () => {
+	setAnswer({ modes: {}, renames: {} });
+	const fake = load([skill("constructor"), skill("toString", "user", true), skill("__proto__")]);
+	assert.equal(brief(await fake.run()), "constructor:auto,toString:manual,__proto__:auto");
+	assert.deepEqual(await fake.emit("input", { type: "input", text: "/skill:constructor go", source: "interactive" }), { action: "continue" });
+	assert.deepEqual(await fake.emit("input", { type: "input", text: "/skill:hasOwnProperty", source: "interactive" }), { action: "continue" });
+	assert.deepEqual(fake.notices, []);
+});
+
+test("the status line names input and rename problems, and what still applied", async () => {
+	const rename = { original: "review", file: "/h/review/SKILL.md", baseDir: "/h/review", description: "mine", mode: "manual" as const, from: "skill" };
+	const file = join(home, ".akit", "local", "skill-modes.json");
+	setAnswer({ problems: [{ kind: "file", message: "the modes file is not valid JSON" }], renames: { "my-review": rename } });
+	const fake = load([skill("tdd"), skill("review", "project")]);
+	await fake.run();
+	assert.equal(fake.status.at(-1), "skill modes: project modes not applied, the modes file is not valid JSON; 1 my- skill added");
+	setAnswer({ problems: [{ kind: "input", message: "stdin is not {\"skills\":[…]}" }] });
+	writeFileSync(file, "1");
+	await fake.run();
+	assert.equal(fake.status.at(-1), "skill modes: not applied, stdin is not {\"skills\":[…]}");
+	setAnswer({ problems: [{ kind: "rename", message: "Your review is hidden by the project's, and a skill named my-review is loaded already" }] });
+	writeFileSync(file, "12");
+	await fake.run();
+	assert.equal(fake.status.at(-1), "skill modes: Your review is hidden by the project's, and a skill named my-review is loaded already");
+});

@@ -24,6 +24,12 @@ the user's copy of `/akit` (the template has the section). Settled while buildin
   problem in the answer (exit 0), bad arguments exit 2.
 - `akit skills mode NAME MODE` for a name Pi doesn't load here writes the entry with a note (the
   design keeps such names as "not found here"); outside git a write is refused.
+- After the review (2026-11-25): a failed ask isn't cached (the next run asks again); the status
+  line also names input and rename problems and, when the file doesn't apply, the renames that
+  still did; skill names are looked up as own keys only (`constructor`); the modes file is 0600
+  and a new file's preview is its whole text; a folder's project id and a session's are one
+  implementation (`GitCheckout.repositoryFolders` + `ProjectRecords.projectID(commonDir:)`: links
+  followed, the config's first 256 KB).
 
 ## Question
 
@@ -144,8 +150,20 @@ rename, `my-review`, with its file, folder and description. The extension then:
 - turns `/skill:my-review args` into the same block Pi itself makes for `/skill:` (`<skill
   name=… location=…>` with the body, `agent-session.js` `_expandSkillCommand`).
 
-No copy on disk, nothing in the repository. The entry `review` keeps meaning the team's skill
-in that project. The prefix is a constant `my-` for now.
+No copy on disk, nothing in the repository. The prefix is a constant `my-` for now.
+
+Which entry sets what (decided 2026-11-25, after review): an entry `my-review` always means the
+user's own `review` in that project, whether Pi offers it as the rename `my-review` (the team
+has a `review`) or loads it as `review` (no team skill, or an untrusted worktree where the team's
+skills are absent). So for the user's `review` loaded under its own name, `my-review` sets its
+mode when the project has that entry, and the entry `review` then applies only to a `review` that
+isn't the user's. Without a `my-review` entry, `review` sets whatever Pi loads as `review`. The
+list (`akit skills mode`) names the entry that set a mode when it isn't the skill's name.
+
+Only a project skill (scope `project`, not a package's) hides one of the user's: Pi ranks packages
+below the user's skills. A personal skill Pi doesn't load (`-skills/review/SKILL.md` or a matching
+`!glob` in the `skills` list of Pi's user settings, what `akit skills set --state off` writes) is
+not offered; with a pattern AKit can't read, or settings it can't read, no rename is made.
 
 ## Pi: the extension
 
@@ -228,6 +246,10 @@ global level), so the two levels are visible side by side. The guide
   untrusted worktree the team's skills are absent, whatever the file says.
 - Outside a run Pi reports the base prompt (`session.systemPrompt`), so tools that show the
   prompt between runs show the skills before the modes.
+- The search for the user's own skills behind a rename follows Pi's folders and their order
+  (`~/.pi/agent/skills`, then `~/.agents/skills`) and its override entries, but not the
+  `.gitignore` / `.ignore` / `.fdignore` files Pi honours inside them, nor extra skill paths listed
+  in Pi's settings: a skill hidden only by an ignore file can still come back as `my-NAME`.
 - A mode change costs one system patch on the next run; on providers that fold system
   messages into the head (`supportsMidConvoSystemMessages` false) that is one cache miss.
 

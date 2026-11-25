@@ -215,21 +215,26 @@ public enum SkillModes {
          UserFolder(url: env.homeDirectory.appending(path: ".agents/skills"), rootMarkdown: false)]
     }
 
-    /// The modes of a run in a project: the project's entries for the loaded skills (never a
-    /// `temporary` one), and a `my-` rename for each personal skill a project's or package's skill
-    /// of the same name hides. Reads only the user's skill folders, and only when a loaded skill
-    /// isn't the user's.
-    public static func resolve(file: Reading, skills: [LoadedSkill], projectID: String?, userFolders: [UserFolder]) -> Resolution {
+    /// The modes of a run in a project, and a `my-` rename for each personal skill a project's
+    /// skill of the same name hides (Pi ranks project skills first). Never a `temporary` skill.
+    /// `userEntries`: the `skills` list of Pi's user settings (`piUserSkillEntries`), which can turn a
+    /// personal skill off; nil when it can't be read (then no rename). Reads the user's skill folders
+    /// only when a project skill is loaded.
+    public static func resolve(file: Reading, skills: [LoadedSkill], projectID: String?, userFolders: [UserFolder],
+                               userEntries: [String]? = []) -> Resolution {
         var result = Resolution(project: projectID)
         result.problems = file.problems
         let entries = file.usable ? file.entries(for: projectID) : [:]
         let loaded = Dictionary(skills.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
 
-        // Personal skills hidden behind a loaded skill of the same name at another path.
-        let hiding = skills.filter { !$0.isUsers && $0.scope != "temporary" }
+        // Personal skills hidden behind a project's skill of the same name at another path.
+        let hiding = skills.filter { $0.scope == "project" && $0.origin != "package" }
         if !hiding.isEmpty {
-            let personal = personalSkills(in: userFolders, named: Set(hiding.map(\.name)))
-            for skill in hiding {
+            let personal = personalSkills(in: userFolders, named: Set(hiding.map(\.name)), entries: userEntries ?? [])
+            if userEntries == nil, !personal.isEmpty {
+                result.problems.append(Problem(kind: "rename", message: "Pi's settings can't be read, so it isn't known which of your skills are on; your skills the project's hide are not added."))
+            }
+            for skill in hiding where userEntries != nil {
                 guard let mine = personal[skill.name], !samePath(mine.file, skill.path) else { continue }
                 let renamed = renamePrefix + skill.name
                 if loaded[renamed] != nil {
@@ -243,11 +248,30 @@ public enum SkillModes {
                                                  from: entry == nil ? "skill" : "project")
             }
         }
-        for (name, mode) in entries where result.renames[name] == nil {
-            guard let skill = loaded[name], skill.scope != "temporary" else { continue }
-            result.modes[name] = mode
+        for (name, skill) in loaded where skill.scope != "temporary" && result.renames[name] == nil {
+            if let key = entryName(for: skill, in: entries) { result.modes[name] = entries[key] }
         }
         return result
+    }
+
+    /// The project's entry that sets a loaded skill's mode: `my-NAME` always means the user's own
+    /// NAME, so it sets a user skill Pi loads as NAME (no project skill hides it here); else the
+    /// entry NAME, which then applies only to a skill that isn't the user's when `my-NAME` exists.
+    public static func entryName(for skill: LoadedSkill, in entries: [String: SkillMode]) -> String? {
+        if skill.isUsers, entries[renamePrefix + skill.name] != nil { return renamePrefix + skill.name }
+        return entries[skill.name] != nil ? skill.name : nil
+    }
+
+    /// The string entries of the `skills` list in Pi's user settings (`<agent dir>/settings.json`);
+    /// empty without the file or the key, nil when it can't be read.
+    public static func piUserSkillEntries(in env: HarnessEnvironment) -> [String]? {
+        let file = env.piAgentDirectory.appending(path: "settings.json")
+        do {
+            guard let settings = try SettingsFile.read(file, home: env.homeDirectory) else { return [] }
+            return try SkillSwitches.entries(in: settings.value)
+        } catch {
+            return nil
+        }
     }
 
     /// The skills Pi loads in `folder`, in Pi's order of precedence (project, yours, packages; the
@@ -292,8 +316,11 @@ public enum SkillModes {
 
     /// The first skill of each wanted name in the user's folders, in Pi's order, read as Pi reads
     /// it: the SKILL.md `name` (else its folder's), a description that isn't empty.
-    static func personalSkills(in folders: [UserFolder], named wanted: Set<String>) -> [String: Personal] {
+    /// One Pi doesn't load (`-path`, `!glob` in `entries`) doesn't count; one AKit can't tell (a glob it
+    /// doesn't read) takes its name without a rename.
+    static func personalSkills(in folders: [UserFolder], named wanted: Set<String>, entries: [String] = []) -> [String: Personal] {
         var found: [String: Personal] = [:]
+        var unknown = Set<String>()
         for folder in folders {
             var files: [URL] = []
             var visited = Set<String>()
@@ -304,9 +331,15 @@ public enum SkillModes {
                 let fields = Frontmatter.parse(text)
                 let name = fields["name"].flatMap { $0.isEmpty ? nil : $0 }
                     ?? file.deletingLastPathComponent().lastPathComponent
-                guard wanted.contains(name), found[name] == nil,
+                guard wanted.contains(name), found[name] == nil, !unknown.contains(name),
                       let description = fields["description"], !description.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
-                found[name] = Personal(file: file, description: description, manual: Frontmatter.disablesModelInvocation(text))
+                // Pi's user overrides are relative to the folder's parent (`~/.agents`, `~/.pi/agent`).
+                let place = Skill.Place(file: file, base: folder.url.deletingLastPathComponent(), scope: .global)
+                switch PiSkillFilter.isEnabled(place, entries: entries) {
+                case true?: found[name] = Personal(file: file, description: description, manual: Frontmatter.disablesModelInvocation(text))
+                case false?: continue
+                case nil: unknown.insert(name)
+                }
             }
         }
         return found
@@ -314,7 +347,8 @@ public enum SkillModes {
 
     /// Pi's walk (core/skills.js): a folder with SKILL.md is a skill and the walk stops there;
     /// otherwise its folders (not hidden ones or node_modules), and lone `.md` files at the top
-    /// when `rootMarkdown`. Depth is capped; ignore files are not read.
+    /// when `rootMarkdown`. Depth is capped; ignore files (`.gitignore`, `.ignore`, `.fdignore`) are not read
+    /// (skill-modes.md, Limits).
     static func walk(_ dir: URL, depth: Int, rootMarkdown: Bool, visited: inout Set<String>, into files: inout [URL]) {
         guard depth < 8, FileWalk.isDirectory(dir), visited.insert(dir.resolvingSymlinksInPath().path).inserted else { return }
         let skill = dir.appending(path: "SKILL.md")

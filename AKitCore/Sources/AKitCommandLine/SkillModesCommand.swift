@@ -64,7 +64,8 @@ extension AKitCLI {
             return 0
         }
         out(SkillModes.resolve(file: reading, skills: request.skills, projectID: project,
-                               userFolders: SkillModes.piUserFolders(in: env)).json)
+                               userFolders: SkillModes.piUserFolders(in: env),
+                                                userEntries: SkillModes.piUserSkillEntries(in: env)).json)
         return 0
     }
 
@@ -80,6 +81,9 @@ extension AKitCLI {
         let file: String
         /// A rename: the name the project's skill keeps.
         var renamedFrom: String?
+        /// The project's entry that sets the mode, when it isn't the skill's name: `my-NAME` for
+        /// your NAME that Pi loads as NAME here.
+        var entry: String?
     }
 
     struct ModeList: Encodable {
@@ -181,21 +185,23 @@ extension AKitCLI {
         let file = SkillModes.file(home: home)
         let reading = SkillModes.read(file, home: home)
         let skills = SkillModes.piSkills(in: folder, env: env)
-        let resolution = SkillModes.resolve(file: reading, skills: skills, projectID: project, userFolders: SkillModes.piUserFolders(in: env))
+        let resolution = SkillModes.resolve(file: reading, skills: skills, projectID: project, userFolders: SkillModes.piUserFolders(in: env),
+                                                userEntries: SkillModes.piUserSkillEntries(in: env))
         var rows: [ModeRow] = []
         for skill in skills {
             let source = skill.origin == "package" ? "package" : skill.scope == "project" ? "project" : "yours"
             let own: SkillMode = (skill.path.flatMap { FileWalk.head(of: URL(filePath: $0), limit: 256 << 10) }
                 .map { Frontmatter.disablesModelInvocation(String(decoding: $0, as: UTF8.self)) } ?? false) ? .manual : .auto
             let entry = resolution.modes[skill.name]
+            let key = SkillModes.entryName(for: skill, in: reading.usable ? reading.entries(for: project) : [:])
             rows.append(ModeRow(name: skill.name, mode: entry ?? own, from: entry == nil ? "skill" : "project", source: source,
-                                file: skill.path ?? ""))
+                                file: skill.path ?? "", entry: entry != nil && key != skill.name ? key : nil))
         }
         for (name, rename) in resolution.renames.sorted(by: { $0.key < $1.key }) {
             rows.append(ModeRow(name: name, mode: rename.mode, from: rename.from, source: "yours", file: rename.file, renamedFrom: rename.original))
         }
         rows.sort { $0.name < $1.name }
-        let names = Set(rows.map(\.name))
+        let names = Set(rows.map(\.name) + rows.compactMap(\.entry))
         let notFound = reading.entries(for: project).filter { !names.contains($0.key) }
         return ModeList(project: project, file: file.path, fileUsable: reading.usable, extension: SkillModesExtension(env: env).status().state,
                         extensionFile: SkillModesExtension(env: env).file.path, skills: rows, notFound: notFound, problems: resolution.problems)
@@ -212,7 +218,8 @@ extension AKitCLI {
             let mode = row.mode.title.padding(toLength: 6, withPad: " ", startingAt: 0)
             let from = (row.from == "project" ? "project" : "SKILL.md").padding(toLength: 8, withPad: " ", startingAt: 0)
             let source = row.source.padding(toLength: 7, withPad: " ", startingAt: 0)
-            let renamed = row.renamedFrom.map { "  (yours; the project's \($0) has the name)" } ?? ""
+            let renamed = (row.renamedFrom.map { "  (yours; the project's \($0) has the name)" } ?? "")
+                + (row.entry.map { "  (entry \($0): always your own \(row.name))" } ?? "")
             lines.append("  \(name)  \(mode)  from \(from)  \(source)  \(FileWalk.tilde(URL(filePath: row.file), home: home))\(renamed)")
         }
         for (name, mode) in list.notFound.sorted(by: { $0.key < $1.key }) {

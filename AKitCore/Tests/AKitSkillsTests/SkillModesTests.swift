@@ -110,6 +110,54 @@ struct SkillModesTests {
         #expect(result.problems.map(\.kind) == ["rename"])
     }
 
+    @Test func aPersonalSkillPiTurnedOffIsNotOfferedAndTheNextFolderCounts() throws {
+        try write(".pi/agent/skills/review/SKILL.md", skill("review", description: "Off in Pi"))
+        try write(".agents/skills/review/SKILL.md", skill("review", description: "Mine"))
+        try write(".agents/skills/lint/SKILL.md", skill("lint"))
+        let skills = [loaded("review", scope: "project", path: "/repo/review/SKILL.md"), loaded("lint", scope: "project", path: "/repo/lint/SKILL.md")]
+        let folders = SkillModes.piUserFolders(in: env)
+        // `akit skills set --state off` writes `-skills/review/SKILL.md`, relative to each folder's parent.
+        let off = SkillModes.resolve(file: .init(), skills: skills, projectID: project, userFolders: folders,
+                                     userEntries: ["-skills/review/SKILL.md", "!lint"])
+        #expect(off.renames.isEmpty)
+        // Only ~/.pi/agent's review off: ~/.agents' review is the one Pi loads, so it is offered.
+        let one = SkillModes.resolve(file: .init(), skills: skills, projectID: project, userFolders: folders,
+                                     userEntries: ["-\(home.appending(path: ".pi/agent/skills/review/SKILL.md").path)"])
+        #expect(one.renames["my-review"]?.description == "Mine")
+        #expect(one.renames["my-lint"] != nil)
+        // Pi's settings unreadable: no rename, said why.
+        let unknown = SkillModes.resolve(file: .init(), skills: skills, projectID: project, userFolders: folders, userEntries: nil)
+        #expect(unknown.renames.isEmpty && unknown.problems.map(\.kind) == ["rename"])
+    }
+
+    @Test func onlyAProjectSkillHidesOneOfYours() throws {
+        try write(".agents/skills/review/SKILL.md", skill("review"))
+        let package = loaded("review", scope: "project", origin: "package", path: "/repo/node_modules/x/review/SKILL.md")
+        #expect(SkillModes.resolve(file: .init(), skills: [package], projectID: project, userFolders: SkillModes.piUserFolders(in: env)).renames.isEmpty)
+    }
+
+    @Test func piUserSkillEntriesComeFromPisSettings() throws {
+        #expect(SkillModes.piUserSkillEntries(in: env) == [])
+        try write(".pi/agent/settings.json", #"{"skills": ["-skills/x/SKILL.md", 3, "!y"]}"#)
+        #expect(SkillModes.piUserSkillEntries(in: env) == ["-skills/x/SKILL.md", "!y"])
+        try write(".pi/agent/settings.json", "{ nope")
+        #expect(SkillModes.piUserSkillEntries(in: env) == nil)
+    }
+
+    @Test func myNameAlwaysMeansYourOwnSkill() {
+        let read = reading(#"{"version":1,"projects":{"\#(project)":{"review":"off","my-review":"auto","tdd":"manual"}}}"#)
+        // No team review here (or an untrusted worktree): Pi loads yours as review; my-review sets it.
+        let yours = SkillModes.resolve(file: read, skills: [loaded("review"), loaded("tdd")], projectID: project, userFolders: [])
+        #expect(yours.modes == ["review": .auto, "tdd": .manual])
+        // The team's review: the review entry is for it.
+        let team = SkillModes.resolve(file: read, skills: [loaded("review", scope: "project", path: "/repo/review/SKILL.md")], projectID: project,
+                                      userFolders: [])
+        #expect(team.modes == ["review": .off])
+        // Without a my- entry, the entry applies to whatever Pi loads under the name.
+        let plain = reading(#"{"version":1,"projects":{"\#(project)":{"review":"off"}}}"#)
+        #expect(SkillModes.resolve(file: plain, skills: [loaded("review")], projectID: project, userFolders: []).modes == ["review": .off])
+    }
+
     @Test func theAnswerIsOneLineOfJSONWithANullProject() {
         let json = SkillModes.Resolution(project: nil).json
         #expect(json == #"{"modes":{},"problems":[],"project":null,"renames":{},"version":1}"#)
@@ -121,11 +169,24 @@ struct SkillModesTests {
         let plan = try SkillModes.plan(set: .auto, name: "tdd", project: project, home: home)
         #expect(plan.creates && !plan.changesNothing)
         #expect(plan.summary.contains("Auto"))
+        // The whole new file, not one excerpt per edit.
+        #expect(TextDiff.unified(plan.diff) == ["+ {", "+   \"version\": 1,", "+   \"projects\": {", "+     \"\(project)\": {",
+                                                "+       \"tdd\": \"auto\"", "+     }", "+   }", "+ }"])
         #expect(try SkillModes.apply(plan, home: home) == nil)
         let read = SkillModes.read(file, home: home)
         #expect(read.projects == [project: ["tdd": .auto]])
         let mode = try fm.attributesOfItem(atPath: file.deletingLastPathComponent().path)[.posixPermissions] as? Int
         #expect(mode == 0o700)
+        #expect(try fm.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int == 0o600)
+        try SkillModes.apply(try SkillModes.plan(set: .off, name: "lint", project: project, home: home), home: home)
+        #expect(try fm.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int == 0o600)
+    }
+
+    @Test func anExistingLocalFolderKeepsItsMode() throws {
+        let folder = home.appending(path: ".akit/local")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        try SkillModes.apply(try SkillModes.plan(set: .auto, name: "tdd", project: project, home: home), home: home)
+        #expect(try fm.attributesOfItem(atPath: folder.path)[.posixPermissions] as? Int == 0o755)
     }
 
     @Test func aChangeKeepsTheRestAndBacksUp() throws {
