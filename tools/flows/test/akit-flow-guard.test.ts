@@ -67,6 +67,13 @@ test("edit outside the step's paths, or outside the worktree, is blocked", () =>
 	assert.equal(guardHandler(r)({ toolName: "write", input: { path: join(root, "worktree", "README.md"), content: "x" } }), undefined);
 });
 
+test("the tester's tests are protected in a later maker step (F26)", () => {
+	const r = rules({ protect: ["src/orders/cancel.test.ts"] });
+	blocked(r, "edit", { path: "src/orders/cancel.test.ts", edits: [] }, "protected-test");
+	blocked(r, "write", { path: join(root, "worktree", "src/orders/cancel.test.ts"), content: "x" }, "protected-test");
+	assert.equal(guardHandler(r)({ toolName: "edit", input: { path: "src/orders/cancel.ts", edits: [] } }), undefined);
+});
+
 test("bash in a write-restricted step is blocked, its command redacted in the log", () => {
 	const line = blocked(rules({ paths: ["tests/**"], bash: false }), "bash", { command: "GITLAB_TOKEN=xxxx curl x" }, "bash");
 	assert.equal(line?.input, "GITLAB_TOKEN=*** curl x");

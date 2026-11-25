@@ -19,6 +19,11 @@ import Foundation
 /// | `unrelated-area` | hint | a block for a note of another area that no map of this area jumps to or from (R-SEP) |
 /// | `unknown-kind` | hint | a note's `kind:` that `kb.yaml` doesn't list (K24) |
 /// | `missing-description` | warning | a note without `description:`: agents read the one line first, the note only when needed |
+/// | `scenario-duplicate-id` | error | a rule, scenario or open question ID defined twice in the base (K43) |
+/// | `scenario-header` | warning | an item's comment line without a status or level, with an unknown one, or without its `Rule:` / `Scenario:` / `Question:` line; a malformed `# test:` link |
+/// | `scenario-feature-code` | warning | a requirement note with IDs of more than one feature code |
+/// | `scenario-unknown-id` | warning | a note citing an ID of a known feature code that no note defines |
+/// | `scenario-test-missing` | warning | a `# test:` link whose file or test name no local copy of its repository has (its worktrees included) |
 ///
 /// Known projects (K12): the `origin` remotes of the git repos in the projects root (and one
 /// folder below), the project ids of the project store (the brain's `projects/` and
@@ -46,10 +51,15 @@ public enum KnowledgeLint {
         case unrelatedArea = "unrelated-area"
         case unknownKind = "unknown-kind"
         case missingDescription = "missing-description"
+        case scenarioDuplicateID = "scenario-duplicate-id"
+        case scenarioHeader = "scenario-header"
+        case scenarioFeatureCode = "scenario-feature-code"
+        case scenarioUnknownID = "scenario-unknown-id"
+        case scenarioTestMissing = "scenario-test-missing"
 
         public var severity: Severity {
             switch self {
-            case .brokenLink, .mapParse: .error
+            case .brokenLink, .mapParse, .scenarioDuplicateID: .error
             case .unrelatedArea, .unknownKind: .hint
             default: .warning
             }
@@ -175,11 +185,14 @@ public enum KnowledgeLint {
             }
         }
         let files = KnowledgeBase.files(in: base.areasFolder)
+        var texts: [(id: String, text: String)] = []
         for file in files where file.pathExtension == "md" {
             let id = KnowledgeBase.id(of: file, areas: base.areasFolder)
             guard let note = KnowledgeNote.load(file) else { continue }
+            texts.append((id, note.text))
             findings += check(note: note, path: "areas/\(id).md", targets: targets, kinds: kinds, projects: projects, home: home)
         }
+        findings += scenarios(texts, projects: projects)
         var graphs: [MapGraph.Map] = []
         var scenes: [String: ExcalidrawFile] = [:]
         for file in files where file.pathExtension == "excalidraw" {
@@ -341,6 +354,86 @@ public enum KnowledgeLint {
                                     fix: "In Edit, drag both ends of the arrow onto blocks, or delete it."))
         }
         return findings
+    }
+
+    // MARK: - Scenarios (K43)
+
+    /// The `scenario-*` findings of the notes' gherkin items and of the IDs the notes cite.
+    static func scenarios(_ notes: [(id: String, text: String)], projects: Projects) -> [Finding] {
+        var findings: [Finding] = []
+        var defined: [String: KnowledgeScenarios.Item] = [:]
+        var codes: Set<String> = []
+        for note in notes {
+            let path = "areas/\(note.id).md"
+            let parsed = KnowledgeScenarios.parse(note.text, note: note.id)
+            for problem in parsed.problems {
+                findings.append(Finding(rule: .scenarioHeader, file: path, element: problem.id, message: "Line \(problem.line): \(problem.message)", fix: problem.fix))
+            }
+            for item in parsed.items {
+                if let first = defined[item.id] {
+                    let place = first.note == note.id ? "line \(first.line)" : "areas/\(first.note).md, line \(first.line)"
+                    findings.append(Finding(rule: .scenarioDuplicateID, file: path, element: item.id,
+                                            message: "Line \(item.line): \(item.id) is defined again; it is already on \(place).",
+                                            fix: "Give this one the next free number (akit kb scenarios shows the highest), or drop the copy."))
+                } else {
+                    defined[item.id] = item
+                }
+                codes.insert(item.feature)
+                for link in item.tests {
+                    if let finding = missingTest(link, item: item, path: path, projects: projects) { findings.append(finding) }
+                }
+            }
+            let noteCodes = Set(parsed.items.map(\.feature))
+            if noteCodes.count > 1 {
+                findings.append(Finding(rule: .scenarioFeatureCode, file: path, element: noteCodes.sorted().joined(separator: ", "),
+                                        message: "The note has IDs of \(noteCodes.count) feature codes (\(noteCodes.sorted().joined(separator: ", "))); one requirement note is one feature.",
+                                        fix: "Keep the code of the note's first rule; move the other feature's items to its own scenarios note."))
+            }
+        }
+        for note in notes {
+            for id in KnowledgeScenarios.references(in: note.text) where defined[id] == nil {
+                let code = id.split(separator: "-").dropFirst().first.map(String.init) ?? ""
+                guard codes.contains(code) else { continue }
+                findings.append(Finding(rule: .scenarioUnknownID, file: "areas/\(note.id).md", element: id,
+                                        message: "\(id) is cited, but no note defines it.",
+                                        fix: "Correct the ID (akit kb scenarios lists them), or propose the item in the feature's scenarios note."))
+            }
+        }
+        return findings
+    }
+
+    /// The link's file or test name is in no local copy of its repository; nil when it is, or
+    /// when this Mac has no copy (nothing to compare with).
+    static func missingTest(_ link: KnowledgeScenarios.TestLink, item: KnowledgeScenarios.Item, path: String, projects: Projects) -> Finding? {
+        let copy = ProjectRecords.normalizedRemote(link.repo).flatMap { projects.copies[$0] }
+            ?? projects.copies.values.sorted { $0.path < $1.path }.first { $0.lastPathComponent == link.repo }
+        guard let copy else { return nil }
+        let roots = [copy] + worktrees(of: copy)
+        let texts = roots.compactMap { root in
+            (try? Data(contentsOf: root.appending(path: link.path))).flatMap { String(data: $0, encoding: .utf8) }
+        }
+        let location = "\(link.repo) · \(link.path)"
+        if texts.isEmpty {
+            return Finding(rule: .scenarioTestMissing, file: path, element: item.id, link: location,
+                           message: "Line \(link.line): the test file of \(item.id) is in no local copy of \(link.repo) (\(roots.map(\.path).joined(separator: ", "))).",
+                           fix: "The test moved or was removed: propose the link with its new file, or remove it.")
+        }
+        if let missing = link.names.first(where: { name in !texts.contains { $0.contains(name) } }) {
+            return Finding(rule: .scenarioTestMissing, file: path, element: item.id, link: location,
+                           message: "Line \(link.line): \(link.path) has no test named “\(missing)” for \(item.id).",
+                           fix: "The test was renamed: propose the link with its name as the source writes it.")
+        }
+        return nil
+    }
+
+    /// The worktrees of a clone, from `.git/worktrees/*/gitdir` (no git process).
+    static func worktrees(of copy: URL) -> [URL] {
+        let folder = copy.appending(path: ".git/worktrees", directoryHint: .isDirectory)
+        return FileWalk.children(of: folder).compactMap { entry in
+            guard let text = try? String(contentsOf: entry.appending(path: "gitdir"), encoding: .utf8) else { return nil }
+            let gitdir = URL(filePath: text.trimmingCharacters(in: .whitespacesAndNewlines))
+            return gitdir.lastPathComponent == ".git" ? gitdir.deletingLastPathComponent() : nil
+        }
     }
 
     /// R-SEP: a block on a map of area A for a note of area B, when no map of A jumps to a map of

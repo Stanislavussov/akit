@@ -19,7 +19,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 12
+    public static let version = 13
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -498,6 +498,41 @@ public enum KnowledgeSeed {
             # no-description
 
             A note without a description: agents have to open it to find out what it is about.
+
+            """),
+        // The scenario-* rules (K43): a duplicate ID, a header without a level, a second feature
+        // code, a cited ID no note defines, a test link to a file the clone doesn't have.
+        File(path: "areas/lint-examples/scenarios.md", text: """
+            ---
+            description: Requirement examples lint flags on purpose, one of each scenario rule.
+            ---
+            # Scenarios — lint examples
+
+            A plan cites SC-LNT-099, which no note defines.
+
+            ## R-LNT-01 Checkout keeps the cart
+
+            ```gherkin
+            # R-LNT-01 · ADO 100001 · status: draft
+            Rule: The cart survives a failed payment
+
+              # SC-LNT-001 · ADO 100001 · level: unit · status: draft
+              # test: lint-examples · src/cart.test.ts · cart › keeps the items after a failed payment
+              Scenario: A failed payment keeps the cart
+
+              # SC-LNT-001 · ADO 100001 · level: unit · status: draft
+              Scenario: A copy that took the same number
+
+              # SC-LNT-002 · ADO 100001 · status: draft
+              Scenario: A scenario without a level
+            ```
+
+            ## R-OTH-01 Another feature
+
+            ```gherkin
+            # R-OTH-01 · status: draft
+            Rule: A rule of another feature in the same note
+            ```
 
             """),
         // block-without-note, unbound-arrow and unrelated-area (a hint, R-SEP); then map-parse.

@@ -29,9 +29,25 @@ export const HANDOFF_PARAMETERS = {
 			properties: {
 				steps: { type: "array", items: { type: "string" } },
 				check: { type: "string", description: "One plain command, such as python3 -m unittest test_stats; empty when there is none." },
+				work_item: { type: "string", description: "The ADO work item the task delivers, like 321319; empty for technical work." },
+				scenarios: { type: "array", items: { type: "string" }, description: "The agreed scenario IDs (SC-…) the task proves, from akit kb scenarios --work-item <ID> --status agreed; empty for technical work." },
 			},
-			required: ["steps", "check"],
+			required: ["steps", "check", "work_item", "scenarios"],
 			additionalProperties: false,
+		},
+		tests: {
+			type: "array",
+			description: "Tester steps only: the test that proves each scenario of the plan. Never put a scenario ID into the code or a test name.",
+			items: {
+				type: "object",
+				properties: {
+					scenario: { type: "string", description: "The scenario ID, like SC-ORD-001." },
+					path: { type: "string", description: "The test file, relative to the worktree." },
+					name: { type: "string", description: "The test's describe titles and title joined by › , as the source writes them." },
+				},
+				required: ["scenario", "path", "name"],
+				additionalProperties: false,
+			},
 		},
 		outcome: { type: "string", enum: ["done", "failed", "blocked"] },
 		reason: { type: "string", description: "Why the step failed or is blocked; one word such as tests or unclear. Empty when done." },

@@ -39,6 +39,7 @@ final class WatchFilterTests {
         (".akit-misses.log", .ignore),
         ("areas/payments/.DS_Store", .ignore),
         ("areas/payments/.orders-api.md.swp", .ignore),
+        ("areas/spikes/withdrawal/321306 mobile architecture.md.sb-d3aebe56-Yg6p2T", .ignore),
         (".akit-seed.json", .other(".akit-seed.json")),
         ("README.md", .other("README.md")),
         ("areas", .other("areas")),

@@ -28,6 +28,8 @@ export interface GuardRules {
 	events: string;
 	/** The run records folder (`<main checkout>/.pi/akit-flow`): `edit` / `write` there is always blocked. */
 	records?: string;
+	/** Files a tester step wrote (F26): `edit` / `write` of them is blocked in this step. */
+	protect?: string[];
 }
 
 /** Pi's built-in tools: a step without a tool list may use these, and nothing else. */
@@ -138,6 +140,8 @@ export function forbidden(rules: GuardRules, tool: string, input: Record<string,
 		if (rel === undefined) return { rule: "path", reason: `${filePath(input) || "(no path)"} is outside the flow's worktree.` };
 		if (rules.paths.length > 0 && !rules.paths.some((p) => matches(p, rel)))
 			return { rule: "path", reason: `Step ${rules.step} may change only ${rules.paths.join(", ")}; ${rel} is not one of them.` };
+		if (rules.protect?.includes(rel))
+			return { rule: "protected-test", reason: `${rel} holds the tests the tester step wrote: they prove the task and change only in that step. Fix the code; if a test is wrong, end blocked with the reason.` };
 	}
 	return undefined;
 }
@@ -220,9 +224,25 @@ export const HANDOFF_PARAMETERS = {
 			properties: {
 				steps: { type: "array", items: { type: "string" } },
 				check: { type: "string", description: "One plain command, such as python3 -m unittest test_stats; empty when there is none." },
+				work_item: { type: "string", description: "The ADO work item the task delivers, like 321319; empty for technical work." },
+				scenarios: { type: "array", items: { type: "string" }, description: "The agreed scenario IDs (SC-…) the task proves, from akit kb scenarios --work-item <ID> --status agreed; empty for technical work." },
 			},
-			required: ["steps", "check"],
+			required: ["steps", "check", "work_item", "scenarios"],
 			additionalProperties: false,
+		},
+		tests: {
+			type: "array",
+			description: "Tester steps only: the test that proves each scenario of the plan. Never put a scenario ID into the code or a test name.",
+			items: {
+				type: "object",
+				properties: {
+					scenario: { type: "string", description: "The scenario ID, like SC-ORD-001." },
+					path: { type: "string", description: "The test file, relative to the worktree." },
+					name: { type: "string", description: "The test's describe titles and title joined by › , as the source writes them." },
+				},
+				required: ["scenario", "path", "name"],
+				additionalProperties: false,
+			},
 		},
 		outcome: { type: "string", enum: ["done", "failed", "blocked"] },
 		reason: { type: "string", description: "Why the step failed or is blocked; one word such as tests or unclear. Empty when done." },
@@ -256,21 +276,22 @@ export default function akitFlowHandoff(pi: ExtensionAPI): void {
 // ~/.pi/agent/flows.
 
 import { execFileSync } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-	compareVersions, type Decision, DEFAULT_MAX_LOOPS, firstStep, type Flow, formatProblem, isOutcome, isSafeCommand, MAX_CHECK_COMMANDS, nextStep,
-	type FlowStep, type Outcome, parseOutcome, redact, requiredPi, runId, TESTED_PI, type Visits,
+	compareVersions, type Decision, DEFAULT_MAX_LOOPS, firstStep, type Flow, formatProblem, type GateResult, isOutcome, isSafeCommand, MAX_CHECK_COMMANDS,
+	nextStep, type FlowStep, type Outcome, parseOutcome, planScenariosGate, redact, redFirstGate, requiredPi, runId, type TestClaim, testClaimsGate,
+	TESTED_PI, testsUnchangedGate, type Visits,
 } from "./flow-core.ts";
 import { DEFAULT_TOOLS, type GuardRules } from "./akit-flow-guard.ts";
 import { projectRules, runClaudeChild } from "./claude-adapter.ts";
 import { changedFiles, changes, commit, createWorktree, diffFromBase, flowCommits, resetTo, type Worktree, worktreeExists } from "./flow-git.ts";
 import {
-	appendEvent, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, type RecordedEvent, recordTokens, releaseLock,
-	RUN_SCHEMA, runChecks, stepKey, takeLock, visitsFrom, writeAtomic,
+	appendEvent, type CheckResult, checksGreen, createRunFolder, HANDOFF_SCHEMA, handoffName, latestRun, readEvents, type RecordedEvent, recordTokens,
+	releaseLock, RUN_SCHEMA, runCheck, runChecks, stepKey, takeLock, visitsFrom, writeAtomic,
 } from "./flow-record.ts";
 import {
 	type ChildResult, detectPi, type ExtensionAPI, type ExtensionContext, missingFlags, onShutdown, type PiInfo, readFlowFile,
@@ -544,8 +565,13 @@ function readHandoff(folder: string, index: number, step: string, attempt: numbe
  * which every later step gets next to the previous handoff, so a fix or review after checks still
  * sees what was planned. Undefined when the flow has no planner before the step or it never ended done. */
 function planHandoff(folder: string, flow: Flow, stepId: string): { step: string; handoff: Record<string, unknown> } | undefined {
+	return newestDone(folder, flow, stepId, "planner");
+}
+
+/** The newest done handoff of the flow's last `agent` step before `stepId`. */
+function newestDone(folder: string, flow: Flow, stepId: string, agent: string): { step: string; handoff: Record<string, unknown> } | undefined {
 	const index = flow.steps.findIndex((s) => s.id === stepId);
-	const plans = flow.steps.map((s, i) => ({ s, i })).filter(({ s, i }) => s.agent === "planner" && i < index);
+	const plans = flow.steps.map((s, i) => ({ s, i })).filter(({ s, i }) => s.agent === agent && i < index);
 	const plan = plans.at(-1);
 	if (!plan || !existsSync(join(folder, "handoffs"))) return undefined;
 	const prefix = `${stepKey(plan.i, plan.s.id)}-a`;
@@ -762,12 +788,73 @@ function childExtensions(project: string, own: string[]): string[] {
 /** The guard's rules for one step attempt (F15), in `<run>/guard/NN-<step>-a<attempt>.json`: the
  * step's tools, else the flow's, else Pi's built-ins; `bash` defaults to "yes unless paths is set",
  * as Swift's FlowStep. Returns the file's path for AKIT_FLOW_GUARD. */
+/** The agents whose code a tester's tests prove; after a tester they may not change its tests (F26). */
+const CODE_MAKERS = new Set(["implementer", "debugger", "cleaner"]);
+
+/** The agreed scenario IDs of a work item (all agreed ones without), from `akit kb scenarios`. */
+export function agreedScenarios(project: string, workItem: string): string[] | { error: string } {
+	try {
+		const out = execFileSync("akit", ["kb", "scenarios", ...(workItem ? ["--work-item", workItem] : []), "--status", "agreed", "--json"],
+			{ cwd: project, encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
+		const items = (JSON.parse(out) as { items?: { id?: unknown; kind?: unknown }[] }).items ?? [];
+		return items.filter((i) => i.kind === "scenario" && typeof i.id === "string").map((i) => i.id as string);
+	} catch (error) {
+		return { error: (error as Error).message.split("\n")[0] ?? "akit kb scenarios failed" };
+	}
+}
+
+/** The scenario gates of a step that ended done (F26), as check results for its evidence:
+ * G1 after a planner (the plan's scenarios against the agreed ones), G2 after a tester (a claimed
+ * test per scenario, in a file it changed, and the plan's check red before the code; the claimed
+ * files' hashes go into its handoff), G3 at a checker (the tester's files unchanged). */
+async function scenarioGates(run: Run, step: FlowStep, part: HandoffPart, changed: { path: string }[] | undefined,
+	signal?: AbortSignal): Promise<{ results: CheckResult[]; testFiles?: Record<string, string> }> {
+	const result = (command: string, gate: GateResult | undefined): CheckResult[] => (gate ? [{ command, exit: gate.exit, tail: gate.tail }] : []);
+	const read = (path: string): string | undefined => {
+		try {
+			return readFileSync(join(run.worktree.path, path), "utf8");
+		} catch {
+			return undefined;
+		}
+	};
+	const hash = (path: string) => {
+		const text = read(path);
+		return text === undefined ? undefined : createHash("sha256").update(text).digest("hex");
+	};
+	if (step.agent === "planner" && part.plan) {
+		const gate = part.plan.work_item || part.plan.scenarios.length ? planScenariosGate(part.plan, agreedScenarios(run.project, part.plan.work_item)) : undefined;
+		return { results: result("scenarios: the plan's against akit kb scenarios", gate) };
+	}
+	if (step.agent === "tester") {
+		const plan = planHandoff(run.folder, run.flow, step.id)?.handoff.plan as { check?: unknown; scenarios?: unknown } | undefined;
+		const scenarios = strings(plan?.scenarios);
+		const claims = part.tests ?? [];
+		if (!scenarios.length && !claims.length) return { results: [] };
+		const results = result("scenarios: a test per plan scenario", testClaimsGate(scenarios, claims, new Set((changed ?? []).map((f) => f.path)), read));
+		const check = typeof plan?.check === "string" ? plan.check.trim() : "";
+		const ran = check && isSafeCommand(check) ? await runCheck(check, run.worktree.path, signal) : undefined;
+		results.push(...result(`${check || "the plan's check"} (red before the code)`, redFirstGate(ran ? check : "", ran?.exit ?? null, ran?.tail ?? [])));
+		const testFiles = Object.fromEntries([...new Set(claims.map((c) => c.path))].flatMap((p) => (hash(p) ? [[p, hash(p) as string]] : [])));
+		return { results, testFiles };
+	}
+	if (step.agent === "checker") {
+		const hashes = newestDone(run.folder, run.flow, step.id, "tester")?.handoff.test_files as Record<string, string> | undefined;
+		if (!hashes || !Object.keys(hashes).length) return { results: [] };
+		return { results: result("scenarios: the tester's tests unchanged", testsUnchangedGate(hashes, hash)) };
+	}
+	return { results: [] };
+}
+
 function writeGuardRules(run: Run, step: FlowStep, key: string, attempt: number): string {
 	const paths = step.paths ?? [];
 	const tools = step.tools?.length ? step.tools : run.flow.tools?.length ? run.flow.tools : DEFAULT_TOOLS;
+	// A maker after a tester step may not change the tester's tests (F26): they are the task's proof.
+	const tester = CODE_MAKERS.has(step.agent) ? newestDone(run.folder, run.flow, step.id, "tester") : undefined;
+	const protect = Object.keys((tester?.handoff.test_files as Record<string, string> | undefined) ?? {});
 	const rules: GuardRules = {
 		run: run.id, step: step.id, attempt, tools, paths, bash: step.bash ?? paths.length === 0,
 		root: run.worktree.path, events: join(run.folder, "events.jsonl"), records: dirname(dirname(run.folder)),
+		...(protect.length ? { protect } : {}),
 	};
 	mkdirSync(join(run.folder, "guard"), { recursive: true });
 	const path = join(run.folder, "guard", `${key}-a${attempt}.json`);
@@ -782,8 +869,10 @@ interface HandoffPart {
 	files: { path: string; change: string }[];
 	open_questions: string[];
 	notes: string;
-	/** The planner's plan as data (steps, a check command), when it gave one. */
-	plan?: { steps: string[]; check: string };
+	/** The planner's plan as data (steps, a check command, the work item and its scenarios), when it gave one. */
+	plan?: { steps: string[]; check: string; work_item: string; scenarios: string[] };
+	/** A tester's tests, one per scenario it proves (F26). */
+	tests?: TestClaim[];
 	outcome: Outcome;
 	reason: string;
 	/** Set when the runner made the part from the answer's `outcome:` line, not `flow_handoff`. */
@@ -821,10 +910,16 @@ export function partFrom(value: unknown): HandoffPart | undefined {
 	const files = Array.isArray(v.files) ? v.files.filter((f): f is { path: string; change: string } => typeof f?.path === "string")
 		.map((f) => ({ path: f.path, change: typeof f.change === "string" ? f.change : "" })) : [];
 	const p = v.plan as Record<string, unknown> | undefined;
-	const plan = p && typeof p === "object" && Array.isArray(p.steps) ? { steps: strings(p.steps), check: typeof p.check === "string" ? p.check.trim() : "" } : undefined;
+	const plan = p && typeof p === "object" && Array.isArray(p.steps) ? {
+		steps: strings(p.steps), check: typeof p.check === "string" ? p.check.trim() : "",
+		work_item: typeof p.work_item === "string" ? p.work_item.trim() : "", scenarios: strings(p.scenarios),
+	} : undefined;
+	const tests = Array.isArray(v.tests) ? v.tests.filter((t): t is TestClaim => typeof t?.scenario === "string" && typeof t?.path === "string" && typeof t?.name === "string")
+		.map((t) => ({ scenario: t.scenario.trim(), path: t.path.replace(/^\.\//, ""), name: t.name.trim() })) : undefined;
 	return {
 		goal: typeof v.goal === "string" ? v.goal : "", done: strings(v.done), files, open_questions: strings(v.open_questions),
-		notes: typeof v.notes === "string" ? v.notes : "", ...(plan ? { plan } : {}), outcome: v.outcome, reason: typeof v.reason === "string" ? v.reason : "",
+		notes: typeof v.notes === "string" ? v.notes : "", ...(plan ? { plan } : {}), ...(tests?.length ? { tests } : {}), outcome: v.outcome,
+		reason: typeof v.reason === "string" ? v.reason : "",
 	};
 }
 
@@ -938,7 +1033,7 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			writeRunJson(run, { status: "running", state: { step: step.id, visits } });
 			status(ctx, `flow ${run.flow.name}: ${index + 1}/${run.flow.steps.length} ${step.id}`);
 			// A checker also runs the approved plan's own check command, when it is a plain one.
-			const planCheck = step.agent === "checker" && (step.checks ?? []).length > 0
+			const planCheck = step.agent === "checker"
 				? (planHandoff(run.folder, run.flow, step.id)?.handoff.plan as { check?: unknown } | undefined)?.check : undefined;
 			const checks = [...(step.checks ?? []),
 				...(typeof planCheck === "string" && planCheck && isSafeCommand(planCheck) && !(step.checks ?? []).includes(planCheck) ? [planCheck] : [])];
@@ -1027,9 +1122,11 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 			}
 			let evidence: string | undefined;
 			let failedChecks: Previous["failedChecks"];
-			if (checks.length > 0) {
+			// The scenario gates (F26) of a planner, tester or checker step that ended done.
+			const gates = outcome === "done" && !part.fallback ? await scenarioGates(run, step, part, changed, signal) : { results: [] };
+			if (checks.length > 0 || gates.results.length > 0) {
 				// The runner runs the checks; they count as green only with the evidence file (F19).
-				evidence = await runChecks(run.folder, key, run.id, { id: step.id, attempt }, checks, run.worktree.path, signal);
+				evidence = await runChecks(run.folder, key, run.id, { id: step.id, attempt }, checks, run.worktree.path, signal, gates.results);
 				if (!checksGreen(evidence)) {
 					try {
 						failedChecks = (JSON.parse(readFileSync(evidence, "utf8")).checks as NonNullable<Previous["failedChecks"]>).filter((c) => c.exit !== 0);
@@ -1051,7 +1148,9 @@ async function loop(ctx: ExtensionContext, run: Run, first: Decision, previous: 
 				schema: HANDOFF_SCHEMA, run: run.id, flow: run.flow.name, step: { index: index + 1, id: step.id, attempt },
 				session: result.session ?? null, session_file: file ? `sessions/${file}` : null, from: { outcome, reason },
 				next: next ? { step: next } : null, goal: part.goal || run.task, done: part.done, files: part.files,
-				...(changed ? { changed } : {}), open_questions: part.open_questions, notes: part.notes, ...(part.plan ? { plan: part.plan } : {}), ...(part.fallback ? { fallback: true } : {}), tokens: recordTokens(result.tokens), deviations,
+				...(changed ? { changed } : {}), open_questions: part.open_questions, notes: part.notes, ...(part.plan ? { plan: part.plan } : {}),
+				...(part.tests ? { tests: part.tests } : {}), ...(gates.testFiles ? { test_files: gates.testFiles } : {}),
+				...(part.fallback ? { fallback: true } : {}), tokens: recordTokens(result.tokens), deviations,
 				evidence: evidence ? `evidence/${basename(evidence)}` : null,
 			};
 			writeAtomic(join(run.folder, "handoffs", handoffName(index, step.id, attempt, result.session)), handoff);
@@ -1540,6 +1639,77 @@ export function redact(text: string): string {
 		.replace(/\b(?:sk|pk|ghp|gho|ghs|ghu|glpat|xox[abps])[-_][A-Za-z0-9_-]{12,}\b/g, "***");
 }
 
+/** A tester step's claim (F26): this test, in this file, proves this scenario. `name` is the
+ * test's describe titles and title joined by ` › `, as the source writes them. */
+export interface TestClaim {
+	scenario: string;
+	path: string;
+	name: string;
+}
+
+/** A gate's verdict, written into the step's evidence like a check (F26). */
+export interface GateResult {
+	exit: number;
+	tail: string[];
+}
+
+/** G1 (F26): the plan's scenarios against the agreed scenarios of its work item. Undefined when
+ * the plan names neither (technical work: no gate). `agreed` is what `akit kb scenarios
+ * --work-item <ID> --status agreed` gave, or the error reading it. */
+export function planScenariosGate(plan: { work_item?: string; scenarios?: string[] }, agreed: string[] | { error: string }): GateResult | undefined {
+	const workItem = (plan.work_item ?? "").trim();
+	const scenarios = plan.scenarios ?? [];
+	if (!workItem && scenarios.length === 0) return undefined;
+	if (!Array.isArray(agreed)) return { exit: 1, tail: [`Can't read the agreed scenarios: ${agreed.error}`] };
+	if (workItem && agreed.length === 0) {
+		return { exit: 1, tail: [`No agreed scenario names ADO ${workItem}. The user accepts the task's scenarios in AKit (Knowledge → Inbox) before the task is planned.`] };
+	}
+	const missing = workItem ? agreed.filter((id) => !scenarios.includes(id)) : [];
+	const extra = scenarios.filter((id) => !agreed.includes(id));
+	const tail = [
+		...(missing.length ? [`Agreed scenarios of ADO ${workItem} the plan leaves out: ${missing.join(", ")}. Plan them, or say why in open_questions and end blocked.`] : []),
+		...(extra.length ? [`Plan scenarios that are not agreed${workItem ? ` for ADO ${workItem}` : ""}: ${extra.join(", ")}. Only agreed scenarios count; propose a new one with akit kb propose and wait for the user.`] : []),
+	];
+	return tail.length ? { exit: 1, tail } : { exit: 0, tail: [`The plan covers the agreed scenarios${workItem ? ` of ADO ${workItem}` : ""}: ${scenarios.join(", ")}.`] };
+}
+
+/** G2 (F26): the tester's claims. Each plan scenario has a claimed test; each claimed test is in a
+ * file the step changed and the file has every part of its name. `read` gives a worktree file's text. */
+export function testClaimsGate(scenarios: string[], claims: TestClaim[], changed: Set<string>, read: (path: string) => string | undefined): GateResult {
+	const tail: string[] = [];
+	const unclaimed = scenarios.filter((id) => !claims.some((c) => c.scenario === id));
+	if (unclaimed.length) tail.push(`Scenarios of the plan with no test in your handoff's tests: ${unclaimed.join(", ")}.`);
+	for (const claim of claims) {
+		if (!scenarios.includes(claim.scenario)) tail.push(`${claim.scenario} is not a scenario of the plan (${scenarios.join(", ") || "none"}).`);
+		if (!changed.has(claim.path)) {
+			tail.push(`${claim.path} (test of ${claim.scenario}) is not among the files this step changed.`);
+			continue;
+		}
+		const text = read(claim.path) ?? "";
+		const missing = claim.name.split("›").map((p) => p.trim()).filter((p) => p && !text.includes(p));
+		if (missing.length) tail.push(`${claim.path} has no ${missing.map((p) => `“${p}”`).join(", ")} (test of ${claim.scenario}); write the name as the source does.`);
+	}
+	return tail.length ? { exit: 1, tail } : { exit: 0, tail: [`Every plan scenario has its test: ${claims.map((c) => `${c.scenario} → ${c.path} › ${c.name}`).join("; ")}.`] };
+}
+
+/** G2 (F26): the plan's check run after the tester, before any code: it must be red. A check that
+ * couldn't run (no exit code, or 127: not found) proves nothing either. */
+export function redFirstGate(check: string, exit: number | null, tail: string[]): GateResult {
+	if (!check) return { exit: 1, tail: ["The plan has no check command, so the new tests can't be shown red."] };
+	if (exit === null || exit === 127) return { exit: 1, tail: [`${check} did not run (exit ${exit}).`, ...tail] };
+	if (exit === 0) return { exit: 1, tail: [`${check} passes before the code: the new tests don't test the new behaviour yet, or it exists already. Make them fail first.`] };
+	return { exit: 0, tail: [`${check} is red before the code (exit ${exit}), as it should be.`] };
+}
+
+/** G3 (F26): the tester's test files are as the tester left them. `hashes` from the tester's
+ * handoff, `now` the files' hashes now (undefined: the file is gone). */
+export function testsUnchangedGate(hashes: Record<string, string>, now: (path: string) => string | undefined): GateResult {
+	const changed = Object.keys(hashes).filter((path) => now(path) !== hashes[path]);
+	return changed.length
+		? { exit: 1, tail: [`Tests the tester step wrote were changed after it: ${changed.join(", ")}. Tests change only in the tester step; restore them and fix the code instead.`] }
+		: { exit: 0, tail: [`The tester's tests are unchanged: ${Object.keys(hashes).join(", ")}.`] };
+}
+
 """####
     static let flow_git_ts = ####"""
 // flow-git.ts: written by AKit (docs/design/flows.md F8, F9). The run's git: its worktree outside
@@ -1802,7 +1972,8 @@ export interface CheckResult {
 
 /** One check command, run by the runner (never the model), split on spaces and started without a
  * shell: AKit's rule allows no shell syntax anyway. */
-function runCheck(command: string, cwd: string, signal?: AbortSignal): Promise<CheckResult> {
+/** Runs one plain command (split on spaces, no shell) in `cwd`. */
+export function runCheck(command: string, cwd: string, signal?: AbortSignal): Promise<CheckResult> {
 	return new Promise((resolve) => {
 		const [file, ...args] = command.split(/\s+/).filter(Boolean);
 		let output = "";
@@ -1822,11 +1993,13 @@ function runCheck(command: string, cwd: string, signal?: AbortSignal): Promise<C
 	});
 }
 
-/** Runs a step's checks in `cwd` and writes `evidence/NN-<step>-aN-checks.json`, one file per attempt (F19). */
+/** Runs a step's checks in `cwd` (then adds the gates' results) and writes `evidence/NN-<step>-aN-checks.json`, one file per attempt (F19). */
 export async function runChecks(folder: string, key: string, run: string, step: { id: string; attempt: number }, commands: string[],
-	cwd: string, signal?: AbortSignal): Promise<string> {
+	cwd: string, signal?: AbortSignal, gates: CheckResult[] = []): Promise<string> {
 	const checks: CheckResult[] = [];
 	for (const command of commands) checks.push(await runCheck(command, cwd, signal));
+	// The scenario gates (F26) are results the runner reached itself, kept with the checks.
+	checks.push(...gates);
 	const path = join(folder, "evidence", `${key}-a${step.attempt}-checks.json`);
 	writeAtomic(path, { schema: EVIDENCE_SCHEMA, run, step, time: new Date().toISOString(), checks });
 	return path;

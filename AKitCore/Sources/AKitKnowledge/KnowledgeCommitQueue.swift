@@ -55,11 +55,11 @@ public struct KnowledgeCommitQueue: Sendable {
     /// The pending paths, sorted (read without the lock: for display only).
     public func pending() -> [String] { (try? read()) ?? [] }
 
-    /// Adds base-relative `paths` to the queue. Paths under `inbox/` and paths outside the base
-    /// are refused.
+    /// Adds base-relative `paths` to the queue. Paths under `inbox/`, paths outside the base and
+    /// the temporary files of an atomic save are refused.
     @discardableResult
     public func enqueue(_ paths: [String]) -> EnqueueResult {
-        let refused = paths.filter { Self.isInbox($0) || !KnowledgeGit.isInside($0) }
+        let refused = paths.filter { Self.isInbox($0) || !KnowledgeGit.isInside($0) || WatchFilter.isAtomicSaveFile($0) }
         let wanted = paths.filter { !refused.contains($0) }
         guard !wanted.isEmpty else { return .queued(refused: refused) }
         let lock: FileLock?
@@ -96,9 +96,11 @@ public struct KnowledgeCommitQueue: Sendable {
         let paths: [String]
         do { paths = try read() } catch { return .failed(error.localizedDescription) }
         guard !paths.isEmpty else { return .nothing }
+        // A queue written before atomic-save files were refused may still hold one.
+        let named = paths.filter { !WatchFilter.isAtomicSaveFile($0) }
         let committed: Bool
         do {
-            committed = try await KnowledgeGit(base: base, env: env).commit(paths: paths, message: message ?? Self.message(for: paths),
+            committed = try await KnowledgeGit(base: base, env: env).commit(paths: paths, message: message ?? Self.message(for: named.isEmpty ? paths : named),
                                                                            alreadyLocked: lock)
         } catch {
             return .failed(error.message)

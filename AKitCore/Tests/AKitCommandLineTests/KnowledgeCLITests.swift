@@ -137,8 +137,8 @@ struct KnowledgeCLITests {
 
         let index = try json(await akit("kb", "index", "--rebuild", "--json", "--base", base).out)
         #expect(Set(index.keys) == ["notes", "maps", "chunks", "rebuilt", "stale", "tokens"])
-        #expect(index["notes"] as? Int == 18 && index["maps"] as? Int == 4 && index["rebuilt"] as? Bool == true)
-        #expect(await akit("kb", "index", "--base", base).out.hasPrefix("The index is up to date: 18 notes, 4 maps,"))
+        #expect(index["notes"] as? Int == 19 && index["maps"] as? Int == 4 && index["rebuilt"] as? Bool == true)
+        #expect(await akit("kb", "index", "--base", base).out.hasPrefix("The index is up to date: 19 notes, 4 maps,"))
     }
 
     @Test func lintFindsOnlyTheSeededExamplesWhenTheReposAreCloned() async throws {
@@ -156,13 +156,13 @@ struct KnowledgeCLITests {
         #expect(lint.code == 0, "\(lint.err)")
         let answer = try json(lint.out)
         #expect(Set(answer.keys) == ["base", "findings", "counts"])
-        #expect((answer["counts"] as? [String: Int]) == ["error": 2, "warning": 7, "hint": 2])
+        #expect((answer["counts"] as? [String: Int]) == ["error": 3, "warning": 10, "hint": 2])
         let findings = try #require(answer["findings"] as? [[String: Any]])
-        #expect(findings.count == 11 && findings.allSatisfy { ($0["file"] as? String)?.hasPrefix("areas/lint-examples/") == true })
+        #expect(findings.count == 15 && findings.allSatisfy { ($0["file"] as? String)?.hasPrefix("areas/lint-examples/") == true })
         #expect(Set(findings.flatMap(\.keys)) == ["rule", "severity", "file", "element", "link", "message", "fix"])
         let text = await akit("kb", "lint", "--base", base).out
         #expect(text.hasPrefix("error  broken-link  areas/lint-examples/links.md\n    The link [[no-such-note]] points to no note or map in the base."))
-        #expect(text.hasSuffix("\n2 errors, 7 warnings, 2 hints."))
+        #expect(text.hasSuffix("\n3 errors, 10 warnings, 2 hints."))
         #expect(await akit("kb", "lint", "extra", "--base", base).code == 2)
     }
 

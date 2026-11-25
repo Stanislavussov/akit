@@ -54,6 +54,20 @@ final class KnowledgeCommitQueueTests {
         #expect(queue.pending().isEmpty)
     }
 
+    /// An atomic save's temporary file (`note.md.sb-…`) is refused, and one left in an old queue
+    /// file is not named in the commit message.
+    @Test func atomicSaveFilesAreNotQueuedOrNamed() async throws {
+        let base = try await makeBase()
+        let queue = KnowledgeCommitQueue(base: base.root, env: env())
+        let temp = "areas/payments/orders-api.md.sb-d3aebe56-Yg6p2T"
+        try edit(base, "areas/payments/orders-api.md", "One.")
+        #expect(queue.enqueue(["areas/payments/orders-api.md", temp]) == .queued(refused: [temp]))
+        #expect(queue.pending() == ["areas/payments/orders-api.md"])
+        try Data(#"{"paths":["areas/payments/orders-api.md","\#(temp)"]}"#.utf8).write(to: base.root.appending(path: KnowledgeCommitQueue.fileName))
+        #expect(await queue.flush() == .committed(["areas/payments/orders-api.md", temp]))
+        #expect(try await git("log", "-1", "--format=%s", in: base.root) == "Edit payments/orders-api")
+    }
+
     /// The startup sweep queues what differs from the last commit under areas/ and kb.yaml (an edit,
     /// a new file in a new folder, a deletion, both sides of a staged rename), never inbox/ or
     /// anything else, and the next flush commits it.
