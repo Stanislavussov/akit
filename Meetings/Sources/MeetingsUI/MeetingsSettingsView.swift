@@ -12,6 +12,8 @@ struct MeetingsSettingsView: View {
     @State private var key = ""
     @State private var limit = 10.0
     @State private var repositories = ""
+    /// The background recorder's state; nil until read (asking macOS takes about a tenth of a second).
+    @State private var background: BackgroundRecorder.State?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -120,7 +122,7 @@ struct MeetingsSettingsView: View {
                     Text("The microphone (you and the room) and the system sound (the call) are recorded apart. Auto sends a 30-minute part as two tracks when the room and the call talk at the same time for more than \(Int(MeetingProcessor.overlapForTwoTracks)) s, so overlapping voices are not lost; that part costs twice.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                BackgroundSection(model: model)
+                BackgroundSection(model: model, state: $background)
                 Section("Recording") {
                     Toggle("Echo cancellation", isOn: Binding(get: { model.settings.echoCancellation }, set: { value in model.update { $0.echoCancellation = value } }))
                     Text("Keeps the sound from the speakers out of the microphone, so the other people are not recorded twice. Takes effect at the next Record.")
@@ -174,6 +176,7 @@ struct MeetingsSettingsView: View {
         .padding(20)
         .frame(width: 620, height: 720)
         .onAppear { limit = model.settings.monthlyLimitUSD }
+        .task { background = await BackgroundSection.read() }
         .task {
             model.refreshLocalTools()
             if model.hasKey { await model.checkKey() }
@@ -406,21 +409,27 @@ struct VocabularyEditor: View {
     }
 }
 
-/// M31: ⌥⌘R from any app, without opening a window: the background recorder as a login item.
-/// Only in a host that carries it (AKit).
+/// M31: ⌥⌘R from any app, without opening a window: the background recorder as a login item
+/// (M42: or a launch agent). Only in a host that carries it (AKit).
 struct BackgroundSection: View {
     let model: MeetingsModel
-    @State private var state = BackgroundRecorder.state
+    @Binding var state: BackgroundRecorder.State?
     @State private var problem: String?
 
     var body: some View {
-        if state != .unavailable {
+        if let current = state, current != .unavailable {
             Section("Background") {
-                Toggle("Record with ⌥⌘R from any app", isOn: Binding(get: { state == .on || state == .needsApproval }, set: { on in
-                    do { try BackgroundRecorder.set(on) } catch { problem = error.localizedDescription }
-                    state = BackgroundRecorder.state
+                Toggle("Record with ⌥⌘R from any app", isOn: Binding(get: { current == .on || current == .needsApproval }, set: { on in
+                    problem = nil
+                    Task {
+                        problem = await Task.detached { () -> String? in
+                            do { try BackgroundRecorder.set(on) } catch { return error.localizedDescription }
+                            return nil
+                        }.value
+                        state = await Self.read()
+                    }
                 }))
-                if state == .needsApproval {
+                if current == .needsApproval {
                     HStack {
                         Label("macOS asks you to allow it in Login Items.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                         Button("Open Login Items") { BackgroundRecorder.openLoginItemsSettings() }
@@ -435,7 +444,11 @@ struct BackgroundSection: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .onAppear { state = BackgroundRecorder.state }
         }
+    }
+
+    /// Off the main thread.
+    static func read() async -> BackgroundRecorder.State {
+        await Task.detached { BackgroundRecorder.state }.value
     }
 }
