@@ -90,6 +90,18 @@ fi
 shot skills              $MAIN --section skills
 shot skills-switch       $MAIN --section skills --query tdd --add
 shot skills-invocation   $MAIN --section skills --tab invocation --select grilling
+# Only for this shot: grilling Auto in notes-mac (skill modes, Mode Here); removed afterwards.
+MODES="$DEMO/.akit/local/skill-modes.json"
+if [[ "$ONLY" == "  " || "$ONLY" == *" skills-mode-here "* ]]; then
+    mkdir -p "$DEMO/.akit/local"
+    printf '{\n  "version": 1,\n  "projects": {\n    "github.com/acme/notes-mac": {\n      "grilling": "auto"\n    }\n  }\n}\n' > "$MODES"
+fi
+shot skills-mode-here    $MAIN --section skills --project notes-mac --tab mode-here --select grilling
+rm -f "$MODES"
+# Only the skill card: the picture is about Mode Here (offsets in points of the 1180x760 window).
+if [[ ( "$ONLY" == "  " || "$ONLY" == *" skills-mode-here "* ) && -f "$OUT/skills-mode-here.png" ]]; then
+    sips --cropOffset 52 546 -c 340 634 "$OUT/skills-mode-here.png" >/dev/null
+fi
 # Only for this shot: a global CLAUDE.md with AKit's core block, and an AGENTS.md above the
 # projects that Claude Code skips (notes-mac has a CLAUDE.md). Removed again afterwards.
 GLOBAL_MD="$DEMO/.claude/CLAUDE.md" ABOVE_MD="$DEMO/Projects/AGENTS.md"

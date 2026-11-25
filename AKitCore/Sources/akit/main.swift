@@ -26,7 +26,6 @@ if getuid() == 0 {
     exit(2)
 }
 let env = HarnessEnvironment.current
-let installed = HarnessCatalog.detectAll(in: env).compactMap { ProjectAnswers.target(for: $0.id) }
 // The app's projects folder (Settings), so a project gets the same id in both;
 // AKIT_PROJECTS_ROOT overrides it.
 let appDefaults = UserDefaults(suiteName: "dev.ussov.akit")
@@ -34,6 +33,13 @@ let projectsOverride = env.variables["AKIT_PROJECTS_ROOT"].flatMap { $0.isEmpty 
 let projectsRoot = env.expand(projectsOverride
     ?? appDefaults?.stringArray(forKey: "projectRoots")?.first
     ?? ProjectFinder.defaultRoots[0])
+// The Pi skill modes extension's ask before each run: before the harness detection, read only.
+if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "skills", CommandLine.arguments[2] == "resolve" {
+    exit(AKitCLI.skillsResolve(Array(CommandLine.arguments.dropFirst(3)), env: env, projectsRoot: projectsRoot,
+                               input: { (try? FileHandle.standardInput.readToEnd()) ?? Data() },
+                               out: { print($0) }, err: { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }))
+}
+let installed = HarnessCatalog.detectAll(in: env).compactMap { ProjectAnswers.target(for: $0.id) }
 let preferences = Onboarding.Preferences(
     projectsRoot: { projectsOverride ?? appDefaults?.stringArray(forKey: "projectRoots")?.first },
     // The app's settings belong to the real home; a script with another $HOME doesn't change them.

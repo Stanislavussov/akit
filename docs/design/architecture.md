@@ -113,6 +113,12 @@ modification date and size stay the same. Session summaries (`AKitSessions`) and
 (`AKitUsage`) go through it, so a refresh or the Usage screen reads only changed session files.
 No new dependency.
 
+2026-11-25 (skill modes, `skill-modes.md`): no new dependency. `AKitBrain/FolderProjectID.swift` gives a
+folder's project id from `.git` files (`AKitInsights`' `BindingPaths.canonical` now calls its
+`canonicalPath`); `AKitSkills` holds the modes file, its resolve, the writes and the Pi extension's
+installer, with the extension's TypeScript in `AKitSkills/Resources` (excluded from the target, embedded
+by `tools/gen-skill-modes-extension.sh`); Doctor reads them for its Skill modes lines.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).

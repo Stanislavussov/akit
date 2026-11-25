@@ -242,6 +242,14 @@ struct SkillsView: View {
                 if options.tab == "resolve" { removing = resolveRequest(skill) }
                 return
             }
+            // Snapshots: `--tab mode-here` selects the global skill `--select <folder name>` (Mode Here
+            // shows for the project picked with `--project`).
+            if let options = DebugSnapshot.options, options.tab == "mode-here", snapshotInvocation, model.lastScan != nil,
+               let skill = model.skills.first(where: { $0.folder.lastPathComponent == options.select && $0.scope == .global }) {
+                snapshotInvocation = false
+                selection = skill.id
+                return
+            }
             // Snapshots: `--tab invocation-all` opens Make All Global Skills Manual….
             if let options = DebugSnapshot.options, options.tab == "invocation-all", snapshotInvocation, model.lastScan != nil {
                 snapshotInvocation = false
@@ -738,6 +746,8 @@ private struct SkillDetailView: View {
                 }
             }
             SkillSwitchControls(skill: skill)
+            // The project level first, then the global one (the skill's SKILL.md).
+            SkillModeHereControl(skill: skill)
             SkillInvocationControl(skill: skill)
             if let origin = skill.origin {
                 GridRow {

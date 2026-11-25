@@ -121,6 +121,51 @@ public struct GitCheckout: Sendable, Hashable {
         return names
     }
 
+    /// The git folder and the common git folder of the repository `path` lies in, found as session
+    /// capture has always found them (`RecordSession`): the nearest `.git` at or above `path` with
+    /// links followed (a linked `.git` counts), a `.git` file's `gitdir:` pointer, then the git
+    /// folder's `commondir`. Only reads files; nil outside git or for a relative path.
+    public static func repositoryFolders(containing path: String) -> (gitDir: String, commonDir: String)? {
+        guard path.hasPrefix("/") else { return nil }
+        var folder = (path as NSString).standardizingPath
+        // Bounded: every step drops one path component, and "/" ends the walk.
+        for _ in 0..<512 {
+            let dotGit = (folder as NSString).appendingPathComponent(".git")
+            var info = stat()
+            if stat(dotGit, &info) == 0 {
+                switch info.st_mode & S_IFMT {
+                case S_IFDIR:
+                    return (dotGit, commonDir(ofGitDir: dotGit))
+                case S_IFREG:
+                    if let target = metadata(dotGit).flatMap(gitdirPointer) {
+                        let gitDir = ((target.hasPrefix("/") ? target : (folder as NSString).appendingPathComponent(target)) as NSString).standardizingPath
+                        return (gitDir, commonDir(ofGitDir: gitDir))
+                    }
+                default:
+                    break
+                }
+            }
+            let parent = (folder as NSString).deletingLastPathComponent
+            guard !parent.isEmpty, parent != folder else { return nil }
+            folder = parent
+        }
+        return nil
+    }
+
+    /// The common git folder a git folder's `commondir` names; the git folder itself without one.
+    static func commonDir(ofGitDir gitDir: String) -> String {
+        guard let pointer = metadata(gitDir + "/commondir")?.trimmingCharacters(in: .whitespacesAndNewlines), !pointer.isEmpty else { return gitDir }
+        return ((pointer.hasPrefix("/") ? pointer : gitDir + "/" + pointer) as NSString).standardizingPath
+    }
+
+    /// The text of a git metadata file (a config, a pointer file), at most `limit` bytes: a
+    /// longer file is cut there. nil when it can't be opened.
+    public static func metadata(_ path: String, limit: Int = 256 << 10) -> String? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: limit)).map { String(decoding: $0, as: UTF8.self) }
+    }
+
     /// A small text file (git's pointer files), nil when missing or larger than 64 KB.
     private static func small(_ path: String) -> String? {
         guard let handle = FileHandle(forReadingAtPath: path) else { return nil }

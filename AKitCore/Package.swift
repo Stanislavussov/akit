@@ -41,7 +41,9 @@ let package = Package(
         .target(name: "AKitFoundation"),
         .target(name: "AKitModel"),
         .target(name: "AKitHarnesses", dependencies: ["AKitFoundation", "AKitModel"]),
-        .target(name: "AKitSkills", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        // Resources/akit-skill-modes.ts is the Pi skill modes extension (skill-modes.md), copied into the code by
+        // tools/gen-skill-modes-extension.sh (SkillModesExtensionSource.swift); tested by `make test-skill-modes`.
+        .target(name: "AKitSkills", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"], exclude: ["Resources"]),
         .target(name: "AKitInstructions", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .target(name: "AKitSkillsSh", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions"]),
         .target(name: "AKitSessions", dependencies: ["AKitFoundation", "AKitModel"]),

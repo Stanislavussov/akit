@@ -23,7 +23,7 @@ import SwiftUI
 /// `--tab invocation-all` opens Model Invocation → Make All Global Skills Manual…;
 /// Instructions: `--project <folder name>` picks the session folder, `--select <file name>` the first file of that name, `--tab duplicates` turns the Duplicates filter on, `--tab remove-copy` opens Remove This Copy… for the selected file's first repeated section, `--tab import` Import to Brain… for its first section, `--tab move-up` / `move-down` Move to Global… / Move to Project…, `--tab edit` / `rewrite` Edit… / Rewrite with Skill… for the selected file;
 /// `--tab duplicates` turns the Duplicates filter on and selects `--select <folder name>`; `--tab resolve` opens its Resolve Duplicate…;
-/// `--tab global` opens Move to Global… for the project skill `--select <folder name>` on the Skills screen;
+/// `--tab global` opens Move to Global… for the project skill `--select <folder name>` on the Skills screen, `--tab mode-here` only selects that global skill (Mode Here for `--project`);
 /// `--tab remove` opens Remove Everywhere… for `--select <folder name>` on the Skills screen;
 /// `--tab port` opens Port to Pi… for the Claude Code skill `--select <folder name>` (`port-report` runs it without a model); `--tab move` opens Move to Project… for the global skill `--select <folder name>` (`move-check`, `move-preview` go on to those pages);
 /// `--settings` shows the Settings view in the main window; `--guide <section id>` the guide window's

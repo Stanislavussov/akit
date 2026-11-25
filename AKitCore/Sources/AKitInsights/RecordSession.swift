@@ -88,37 +88,9 @@ public enum RecordSession {
     /// Nearest `.git` at or above `cwd`. A `.git` file (a worktree) points to its gitdir, whose
     /// `commondir` points to the main repository; the remote comes from there.
     static func repository(containing cwd: String) -> Repository? {
-        guard cwd.hasPrefix("/") else { return nil }
-        var folder = (cwd as NSString).standardizingPath
-        // Bounded: every step drops one path component, and "/" ends the walk.
-        for _ in 0..<512 {
-            let dotGit = (folder as NSString).appendingPathComponent(".git")
-            var info = stat()
-            if stat(dotGit, &info) == 0 {
-                switch info.st_mode & S_IFMT {
-                case S_IFDIR:
-                    return repository(gitdir: dotGit)
-                case S_IFREG:
-                    if let target = gitdirPointer(in: dotGit) {
-                        let gitdir = target.hasPrefix("/") ? target : (folder as NSString).appendingPathComponent(target)
-                        return repository(gitdir: (gitdir as NSString).standardizingPath)
-                    }
-                default:
-                    break
-                }
-            }
-            let parent = (folder as NSString).deletingLastPathComponent
-            guard !parent.isEmpty, parent != folder else { return nil }
-            folder = parent
-        }
-        return nil
-    }
-
-    private static func repository(gitdir: String) -> Repository {
-        var common = gitdir
-        if let pointer = small(gitdir + "/commondir")?.trimmingCharacters(in: .whitespacesAndNewlines), !pointer.isEmpty {
-            common = ((pointer.hasPrefix("/") ? pointer : gitdir + "/" + pointer) as NSString).standardizingPath
-        }
+        // The same lookup skill modes use for a folder's project id (`GitCheckout.repositoryFolders`).
+        guard let folders = GitCheckout.repositoryFolders(containing: cwd) else { return nil }
+        let gitdir = folders.gitDir, common = folders.commonDir
         let remote = small(common + "/config").flatMap(GitCheckout.originURL(inConfig:)).flatMap(ProjectRecords.normalizedRemote)
         let head = small(gitdir + "/HEAD", limit: 4096)?.trimmingCharacters(in: .whitespacesAndNewlines)
         var branch: String?
@@ -162,14 +134,6 @@ public enum RecordSession {
     }
 
     /// `gitdir: <path>` of a worktree's `.git` file.
-    private static func gitdirPointer(in file: String) -> String? {
-        small(file).flatMap(GitCheckout.gitdirPointer)
-    }
-
     /// A small text file (git metadata), or nil.
-    static func small(_ path: String, limit: Int = 256 << 10) -> String? {
-        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
-        defer { try? handle.close() }
-        return (try? handle.read(upToCount: limit)).map { String(decoding: $0, as: UTF8.self) }
-    }
+    static func small(_ path: String, limit: Int = 256 << 10) -> String? { GitCheckout.metadata(path, limit: limit) }
 }

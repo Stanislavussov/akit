@@ -1,0 +1,286 @@
+// akit-skill-modes: written by AKit (akit skills extension install); AKit replaces or removes this file.
+// Skill modes per project (~/.akit/local/skill-modes.json, `akit skills mode`): before each run
+// it asks `akit skills resolve` and gives the run a skill list with the project's modes: Auto
+// skills are listed to the model, Manual ones only run with /skill:NAME, Off ones are left out
+// and /skill:NAME of one is refused. A personal skill a project's skill of the same name hides
+// comes back as my-NAME. Skill files are never changed. Every decision is AKit's; this file only
+// applies the answer. When AKit can't answer (not found, too slow, a bad answer), nothing
+// changes and the status line says so.
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
+
+export const STATUS = "akit-skill-modes";
+export const TIMEOUT_MS = 3000;
+
+export type Mode = "auto" | "manual" | "off";
+
+export interface Rename {
+	original: string;
+	file: string;
+	baseDir: string;
+	description: string;
+	mode: Mode;
+	from: string;
+}
+
+export interface Answer {
+	version: number;
+	project: string | null;
+	modes: Record<string, Mode>;
+	renames: Record<string, Rename>;
+	problems: { kind: string; message: string }[];
+}
+
+/** A skill as `akit skills resolve` takes it on stdin. */
+export interface Loaded {
+	name: string;
+	scope?: string;
+	origin?: string;
+	path?: string;
+}
+
+export function findAkit(): string | undefined {
+	for (const folder of (process.env.PATH ?? "").split(delimiter)) {
+		if (folder && existsSync(join(folder, "akit"))) return join(folder, "akit");
+	}
+	const local = join(homedir(), ".local", "bin", "akit");
+	return existsSync(local) ? local : undefined;
+}
+
+/** The modes file's change time and size: a new answer is asked only when they change. */
+function stamp(): string {
+	try {
+		const info = statSync(join(homedir(), ".akit", "local", "skill-modes.json"));
+		return `${info.mtimeMs}:${info.size}`;
+	} catch {
+		return "none";
+	}
+}
+
+function loaded(skills: any[]): Loaded[] {
+	return skills.map((skill) => ({
+		name: String(skill?.name ?? ""),
+		scope: skill?.sourceInfo?.scope,
+		origin: skill?.sourceInfo?.origin,
+		path: skill?.filePath ?? skill?.sourceInfo?.path,
+	}));
+}
+
+/** The skills Pi loaded, outside a run: its `/skill:` commands. */
+function loadedFromCommands(pi: any): Loaded[] | undefined {
+	try {
+		const commands = pi?.getCommands?.();
+		if (!Array.isArray(commands)) return undefined;
+		return commands
+			.filter((command: any) => command?.source === "skill" && String(command?.name ?? "").startsWith("skill:"))
+			.map((command: any) => ({
+				name: String(command.name).slice("skill:".length),
+				scope: command.sourceInfo?.scope,
+				origin: command.sourceInfo?.origin,
+				path: command.sourceInfo?.path,
+			}));
+	} catch {
+		return undefined;
+	}
+}
+
+function isAnswer(value: any): value is Answer {
+	const isObject = (x: any) => typeof x === "object" && x !== null && !Array.isArray(x);
+	return isObject(value) && value.version === 1 && isObject(value.modes) && isObject(value.renames) && Array.isArray(value.problems);
+}
+
+/** Runs `akit skills resolve` with the skills on stdin; rejects with the reason. */
+export function ask(akit: string, cwd: string, skills: Loaded[], timeoutMs = TIMEOUT_MS): Promise<Answer> {
+	return new Promise((resolve, reject) => {
+		let stdout = "";
+		let stderr = "";
+		let finished = false;
+		const done = (error?: Error, answer?: Answer) => {
+			if (finished) return;
+			finished = true;
+			clearTimeout(timer);
+			if (error) reject(error);
+			else resolve(answer as Answer);
+		};
+		const child = spawn(akit, ["skills", "resolve", "--harness", "pi", "--cwd", cwd, "--json"], { stdio: ["pipe", "pipe", "pipe"] });
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+			done(new Error(`akit didn't answer in ${timeoutMs / 1000} s`));
+		}, timeoutMs);
+		child.stdout?.on("data", (chunk) => (stdout += chunk));
+		child.stderr?.on("data", (chunk) => (stderr += chunk));
+		child.on("error", (error) => done(new Error(`akit couldn't start (${error.message})`)));
+		child.on("close", (code) => {
+			if (code !== 0) return done(new Error(`akit exited with ${code}${stderr.trim() ? `: ${stderr.trim().split("\n")[0]}` : ""}`));
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(stdout);
+			} catch {
+				return done(new Error("akit's answer is not JSON"));
+			}
+			if (!isAnswer(parsed)) return done(new Error("akit's answer is not a skill modes answer"));
+			done(undefined, parsed);
+		});
+		child.stdin?.on("error", () => {});
+		child.stdin?.end(JSON.stringify({ skills }));
+	});
+}
+
+/** `record[key]` only when the record has it itself (a skill named `constructor` is no mode). */
+export function own<T>(record: Record<string, T>, key: unknown): T | undefined {
+	return typeof key === "string" && Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+/** The run's skill list: a new array of new objects (Pi's own are never changed). */
+export function applyModes(skills: any[], answer: Answer): any[] {
+	const next: any[] = [];
+	for (const skill of skills) {
+		const mode = skill?.sourceInfo?.scope === "temporary" ? undefined : own(answer.modes, skill?.name);
+		if (mode === "off") continue;
+		next.push(mode ? { ...skill, disableModelInvocation: mode !== "auto" } : { ...skill });
+	}
+	for (const [name, rename] of Object.entries(answer.renames)) {
+		if (rename.mode === "off" || next.some((skill) => skill?.name === name)) continue;
+		next.push({
+			name,
+			description: rename.description,
+			filePath: rename.file,
+			baseDir: rename.baseDir,
+			sourceInfo: { path: rename.file, source: "local", scope: "user", origin: "top-level", baseDir: rename.baseDir },
+			disableModelInvocation: rename.mode !== "auto",
+		});
+	}
+	return next;
+}
+
+/** A skill file's body as Pi's `/skill:` expansion takes it (utils/frontmatter.js). */
+export function body(text: string): string {
+	let normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	if (normalized.charCodeAt(0) === 0xfeff) normalized = normalized.slice(1);
+	if (normalized.startsWith("---")) {
+		const end = normalized.indexOf("\n---", 3);
+		if (end !== -1) return normalized.slice(end + 4).trim();
+	}
+	return normalized.trim();
+}
+
+/** `/skill:NAME args` → the name and the arguments; undefined for other input. */
+export function skillCommand(text: string): { name: string; args: string } | undefined {
+	if (!text.startsWith("/skill:")) return undefined;
+	const space = text.indexOf(" ");
+	return { name: space === -1 ? text.slice(7) : text.slice(7, space), args: space === -1 ? "" : text.slice(space + 1).trim() };
+}
+
+/** The block Pi itself makes for `/skill:NAME args` (agent-session.js `_expandSkillCommand`). */
+export function expand(name: string, rename: Rename, args: string, read: (path: string) => string = (path) => readFileSync(path, "utf8")): string {
+	const block = `<skill name="${name}" location="${rename.file}">\nReferences are relative to ${rename.baseDir}.\n\n${body(read(rename.file))}\n</skill>`;
+	return args ? `${block}\n\n${args}` : block;
+}
+
+function reason(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+export default function akitSkillModes(pi: any, options: { akit?: () => string | undefined; timeoutMs?: number } = {}) {
+	const locate = options.akit ?? findAkit;
+	const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
+	// One ask per folder, modes file and skill list.
+	const cache = new Map<string, Promise<Answer>>();
+
+	function answer(cwd: string, skills: Loaded[]): Promise<Answer> {
+		const key = JSON.stringify([cwd, stamp(), skills]);
+		let pending = cache.get(key);
+		if (!pending) {
+			const akit = locate();
+			const asking = akit ? ask(akit, cwd, skills, timeoutMs) : Promise.reject(new Error("akit not found (make install-cli)"));
+			// A failed ask isn't kept: the next run asks again (akit installed meanwhile, a slow start).
+			asking.catch(() => {
+				if (cache.get(key) === asking) cache.delete(key);
+			});
+			cache.set(key, asking);
+			pending = asking;
+		}
+		return pending;
+	}
+
+	function report(ctx: any, result: Answer | undefined, error?: unknown) {
+		let text: string | undefined;
+		if (error !== undefined) text = `skill modes: not applied, ${reason(error)}`;
+		else if (result) {
+			const problems = result.problems ?? [];
+			const blocking = problems.find((problem) => problem.kind === "file" || problem.kind === "input");
+			const renames = Object.keys(result.renames).length;
+			const parts: string[] = [];
+			if (blocking) {
+				// The project's modes don't apply; renames (from the skills' own files) still may.
+				parts.push(renames > 0 ? `project modes not applied, ${blocking.message}; ${renames} my- skill${renames === 1 ? "" : "s"} added`
+					: `not applied, ${blocking.message}`);
+			}
+			const skipped = problems.filter((problem) => problem.kind === "entry").length;
+			if (skipped > 0) parts.push(`${skipped} entr${skipped === 1 ? "y" : "ies"} skipped (akit doctor)`);
+			const left = problems.filter((problem) => problem.kind === "rename");
+			if (left.length > 0) parts.push(left.length === 1 ? left[0].message : `${left.length} of your skills not added as my- (akit skills mode)`);
+			if (parts.length > 0) text = `skill modes: ${parts.join("; ")}`;
+		}
+		try {
+			ctx?.ui?.setStatus?.(STATUS, text);
+		} catch {}
+	}
+
+	function cwdOf(ctx: any): string {
+		return ctx?.cwd ?? process.cwd();
+	}
+
+	pi.on("session_start", (_event: any, ctx: any) => {
+		cache.clear();
+		const skills = loadedFromCommands(pi);
+		if (skills) answer(cwdOf(ctx), skills).catch(() => {});
+	});
+
+	pi.on("before_agent_start", async (event: any, ctx: any) => {
+		const options = event?.systemPromptOptions;
+		if (!options || !Array.isArray(options.skills)) return;
+		try {
+			const result = await answer(cwdOf(ctx), loaded(options.skills));
+			const next = applyModes(options.skills, result);
+			options.skills = next;
+			report(ctx, result);
+		} catch (error) {
+			report(ctx, undefined, error);
+		}
+	});
+
+	pi.on("input", async (event: any, ctx: any) => {
+		const command = skillCommand(String(event?.text ?? ""));
+		if (!command) return { action: "continue" };
+		const skills = loadedFromCommands(pi);
+		if (!skills) return { action: "continue" };
+		let result: Answer;
+		try {
+			result = await answer(cwdOf(ctx), skills);
+		} catch (error) {
+			report(ctx, undefined, error);
+			return { action: "continue" };
+		}
+		const rename = own(result.renames, command.name);
+		const loadedSkill = skills.find((skill) => skill.name === command.name);
+		const off = rename ? rename.mode === "off" : loadedSkill?.scope !== "temporary" && own(result.modes, command.name) === "off";
+		if (off) {
+			try {
+				ctx?.ui?.notify?.(`${command.name} is off in this project (akit skills mode ${command.name} --reset)`, "warning");
+			} catch {}
+			return { action: "handled" };
+		}
+		if (rename && !loadedSkill) {
+			try {
+				return { action: "transform", text: expand(command.name, rename, command.args) };
+			} catch (error) {
+				report(ctx, undefined, `can't read ${rename.file} (${reason(error)})`);
+				return { action: "continue" };
+			}
+		}
+		return { action: "continue" };
+	});
+}

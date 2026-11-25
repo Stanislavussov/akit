@@ -99,6 +99,8 @@ public enum SettingsFile {
         public let diff: [TextDiff.Line]
         /// The file doesn't exist yet.
         public let creates: Bool
+        /// The file's whole text after the edits, as the plan made it (for a preview of a new file).
+        public let text: String
         /// The value at each edited key path when the plan was made (nil = absent).
         let snapshot: [[String]: JSONValue?]
         let limit: Int
@@ -137,7 +139,8 @@ public enum SettingsFile {
         var snapshot: [[String]: JSONValue?] = [:]
         for edit in edits { snapshot.updateValue(value.value(at: edit.path), forKey: edit.path) }
         let diff = edits.flatMap { preview(old: current?.value, new: result.value, at: $0.path) }
-        return Change(file: file, edits: edits, diff: diff, creates: current == nil, snapshot: snapshot, limit: limit, lock: lock)
+        return Change(file: file, edits: edits, diff: diff, creates: current == nil, text: String(decoding: result.data, as: UTF8.self),
+                      snapshot: snapshot, limit: limit, lock: lock)
     }
 
     /// Applies a change on the file as it is now (see `Change`), under the harness's lock when

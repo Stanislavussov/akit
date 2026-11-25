@@ -4,7 +4,7 @@ enum AKitSkill {
     static let text = #"""
 ---
 name: akit
-description: Create or edit harness layers in the AKit brain (~/.akit/registry) and set up a project's harness from them with the akit command. Use when the user asks to make or change a layer, add skills or fields to one, or set up / re-render a project's AGENTS.md and skills, to set up the knowledge base (akit kb init, path, focus, accept, reject), and to read or run the weekly digest of GitLab and Azure DevOps (akit digest). Reading the knowledge base and the notebook is the akit-context skill.
+description: Create or edit harness layers in the AKit brain (~/.akit/registry) and set up a project's harness from them with the akit command. Use when the user asks to make or change a layer, add skills or fields to one, or set up / re-render a project's AGENTS.md and skills, to make a skill Auto, Manual or Off in one project (akit skills mode), to set up the knowledge base (akit kb init, path, focus, accept, reject), and to read or run the weekly digest of GitLab and Azure DevOps (akit digest). Reading the knowledge base and the notebook is the akit-context skill.
 ---
 
 # AKit: layers and project setup
@@ -277,6 +277,35 @@ and checks). Rules directly: `--rules PRESET|FILE` (`akit skills port presets` l
 catalog pair is one, e.g. npm-to-pnpm; `presets save NAME FILE` saves one), or `--rule 'FROM => TO'`,
 `--rule 're:PATTERN => TO'`, `--forbid TOKEN`, `--note TEXT` (all repeatable). Their
 leftovers show as `[your …]` hits. `--check-only PATH --rules …` checks a port against them.
+
+## Skill modes per project (Pi)
+
+When the user wants a skill Auto, Manual or Off in one project only (not everywhere), set its
+mode for the project; no file goes into the repository, and every checkout and git worktree
+of the project (same `origin`) shares it. Pi applies it through AKit's extension, from its
+next run.
+
+```sh
+akit skills mode [--project PATH] [--json]          # skills Pi loads here: name, mode, from (project
+                                                    # entry or SKILL.md), source (yours/project/package);
+                                                    # my-NAME = your NAME that the project's NAME hides
+akit skills mode NAME auto|manual|off [--project PATH] [--yes] [--json]
+                                                    # set it for the project of the cwd (or PATH)
+akit skills mode NAME --reset [--yes]               # take the entry out: its SKILL.md decides again
+akit skills mode --reset-project [--yes]            # take every entry of the project out
+akit skills mode NAME auto|manual --global [--yes]  # the skill everywhere: its SKILL.md (Model invocation)
+akit skills extension install|status|uninstall [--yes] [--json]
+                                                    # the Pi extension that applies the modes
+```
+
+Auto: listed to the model. Manual: only `/skill:NAME` runs it. Off: not listed and
+`/skill:NAME` is refused (not a lock: the model can still read the file). Without `--yes` each
+write is a preview: show it to the user, then run it again with `--yes` (a backup goes to
+`~/.akit/backups`). A write says when the extension is missing; then offer
+`akit skills extension install` (preview, then `--yes`). `--global off` is refused: Off
+everywhere is `akit skills set NAME --harness pi --state off`. The modes live in
+`~/.akit/local/skill-modes.json` (one file per Mac); `akit skills resolve` is the
+extension's, not for you.
 
 ## MCP servers
 
