@@ -82,6 +82,33 @@ struct FolderProjectIDTests {
         #expect(first.folder == first.live && second.folder == second.live)
     }
 
+    @Test func aConfigOver64KBStillGivesTheRemoteID() async throws {
+        let big = home.appending(path: "Projects/big")
+        try await repository(at: big)
+        let config = big.appending(path: ".git/config")
+        let padding = String(repeating: "# a long comment line to make the config large\n", count: 1_600)  // ≈ 77 KB
+        try Data((padding + (try String(contentsOf: config, encoding: .utf8)) + "[remote \"origin\"]\n\turl = https://example.com/team/big.git\n").utf8)
+            .write(to: config)
+        let found = ids(big)
+        #expect(found.folder == "example.com/team/big")
+        #expect(found.folder == found.live)
+    }
+
+    @Test func aLinkedDotGitIsFollowed() async throws {
+        let real = home.appending(path: "store/real")
+        try await repository(at: real, remote: "git@example.com:team/linked.git")
+        let checkout = home.appending(path: "Projects/linked")
+        try fm.createDirectory(at: checkout, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: checkout.appending(path: ".git"), withDestinationURL: real.appending(path: ".git"))
+        let found = ids(checkout)
+        #expect(found.folder == "example.com/team/linked")
+        #expect(found.folder == found.live)
+        // Without origin: the id of the folder holding the link, the same in both.
+        try await git("remote", "remove", "origin", in: real)
+        let local = ids(checkout)
+        #expect(local.folder == "local/linked" && local.folder == local.live)
+    }
+
     @Test func aFolderOutsideGitHasNoProject() throws {
         let plain = home.appending(path: "Projects/plain")
         try fm.createDirectory(at: plain, withIntermediateDirectories: true)

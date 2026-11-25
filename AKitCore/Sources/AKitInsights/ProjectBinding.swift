@@ -115,10 +115,7 @@ enum BindingPaths {
     /// The project id of the repository with this common git dir: its `origin` remote, else the
     /// `local/…` id of its main folder, as `ProjectRecords.projectID` gives it.
     static func projectID(commonDir: String, projectsRoot: String) -> String {
-        if let remote = RecordSession.small(commonDir + "/config").flatMap(GitCheckout.originURL(inConfig:)).flatMap(ProjectRecords.normalizedRemote) {
-            return remote
-        }
-        return ProjectRecords.localID(path: canonical(mainFolder(ofCommonDir: commonDir)), projectsRoot: projectsRoot)
+        ProjectRecords.projectID(commonDir: commonDir, projectsRoot: projectsRoot)
     }
 }
 
@@ -145,10 +142,9 @@ final class LiveFolderResolver: ProjectResolver {
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue else { return nil }
         if let repository = RecordSession.repository(containing: path) {
-            let common = BindingPaths.canonical(repository.commonDir)
-            let id = repository.remoteID
-                ?? ProjectRecords.localID(path: BindingPaths.mainFolder(ofCommonDir: common), projectsRoot: projectsRoot)
-            return RepositoryMatch(projectID: id, repoPath: common)
+            // The one id of a repository (`ProjectRecords.projectID(commonDir:)`), as skill modes give it to a folder.
+            return RepositoryMatch(projectID: ProjectRecords.projectID(commonDir: repository.commonDir, projectsRoot: projectsRoot),
+                                   repoPath: BindingPaths.canonical(repository.commonDir))
         }
         // A folder without git is a project only inside the projects root (not ~, not /tmp).
         let folder = BindingPaths.canonical(path)
