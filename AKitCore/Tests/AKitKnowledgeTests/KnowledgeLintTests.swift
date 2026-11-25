@@ -10,6 +10,8 @@ final class KnowledgeLintTests {
     deinit { try? FileManager.default.removeItem(at: home) }
 
     static let fixture = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/lint-base")
+    /// The local copy of the repository the fixture's scenarios link (`lint-repo`).
+    static let fixtureRepo = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/lint-repo")
     let home: URL
     let fm = FileManager.default
 
@@ -26,25 +28,31 @@ final class KnowledgeLintTests {
     @Test func theFixtureHasOneFindingOfEachRule() throws {
         // missing-file.md's repo is ~/Library, as on every Mac.
         try fm.createDirectory(at: home.appending(path: "Library"), withIntermediateDirectories: true)
-        let findings = KnowledgeLint.run(KnowledgeBase(root: Self.fixture), projects: .init(), home: home)
+        let findings = KnowledgeLint.run(KnowledgeBase(root: Self.fixture), projects: .init(copies: ["example.com/shop/lint-repo": Self.fixtureRepo]),
+                                         home: home)
         let summary = findings.map { "\($0.severity.rawValue) \($0.rule.rawValue) \($0.file) \($0.element ?? "-") \($0.link ?? "-")" }
         #expect(summary == [
             "error broken-link areas/shop/links.md - [[no-such-note]]",
             "error map-parse areas/shop/maps/broken.excalidraw - -",
+            "error scenario-duplicate-id areas/shop/scenarios.md SC-ORD-001 -",
             "warning missing-home-path areas/shop/home-path.md - ~/akit-lint-fixture-missing/notes.txt",
             "warning ambiguous-link areas/shop/links.md - [[status]]",
             "warning unbound-arrow areas/shop/maps/blocks.excalidraw arr-loose -",
             "warning block-without-note areas/shop/maps/blocks.excalidraw blk-draft -",
             "warning missing-file areas/shop/missing-file.md - akit-lint-fixture/no-such-file.txt",
             "warning missing-description areas/shop/no-description.md - -",
+            "warning scenario-feature-code areas/shop/scenarios.md ORD, PAY -",
+            "warning scenario-header areas/shop/scenarios.md SC-ORD-002 -",
+            "warning scenario-test-missing areas/shop/scenarios.md SC-ORD-002 lint-repo · tests/cancel.test.ts",
+            "warning scenario-unknown-id areas/shop/scenarios.md SC-ORD-099 -",
             "warning unknown-repo areas/shop/unknown-repo.md - git@example.com:lint/no-such-repo.git",
             "hint unknown-kind areas/shop/gadget.md - gadget",
             "hint unrelated-area areas/shop/maps/blocks.excalidraw blk-thing other/thing",
         ])
         let rules = findings.filter { $0.severity != .hint }.map(\.rule)
-        #expect(rules.count == 9 && Set(rules) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint }))
+        #expect(rules.count == 14 && Set(rules) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint }))
         #expect(findings.allSatisfy { $0.fix != nil && !$0.message.isEmpty })
-        #expect(KnowledgeLint.counts(findings) == .init(error: 2, warning: 7, hint: 2))
+        #expect(KnowledgeLint.counts(findings) == .init(error: 3, warning: 11, hint: 2))
     }
 
     @Test func theAnswerEncodesAsTheCLIPrintsIt() throws {

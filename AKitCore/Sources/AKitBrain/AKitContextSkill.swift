@@ -62,6 +62,13 @@ akit kb index [--rebuild] [--json] [--base PATH|WORLD]
                                                    # bring the search index up to the files
 akit kb lint [--json] [--base PATH|WORLD]          # check the base: {base, findings: [{rule, severity,
                                                    # file, element, link, message, fix}], counts}
+akit kb scenarios [NOTE] [--work-item ID] [--status S] [--json]
+                                                   # the rules, scenarios and open questions of
+                                                   # requirement notes (gherkin blocks): {base, note,
+                                                   # items: [{id, kind, status, level, rule,
+                                                   # workItems, tests: [{repo, path, names}]}]}; a
+                                                   # scenario's tests are linked from the note,
+                                                   # never by an ID in the repository
 akit kb inbox [--json] [--base PATH|WORLD]         # the proposals waiting for the user: {base,
                                                    # proposals: [{id, kind, target, reason, created,
                                                    # checks: [{name, status, message}], modelCheck:

@@ -1,7 +1,7 @@
 # Flows: agent orchestration for Pi
 
 Status: 2026-11-16, spec revised after the ralplan review (plan in `.omc/plans/flows-plan.md`,
-local); D24–D28 decided; step 1 built 2026-11-17 (`AKitFlows`, `akit flow`); steps 2a–2d built 2026-11-17 (runner core, handoff tool, worktree, gates); steps 3a–3b built 2026-11-17 (guard, Pi row, shortcuts, overlay, `make test-flows-e2e`); step 4 built 2026-11-17 (`brain/flows`, layers include flows, Apply, Flows screen, guide `flows.ru.md`); Runs screen not yet. Written from a web search, the Pi docs (context7,
+local); D24–D28 decided; step 1 built 2026-11-17 (`AKitFlows`, `akit flow`); steps 2a–2d built 2026-11-17 (runner core, handoff tool, worktree, gates); steps 3a–3b built 2026-11-17 (guard, Pi row, shortcuts, overlay, `make test-flows-e2e`); step 4 built 2026-11-17 (`brain/flows`, layers include flows, Apply, Flows screen, guide `flows.ru.md`); Runs screen not yet; F26 built 2026-11-25 (scenario gates). Written from a web search, the Pi docs (context7,
 `earendil-works/pi`), the Pi 1.5.2 package, Pi 1.0.4 `--help` and PurpleFlow (MIT). F1–F19
 are the design; the spec audit A1–A22 is closed in the decisions below.
 
@@ -319,6 +319,23 @@ reads run records and writes a `STOP` file.
   The runner and AKit's session recorder see `AKIT_FLOW_HANDOFF` in a step's child and do
   nothing there. Tried live: a read-only step listed Azure DevOps projects through the guard.
   This replaces the isolation part of F15; a Claude Code step stays isolated (F21).
+- **F26 Scenario gates (2026-11-25, the user's request).** A flow proves the task's agreed
+  scenarios (`knowledge.md` K43) with three gates the runner computes itself and writes into the
+  step's evidence like checks (red turns `done` into `failed:checks`, routed as usual):
+  **G1** after a planner: the plan's new `work_item` and `scenarios` against `akit kb scenarios
+  --work-item <ID> --status agreed` (an agreed scenario left out, a scenario not agreed, or a work
+  item with no agreed scenario is red; technical work leaves both empty and has no gate);
+  **G2** after a `tester` step: the handoff's new `tests` (scenario, file, test name) give a test
+  per plan scenario, each in a file the step changed and with its name in the file, and the
+  plan's check is red before the code (a check that couldn't run, exit 127 or none, proves
+  nothing); the runner keeps the claimed files' sha256 in the handoff (`test_files`);
+  **G3** at a checker: those files are unchanged. A maker after the tester (implementer, debugger,
+  cleaner) has them as `protect` in its guard rules: `edit` / `write` is blocked (`protected-test`);
+  a change through bash is caught by G3. Test names carry no scenario ID: the link lives in the
+  knowledge base. Also: a checker without check commands of its own now runs the plan's check too
+  (before, only a checker with commands did, so the brain's Feature flow ran none). The built-in
+  Feature template keeps its steps; a tester step is added on the Flows screen (Add Step) or in
+  the brain's flow file.
 - **F24 Where the parts meet (2026-11-20, from a review of the edges).** A step gets exactly
   the tools its prompt names: `-t` (Pi) and `--tools` (Claude) always carry the step's, else the
   flow's, else the built-ins (Pi alone turns on only read, bash, edit, write). A Claude Code step

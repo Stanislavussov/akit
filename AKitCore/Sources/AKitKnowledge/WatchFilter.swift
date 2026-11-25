@@ -16,6 +16,8 @@ import Foundation
 /// - git's, Obsidian's and AKit's own working files (`.git/`, `.obsidian/`, the index, the locks,
 ///   the queue, the miss log) and any other hidden file (`.DS_Store`, an editor's swap file):
 ///   ignored. Queuing one would commit litter, or fail on a path the base's `.gitignore` names.
+/// - A file the system writes for an atomic save (`note.md.sb-1a2b3c4d-Xy7Zq9`): ignored. It is
+///   gone before the commit, and naming it made commit messages list notes that don't exist.
 /// - Anything else, like the sample base's `.akit-seed.json` (committed by `kb seed` itself) or a
 ///   file at the base's top: `other`, nothing to do.
 public enum WatchFilter {
@@ -45,6 +47,7 @@ public enum WatchFilter {
         // The check model's hidden marks of a proposal (5.2) refresh the Inbox like the proposal.
         if top == "inbox", parts.count == 2, parts[1].hasPrefix("."), parts[1].hasSuffix(".check.json") { return .inbox(path) }
         if parts.contains(where: { $0.hasPrefix(".") }) { return .ignore }
+        if isAtomicSaveFile(path) { return .ignore }
         switch top {
         case "areas" where parts.count > 1: return .area(path)
         case KnowledgeNotebook.folderName where parts.count > 1: return .notebook(path)
@@ -53,6 +56,12 @@ public enum WatchFilter {
         case KnowledgeKinds.fileName where parts.count == 1: return .baseConfig(path)
         default: return .other(path)
         }
+    }
+
+    /// A temporary file of an atomic save: `<name>.sb-<8 hex>-<6 characters>` beside the file.
+    public static func isAtomicSaveFile(_ path: String) -> Bool {
+        let name = path.split(separator: "/").last.map(String.init) ?? path
+        return name.wholeMatch(of: /.+\.sb-[0-9a-f]{8}-[A-Za-z0-9]{6}/) != nil
     }
 
     /// `absolute` relative to the base folder `root`; nil when it is the folder itself or outside it.

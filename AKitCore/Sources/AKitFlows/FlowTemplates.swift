@@ -379,12 +379,15 @@ public enum FlowTemplates {
             command. Then give the plan in the handoff's plan field: steps, in order, each saying what changes in which \
             file, and check, one plain command that runs only the tests the task touches (the tests of the changed \
             modules and the new ones; name folders or filters, not only new files, since they do not exist before the \
-            change). The checks step runs it. Risks and decisions go in notes. Change no code.
+            change). The checks step runs it. A task with business behaviour names its ADO work item in work_item and \
+            its agreed scenarios in scenarios (akit kb scenarios --work-item <ID> --status agreed); technical work \
+            leaves both empty. Risks and decisions go in notes. Change no code.
             """,
         "implementer": """
             Implement the plan (the plan's handoff above; a later handoff says what to fix). Run only the tests you need; the checks step runs the \
             full commands after you. Keep the change to what the plan asks; when the plan is wrong or not enough, end \
-            blocked with the reason instead of guessing.
+            blocked with the reason instead of guessing. A tester step's tests are fixed: don't change them; when one \
+            is wrong, end blocked and say why.
             """,
         "checker": """
             Run the project's tests and lint the plan names, read only, and say in the handoff which fail and why; \
@@ -424,7 +427,8 @@ public enum FlowTemplates {
             Write the tests first. From the task, add the smallest tests that describe the wanted behaviour, in the \
             project's test style, and run them: they must fail for the right reason (the behaviour is missing, not a \
             typo). Change no production code. Say in the handoff the test names, why they fail and the command that \
-            runs them.
+            runs them. When the plan names scenarios, give one entry in tests per scenario: its ID, the test file and \
+            the test's name (describe titles › title). Never write a scenario ID into the code or a test name.
             """,
         "debugger": """
             Find the root cause before any fix. Reproduce the problem with a command, read the code paths it takes, \

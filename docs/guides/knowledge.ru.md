@@ -242,7 +242,7 @@ payments/billing  billing: Bills each order once.
 ### Просто: 8. Lint
 <!-- section: try-lint -->
 
-Вкладка **Lint** показывает ошибки пространства `lint-examples`: сломанная ссылка `[[no-such-note]]`, карта, которая не читается, путь, которого нет, ссылка на две заметки сразу, стрелка без концов, блок без заметки. У каждой строки есть подсказка, как исправить. В терминале: `akit kb lint --base sample`.
+Вкладка **Lint** показывает ошибки пространства `lint-examples`: сломанная ссылка `[[no-such-note]]`, карта, которая не читается, путь, которого нет, ссылка на две заметки сразу, стрелка без концов, блок без заметки, а в заметке `scenarios` — повторный ID сценария, сценарий без `level:`, два кода фичи, ссылка на неизвестный ID и строка `# test:` на тест, которого нет. У каждой строки есть подсказка, как исправить. В терминале: `akit kb lint --base sample`.
 
 ### Просто: 9. удалить пример
 <!-- section: try-remove -->
@@ -859,7 +859,7 @@ AKit записывает `area.yaml`. Коммит ждёт в очереди, 
 - «В какой заметке про `retry`?» → введите `retry` (или просто `retr`).
 - «Что агент найдёт по слову `order`?» → `akit kb search order` в терминале. Агент ищет слова целиком, поэтому его находок бывает меньше, чем в поле поиска.
 
-![Поиск order на экране Knowledge: в поле поиска панели инструментов слово order; слева вместо списка заметок часть «11 hits» с находками payments/orders-db с разделом ## Tables, payments/orders-api, payments/checkout-team, payments/orders-api с разделом ## Events, payments/order-events, payments/flows/order-to-billing, payments/billing, logistics/warehouse и другими; у каждой — кусок текста, где order и начало слова orders подсвечены жёлтым; внизу колонки строка Index: 18 notes, 29 sections, кнопка Reindex и Inbox: 3](images/knowledge-search.png)
+![Поиск order на экране Knowledge: в поле поиска панели инструментов слово order; слева вместо списка заметок часть «11 hits» с находками payments/orders-db с разделом ## Tables, payments/orders-api, payments/checkout-team, payments/orders-api с разделом ## Events, payments/order-events, payments/flows/order-to-billing, payments/billing, logistics/warehouse и другими; у каждой — кусок текста, где order и начало слова orders подсвечены жёлтым; внизу колонки строка Index: 19 notes, 32 sections, кнопка Reindex и Inbox: 3](images/knowledge-search.png)
 
 ### Просто: найти заметку
 <!-- section: search-find -->
@@ -1004,7 +1004,7 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 
 В примере базы есть пространство `lint-examples`: в нём по одной находке каждого правила, нарочно.
 
-![Экран Knowledge, вкладка Lint: вверху переключатель Notes, Inbox (2) и Lint (8), строка «2 errors, 6 warnings, 2 hints» и кнопка Check Again; ниже части Errors, Warnings и Hints; в каждой строке значок важности, текст находки, правило, файл и элемент карты, совет, кнопка Open, а у сломанной ссылки [[no-such-note]] ещё Create Note…](images/knowledge-lint.png)
+![Экран Knowledge, вкладка Lint: вверху переключатель Notes, Inbox (3) и Lint, строка «3 errors, 11 warnings, 2 hints» и кнопка Check Again; ниже части Errors и Warnings; в каждой строке значок важности, текст находки, правило, файл и элемент карты, совет, кнопка Open, а у сломанной ссылки [[no-such-note]] ещё Create Note…; среди ошибок повторный ID сценария SC-LNT-001 в scenarios.md, среди предупреждений два кода фичи в одной заметке](images/knowledge-lint.png)
 
 ### Просто: вкладка Lint
 <!-- section: lint-tab -->
@@ -1031,8 +1031,23 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 | `missing-file` | Warning | пути из `files:` нет в локальной копии репозитория |
 | `missing-home-path` | Warning | путь `~/…` в `repo:` или `files:` не существует, или папки из `path:` нет |
 | `missing-description` | Warning | у заметки нет `description:`. Агенты (ревью AKit) сначала читают эту одну строку и открывают заметку, только если она нужна. Без строки им приходится открывать заметку целиком |
+| `scenario-duplicate-id` | Error | ID правила, сценария или открытого вопроса (`R-…`, `SC-…`, `OPEN-…`) объявлен в базе дважды |
+| `scenario-header` | Warning | у строки-комментария сценария нет `status:` или `level:`, значение неизвестное, под ней нет строки `Rule:` / `Scenario:` / `Question:`, или строка `# test:` записана неправильно |
+| `scenario-feature-code` | Warning | в одной заметке требований ID двух разных фич |
+| `scenario-unknown-id` | Warning | заметка ссылается на ID известной фичи, который нигде не объявлен |
+| `scenario-test-missing` | Warning | в локальной копии репозитория (и в её worktree) нет файла или теста из строки `# test:`: тест переименовали или перенесли |
 | `unknown-kind` | Hint | вида из `kind:` нет в `kb.yaml` |
 | `unrelated-area` | Hint | на карте пространства блок заметки другого пространства, а карты этих пространств не ссылаются друг на друга |
+
+Правила `scenario-*` читают заметки требований: блоки ```` ```gherkin ```` с правилами и сценариями. Сценарий связан с тестами, которые его доказывают, строками под его заголовком:
+
+```gherkin
+  # SC-ORD-002 · ADO 123457 · level: unit · status: agreed
+  # test: shop-web · src/orders/cancel.test.ts · cancel › keeps a shipped order as it is
+  Scenario: A shipped order cannot be cancelled
+```
+
+Поля через `·`: репозиторий (имя его папки в папке проектов или git remote), файл от корня репозитория, имя теста (заголовки `describe` и название теста через ` › `). ID сценариев в репозиторий не пишутся: ни в названия тестов, ни в код. Связь живёт только в базе. `akit kb scenarios` показывает правила, сценарии и вопросы со статусами и связанными тестами.
 
 **Известный проект** — это:
 
@@ -1054,7 +1069,7 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 ### Средне: проверка в терминале: akit kb lint
 <!-- section: lint-terminal -->
 
-`akit kb lint` печатает те же находки, что и вкладка **Lint**, и в конце «2 errors, 6 warnings, 2 hints.». `akit kb lint --json` отдаёт `{base, findings, counts}`. Каждая находка — `rule`, `severity`, `file`, `element` (элемент карты), `link`, `message` и `fix` (что сделать). Команда только читает базу, поэтому агенты её запускают сами.
+`akit kb lint` печатает те же находки, что и вкладка **Lint**, и в конце «3 errors, 11 warnings, 2 hints.». `akit kb lint --json` отдаёт `{base, findings, counts}`. Каждая находка — `rule`, `severity`, `file`, `element` (элемент карты), `link`, `message` и `fix` (что сделать). Команда только читает базу, поэтому агенты её запускают сами.
 
 ## Предложения агента
 <!-- section: inbox -->

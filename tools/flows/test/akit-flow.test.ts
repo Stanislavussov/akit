@@ -567,8 +567,18 @@ test("the checks step also runs the plan's own check command when it is plain", 
 	const evidence = JSON.parse(readFileSync(join(run, "evidence", "03-checks-a1-checks.json"), "utf8"));
 	assert.deepEqual(evidence.checks.map((c: { command: string }) => c.command), ["node check.mjs", "node check.mjs --only-mean"]);
 	const plan = JSON.parse(readFileSync(join(run, "handoffs", "01-plan-a1-sess-plan-1.json"), "utf8"));
-	assert.deepEqual(plan.plan, { steps: ["add mean", "test it"], check: "node check.mjs --only-mean" });
+	assert.deepEqual(plan.plan, { steps: ["add mean", "test it"], check: "node check.mjs --only-mean", work_item: "", scenarios: [] });
 	assert.match(calls()[1].args.at(-1) ?? "", /"steps": \[\n\s+"add mean"/);
+});
+
+test("a checks step without checks of its own still runs the plan's check (F26)", async () => {
+	flow([{ id: "plan", agent: "planner", model: "m/a" }, { id: "implement", agent: "implementer", model: "m/a" },
+		{ id: "checks", agent: "checker", model: "m/a", routes: { "failed:*": "implement" } }]);
+	checkScript(0);
+	pi({ plan: { plan: { steps: ["x"], check: "node check.mjs" } } });
+	await flowCommand("feature x", ctx());
+	const evidence = JSON.parse(readFileSync(join(onlyRun(), "evidence", "03-checks-a1-checks.json"), "utf8"));
+	assert.deepEqual(evidence.checks.map((c: { command: string }) => c.command), ["node check.mjs"]);
 });
 
 test("a plan check that is not plain is not run", async () => {

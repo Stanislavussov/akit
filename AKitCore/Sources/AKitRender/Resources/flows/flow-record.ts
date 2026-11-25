@@ -149,7 +149,8 @@ export interface CheckResult {
 
 /** One check command, run by the runner (never the model), split on spaces and started without a
  * shell: AKit's rule allows no shell syntax anyway. */
-function runCheck(command: string, cwd: string, signal?: AbortSignal): Promise<CheckResult> {
+/** Runs one plain command (split on spaces, no shell) in `cwd`. */
+export function runCheck(command: string, cwd: string, signal?: AbortSignal): Promise<CheckResult> {
 	return new Promise((resolve) => {
 		const [file, ...args] = command.split(/\s+/).filter(Boolean);
 		let output = "";
@@ -169,11 +170,13 @@ function runCheck(command: string, cwd: string, signal?: AbortSignal): Promise<C
 	});
 }
 
-/** Runs a step's checks in `cwd` and writes `evidence/NN-<step>-aN-checks.json`, one file per attempt (F19). */
+/** Runs a step's checks in `cwd` (then adds the gates' results) and writes `evidence/NN-<step>-aN-checks.json`, one file per attempt (F19). */
 export async function runChecks(folder: string, key: string, run: string, step: { id: string; attempt: number }, commands: string[],
-	cwd: string, signal?: AbortSignal): Promise<string> {
+	cwd: string, signal?: AbortSignal, gates: CheckResult[] = []): Promise<string> {
 	const checks: CheckResult[] = [];
 	for (const command of commands) checks.push(await runCheck(command, cwd, signal));
+	// The scenario gates (F26) are results the runner reached itself, kept with the checks.
+	checks.push(...gates);
 	const path = join(folder, "evidence", `${key}-a${step.attempt}-checks.json`);
 	writeAtomic(path, { schema: EVIDENCE_SCHEMA, run, step, time: new Date().toISOString(), checks });
 	return path;

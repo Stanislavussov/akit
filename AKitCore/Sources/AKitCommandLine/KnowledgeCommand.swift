@@ -68,8 +68,21 @@ extension AKitCLI {
                                         no note, unbound arrows, maps that don't parse (errors and
                                         warnings), repo: not among the known projects, files: and
                                         ~/ paths that don't exist; hints for a kind not in kb.yaml
-                                        and a block of an unrelated area. --json: {base, findings:
-                                        [{rule, severity, file, element, link, message, fix}], counts}
+                                        and a block of an unrelated area; in requirement notes a
+                                        scenario ID defined twice, a malformed item or test link,
+                                        an ID no note defines, a linked test the local copy lacks.
+                                        --json: {base, findings: [{rule, severity, file, element,
+                                        link, message, fix}], counts}
+      akit kb scenarios [NOTE] [--work-item ID] [--status S] [--json] [--base PATH|WORLD]
+                                        The rules (R-…), scenarios (SC-…) and open questions
+                                        (OPEN-…) of the gherkin blocks of NOTE, or of every note:
+                                        status, level, journey, rule, ADO work items, the linked
+                                        tests (# test: repo · file · name). --work-item keeps the
+                                        items whose own comment line names that ADO ID, --status
+                                        those with that status. --json: {base, note, items: [{id,
+                                        kind, feature, number, title, status, level, journey, rule,
+                                        workItems, sources, tests: [{repo, path, names, line}],
+                                        note, line}]}
       akit kb history NOTE|MAP [REV] [--limit N] [--json] [--base PATH|WORLD]
                                         Every version of a note or a map from the base's git,
                                         renames followed, newest first: hash, date, the commit's
@@ -361,6 +374,37 @@ extension AKitCLI {
                     "\(finding.severity.rawValue)  \(finding.rule.rawValue)  \(finding.file)" + (finding.element.map { "  \($0)" } ?? "")
                         + "\n    \(finding.message)" + (finding.fix.map { "\n    fix: \($0)" } ?? "")
                 }.joined(separator: "\n") + "\n\(count(counts.error, "error")), \(count(counts.warning, "warning")), \(count(counts.hint, "hint")).")
+            }
+            return 0
+        case "scenarios":
+            let workItem = args.value("--work-item"), status = args.value("--status")
+            let name = args.positional()
+            try args.finish()
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
+            var items: [KnowledgeScenarios.Item]
+            var noteID: String?
+            if let name {
+                let id: String
+                do { id = try base.noteID(name) } catch { throw Failure(message: error.message) }
+                guard let note = KnowledgeNote.load(base.noteFile(id)) else { throw Failure(message: "Can't read the note \(id).") }
+                items = KnowledgeScenarios.parse(note.text, note: id).items
+                noteID = id
+            } else {
+                items = KnowledgeScenarios.all(in: base)
+            }
+            items = KnowledgeScenarios.filter(items, workItem: workItem, status: status)
+            if json {
+                out(encode(KnowledgeScenarios.Answer(base: base.root.path, note: noteID, items: items)))
+            } else if items.isEmpty {
+                out("No rules, scenarios or open questions" + (noteID.map { " in \($0)" } ?? "") + ".")
+            } else {
+                out(items.map { item in
+                    var line = [item.id, item.status ?? "-", item.level ?? "", item.journey ? "journey" : "", item.rule ?? ""]
+                        .filter { !$0.isEmpty }.joined(separator: "  ")
+                    if !item.workItems.isEmpty { line += "  ADO " + item.workItems.joined(separator: ", ") }
+                    line += "  " + (item.title ?? "(no title)")
+                    return ([line] + item.tests.map { "    test: \($0.repo) · \($0.path) · \($0.name)" }).joined(separator: "\n")
+                }.joined(separator: "\n"))
             }
             return 0
         case "search", "show", "index":

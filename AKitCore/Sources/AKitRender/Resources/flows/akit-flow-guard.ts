@@ -25,6 +25,8 @@ export interface GuardRules {
 	events: string;
 	/** The run records folder (`<main checkout>/.pi/akit-flow`): `edit` / `write` there is always blocked. */
 	records?: string;
+	/** Files a tester step wrote (F26): `edit` / `write` of them is blocked in this step. */
+	protect?: string[];
 }
 
 /** Pi's built-in tools: a step without a tool list may use these, and nothing else. */
@@ -135,6 +137,8 @@ export function forbidden(rules: GuardRules, tool: string, input: Record<string,
 		if (rel === undefined) return { rule: "path", reason: `${filePath(input) || "(no path)"} is outside the flow's worktree.` };
 		if (rules.paths.length > 0 && !rules.paths.some((p) => matches(p, rel)))
 			return { rule: "path", reason: `Step ${rules.step} may change only ${rules.paths.join(", ")}; ${rel} is not one of them.` };
+		if (rules.protect?.includes(rel))
+			return { rule: "protected-test", reason: `${rel} holds the tests the tester step wrote: they prove the task and change only in that step. Fix the code; if a test is wrong, end blocked with the reason.` };
 	}
 	return undefined;
 }
