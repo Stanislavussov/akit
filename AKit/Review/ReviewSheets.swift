@@ -52,6 +52,10 @@ struct NewReviewSheet: View {
     @State private var flagSuggestions: [(flag: String, help: String)] = []
     /// Models Pi has credentials for (`pi --list-models`).
     @State private var piModels: [String] = []
+    @State private var claudeModels: [String] = []
+    /// Who runs a local review's passes (R69); nil: from the configuration. A merge request runs on Pi.
+    /// Snapshots: `--harness claude-code`.
+    @State private var harness: ReviewHarness? = DebugSnapshot.options?.harness.flatMap(ReviewHarness.init(rawValue:))
 
     /// `again`: Review Again… on a run fills in its change, scenario, context and models, and
     /// reads the whole change again (a rerun on the same commit would only carry the findings).
@@ -79,6 +83,7 @@ struct NewReviewSheet: View {
             _verifierModel = State(initialValue: again.verifier.value.model)
             _verifierThinking = State(initialValue: again.verifier.value.thinking)
         }
+        if again.harness?.source == .run { _harness = State(initialValue: again.harness?.value) }
         if again.impact?.source == .run { _impact = State(initialValue: again.impact?.value) }
         if again.summaryLanguage?.source == .run { _summaryLanguage = State(initialValue: again.summaryLanguage?.value) }
         _fullReview = State(initialValue: true)
@@ -99,21 +104,27 @@ struct NewReviewSheet: View {
     private var checkedLinks: Result<[String], Error> { Result { try ReviewContext.links([links]) } }
     /// The project's MCP rules (or the defaults): its own servers and its context servers.
     private var access: ReviewMCPAccess { profile?.mcp ?? ReviewMCPAccess() }
+    /// `harness` from the configuration: the profile, the brain, the built-in default.
+    private var configuredHarness: ReviewHarness {
+        profile?.settings.harness ?? catalog?.brainDefaults.harness ?? catalog?.builtInDefaults.harness ?? .pi
+    }
+    /// Who runs this run's passes: a merge request always Pi.
+    private var runHarness: ReviewHarness { source == .local ? harness ?? configuredHarness : .pi }
+    private var onClaude: Bool { runHarness == .claudeCode }
+    /// The first value the levels set (project profile, brain, built-in) for the run's harness; empty when none.
+    private func configured(_ key: KeyPath<ReviewModelChoice, String>, pi: KeyPath<ReviewSettingsPatch, ReviewModelChoice?>,
+                            claude: KeyPath<ReviewSettingsPatch, ReviewModelChoice?>) -> String {
+        let field = onClaude ? claude : pi
+        return [profile?.settings, catalog?.brainDefaults, catalog?.builtInDefaults].compactMap { $0?[keyPath: field]?[keyPath: key] }
+            .first { !$0.isEmpty } ?? ""
+    }
     /// The verifier's model from the configuration (brain, then the project profile); empty when none.
-    private var configuredVerifier: String {
-        [profile?.settings.verifier?.model, catalog?.brainDefaults.verifier?.model, catalog?.builtInDefaults.verifier?.model]
-            .compactMap { $0 }.first { !$0.isEmpty } ?? ""
-    }
-    /// The verifier's thinking from the configuration; empty = Pi's default.
-    private var configuredVerifierThinking: String {
-        [profile?.settings.verifier?.thinking, catalog?.brainDefaults.verifier?.thinking, catalog?.builtInDefaults.verifier?.thinking]
-            .compactMap { $0 }.first { !$0.isEmpty } ?? ""
-    }
-    /// The passes' model from the configuration; empty = Pi's default.
-    private var configuredPasses: String {
-        [profile?.settings.passes?.model, catalog?.brainDefaults.passes?.model, catalog?.builtInDefaults.passes?.model]
-            .compactMap { $0 }.first { !$0.isEmpty } ?? ""
-    }
+    private var configuredVerifier: String { configured(\.model, pi: \.verifier, claude: \.claudeVerifier) }
+    /// The verifier's thinking from the configuration; empty = the harness's default.
+    private var configuredVerifierThinking: String { configured(\.thinking, pi: \.verifier, claude: \.claudeVerifier) }
+    /// The passes' model from the configuration; empty = the harness's default.
+    private var configuredPasses: String { configured(\.model, pi: \.passes, claude: \.claudePasses) }
+    private var harnessDefault: String { onClaude ? "Claude Code's default" : "Pi's default" }
     /// `impact` from the configuration: the profile, the brain, the built-in default.
     private var configuredImpact: ReviewImpact {
         profile?.settings.impact ?? catalog?.brainDefaults.impact ?? catalog?.builtInDefaults.impact ?? .auto
@@ -124,7 +135,7 @@ struct NewReviewSheet: View {
             ?? ReviewResolver.preferredLanguage(Locale.preferredLanguages)
     }
     private var canStart: Bool {
-        guard !model.isBusy, (try? checkedLinks.get()) != nil, flagsProblem == nil else { return false }
+        guard !model.isBusy, onClaude || ((try? checkedLinks.get()) != nil && flagsProblem == nil) else { return false }
         // The verifier's model is the user's choice (R25).
         guard !verifierModel.trimmingCharacters(in: .whitespaces).isEmpty || !configuredVerifier.isEmpty else { return false }
         return switch source {
@@ -145,6 +156,12 @@ struct NewReviewSheet: View {
                 .pickerStyle(.segmented)
                 if source == .local {
                     localSection
+                    Picker("Harness", selection: $harness) {
+                        Text("From the configuration (\(configuredHarness.title))").tag(ReviewHarness?.none)
+                        ForEach(ReviewHarness.allCases, id: \.self) { Text($0.title).tag(ReviewHarness?.some($0)) }
+                    }
+                    .help("Who runs the passes. Claude Code reads the workspace's copy with Read, Grep and Glob only: no MCP server, "
+                          + "so no links, context servers or Pi steps.")
                 } else {
                 Section {
                     mergeRequestsField
@@ -177,28 +194,33 @@ struct NewReviewSheet: View {
                         }
                     }
                 }
-                extraServersSection
-                piSection
+                if !onClaude {
+                    extraServersSection
+                    piSection
+                }
                 Section("This run only") {
-                    PiModelPicker(selection: $passesModel, models: piModels,
-                                  empty: "From the configuration (\(configuredPasses.isEmpty ? "Pi's default" : configuredPasses))") {
+                    let models = onClaude ? claudeModels : piModels
+                    let help = onClaude ? "Claude Code's models; Other… to type one" : "Models Pi has credentials for (pi --list-models); Other… to type one"
+                    PiModelPicker(selection: $passesModel, models: models,
+                                  empty: "From the configuration (\(configuredPasses.isEmpty ? harnessDefault : configuredPasses))", help: help) {
                         Text("Model for the brief and roles")
                     }
-                    PiModelPicker(selection: $verifierModel, models: piModels,
-                                  empty: configuredVerifier.isEmpty ? "Choose a model…" : "From the configuration (\(configuredVerifier))") {
+                    PiModelPicker(selection: $verifierModel, models: models,
+                                  empty: configuredVerifier.isEmpty ? "Choose a model…" : "From the configuration (\(configuredVerifier))", help: help) {
                         if configuredVerifier.isEmpty { RequiredLabel("Verifier model") } else { Text("Verifier model") }
                     }
                     Picker("Verifier thinking", selection: $verifierThinking) {
-                        Text("From the configuration (\(configuredVerifierThinking.isEmpty ? "Pi's default" : configuredVerifierThinking))").tag("")
-                        ForEach(ReviewModelChoice.thinkingLevels, id: \.self) { Text($0).tag($0) }
+                        Text("From the configuration (\(configuredVerifierThinking.isEmpty ? harnessDefault : configuredVerifierThinking))").tag("")
+                        ForEach(runHarness.thinkingLevels, id: \.self) { Text($0).tag($0) }
                     }
-                    .help("How hard the verifier model thinks (Pi's --thinking). A model without thinking ignores it.")
+                    .help(onClaude ? "How hard the verifier model thinks (Claude Code's --effort)."
+                          : "How hard the verifier model thinks (Pi's --thinking). A model without thinking ignores it.")
                     if verifierModel.trimmingCharacters(in: .whitespaces).isEmpty, configuredVerifier.isEmpty {
                         Text("Required: no verifier model is configured. Choose one here, or set it in Review Settings… (models: verifier). A model of "
                              + "another family than the roles' checks their findings best.")
                             .font(.caption).foregroundStyle(.red)
                     }
-                    if piModels.isEmpty {
+                    if !onClaude, piModels.isEmpty {
                         Text("Pi lists no models (pi --list-models): log in to a provider in Pi first.").font(.caption).foregroundStyle(.secondary)
                     }
                     TextField("Credit cap", text: $cap, prompt: Text("empty: from the configuration"))
@@ -215,7 +237,7 @@ struct NewReviewSheet: View {
             .formStyle(.grouped)
             HStack {
                 Text("* Required.").font(.caption).foregroundStyle(.red)
-                Text(source == .local ? "Pi reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit."
+                Text(source == .local ? "\(runHarness.title) reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit."
                      : "Pi reads the merge request and its work items through its MCP servers, only with reading tools. Nothing is written to GitLab here.")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -240,6 +262,9 @@ struct NewReviewSheet: View {
         .task(id: "\(source.rawValue)|\(workspace)|\(baseRef)|\(headRef)") { await inspect() }
         .task { await loadPi() }
         .task { piModels = await LabRuns.models(for: .pi, env: model.env) }
+        .task { claudeModels = await LabRuns.models(for: .claudeCode, env: model.env) }
+        // A thinking level of one harness is no choice for the other.
+        .onChange(of: runHarness) { if !runHarness.thinkingLevels.contains(verifierThinking) { verifierThinking = "" } }
     }
 
     /// One merge request per line; the first is the main one, the others are linked.
@@ -428,6 +453,7 @@ struct NewReviewSheet: View {
                 Text("What the change is for, what to focus on, decisions already made. Every pass reads it as your instructions for focus; the model still only returns findings.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if !onClaude {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Links")
                 TextEditor(text: $links)
@@ -440,6 +466,7 @@ struct NewReviewSheet: View {
                     Text("One https link per line: Figma frames, Azure DevOps wiki pages or work items, Confluence pages. Pi reads each with a matching MCP server's reading tools; what it can't read becomes a context gap.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+            }
             }
         } header: {
             Text("Context")
@@ -602,10 +629,14 @@ struct NewReviewSheet: View {
         choices.settings.impact = impact
         choices.settings.summaryLanguage = summaryLanguage
         choices.notes = notes
-        choices.links = (try? checkedLinks.get()) ?? []
         choices.setup = setup.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        choices.extraServers = extraServers.sorted()
-        choices.pi = ReviewPiExtras(flags: ReviewPiFlags.split(piFlags), steps: steps.map { ReviewStepConfig(command: $0) })
+        if source == .local { choices.settings.harness = harness }
+        // Claude Code has no MCP server and no Pi steps (R69): what only Pi reads stays out.
+        if !onClaude {
+            choices.links = (try? checkedLinks.get()) ?? []
+            choices.extraServers = extraServers.sorted()
+            choices.pi = ReviewPiExtras(flags: ReviewPiFlags.split(piFlags), steps: steps.map { ReviewStepConfig(command: $0) })
+        }
         if source == .local, let inspection {
             model.startLocal(inspection, mode: mode, project: profile?.slug, choices: choices, brain: brain)
         } else if let list = try? entries.get(), let first = list.first {
@@ -638,6 +669,10 @@ struct ReviewSettingsSheet: View {
     /// The profile's setup: commands, one per line.
     @State private var setupText = ""
     @State private var bases: [KnowledgeBase] = []
+    /// Claude Code's models in the brain's review.yaml (`claude:`), as set here; saved with Save Claude Code Models….
+    @State private var claudePasses = ReviewModelChoice(model: "")
+    @State private var claudeVerifier = ReviewModelChoice(model: "")
+    @State private var claudeModels: [String] = []
 
     private var profile: ReviewProfile? { catalog?.profiles.first { $0.slug == rules } }
     private var access: ReviewMCPAccess { profile?.mcp ?? ReviewMCPAccess() }
@@ -702,6 +737,7 @@ struct ReviewSettingsSheet: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 overviewSection
+                harnessSection
                 if let profile {
                     repositorySection(profile)
                     knowledgeSection(profile)
@@ -752,6 +788,8 @@ struct ReviewSettingsSheet: View {
         .task {
             catalog = model.catalog(brain: brain)
             bases = KnowledgeBase.all(home: model.home)
+            loadClaude()
+            claudeModels = await LabRuns.models(for: .claudeCode, env: model.env)
         }
         .onChange(of: rules) {
             extras = access.extraServers
@@ -764,10 +802,63 @@ struct ReviewSettingsSheet: View {
                     catalog = model.catalog(brain: brain)
                     extras = access.extraServers
                     loadKnowledge()
+                    loadClaude()
                     message = "Saved \(box.save.file.lastPathComponent)."
                 }
             }
         }
+    }
+
+    /// Who runs a review's passes (R69), for the level picked in Rules of, and Claude Code's own
+    /// models, which only the brain's review.yaml holds. Each change shows its diff first.
+    @ViewBuilder private var harnessSection: some View {
+        let builtIn = catalog?.builtInDefaults.harness ?? .pi
+        let brainHarness = catalog?.brainDefaults.harness ?? builtIn
+        Section {
+            Picker("Harness", selection: Binding(get: { profile == nil ? catalog?.brainDefaults.harness : profile?.settings.harness },
+                                                 set: { value in plan { try ReviewConfigEditor.reviewSetting(harness: value, profile: profile?.slug,
+                                                                                                             home: model.home, brain: brain) } })) {
+                Text(profile == nil ? "Built-in (\(builtIn.title))" : "From the brain (\(brainHarness.title))").tag(ReviewHarness?.none)
+                ForEach(ReviewHarness.allCases, id: \.self) { Text($0.title).tag(ReviewHarness?.some($0)) }
+            }
+            if profile == nil {
+                claudeModelRow("Claude Code: brief and roles", choice: $claudePasses, builtIn: catalog?.builtInDefaults.claudePasses)
+                claudeModelRow("Claude Code: verifier", choice: $claudeVerifier, builtIn: catalog?.builtInDefaults.claudeVerifier)
+                HStack {
+                    Spacer()
+                    Button("Save Claude Code Models…") {
+                        plan { try ReviewConfigEditor.claudeModels(passes: claudePasses, verifier: claudeVerifier, home: model.home, brain: brain) }
+                    }
+                    .disabled(claudePasses == (catalog?.brainDefaults.claudePasses ?? ReviewModelChoice(model: ""))
+                              && claudeVerifier == (catalog?.brainDefaults.claudeVerifier ?? ReviewModelChoice(model: "")))
+                }
+            }
+        } header: {
+            Text("Harness")
+        } footer: {
+            Text("Pi reviews merge requests and local workspaces with its MCP servers. Claude Code reviews only a local workspace: "
+                 + "Read, Grep and Glob over its copy, no MCP server, no links or Pi steps"
+                 + (profile == nil ? ". Its models are review.yaml's claude: block; Pi's stay in models: and thinking:."
+                    : ". Claude Code's models are the brain's (Rules of: Default)."))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// A Claude Code model and effort; empty = the built-in one.
+    @ViewBuilder private func claudeModelRow(_ title: String, choice: Binding<ReviewModelChoice>, builtIn: ReviewModelChoice?) -> some View {
+        PiModelPicker(selection: choice.model, models: claudeModels, empty: "Built-in (\(builtIn?.model ?? "Claude Code's default"))",
+                      help: "Claude Code's models; Other… to type one") {
+            Text(title)
+        }
+        Picker("Effort", selection: choice.thinking) {
+            Text("Built-in (\(builtIn?.thinking.isEmpty == false ? builtIn?.thinking ?? "" : "Claude Code's default"))").tag("")
+            ForEach(ReviewHarness.claudeCode.thinkingLevels, id: \.self) { Text($0).tag($0) }
+        }
+    }
+
+    private func loadClaude() {
+        claudePasses = catalog?.brainDefaults.claudePasses ?? ReviewModelChoice(model: "")
+        claudeVerifier = catalog?.brainDefaults.claudeVerifier ?? ReviewModelChoice(model: "")
     }
 
     /// Other repositories and Summary language of the level picked in Rules of: the brain's

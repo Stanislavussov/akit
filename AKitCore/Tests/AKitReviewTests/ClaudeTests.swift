@@ -94,6 +94,8 @@ extension ReviewProcessTests {
             let verifier = args(home, "verifier")
             #expect(value(verifier, "--model") == "opus" && value(verifier, "--session-id") != log.mainSession && !verifier.contains("--resume"))
             #expect(log.passes.allSatisfy { $0.credits > 0 } && log.passes.first?.usage.cached == 2000)
+            #expect(ReviewLive.events(stream: folder.appending(path: "passes/brief.jsonl")).map(\.title).first == "read src/Cart.swift",
+                    "Log… reads Claude Code's events")
 
             // No prompt names a Pi tool.
             let system = try String(contentsOf: folder.appending(path: "prompts/system.md"), encoding: .utf8)

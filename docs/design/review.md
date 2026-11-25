@@ -1,6 +1,6 @@
 # AKit Review: AI review of merge requests
 
-Status: 2026-10-15, built on branch `akit-review`; R53 (Debug… and the full log) built 2026-10-28; R54–R56 (log details, recall first, Markdown for the eye) built 2026-10-30; R57–R60 (AKit's own clone, setup commands, git before MCP) built 2026-11-01; R61 (old worktrees removed, restored on use) built 2026-11-02; R62 (Why Missed?) built 2026-11-02; R63 (a scenario's roles without YAML) built 2026-11-02; R64 (criteria from the text, no diff versions with a clone) built 2026-11-02; R65 (a new run takes the earlier worktree) built 2026-11-02; R66 (publish at once when the GitLab MCP server has no drafts) built 2026-11-02; R68 (causes, not symptoms: a checked trace on every finding) built 2026-11-20 on branch `review-trace`; MCP change (R2, R3 revised, below) on branch
+Status: 2026-10-15, built on branch `akit-review`; R53 (Debug… and the full log) built 2026-10-28; R54–R56 (log details, recall first, Markdown for the eye) built 2026-10-30; R57–R60 (AKit's own clone, setup commands, git before MCP) built 2026-11-01; R61 (old worktrees removed, restored on use) built 2026-11-02; R62 (Why Missed?) built 2026-11-02; R63 (a scenario's roles without YAML) built 2026-11-02; R64 (criteria from the text, no diff versions with a clone) built 2026-11-02; R65 (a new run takes the earlier worktree) built 2026-11-02; R66 (publish at once when the GitLab MCP server has no drafts) built 2026-11-02; R68 (causes, not symptoms: a checked trace on every finding) built 2026-11-20 on branch `review-trace`; R69 (a local review on Claude Code, read-only, no MCP) built 2026-11-25 on branch `review-claude`; MCP change (R2, R3 revised, below) on branch
 `review-mcp`. Grilled with the user on 2026-10-15 from a
 research plan (Pi with the `github-copilot` provider, GitLab, Azure DevOps). The decisions
 below are agreed. The user's employer allows both parts: Copilot from a third-party harness
@@ -519,6 +519,29 @@ a finding's trace under its request and under Only in AKit (Trace (N steps), a s
 marked), or "No trace". Not done here: a cause pass of its own before the roles, and measuring the change
 on the eval set (`eval-set.json`) and past merge requests: the share of findings the verifier rejects, the
 share with a trace, reads per finding.
+
+## A local review on Claude Code (2026-11-25, R69)
+
+The user's request: run AKit Review with the Claude subscription too, as a second harness that
+reads only the local changes and reaches no MCP server, Azure DevOps or GitLab; each harness keeps
+its own saved models.
+
+| # | Question | Decision |
+|---|---|---|
+| R69a | Which reviews? | A local workspace only (`akit review local`, New Review… → Local Workspace). A merge request is read through Pi's MCP servers, so it always runs on Pi, whatever `harness:` the brain or the project prefers; `--harness claude-code` with a merge request is refused |
+| R69b | How is it chosen? | `harness: pi\|claude-code` in `review.yaml` and a profile's `review:` block, `--harness`, the Harness picker of New Review… and Review Settings… → Harness; default `pi` |
+| R69c | Its models? | Its own block `claude: { models: {passes, verifier}, thinking: {passes, verifier} }`; `models:` and `thinking:` stay Pi's. Built-in: sonnet and opus, effort `high`. A run's `--passes-model` / `--verifier-model` / `--verifier-thinking` are for the harness it runs on; Claude Code's thinking is its `--effort` (low…max). Review Settings… writes the brain's `claude:` block as one line (Save Claude Code Models…) |
+| R69d | How does a pass run? | `claude -p --output-format stream-json --verbose` in the run's worktree, prompt on stdin: `--tools Read,Grep,Glob --safe-mode --strict-mcp-config --permission-prompts none` (no CLAUDE.md, skills, hooks, plugins or MCP; anything that would ask is denied), `--settings` with Read deny rules for the files `ReviewExtension.isBlocked` keeps from Pi, `--add-dir` for the pack's folders (Pi's read roots) and the knowledge base, `--append-system-prompt-file prompts/system.md`. Probed live 2026-11-25 (Claude Code 2.1.311): the deny rule and reads outside the folders are refused, `--resume … --fork-session` forks |
+| R69e | How do results come back? | Pi's extension can't load, so each pass answers with `--json-schema` structured output: the brief `{brief, boundaries, gaps}`, the overview `{points, modules, why_sources, flow, flow_kind, gaps}`, a role `{findings, gaps}`, the verifier `{verdicts, gaps}`, with the extension tools' item schemas. `ReviewClaude.save` writes them where the tools write (`passes/<pass>.json`, `passes/boundaries.json`, `passes/overview.json`, `passes/gaps-<pass>.jsonl`), so candidates, the verifier, findings, the plan and the map are the same code for both harnesses; the role limit and every check stay `ReviewCandidates`' |
+| R69f | Sessions? | As on Pi: the brief and the roles in one session (`--session-id`, then `--resume`), the overview in a fork (`--fork-session`), the verifier in its own. The sessions stay in `~/.claude/projects` under the run's path; `SessionScanner.isReviewRun` keeps them out of Sessions and Insights |
+| R69g | Prompts? | The same texts; the system text names Read, Grep and Glob and the structured answer, gives the pack and the knowledge base by absolute path (Grep and Read over the base's notes instead of `akit_kb_*`), and `ReviewPrompts.forClaude` replaces each sentence that names an extension tool. A test checks no prompt of a Claude run names a Pi tool |
+| R69h | What isn't there? | Links, context servers, Pi flags and Pi steps (refused for a run, the brain's and the profile's skipped); the impact pass (a gap, as for any local review); Discuss in Pi…, Ask, Why Missed? and Debug…'s analysis, which go on in a Pi session: they say the run ran on Claude Code. Translate goes to Claude Code, where the passes went |
+| R69i | Sending policy? | A new origin `.localReview` (only these passes use it). On a personal Mac it may go to Claude Code. On a work Mac it needs the allowed list; an entry can be scoped to it alone (`localReviewOnly`, `akit lab policy allow claude-code … --local-review-only`, shown "· local reviews only"), so Claude Code gets nothing else from that Mac. The user's choice for this Mac, 2026-11-25 |
+| R69j | Credits? | The result line's tokens (input plus cache writes, cache reads, output) and `total_cost_usd`, as `SendUsage`; the estimate and the monthly limit use the Claude Code harness |
+
+Checks: `ClaudeTests` (a fake `claude` plays every pass: arguments, sessions, prompts, files, gaps, Log…,
+refusals, Discuss, Translate), `ReviewHarnessConfigTests`, `ConfigEditorTests.harnessAndClaudeModels`;
+a live run on a small repository with haiku found the planted bug (2026-11-25).
 
 ## Change map and impact on other repositories (2026-10-24)
 

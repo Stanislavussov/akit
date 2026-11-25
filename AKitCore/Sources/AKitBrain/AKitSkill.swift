@@ -431,6 +431,17 @@ is the Mac's preferred language, else English. GitLab text keeps `posting: langu
 review.yaml) sets how hard the verifier model thinks: off, minimal, low, medium,
 high, xhigh or max; alone it keeps the configured verifier model. The New Review sheet has the
 same menu (Verifier thinking).
+`akit review local [PATH] --harness claude-code` runs the passes on Claude Code instead of Pi (the
+user's Claude subscription): Read, Grep and Glob over the run's copy and context pack only, no MCP
+server, so no `--link`, `--extra-server`, `--pi-flags` or `--step`; a merge request always runs on
+Pi. Its models are review.yaml's `claude: { models: {passes, verifier}, thinking: {…} }` (default
+sonnet and opus, effort high; `models:` and `thinking:` stay Pi's); `--passes-model`,
+`--verifier-model` and `--verifier-thinking` (low…max) choose them for one run. `harness:` in
+review.yaml or a profile's `review:` makes it the default for local reviews. On a work Mac the
+sending policy needs Claude Code on the allowed list; `akit lab policy allow claude-code anthropic
+EMAIL ORG --local-review-only` allows it for these reviews only. Discuss in Pi, Ask, Why Missed?
+and Debug's analysis stay Pi-only. In the app: New Review… → Local Workspace → Harness, and
+Review Settings… → Harness (Save Claude Code Models…).
 `akit review kb-gaps RUN [--json]` lists what a review missed in the knowledge base: searches
 with no answer, gaps a pass reported with `system: knowledge`, and notes it used without a
 `description:`; each line ends with the `akit kb propose …` command that fills it. Use it after a
