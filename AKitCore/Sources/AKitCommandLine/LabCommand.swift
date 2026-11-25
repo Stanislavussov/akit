@@ -77,11 +77,13 @@ extension AKitCLI {
           akit lab policy check HARNESS [--model M]
                                           Who that harness sends to now (account check) and whether
                                           a Claude Code or Pi session may go there
-          akit lab policy allow HARNESS PROVIDER ACCOUNT ORG
+          akit lab policy allow HARNESS PROVIDER ACCOUNT ORG [--local-review-only]
           akit lab policy remove HARNESS PROVIDER ACCOUNT ORG
                                           Add or remove an allowed destination, for data from
                                           another origin (a session goes back to its own harness and
-                                          provider without one). `allow pi PROVIDER LOGIN ORG` also
+                                          provider without one). --local-review-only (claude-code):
+                                          the entry lets through only AKit Review of a local
+                                          workspace on Claude Code (no MCP). `allow pi PROVIDER LOGIN ORG` also
                                           enters the Pi account when none is
           akit lab policy pi-account PROVIDER ACCOUNT ORG
                                           The account behind a Pi provider (Pi has no whoami); needed
@@ -400,7 +402,11 @@ extension AKitCLI {
                 out("\(name): \(decision.allowed ? "allowed" : "refused"). \(decision.reason)")
             }
         case "allow":
-            let entry = try destination()
+            var entry = try destination()
+            if args.flag("--local-review-only") {
+                guard entry.harness == .claudeCode else { throw Failure(message: "--local-review-only is for claude-code: AKit Review of a local workspace.") }
+                entry.localReviewOnly = true
+            }
             try args.finish()
             guard entry.isAccountKnown else { throw Failure(message: "Give the ACCOUNT and the ORG (plan or organization).") }
             var entered = false

@@ -280,6 +280,8 @@ shot review-log          $MAIN --section review --tab log --select 20261015-0915
 shot review-debug        $MAIN --section review --tab debug --select 20261015-091500-orders-service-42
 # New Review… in Local Workspace mode: a query starting with "/" is the workspace path.
 shot review-local        $MAIN --section review --query "$DEMO/work/orders-service" --add
+# The same on Claude Code (R69): no links, context servers or Pi steps; Claude Code's models.
+shot review-local-claude $MAIN --section review --query "$DEMO/work/orders-service" --harness claude-code --add
 # Base → Find…: the branches, the tag and the commits of the made-up clone.
 shot review-local-find   $MAIN --section review --query "$DEMO/work/orders-service" --tab find-base --add
 # Knowledge (guide knowledge.ru.md): the made-up base from tools/demo-home.sh.

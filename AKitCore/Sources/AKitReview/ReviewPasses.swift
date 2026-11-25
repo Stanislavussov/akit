@@ -199,8 +199,42 @@ public enum ReviewPasses {
             throw Failure(message: String(format: "Stopped before %@: %.0f credits used, the run's limit is %.0f.", setup.name, log.credits, limit))
         }
         options.progress("Pass \(setup.name)…")
-        try setup.gate.check(.mergeRequest)
+        try setup.gate.check(spec.onClaude ? .localReview : .mergeRequest)
         try write(setup.prompt, to: folder.appending(path: "prompts/\(setup.name).md"))
+        var record = ReviewPassRecord(name: setup.name, role: setup.role?.id, model: setup.model.model, session: nil, started: .now, ended: nil,
+                                      usage: SendUsage(), credits: 0, paths: [], error: nil)
+        let output = spec.onClaude
+            ? try await claudeOutput(setup, spec: spec, folder: folder, log: log, env: env, options: options, claude: pi)
+            : try await piOutput(setup, spec: spec, folder: folder, env: env, options: options, pi: pi)
+        ReviewMask.saved(in: folder)
+        record.ended = .now
+        record.session = output.session
+        record.usage = output.usage
+        record.credits = ReviewCredits.of(output.usage)
+        record.paths = output.paths.map { relative($0, to: setup.cwd, run: folder) }
+        record.error = output.error
+        options.progress(String(format: "Pass %@ %@: %.1f credits, %.0f s, %@ in / %@ cached / %@ out", setup.name,
+                                output.error == nil ? "done" : "failed", record.credits, record.ended!.timeIntervalSince(record.started),
+                                ReviewRunLog.tokens(output.usage.input), ReviewRunLog.tokens(output.usage.cached), ReviewRunLog.tokens(output.usage.output)))
+        let before = log.credits
+        log.passes.append(record)
+        try ReviewJSON.write(log, to: folder.appending(path: "passes.json"))
+        if let cap, before <= cap, log.credits > cap {
+            options.over(String(format: "%.0f credits spent, over the cap of %.0f. The review goes on.", log.credits, cap))
+        }
+        let system = setup.systemPrompt.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+        var send = SendRecord(purpose: "review-\(setup.name)", session: output.session, runID: spec.id, destination: setup.gate.destination,
+                              model: setup.model.model, inputCharacters: setup.prompt.count, systemCharacters: system.count, usage: output.usage)
+        send.paths = record.paths
+        send.error = output.error
+        _ = SendLog.appendAfterRun(send, env: env, out: options.progress)
+        if let error = output.error { throw Failure(message: "Pass \(setup.name) failed: \(error)") }
+        return output
+    }
+
+    /// One pass on Pi: the extension `akit-review.ts` with the run's tools and policy.
+    static func piOutput(_ setup: PassSetup, spec: ReviewRunSpec, folder: URL, env: HarnessEnvironment, options: Options,
+                         pi: URL) async throws -> PassOutput {
         try write(ReviewExtension.source, to: folder.appending(path: "akit-review.ts"))
         try FileManager.default.createDirectory(at: folder.appending(path: "sessions"), withIntermediateDirectories: true)
         // The send pass gets only the run's own servers: context servers never reach it.
@@ -227,34 +261,34 @@ public enum ReviewPasses {
         // Only a confirmed send publishes, never a variable the user's shell happens to have.
         environment["AKIT_REVIEW_PUBLISH"] = nil
         environment.merge(setup.environment) { $1 }
-        var record = ReviewPassRecord(name: setup.name, role: setup.role?.id, model: setup.model.model, session: nil, started: .now, ended: nil,
-                                      usage: SendUsage(), credits: 0, paths: [], error: nil)
-        let output = await runPi(pi, arguments: arguments(setup, folder: folder, access: access), directory: setup.cwd,
-                                 environment: environment, timeout: options.timeout, stream: folder.appending(path: "passes/\(setup.name).jsonl"),
-                                 progress: { [name = setup.name] line in options.progress("  \(name) · \(line)") }, details: true)
-        ReviewMask.saved(in: folder)
-        record.ended = .now
-        record.session = output.session
-        record.usage = output.usage
-        record.credits = ReviewCredits.of(output.usage)
-        record.paths = output.paths.map { relative($0, to: setup.cwd, run: folder) }
-        record.error = output.error
-        options.progress(String(format: "Pass %@ %@: %.1f credits, %.0f s, %@ in / %@ cached / %@ out", setup.name,
-                                output.error == nil ? "done" : "failed", record.credits, record.ended!.timeIntervalSince(record.started),
-                                ReviewRunLog.tokens(output.usage.input), ReviewRunLog.tokens(output.usage.cached), ReviewRunLog.tokens(output.usage.output)))
-        let before = log.credits
-        log.passes.append(record)
-        try ReviewJSON.write(log, to: folder.appending(path: "passes.json"))
-        if let cap, before <= cap, log.credits > cap {
-            options.over(String(format: "%.0f credits spent, over the cap of %.0f. The review goes on.", log.credits, cap))
+        return await runPi(pi, arguments: arguments(setup, folder: folder, access: access), directory: setup.cwd,
+                           environment: environment, timeout: options.timeout, stream: folder.appending(path: "passes/\(setup.name).jsonl"),
+                           progress: { [name = setup.name] line in options.progress("  \(name) · \(line)") }, details: true)
+    }
+
+    /// One pass on Claude Code (R69): it reads its working folder and the folders Pi's policy
+    /// allows (`roots`) and the knowledge base; its structured answer goes where the extension's
+    /// tools write. The brief's text is the answer, as Pi's last message is.
+    static func claudeOutput(_ setup: PassSetup, spec: ReviewRunSpec, folder: URL, log: ReviewPassLog, env: HarnessEnvironment,
+                             options: Options, claude: URL) async throws -> PassOutput {
+        let kind = ReviewClaude.kind(of: setup.name)
+        var folders = setup.roots.split(separator: ":").map { URL(filePath: String($0), directoryHint: .isDirectory) }
+            .filter { $0.standardizedFileURL != setup.cwd.standardizedFileURL && FileWalk.isDirectory($0) }
+        if let base = spec.knowledgeBasePath, base.hasPrefix("/"), FileWalk.isDirectory(URL(filePath: base)) {
+            folders.append(URL(filePath: base, directoryHint: .isDirectory))
         }
-        let system = setup.systemPrompt.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
-        var send = SendRecord(purpose: "review-\(setup.name)", session: output.session, runID: spec.id, destination: setup.gate.destination,
-                              model: setup.model.model, inputCharacters: setup.prompt.count, systemCharacters: system.count, usage: output.usage)
-        send.paths = record.paths
-        send.error = output.error
-        _ = SendLog.appendAfterRun(send, env: env, out: options.progress)
-        if let error = output.error { throw Failure(message: "Pass \(setup.name) failed: \(error)") }
+        let session = ReviewClaude.sessionArguments(setup.session, known: Set(log.passes.compactMap(\.session)))
+        let arguments = ReviewClaude.arguments(kind: kind, model: setup.model, session: session, system: setup.systemPrompt, folders: folders)
+        let environment = await passEnvironment(env)
+        var (output, answer) = await ReviewClaude.run(claude, arguments: arguments, prompt: folder.appending(path: "prompts/\(setup.name).md"),
+                                                      directory: setup.cwd, environment: environment, timeout: options.timeout,
+                                                      stream: folder.appending(path: "passes/\(setup.name).jsonl")) { [name = setup.name] line in
+            if let event = ReviewClaude.liveEvent(line, details: true) { options.progress("  \(name) · " + ReviewLive.line(event.title, detail: event.detail)) }
+        }
+        if output.error == nil, let answer {
+            let brief = try ReviewClaude.save(answer, kind: kind, pass: setup.name, role: setup.role?.id, folder: folder)
+            if kind == .brief { output.answer = brief }
+        }
         return output
     }
 
@@ -341,7 +375,10 @@ public enum ReviewPasses {
         guard var spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")), spec.headSHA != nil else {
             throw Failure(message: "\(folder.lastPathComponent) has no gathered run.json; gather it first.")
         }
-        guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
+        // R69: the run's harness runs every pass.
+        guard let pi = env.findExecutable(spec.onClaude ? "claude" : "pi") else {
+            throw Failure(message: spec.onClaude ? "Claude Code (claude) is not installed." : "Pi (pi) is not installed.")
+        }
         if let problem = spec.verifierProblem { throw Failure(message: problem) }
         await ReviewCleanup.restoreIfRemoved(folder, env: env, progress: options.progress)
         // A rerun needs the earlier run's findings (R28); without them (moved to the Trash) the
@@ -381,15 +418,16 @@ public enum ReviewPasses {
         var roles = spec.roles
         // Every send checks the policy first: a merge request goes only to a destination on
         // the allowed list (a work Mac's list is the company's).
-        let passesGate = try await gate(model: spec.passes.value.model, env: env)
+        let harness: LabHarness = spec.onClaude ? .claudeCode : .pi
+        let passesGate = try await gate(model: spec.passes.value.model, harness: harness, env: env)
         let verifierGate = spec.verifier.value.model == spec.passes.value.model ? passesGate
-            : try await gate(model: spec.verifier.value.model, env: env)
+            : try await gate(model: spec.verifier.value.model, harness: harness, env: env)
 
         let context = folder.appending(path: "context")
         let worktree = folder.appending(path: "worktree")
         let hasWorktree = FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path)
         let cwd = hasWorktree ? worktree : folder
-        let system = ReviewPrompts.system(spec: spec, hasWorktree: hasWorktree)
+        let system = ReviewPrompts.system(spec: spec, hasWorktree: hasWorktree, folder: folder)
         let systemFile = folder.appending(path: "prompts/system.md")
         try write(system, to: systemFile)
 
@@ -431,7 +469,7 @@ public enum ReviewPasses {
         }
         // The monthly limit (US dollars, Settings → Lab) counts review passes too.
         let records = SendLog.records(env: env)
-        let dollars = SendLog.estimate(characters: contextSize * (roles.count + steps.count + extraPasses + 2), harness: .pi, model: spec.passes.value.model, records: records)
+        let dollars = SendLog.estimate(characters: contextSize * (roles.count + steps.count + extraPasses + 2), harness: harness, model: spec.passes.value.model, records: records)
         try SendLog.checkLimit(estimate: dollars, settings: passesGate.settings, env: env)
 
         var log = ReviewPassLog(mainSession: UUID().uuidString.lowercased(), estimate: estimate)
@@ -441,7 +479,7 @@ public enum ReviewPasses {
         try ReviewRuns.setStatus(.passes, folder: folder)
         // The role's checklist is in its pass prompt: its SKILL.md isn't loaded as a skill too, so no
         // pass carries every role's listing or reads a checklist it already has.
-        let skills = ReviewSkillLinks.flags(folder: folder, spec: spec)
+        let skills = spec.onClaude ? [] : ReviewSkillLinks.flags(folder: folder, spec: spec)
         let linkedTrees = ReviewLinked.worktrees(folder, spec: spec)
         let roots = ([readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)] + linkedTrees.map(\.path)).joined(separator: ":")
         // Where findings' files are read: the worktree, and `@key/…` in the linked worktrees beside it.
@@ -455,6 +493,7 @@ public enum ReviewPasses {
 
         func pass(_ name: String, role: ReviewRunSpec.Role?, prompt: String, model: ReviewModelChoice, gate: SendGate,
                   session: [String], tools: String = Self.tools) async throws -> PassOutput {
+            let prompt = spec.onClaude ? ReviewPrompts.forClaude(prompt) : prompt
             var setup = PassSetup(name: name, mode: "review", role: role, prompt: prompt, model: model, gate: gate, session: session,
                                   skills: skills, tools: tools, mcp: spec.access.inPasses, cwd: cwd, systemPrompt: systemFile, roots: roots)
             setup.flags = spec.extraFlags
@@ -564,7 +603,8 @@ public enum ReviewPasses {
                                               model: spec.verifier.value, gate: verifierGate,
                                               session: ["--session-id", UUID().uuidString.lowercased()])
                 log.verifierSession = verified.session
-                log.verifierSessionFile = verified.session.flatMap { sessionFile(id: $0, in: folder.appending(path: "sessions")) }?.path
+                log.verifierSessionFile = spec.onClaude ? nil
+                    : verified.session.flatMap { sessionFile(id: $0, in: folder.appending(path: "sessions")) }?.path
                 try ReviewJSON.write(log, to: logFile)
                 candidates = ReviewCandidates.apply(verdictsFile: folder.appending(path: "passes/verifier.json"), to: candidates, worktree: readable)
             }
@@ -707,10 +747,11 @@ public enum ReviewPasses {
     }
 
     /// The checked destination of a pass model: Pi with the model's provider, the account the
-    /// user entered for it. Throws the policy's reason when a merge request may not go there.
-    static func gate(model: String, env: HarnessEnvironment) async throws -> SendGate {
-        let gate = try await SendGate.open(agent: LabAgent(harness: .pi, model: model, effort: ""), env: env)
-        try gate.check(.mergeRequest)
+    /// user entered for it, or Claude Code's account (R69). Throws the policy's reason when a
+    /// merge request may not go there.
+    static func gate(model: String, harness: LabHarness = .pi, env: HarnessEnvironment) async throws -> SendGate {
+        let gate = try await SendGate.open(agent: LabAgent(harness: harness, model: model, effort: ""), env: env)
+        try gate.check(harness == .claudeCode ? .localReview : .mergeRequest)
         return gate
     }
 

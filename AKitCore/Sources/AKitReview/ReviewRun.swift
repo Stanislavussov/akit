@@ -58,6 +58,13 @@ public enum ReviewRuns {
         let profile = catalog.profile(for: mr, named: project)
         if let project, profile == nil { throw Failure(message: "There is no project profile \(project).") }
         let id = newID(for: mr)
+        // A merge request is read through Pi's MCP servers (R69): it runs on Pi whatever harness
+        // the brain or the project prefers.
+        if choices.settings.harness == .claudeCode {
+            throw Failure(message: "Claude Code reviews only a local workspace (akit review local): a merge request is read through Pi's MCP servers.")
+        }
+        var choices = choices
+        choices.settings.harness = .pi
         var (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: mr, id: id,
                                                        pi: ReviewPiLibrary.load(env: env))
         if let commit = choices.fromCommit, !ReviewLinked.isCommit(commit) {

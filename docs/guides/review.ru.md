@@ -130,7 +130,7 @@
 - «Ревью остановилось с Not allowed» → [разрешите адресата](#setup-policy).
 - «Агент видит только diff, а не весь файл» → AKit не смог склонировать проект (или в профиле `clone: false`): [репозиторий и установка](#setup-repository).
 
-![Окно Review Settings…: блок Pi's MCP servers со списком Rules of (Default) и кнопкой Check Servers, строка Pick a project profile in Rules of to add context servers to it (mcp: extra_servers)., подпись: Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens, а ревью пишет только одобренные черновики слово в слово, никогда не публикует, а Context server (Figma, Confluence, вики) добавляется сверху и только читает; блок Overview and other repositories со списками Other repositories и Summary language и подписью о review.yaml в brain; блок Project profiles со строкой orders-service, адресом https://gitlab.example.com/shop/orders-service · MCP: gitlab, azure-devops и кнопкой Edit…, кнопками New Profile… и Show Folder и подписью о папке ~/.akit/local/review/projects; кнопка Done](images/review-settings.png)
+![Окно Review Settings…: блок Pi's MCP servers со списком Rules of (Default) и кнопкой Check Servers, строка Pick a project profile in Rules of to add context servers to it (mcp: extra_servers)., подпись: Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens, а ревью пишет только одобренные черновики слово в слово, никогда не публикует, а Context server (Figma, Confluence, вики) добавляется сверху и только читает; блок Overview and other repositories со списками Other repositories и Summary language и подписью о review.yaml в brain; блок Harness со списком Harness (Built-in (Pi)) и моделями Claude Code: Claude Code: brief and roles (Built-in (sonnet)), Effort (Built-in (high)), Claude Code: verifier (Built-in (opus)); ниже блок Project profiles со строкой orders-service, адресом https://gitlab.example.com/shop/orders-service · MCP: gitlab, azure-devops и кнопкой Edit…, кнопками New Profile… и Show Folder и подписью о папке ~/.akit/local/review/projects; кнопка Done](images/review-settings.png)
 
 ### Просто: MCP-серверы GitLab и трекера в Pi
 <!-- section: setup-mcp -->
@@ -850,7 +850,7 @@ pi:
 8. Выберите **Scenario** и роли, как для MR. Поля **Work items** здесь нет.
 9. Нажмите **Start Review**.
 
-![Окно New Review… в режиме Local Workspace: переключатель Review со значениями Merge Request и Local Workspace; поле Workspace с путём /private/tmp/akit-demo-home/work/orders-service и кнопка Choose…; пустое поле Base с подсказкой empty: the default branch (origin/HEAD, main or master) и кнопкой Find…; пустое поле Head с подсказкой empty: HEAD of the workspace, with its uncommitted changes и кнопкой Find…; строка feature/4630-export-csv at <коммит> · base main; строка 2 commits since main (<коммит>..<коммит>) and 2 uncommitted files.; список What to review со значением Commits and uncommitted changes; свёрнутые Commits (2) и Uncommitted files (2); строка Project profile: orders-service (orders-service.yaml); подпись In a terminal of the workspace: akit review local . (--what commits | uncommitted, --base REF, --head REF); akit review points . --find TEXT finds a ref.; ниже блок Context; внизу подпись Pi reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit. и кнопки Cancel и Start Review](images/review-local.png)
+![Окно New Review… в режиме Local Workspace: переключатель Review со значениями Merge Request и Local Workspace; поле Workspace с путём /private/tmp/akit-demo-home/work/orders-service и кнопка Choose…; пустое поле Base с подсказкой empty: the default branch (origin/HEAD, main or master) и кнопкой Find…; пустое поле Head с подсказкой empty: HEAD of the workspace, with its uncommitted changes и кнопкой Find…; строка feature/4630-export-csv at <коммит> · base main; строка 2 commits since main (<коммит>..<коммит>) and 2 uncommitted files.; список What to review со значением Commits and uncommitted changes; свёрнутые Commits (2) и Uncommitted files (2); строка Project profile: orders-service (orders-service.yaml); подпись In a terminal of the workspace: akit review local . (--what commits | uncommitted, --base REF, --head REF); akit review points . --find TEXT finds a ref.; список Harness со значением From the configuration (Pi); ниже блок Context; внизу подпись Pi reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit. и кнопки Cancel и Start Review](images/review-local.png)
 
 Что значат строки под полями:
 
@@ -1015,6 +1015,49 @@ To review: commits and uncommitted changes.
 - **Ничего не уходит в GitLab.** Нет прохода `fetch`, нет **Send Drafts…**. Находки и решения остаются в папке ревью на этом Mac.
 
 > **Почему так:** вы смотрите свою работу до MR. Ошибку проще исправить до push, чем после чужого комментария. Копия для Pi защищает вашу папку: агент не видит файлов, которые вы меняете прямо сейчас, и ничего не может в ней изменить.
+
+### Средне: ревью на Claude Code
+<!-- section: local-claude -->
+
+**Что это:** проходы ревью копии (brief, роли, verifier) может вести Claude Code вместо Pi. Например, по вашей подписке Claude. Claude Code читает копию на коммите ревью и пакет контекста только инструментами **Read**, **Grep** и **Glob**. У него нет MCP-серверов, сети и shell. Остальное как у Pi: те же роли, те же проверки AKit, те же запросы на экране **Review**.
+
+**Как включить для одного ревью:**
+
+1. В **New Review…** выберите **Local Workspace**.
+2. В списке **Harness** выберите **Claude Code**. **From the configuration (…)** берёт значение из настроек (см. ниже).
+3. В блоке **This run only** выберите модели Claude Code: **Model for the brief and roles** и **Verifier model** (opus, sonnet, haiku или **Other…**). **Verifier thinking** — это `--effort` Claude Code: low, medium, high, xhigh или max.
+4. Нажмите **Start Review**.
+
+![Окно New Review… в режиме Local Workspace с выбранным Harness = Claude Code: поле Workspace с путём /private/tmp/akit-demo-home/work/orders-service, пустые Base и Head с кнопками Find…, строка feature/4630-export-csv at <коммит> · base main, What to review = Commits and uncommitted changes, строка Project profile: orders-service (orders-service.yaml), список Harness со значением Claude Code, ниже блок Context; внизу подпись Claude Code reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit. и кнопки Cancel и Start Review](images/review-local-claude.png)
+
+**Как сделать по умолчанию:** **Review Settings…** → блок **Harness**.
+
+- **Harness** при **Rules of** = **Default** — для всех ревью копий (`harness:` в `review.yaml` brain). При выбранном профиле — только для этого проекта (`harness:` в его блоке `review:`).
+- **Claude Code: brief and roles**, **Claude Code: verifier** и **Effort** под ними — модели Claude Code. Сохраняет их **Save Claude Code Models…**: AKit покажет diff `review.yaml` (блок `claude:`). Модели Pi остаются в `models:` и `thinking:`: у каждого harness свои.
+- Без своих значений действуют встроенные: sonnet с high для проходов, opus с high для verifier.
+
+**Чего нет на Claude Code:**
+
+- Поля **Links**, дополнительных серверов и шагов Pi: всё это работает через MCP-серверы Pi. Окно прячет эти блоки, а команда отвечает отказом на `--link`, `--extra-server`, `--pi-flags` и `--step`.
+- Ревью MR: MR читается через MCP-серверы Pi. MR всегда идёт на Pi, даже если в настройках стоит `harness: claude-code`.
+- **Discuss in Pi…**, вопросы к находке, **Why Missed?** и разбор Pi в **Debug…**: они продолжают сессию Pi. На ревью с Claude Code AKit скажет «… works with a review on Pi, and this one ran on Claude Code».
+- База знаний: вместо `akit_kb_search` Claude Code ищет по папке базы через **Grep** и **Read**. Карточка базы такая же.
+
+**Политика отправки.** Ревью на Claude Code отправляет код копии и пакет контекста в Anthropic. На личном Mac это разрешено. На рабочем Mac нужна запись в списке разрешённых, и её можно ограничить только ревью копий:
+
+```
+akit lab policy allow claude-code anthropic EMAIL ORG --local-review-only
+```
+
+Такая запись пускает в Claude Code только ревью локальной копии. Для остального (Lab, переводы, ревью MR) Claude Code не становится разрешённым. В **Settings** → **Sending policy** запись видна с пометкой «· local reviews only».
+
+**Из терминала:** `akit review local . --harness claude-code` (модели: `--passes-model`, `--verifier-model`, `--verifier-thinking`).
+
+**Тонкости:**
+
+- Сессии Claude Code ревью лежат в `~/.claude/projects` под путём папки ревью. В **Sessions** и **Insights** их нет: это работа AKit, не ваша.
+- **Log…** показывает шаги прохода Claude Code так же, как у Pi: какие файлы он прочитал и что сдал.
+- Кредиты и стоимость берутся из ответа Claude Code (токены и `total_cost_usd`).
 
 ## Экран Review: запросы, решения, Send Drafts…
 <!-- section: screen -->

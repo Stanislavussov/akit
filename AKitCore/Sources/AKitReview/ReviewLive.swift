@@ -50,7 +50,9 @@ public enum ReviewLive {
         return data.split(separator: 0x0A).compactMap { line in
             // Partial answers: frequent and large. Never decode them.
             if line.starts(with: update) { return nil }
-            return ReviewPasses.liveEvent(String(decoding: line, as: UTF8.self))
+            let text = String(decoding: line, as: UTF8.self)
+            // A pass on Claude Code (R69) saved Claude's events.
+            return ReviewPasses.liveEvent(text) ?? ReviewClaude.liveEvent(text, details: true)
         }
     }
 }

@@ -16,13 +16,20 @@ public struct SendDestination: Codable, Hashable, Sendable {
     public var account: String
     /// The plan or organization: Claude's organization, the GitHub org that grants Copilot.
     public var org: String
+    /// An allowed-list entry that lets through only AKit Review of a local workspace on Claude
+    /// Code (`.localReview`, R69): Read, Grep and Glob over the local changes, no MCP. nil = all.
+    public var localReviewOnly: Bool?
 
-    public init(harness: LabHarness, provider: String, account: String, org: String) {
+    public init(harness: LabHarness, provider: String, account: String, org: String, localReviewOnly: Bool? = nil) {
         self.harness = harness
         self.provider = provider
         self.account = account
         self.org = org
+        self.localReviewOnly = localReviewOnly
     }
+
+    /// Whether this allowed-list entry covers data of `origin`.
+    public func covers(_ origin: SendOrigin) -> Bool { localReviewOnly != true || origin == .localReview }
 
     /// Whether the account and plan/org are known: Pi can't tell them, so a Pi provider with no
     /// account entered goes out as the provider alone.
@@ -32,7 +39,8 @@ public struct SendDestination: Codable, Hashable, Sendable {
 
     /// "Pi · github-copilot · me@example.com · acme", or "Pi · github-copilot · account not entered".
     public var label: String {
-        isAccountKnown ? "\(harness.title) · \(provider) · \(account) · \(org)" : "\(harness.title) · \(provider) · account not entered"
+        (isAccountKnown ? "\(harness.title) · \(provider) · \(account) · \(org)" : "\(harness.title) · \(provider) · account not entered")
+            + (localReviewOnly == true ? " · local reviews only" : "")
     }
 
     /// The same destination, ignoring case and surrounding spaces. One whose account isn't
@@ -75,6 +83,9 @@ public enum SendOrigin: Hashable, Sendable {
     /// AKit only runs Pi on it, as the user would: Pi reads it through its own MCP servers and
     /// sends it to the model it is set up with, so any Pi destination may get it.
     case mergeRequest
+    /// The changes of a local workspace with the context pack AKit made of them, reviewed on
+    /// Claude Code (AKit Review, R69): the user picked Claude Code for it on this Mac.
+    case localReview
     /// A proposal for a knowledge base and the notes and map arrows it is checked against
     /// (`akit kb check`, K15). The base describes systems the user gives Pi in daily work, and
     /// the check runs only through Pi, so any Pi destination may get it.
@@ -111,11 +122,15 @@ public enum SendPolicy {
     /// harness, not to every provider it can reach.
     public static func decide(origin: SendOrigin, destination: SendDestination, isWork: Bool, allowed: [SendDestination]) -> Decision {
         // Only entries with an account: an old entry with blank fields mustn't let anything through.
-        if allowed.contains(where: { $0.isAccountKnown && $0.matches(destination) }) {
+        if allowed.contains(where: { $0.isAccountKnown && $0.matches(destination) && $0.covers(origin) }) {
             return Decision(allowed: true, reason: "\(destination.label) is on the allowed list.")
         }
         if origin == .mergeRequest, destination.harness == .pi {
             return Decision(allowed: true, reason: "AKit Review runs Pi, and Pi sends the merge request to the model it is set up with.")
+        }
+        // A work Mac's code still goes only to its allowed list.
+        if origin == .localReview, destination.harness == .claudeCode, !isWork {
+            return Decision(allowed: true, reason: "AKit Review runs on Claude Code for a local workspace on this personal Mac.")
         }
         if origin == .knowledgeBase, destination.harness == .pi {
             return Decision(allowed: true, reason: "Knowledge base data goes to Pi (the knowledge check, Ask Pi), and Pi sends it to the model it is set up with.")
@@ -146,7 +161,7 @@ public enum SendPolicy {
                 && providers.first?.caseInsensitiveCompare(destination.provider) == .orderedSame
         case .code(let harness):
             return destination.harness == harness
-        case .mergeRequest, .knowledgeBase:
+        case .mergeRequest, .localReview, .knowledgeBase:
             return false
         }
     }
@@ -167,6 +182,7 @@ extension SendOrigin {
                 : "a Pi session through \(providers.sorted().joined(separator: ", "))"
         case .code(let harness): "repository code worked on with \(harness.title)"
         case .mergeRequest: "a merge request with its threads and work items"
+        case .localReview: "a local workspace's changes with their context pack"
         case .knowledgeBase: "a knowledge base proposal with the notes it is checked against"
         }
     }

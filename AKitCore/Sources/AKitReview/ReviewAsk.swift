@@ -111,6 +111,7 @@ public enum ReviewAsk {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { throw Failure(message: "Write the question or the note first.") }
         let run = try ReviewWorkflow.load(folder)
+        try ReviewDiscuss.refuseClaude(run.spec, "Asking about a finding")
         let finding = try id.map { id in
             guard let found = run.findings?.findings.first(where: { $0.id == id }) else {
                 throw Failure(message: "\(run.id) has no finding \(id) (akit review show \(run.id) lists them).")

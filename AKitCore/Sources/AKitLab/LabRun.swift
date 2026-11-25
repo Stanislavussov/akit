@@ -379,7 +379,12 @@ public struct LabSettings: Codable, Sendable, Hashable {
         var destination = given
         destination.provider = destination.provider.trimmingCharacters(in: .whitespaces)
         guard destination.isAccountKnown else { return false }
-        if !allowedDestinations.contains(where: { $0.matches(destination) }) { allowedDestinations.append(destination) }
+        if let index = allowedDestinations.firstIndex(where: { $0.matches(destination) }) {
+            // An entry for everything widens one for local reviews only, never the other way round.
+            if destination.localReviewOnly != true { allowedDestinations[index].localReviewOnly = nil }
+        } else {
+            allowedDestinations.append(destination)
+        }
         guard destination.harness == .pi,
               SendAccounts.piEntry(provider: destination.provider, settings: self) == nil else { return false }
         piAccounts.removeAll { $0.provider.caseInsensitiveCompare(destination.provider) == .orderedSame }

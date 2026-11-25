@@ -11,6 +11,14 @@ public enum ReviewBuiltIns {
     thinking:
       passes: high      # the brief and the roles trace each finding to its cause: they need to think
       verifier: high
+    harness: pi         # who runs the passes: pi, or claude-code (a local workspace only, no MCP)
+    claude:             # the models of a review on Claude Code; models and thinking above are Pi's
+      models:
+        passes: sonnet
+        verifier: opus
+      thinking:         # Claude Code's effort: low, medium, high, xhigh or max
+        passes: high
+        verifier: high
     posting:
       marker: "🤖"
       language: cs      # the comments' language; Send lets only Czech (cs) go to GitLab
