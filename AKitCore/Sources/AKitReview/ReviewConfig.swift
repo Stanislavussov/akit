@@ -162,6 +162,8 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
     /// `verifier` above are Pi's.
     public var claudePasses: ReviewModelChoice?
     public var claudeVerifier: ReviewModelChoice?
+    /// Whether a review on Claude Code may read public code on GitHub (`claude: github`, R69k).
+    public var claudeGitHub: Bool?
 
     public init(passes: ReviewModelChoice? = nil, verifier: ReviewModelChoice? = nil, marker: String? = nil,
                 severityThreshold: ReviewSeverity? = nil, confidenceThreshold: Double? = nil, maxInline: Int? = nil,
@@ -243,7 +245,7 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
             patch.harness = harness
         }
         if let value = map["claude"] {
-            guard let claude = value as? [String: Any] else { throw ReviewRole.Failure(message: "\(where_): claude must be a map (models, thinking).") }
+            guard let claude = value as? [String: Any] else { throw ReviewRole.Failure(message: "\(where_): claude must be a map (models, thinking, github).") }
             let models = claude["models"] as? [String: Any] ?? [:]
             let thinking = claude["thinking"] as? [String: Any] ?? [:]
             func choice(_ key: String) throws -> ReviewModelChoice? {
@@ -258,6 +260,10 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
             }
             patch.claudePasses = try choice("passes")
             patch.claudeVerifier = try choice("verifier")
+            if let value = claude["github"] {
+                guard let github = value as? Bool else { throw ReviewRole.Failure(message: "\(where_): claude github \(value) is not true or false.") }
+                patch.claudeGitHub = github
+            }
         }
         return patch
     }

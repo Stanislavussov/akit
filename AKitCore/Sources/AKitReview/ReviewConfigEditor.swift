@@ -366,24 +366,26 @@ public enum ReviewConfigEditor {
         try reviewSetting("harness", harness?.rawValue, profile: slug, home: home, brain: brain) { $0.harness = harness }
     }
 
-    /// Review Settings… → Claude Code's models (R69): the brain's `claude:` block, written as one
-    /// line; an empty model or level is left out, so the built-in one decides.
-    public static func claudeModels(passes: ReviewModelChoice, verifier: ReviewModelChoice, home: URL, brain: URL) throws -> Save {
+    /// Review Settings… → Claude Code's settings (R69): the brain's `claude:` block, written as one
+    /// line; an empty model or level is left out, so the built-in one decides, and `github` is
+    /// written only when on (R69k).
+    public static func claudeSettings(passes: ReviewModelChoice, verifier: ReviewModelChoice, github: Bool, home: URL, brain: URL) throws -> Save {
         func pair(_ passes: String, _ verifier: String) -> String? {
             let parts = [("passes", passes), ("verifier", verifier)].filter { !$0.1.isEmpty }.map { "\($0.0): \"\($0.1.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\"" }
             return parts.isEmpty ? nil : "{ " + parts.joined(separator: ", ") + " }"
         }
         let parts = [("models", pair(passes.model, verifier.model)), ("thinking", pair(passes.thinking, verifier.thinking))]
-            .compactMap { key, value in value.map { "\(key): \($0)" } }
+            .compactMap { key, value in value.map { "\(key): \($0)" } } + (github ? ["github: true"] : [])
         let url = file(.defaults, id: "", level: .brain, home: home, brain: brain)
         let old = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         let text = settingTopLevelBlock("claude", parts.isEmpty ? nil : "{ " + parts.joined(separator: ", ") + " }", in: old)
-        let refused = Failure(message: "AKit couldn't change claude: by itself. Edit review.yaml and set claude: models and thinking.")
+        let refused = Failure(message: "AKit couldn't change claude: by itself. Edit review.yaml and set claude: models, thinking and github.")
         guard var expected = try? ReviewSettingsPatch.parse(ReviewYAML.map(old), where: "review.yaml"),
               let after = try? ReviewSettingsPatch.parse(ReviewYAML.map(text), where: "review.yaml") else { throw refused }
         func choice(_ value: ReviewModelChoice) -> ReviewModelChoice? { value.model.isEmpty && value.thinking.isEmpty ? nil : value }
         expected.claudePasses = choice(passes)
         expected.claudeVerifier = choice(verifier)
+        expected.claudeGitHub = github ? true : nil
         guard after == expected else { throw refused }
         return try plan(.defaults, id: "", text: text, level: .brain, home: home, brain: brain)
     }

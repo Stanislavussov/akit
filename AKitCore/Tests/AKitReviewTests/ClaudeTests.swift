@@ -63,6 +63,7 @@ extension ReviewProcessTests {
             #expect(spec.passes.value == ReviewModelChoice(model: "sonnet", thinking: "high"), "the built-in claude: models, not Pi's")
             #expect(spec.verifier.value == ReviewModelChoice(model: "opus", thinking: "high"))
             #expect(spec.access.inPasses == false && spec.mcpServers == [] && spec.steps == nil)
+            #expect(spec.github == Sourced(false, .builtIn) && !spec.readsGitHub, "no network unless claude: github says so")
             let folder = ReviewPaths(home: home.url).run(spec.id)
 
             home.write("fake/claude-role-bug-hunter.json", #"""
@@ -88,6 +89,7 @@ extension ReviewProcessTests {
             #expect(value(brief, "--tools") == "Read,Grep,Glob" && value(brief, "--permission-prompts") == "none")
             #expect(value(brief, "--model") == "sonnet" && value(brief, "--effort") == "high" && value(brief, "--session-id") == log.mainSession)
             #expect(value(brief, "--settings")?.contains("Read(**/.env*)") == true)
+            #expect(value(brief, "--settings")?.contains("WebFetch") == false)
             #expect(brief.contains(folder.appending(path: "context").path), "the context pack is an added folder")
             #expect(value(args(home, "overview"), "--resume") == log.mainSession && args(home, "overview").contains("--fork-session"))
             #expect(value(args(home, "role-bug-hunter"), "--resume") == log.mainSession, "the roles go on in the brief's session")
@@ -114,6 +116,33 @@ extension ReviewProcessTests {
             #expect(try ReviewWorkflow.load(folder).translationSource.ownAgent?.harness == .claudeCode, "a translation goes where the passes went")
         }
 
+        /// R69k: with `claude: github` the passes have WebFetch, allowed only for GitHub's hosts.
+        @Test func readsGitHubWhenAllowed() async throws {
+            let (home, repo) = try LocalTests().workspace()
+            home.write("bin/claude", Self.fakeClaude, executable: true)
+            home.write("brain/layers/review/review.yaml", "claude: { github: true }\n")
+            let inspection = try await ReviewLocal.inspect(path: repo, env: home.env)
+            let target = try await ReviewLocal.target(inspection, mode: .all, env: home.env)
+            let brain = home.url.appending(path: "brain")
+            let spec = try await ReviewRuns.startLocal(target, project: nil, choices: Self.choices, env: home.env, brain: brain).spec
+            #expect(spec.github == Sourced(true, .brain) && spec.readsGitHub)
+            let folder = ReviewPaths(home: home.url).run(spec.id)
+            _ = try await ReviewPasses.run(folder: folder, env: home.env)
+            let brief = args(home, "brief")
+            func value(_ flag: String) -> String? { brief.firstIndex(of: flag).map { brief[$0 + 1] } }
+            #expect(value("--tools") == "Read,Grep,Glob,WebFetch")
+            let settings = try #require(value("--settings"))
+            #expect(settings.contains("\"allow\":[\"WebFetch(domain:github.com)\",\"WebFetch(domain:api.github.com)\",\"WebFetch(domain:raw.githubusercontent.com)\"]"))
+            #expect(settings.contains("Read(**/.env*)"), "the deny rules stay")
+            let system = try String(contentsOf: folder.appending(path: "prompts/system.md"), encoding: .utf8)
+            #expect(system.contains("WebFetch") && system.contains("Never put code") && !system.contains("You have no network"))
+
+            var off = Self.choices
+            off.settings.claudeGitHub = false
+            let quiet = try await ReviewRuns.startLocal(target, project: nil, choices: off, env: home.env, brain: brain).spec
+            #expect(quiet.github == Sourced(false, .run) && !quiet.readsGitHub, "--no-github wins over the brain")
+        }
+
         @Test func refusesWhatNeedsMCPOrPi() async throws {
             let (home, repo) = try LocalTests().workspace()
             let inspection = try await ReviewLocal.inspect(path: repo, env: home.env)
@@ -132,6 +161,11 @@ extension ReviewProcessTests {
             await #expect(throws: ReviewResolver.Failure.self) { try await ReviewRuns.startLocal(target, project: nil, choices: piThinking, env: home.env, brain: nil) }
             await #expect(throws: ReviewRuns.Failure.self) {
                 try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: Self.choices, env: home.env, brain: nil)
+            }
+            var gitHubOnPi = ReviewRunChoices()
+            gitHubOnPi.settings.claudeGitHub = true
+            await #expect(throws: ReviewResolver.Failure.self, "--github is for Claude Code") {
+                try await ReviewRuns.startLocal(target, project: nil, choices: gitHubOnPi, env: home.env, brain: nil)
             }
         }
     }
@@ -164,8 +198,10 @@ struct ReviewHarnessConfigTests {
         #expect(patch.claudePasses == ReviewModelChoice(model: "haiku") && patch.claudeVerifier == ReviewModelChoice(model: "opus", thinking: "max"))
         #expect(throws: ReviewRole.Failure.self) { try ReviewSettingsPatch.parse(ReviewYAML.map("harness: codex"), where: "x") }
         #expect(throws: ReviewRole.Failure.self) { try ReviewSettingsPatch.parse(ReviewYAML.map("claude: { thinking: { passes: minimal } }"), where: "x") }
+        #expect(try ReviewSettingsPatch.parse(ReviewYAML.map("claude: { github: true }"), where: "x").claudeGitHub == true)
+        #expect(throws: ReviewRole.Failure.self) { try ReviewSettingsPatch.parse(ReviewYAML.map("claude: { github: always }"), where: "x") }
         let builtIn = try ReviewSettingsPatch.parse(ReviewYAML.map(ReviewBuiltIns.defaultsYAML), where: "built-in")
-        #expect(builtIn.harness == .pi && builtIn.claudeVerifier?.model == "opus")
+        #expect(builtIn.harness == .pi && builtIn.claudeVerifier?.model == "opus" && builtIn.claudeGitHub == false)
     }
 
     @Test func aPersonalMacSendsALocalReviewToClaudeCode() {

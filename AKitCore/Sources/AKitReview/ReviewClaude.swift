@@ -11,8 +11,13 @@ import Foundation
 /// `passes/gaps-<pass>.jsonl`): everything after the passes is the same for both harnesses.
 /// The path policy is Claude Code's own: it reads only the working folder and the `--add-dir`
 /// folders, and the deny rules below keep the files `ReviewExtension.isBlocked` keeps from Pi.
+/// With `claude: github` (R69k) a pass also has WebFetch, allowed only for GitHub's hosts: any
+/// other address is denied, as nothing may ask.
 enum ReviewClaude {
-    static let tools = "Read,Grep,Glob"
+    static func tools(github: Bool) -> String { github ? "Read,Grep,Glob,WebFetch" : "Read,Grep,Glob" }
+
+    /// The hosts WebFetch may read with `claude: github`; a redirect elsewhere is another fetch, denied.
+    static let gitHubHosts = ["github.com", "api.github.com", "raw.githubusercontent.com"]
 
     /// What a pass hands back.
     enum Kind: Equatable {
@@ -34,8 +39,10 @@ enum ReviewClaude {
                               "**/*.keystore", "**/auth.json", "**/settings.local.json", "**/.npmrc", "**/.netrc", "**/.pypirc",
                               "**/.git-credentials"]
 
-    static var settings: String {
-        json(["permissions": ["deny": deniedReads.map { "Read(\($0))" }]])
+    static func settings(github: Bool) -> String {
+        var permissions = ["deny": deniedReads.map { "Read(\($0))" }]
+        if github { permissions["allow"] = gitHubHosts.map { "WebFetch(domain:\($0))" } }
+        return json(["permissions": permissions])
     }
 
     /// Pi's session arguments as Claude Code's: a session id seen before is resumed, a fork
@@ -50,12 +57,12 @@ enum ReviewClaude {
     }
 
     /// The arguments of one pass; the prompt goes on stdin.
-    static func arguments(kind: Kind, model: ReviewModelChoice, session: [String], system: URL?, folders: [URL]) -> [String] {
+    static func arguments(kind: Kind, model: ReviewModelChoice, session: [String], system: URL?, folders: [URL], github: Bool = false) -> [String] {
         var arguments = ["-p", "--output-format", "stream-json", "--verbose"] + session
         if !model.model.isEmpty { arguments += ["--model", model.model] }
         if !model.thinking.isEmpty { arguments += ["--effort", model.thinking] }
-        arguments += ["--tools", tools, "--safe-mode", "--strict-mcp-config", "--permission-prompts", "none",
-                      "--settings", settings, "--json-schema", schema(kind)]
+        arguments += ["--tools", tools(github: github), "--safe-mode", "--strict-mcp-config", "--permission-prompts", "none",
+                      "--settings", settings(github: github), "--json-schema", schema(kind)]
         for folder in folders { arguments += ["--add-dir", folder.path] }
         if let system { arguments += ["--append-system-prompt-file", system.path] }
         return arguments
@@ -306,6 +313,7 @@ enum ReviewClaude {
         case "Read": return ("read", ["path": call.input["file_path"] ?? ""])
         case "Grep": return ("grep", ["path": call.input["path"] ?? ".", "pattern": call.input["pattern"] ?? ""])
         case "Glob": return ("find", ["path": call.input["path"] ?? ".", "pattern": call.input["pattern"] ?? ""])
+        case "WebFetch": return ("fetch", ["url": call.input["url"] ?? ""])
         case "StructuredOutput":
             if call.input["boundaries"] != nil { return ("akit_submit_boundaries", call.input) }
             if call.input["points"] != nil { return ("akit_submit_overview", call.input) }

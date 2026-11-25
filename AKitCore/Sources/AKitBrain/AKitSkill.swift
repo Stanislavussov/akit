@@ -441,7 +441,10 @@ review.yaml or a profile's `review:` makes it the default for local reviews. On 
 sending policy needs Claude Code on the allowed list; `akit lab policy allow claude-code anthropic
 EMAIL ORG --local-review-only` allows it for these reviews only. Discuss in Pi, Ask, Why Missed?
 and Debug's analysis stay Pi-only. In the app: New Review… → Local Workspace → Harness, and
-Review Settings… → Harness (Save Claude Code Models…).
+Review Settings… → Harness (Save Claude Code Settings…). `--github` (or `claude: { github: true }`)
+lets these passes read public code on GitHub with WebFetch, allowed for github.com,
+api.github.com and raw.githubusercontent.com only (any other host is denied); `--no-github` turns
+it off for one run. Use it when the notes ask to compare the change with a known library.
 `akit review kb-gaps RUN [--json]` lists what a review missed in the knowledge base: searches
 with no answer, gaps a pass reported with `system: knowledge`, and notes it used without a
 `description:`; each line ends with the `akit kb propose …` command that fills it. Use it after a

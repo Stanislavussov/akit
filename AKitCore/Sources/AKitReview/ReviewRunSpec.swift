@@ -238,6 +238,10 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     /// The run's harness: Pi when the run predates the choice.
     public var harnessValue: ReviewHarness { harness?.value ?? .pi }
     public var onClaude: Bool { harnessValue == .claudeCode }
+    /// Whether a review on Claude Code may read public code on GitHub (R69k); nil on Pi and in
+    /// runs made before 2026-11-25.
+    public var github: Sourced<Bool>?
+    public var readsGitHub: Bool { onClaude && github?.value == true }
 
     /// The overview's language: the run's, or for an older run the Mac's preferred one, else English.
     public func overviewLanguage(preferred: [String] = Locale.preferredLanguages) -> LabLanguage {
@@ -374,6 +378,9 @@ public enum ReviewResolver {
         }
         let verifier = model(\.verifier, claude: \.claudeVerifier)
         let passes = model(\.passes, claude: \.claudePasses)
+        if !onClaude, run.claudeGitHub == true {
+            throw Failure(message: "Reading GitHub (--github) is for a review on Claude Code: Pi reads the web through its MCP servers.")
+        }
         if onClaude {
             // Claude Code reads only the workspace and the context pack: nothing reaches an MCP server.
             if !choices.links.isEmpty { throw Failure(message: "A review on Claude Code has no MCP server to read links (--link): run it on Pi.") }
@@ -476,6 +483,7 @@ public enum ReviewResolver {
         if onClaude {
             spec.mcp?.inPasses = false
             spec.mcpServers = []
+            spec.github = pick(\.claudeGitHub, fallback: false)
         }
         return (spec, roles)
     }

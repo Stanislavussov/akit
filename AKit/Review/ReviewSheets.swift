@@ -56,6 +56,8 @@ struct NewReviewSheet: View {
     /// Who runs a local review's passes (R69); nil: from the configuration. A merge request runs on Pi.
     /// Snapshots: `--harness claude-code`.
     @State private var harness: ReviewHarness? = DebugSnapshot.options?.harness.flatMap(ReviewHarness.init(rawValue:))
+    /// Whether a review on Claude Code reads public code on GitHub (R69k); nil: from the configuration.
+    @State private var github: Bool?
 
     /// `again`: Review Again… on a run fills in its change, scenario, context and models, and
     /// reads the whole change again (a rerun on the same commit would only carry the findings).
@@ -84,6 +86,7 @@ struct NewReviewSheet: View {
             _verifierThinking = State(initialValue: again.verifier.value.thinking)
         }
         if again.harness?.source == .run { _harness = State(initialValue: again.harness?.value) }
+        if again.github?.source == .run { _github = State(initialValue: again.github?.value) }
         if again.impact?.source == .run { _impact = State(initialValue: again.impact?.value) }
         if again.summaryLanguage?.source == .run { _summaryLanguage = State(initialValue: again.summaryLanguage?.value) }
         _fullReview = State(initialValue: true)
@@ -111,6 +114,10 @@ struct NewReviewSheet: View {
     /// Who runs this run's passes: a merge request always Pi.
     private var runHarness: ReviewHarness { source == .local ? harness ?? configuredHarness : .pi }
     private var onClaude: Bool { runHarness == .claudeCode }
+    /// `claude: github` from the configuration: the profile, the brain, the built-in default.
+    private var configuredGitHub: Bool {
+        profile?.settings.claudeGitHub ?? catalog?.brainDefaults.claudeGitHub ?? catalog?.builtInDefaults.claudeGitHub ?? false
+    }
     /// The first value the levels set (project profile, brain, built-in) for the run's harness; empty when none.
     private func configured(_ key: KeyPath<ReviewModelChoice, String>, pi: KeyPath<ReviewSettingsPatch, ReviewModelChoice?>,
                             claude: KeyPath<ReviewSettingsPatch, ReviewModelChoice?>) -> String {
@@ -162,6 +169,16 @@ struct NewReviewSheet: View {
                     }
                     .help("Who runs the passes. Claude Code reads the workspace's copy with Read, Grep and Glob only: no MCP server, "
                           + "so no links, context servers or Pi steps.")
+                    if onClaude {
+                        Picker("GitHub", selection: $github) {
+                            Text("From the configuration (\(configuredGitHub ? "reads public code" : "off"))").tag(Bool?.none)
+                            Text("Reads public code").tag(Bool?.some(true))
+                            Text("Off").tag(Bool?.some(false))
+                        }
+                        .help("Lets Claude Code read public pages on GitHub (WebFetch, github.com, api.github.com and "
+                              + "raw.githubusercontent.com only), to compare the change with how a library does it. Nothing from the "
+                              + "change goes into a URL; any other address is refused.")
+                    }
                 } else {
                 Section {
                     mergeRequestsField
@@ -631,6 +648,7 @@ struct NewReviewSheet: View {
         choices.notes = notes
         choices.setup = setup.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         if source == .local { choices.settings.harness = harness }
+        if onClaude { choices.settings.claudeGitHub = github }
         // Claude Code has no MCP server and no Pi steps (R69): what only Pi reads stays out.
         if !onClaude {
             choices.links = (try? checkedLinks.get()) ?? []
@@ -672,6 +690,7 @@ struct ReviewSettingsSheet: View {
     /// Claude Code's models in the brain's review.yaml (`claude:`), as set here; saved with Save Claude Code Models….
     @State private var claudePasses = ReviewModelChoice(model: "")
     @State private var claudeVerifier = ReviewModelChoice(model: "")
+    @State private var claudeGitHub = false
     @State private var claudeModels: [String] = []
 
     private var profile: ReviewProfile? { catalog?.profiles.first { $0.slug == rules } }
@@ -824,22 +843,26 @@ struct ReviewSettingsSheet: View {
             if profile == nil {
                 claudeModelRow("Claude Code: brief and roles", choice: $claudePasses, builtIn: catalog?.builtInDefaults.claudePasses)
                 claudeModelRow("Claude Code: verifier", choice: $claudeVerifier, builtIn: catalog?.builtInDefaults.claudeVerifier)
+                Toggle("Claude Code: read public code on GitHub", isOn: $claudeGitHub)
+                    .help("WebFetch on github.com, api.github.com and raw.githubusercontent.com only (claude: github).")
                 HStack {
                     Spacer()
-                    Button("Save Claude Code Models…") {
-                        plan { try ReviewConfigEditor.claudeModels(passes: claudePasses, verifier: claudeVerifier, home: model.home, brain: brain) }
+                    Button("Save Claude Code Settings…") {
+                        plan { try ReviewConfigEditor.claudeSettings(passes: claudePasses, verifier: claudeVerifier, github: claudeGitHub,
+                                                                     home: model.home, brain: brain) }
                     }
                     .disabled(claudePasses == (catalog?.brainDefaults.claudePasses ?? ReviewModelChoice(model: ""))
-                              && claudeVerifier == (catalog?.brainDefaults.claudeVerifier ?? ReviewModelChoice(model: "")))
+                              && claudeVerifier == (catalog?.brainDefaults.claudeVerifier ?? ReviewModelChoice(model: ""))
+                              && claudeGitHub == (catalog?.brainDefaults.claudeGitHub ?? false))
                 }
             }
         } header: {
             Text("Harness")
         } footer: {
             Text("Pi reviews merge requests and local workspaces with its MCP servers. Claude Code reviews only a local workspace: "
-                 + "Read, Grep and Glob over its copy, no MCP server, no links or Pi steps"
-                 + (profile == nil ? ". Its models are review.yaml's claude: block; Pi's stay in models: and thinking:."
-                    : ". Claude Code's models are the brain's (Rules of: Default)."))
+                 + "Read, Grep and Glob over its copy, no MCP server, no links or Pi steps, and GitHub's public code when you allow it"
+                 + (profile == nil ? ". Its settings are review.yaml's claude: block; Pi's stay in models: and thinking:."
+                    : ". Claude Code's settings are the brain's (Rules of: Default)."))
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -859,6 +882,7 @@ struct ReviewSettingsSheet: View {
     private func loadClaude() {
         claudePasses = catalog?.brainDefaults.claudePasses ?? ReviewModelChoice(model: "")
         claudeVerifier = catalog?.brainDefaults.claudeVerifier ?? ReviewModelChoice(model: "")
+        claudeGitHub = catalog?.brainDefaults.claudeGitHub ?? false
     }
 
     /// Other repositories and Summary language of the level picked in Rules of: the brain's

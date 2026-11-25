@@ -278,7 +278,8 @@ public enum ReviewPasses {
             folders.append(URL(filePath: base, directoryHint: .isDirectory))
         }
         let session = ReviewClaude.sessionArguments(setup.session, known: Set(log.passes.compactMap(\.session)))
-        let arguments = ReviewClaude.arguments(kind: kind, model: setup.model, session: session, system: setup.systemPrompt, folders: folders)
+        let arguments = ReviewClaude.arguments(kind: kind, model: setup.model, session: session, system: setup.systemPrompt, folders: folders,
+                                               github: spec.readsGitHub)
         let environment = await passEnvironment(env)
         var (output, answer) = await ReviewClaude.run(claude, arguments: arguments, prompt: folder.appending(path: "prompts/\(setup.name).md"),
                                                       directory: setup.cwd, environment: environment, timeout: options.timeout,
@@ -932,6 +933,7 @@ public enum ReviewPasses {
             let pattern = (args["pattern"] as? String).map { " \"\(SecretFilter.masked(String($0.prefix(60))))\"" } ?? ""
             return "\(name) \(SecretFilter.masked(target))\(pattern)"
         case "codemode": return "runs a script that calls MCP tools"
+        case "fetch": return "fetches " + SecretFilter.masked(String((args["url"] as? String ?? "").prefix(120)))
         case "akit_submit_findings":
             let count = (args["findings"] as? [Any])?.count ?? 0
             let verdicts = (args["verdicts"] as? [Any])?.count ?? 0
