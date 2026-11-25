@@ -11,8 +11,11 @@ Built 2026-11-25, steps 1–5 (branch `skill-store`): `ProjectRecords.projectID(
 (`AKitCommandLine/SkillModesCommand.swift`); the extension (`AKitSkills/Resources/akit-skill-modes.ts`,
 embedded by `tools/gen-skill-modes-extension.sh`, installer `SkillModesExtension`, node tests in
 `make test` as `make test-skill-modes`, the end-to-end `make test-skill-modes-pi` passed on Pi 1.5.2 =
-`minPi`); Doctor's "Skill modes" lines (`AKitDoctor/DoctorSkillModes.swift`). Not built: steps 6–7, and
-the user's copy of `/akit` (the template has the section). Settled while building:
+`minPi`); Doctor's "Skill modes" lines (`AKitDoctor/DoctorSkillModes.swift`). Steps 6–7 built the same
+day: Pi-only projects get no skill copies and their modes as entries (`ProjectSetup.planSkillModes`,
+`ProjectBundle.resolve(homeSkills:)`, Forget takes the entries out), and **Mode Here** on the Skills
+screen (`AKit/SkillModeViews.swift`, Install… for the extension, the guide section `skills-mode-here`).
+Not done here: the user's copy of `/akit` (the template has the sections). Settled while building:
 
 - `session_start` has no skill list, so the extension's first ask takes Pi's `/skill:` commands
   (`pi.getCommands()`, same names and paths); the cache key is the folder, the modes file's time and
