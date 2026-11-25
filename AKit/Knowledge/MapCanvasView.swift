@@ -95,15 +95,19 @@ struct MapCanvasView: NSViewRepresentable {
         private(set) var loadedElements: Int?
 
         /// The canvas on screen (the map in view or the Inbox draft): the model saves and drops
-        /// through it, snapshots read it.
-        private(set) static weak var current: Coordinator?
+        /// through it, snapshots read it. The newest one still alive: the Notes view stays
+        /// alive under the Inbox tab, so its map is current again once the Inbox draft closes.
+        static var current: Coordinator? { made.last { $0.coordinator != nil }?.coordinator }
+        private struct Made { weak var coordinator: Coordinator? }
+        private static var made: [Made] = []
 
         init(scene: Scene, viewMode: Bool, onMessage: @escaping (MapCanvasMessage) -> Void) {
             self.scene = scene
             self.viewMode = viewMode
             self.onMessage = onMessage
             super.init()
-            Self.current = self
+            Self.made.removeAll { $0.coordinator == nil }
+            Self.made.append(Made(coordinator: self))
         }
 
         /// Installs the http(s) block, then loads the page.

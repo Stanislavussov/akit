@@ -59,34 +59,23 @@ struct KnowledgeView: View {
                 } else {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else if model.screenTab == .lint {
-                LintPanel()
-            } else if model.screenTab == .inbox {
-                InboxPanel()
             } else {
-                HSplitView {
-                    if !listHidden {
-                        // Stacked, not inset: the list's rows never show through the bars.
-                        VStack(spacing: 0) {
-                            if model.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                                listHeader
-                                noteList
-                            } else {
-                                SearchResultsList()
-                            }
-                            IndexStatusLine()
-                        }
-                        .frame(minWidth: 200, idealWidth: 260, maxWidth: 380)
-                    }
-                    if model.map != nil {
-                        MapPanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
-                        if model.noteBesideMap, model.note != nil {
-                            NotePanel().frame(minWidth: 360, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
-                        }
-                    } else {
-                        NotePanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                // The Notes view stays alive under the Inbox and Lint tabs: building its split,
+                // list, note and map canvas again made every switch back lag. Disabled while
+                // hidden, so its shortcuts (⌘F, ⌘G, ⌥⌘A) and keys stay off.
+                ZStack {
+                    notesView
+                        .opacity(model.screenTab == .notes ? 1 : 0)
+                        .allowsHitTesting(model.screenTab == .notes)
+                        .disabled(model.screenTab != .notes)
+                        .accessibilityHidden(model.screenTab != .notes)
+                    if model.screenTab == .lint {
+                        LintPanel().background(.background)
+                    } else if model.screenTab == .inbox {
+                        InboxPanel().background(.background)
                     }
                 }
+                .onChange(of: model.screenTab) { if model.screenTab != .notes { listFocused = false } }
             }
         }
         .frame(maxHeight: .infinity)
@@ -150,6 +139,33 @@ struct KnowledgeView: View {
         .task {
             (model.projectsRoot, model.brainRoot) = (app.projectsRoot, app.brainRoot)
             await model.load(select: DebugSnapshot.options?.select)
+        }
+    }
+
+    /// The Notes tab: the note list beside the note or map.
+    private var notesView: some View {
+        HSplitView {
+            if !listHidden {
+                // Stacked, not inset: the list's rows never show through the bars.
+                VStack(spacing: 0) {
+                    if model.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                        listHeader
+                        noteList
+                    } else {
+                        SearchResultsList()
+                    }
+                    IndexStatusLine()
+                }
+                .frame(minWidth: 200, idealWidth: 260, maxWidth: 380)
+            }
+            if model.map != nil {
+                MapPanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                if model.noteBesideMap, model.note != nil {
+                    NotePanel().frame(minWidth: 360, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                NotePanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 
