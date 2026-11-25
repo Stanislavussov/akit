@@ -1,6 +1,5 @@
 import AKitBrain
 import AKitFoundation
-import AKitSkills
 import Foundation
 
 /// Forgets a project (or a home folder): the files AKit wrote there go to the Trash (an empty
@@ -35,40 +34,24 @@ public enum ProjectForget {
         }
         /// The repository's exclude file whose AKit block comes out (a local-only project).
         public var excludeTakenOut: URL? { plan?.exclude?.current == nil ? nil : plan?.exclude?.file }
-        /// The project's entries in `~/.akit/local/skill-modes.json` that come out; nil when none.
-        public var skillModes: SkillModes.Plan?
         /// Files AKit wrote and the user edited since: kept.
         public var kept: [String] { plan?.changes.filter { $0.kind == .keepEdited && !$0.block }.map(\.path) ?? [] }
     }
 
     /// What forgetting would do; nil when nothing is saved for the id. Only reads.
     /// `piAgentDirSetting`: see `ProjectSetup.plan`.
-    /// `projectsRoot`: for the modes-file id of a project without a remote (see `ProjectSetup.plan`).
     public static func preview(id: String, folder: URL?, forHome: Bool, brain: Brain, store: ProjectStore,
-                               piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false, projectsRoot: URL? = nil,
+                               piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false,
                                env: HarnessEnvironment = .current) -> Preview? {
         guard var empty = ProjectRecords.savedAnswers(id: id, in: store) else { return nil }
         empty.layers = []
         empty.skills = []
-        let plan = folder.map { folder in
-            var plan = ProjectSetup.plan(project: folder, id: id, answers: empty, brain: brain, store: store, forHome: forHome,
-                                         piAgentDirSetting: piAgentDirSetting, rememberPiAgentDir: rememberPiAgentDir,
-                                         projectsRoot: projectsRoot, env: env)
-            // Every entry of the project comes out below, not only AKit's.
-            plan.skillModes = nil
-            return plan
-        }
+        let plan = folder.map { ProjectSetup.plan(project: $0, id: id, answers: empty, brain: brain, store: store, forHome: forHome,
+                                                  piAgentDirSetting: piAgentDirSetting, rememberPiAgentDir: rememberPiAgentDir, env: env) }
         let fm = FileManager.default
-        var preview = Preview(id: id, store: store, plan: plan,
-                              ownRecord: !store.isLocal || fm.fileExists(atPath: store.folder(id: id).path),
-                              brainCopyLeft: store.isLocal && store.readFallback.map { fm.fileExists(atPath: $0.appending(path: id).path) } == true)
-        // The project's skill modes leave with it (skill-modes.md, step 6).
-        if !forHome {
-            let root = (projectsRoot ?? env.homeDirectory.appending(path: "Projects")).path
-            let modesID = folder.flatMap { ProjectRecords.projectID(ofFolder: $0, projectsRoot: root) } ?? id
-            if let modes = try? SkillModes.plan(resetProject: modesID, home: env.homeDirectory), !modes.changesNothing { preview.skillModes = modes }
-        }
-        return preview
+        return Preview(id: id, store: store, plan: plan,
+                       ownRecord: !store.isLocal || fm.fileExists(atPath: store.folder(id: id).path),
+                       brainCopyLeft: store.isLocal && store.readFallback.map { fm.fileExists(atPath: $0.appending(path: id).path) } == true)
     }
 
     /// Trashes the files AKit wrote (unless `keepFiles`), then the record, committed when the
@@ -82,9 +65,6 @@ public enum ProjectForget {
         }
         if !keepFiles, let plan = preview.plan, !preview.removals.isEmpty || !preview.keysTakenOut.isEmpty || !preview.blocksTakenOut.isEmpty {
             _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
-        }
-        if let modes = preview.skillModes {
-            do { try SkillModes.apply(modes, home: home) } catch { throw ProjectSetup.Failure(message: error.message) }
         }
         // Apply saved a lock again, in a local store too; forget the project with it.
         let store = preview.store

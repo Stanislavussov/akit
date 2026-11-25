@@ -114,9 +114,6 @@ public struct ProjectBundle: Sendable {
     /// What `RenderedFile.layers` says for a skill the project picked itself (not a layer
     /// name: layer names have no spaces).
     public static let projectSource = "this project"
-    /// What `RenderedFile.layers` says for a brain skill the home folder gets although no layer
-    /// of it brings it (`homeSkills`): Manual there; a Pi-only project's modes entry makes it Auto there.
-    public static let brainSource = "brain library"
 
     public let projectName: String
     public let targets: [String]
@@ -126,9 +123,6 @@ public struct ProjectBundle: Sendable {
     public let files: [File]
     /// The skills in order (`off` ones left out).
     public let skills: [Skill]
-    /// Every skill the layers and the answers name, with its final mode, `off` ones too
-    /// (skill-modes.md, step 6: a Pi-only project's modes go into the modes file).
-    public var modes: [String: LayerSkill.Mode] = [:]
     /// The layers' flows (flows.md F3), each as JSON text: Pi's extension can't load a YAML
     /// package (Pi 1.0.4 aliases only its own packages and typebox), and JSON is YAML.
     public var flows: [Flow] = []
@@ -166,10 +160,7 @@ public struct ProjectBundle: Sendable {
     /// Things worth a look that don't stop it (unknown `{{field}}` in a template).
     public let warnings: [String]
 
-    /// `homeSkills`: the home folder's render (skill-modes.md, step 6): these brain skills (the ones
-    /// Pi-only projects use, which get no copies) come too when the layers and answers don't name
-    /// them, Manual (a project's mode is then a modes entry).
-    public static func resolve(_ answers: ProjectAnswers, brain: Brain, projectName: String, homeSkills: Set<String> = []) -> ProjectBundle {
+    public static func resolve(_ answers: ProjectAnswers, brain: Brain, projectName: String) -> ProjectBundle {
         var errors: [String] = []
         var warnings: [String] = []
         let byName = Dictionary(brain.layers.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
@@ -214,7 +205,6 @@ public struct ProjectBundle: Sendable {
 
         // 3. Skills.
         var skillOwner: [String: (layer: String, override: Bool)] = [:]
-        var modes: [String: LayerSkill.Mode] = [:]
         var skills: [(skill: LayerSkill, layer: String)] = []
         // The same skill from two layers: the one with override: true wins (its mode too,
         // so `mode: off` + override removes a skill an earlier layer brings).
@@ -229,22 +219,17 @@ public struct ProjectBundle: Sendable {
                     skills.removeAll { $0.skill.name == skill.name }
                 }
                 skillOwner[skill.name] = (layer.name, skill.override)
-                modes[skill.name] = skill.mode
                 if skill.mode != .off { skills.append((skill, layer.name)) }
             }
         }
         // This project's own choices come last and win over the layers' modes.
         for chosen in answers.skills {
-            modes[chosen.name] = chosen.mode
             let index = skills.firstIndex { $0.skill.name == chosen.name }
             if let index { skills.remove(at: index) }
             if chosen.mode != .off {
                 let skill = LayerSkill(name: chosen.name, mode: chosen.mode, when: [], override: false, keepAuto: false)
                 skills.insert((skill, projectSource), at: index ?? skills.endIndex)
             }
-        }
-        for library in brain.skills.sorted(by: { $0.name < $1.name }) where homeSkills.contains(library.name) && modes[library.name] == nil {
-            skills.append((LayerSkill(name: library.name, mode: .manual, when: [], override: false, keepAuto: false), brainSource))
         }
         var resolved: [Skill] = []
         for (skill, layer) in skills {
@@ -358,7 +343,6 @@ public struct ProjectBundle: Sendable {
         var bundle = ProjectBundle(projectName: projectName, targets: answers.targets, layers: order, files: files,
                                    skills: resolved, errors: errors, warnings: warnings)
         bundle.flows = flows
-        bundle.modes = modes
         return bundle
     }
 

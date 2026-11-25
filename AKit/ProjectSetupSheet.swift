@@ -492,8 +492,7 @@ struct ProjectSetupSheet: View {
     private func changesBesidesFiles(_ plan: ProjectSetup.Plan) -> Bool {
         guard !forHome else { return false }
         let block = plan.exclude.map { ($0.current ?? []) != $0.units } ?? false
-        // A Pi-only project's skill modes (in ~/.akit/local/skill-modes.json, listed in the notes).
-        return block || plan.answers.localOnly != savedLocalOnly || plan.skillModes != nil
+        return block || plan.answers.localOnly != savedLocalOnly
     }
 
     /// Changes that Apply would carry out.

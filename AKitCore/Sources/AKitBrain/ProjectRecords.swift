@@ -95,16 +95,10 @@ public enum ProjectRecords {
         /// environment doesn't set PI_CODING_AGENT_DIR (the app started from the Finder doesn't
         /// see the shell's), so the block doesn't move between files from run to run.
         public var piAgentDir: String?
-        /// A Pi-only project (skill-modes.md, step 6): the entries Apply wrote into
-        /// `~/.akit/local/skill-modes.json` for it, name → mode. An entry AKit wrote and nobody
-        /// changed comes out when the layers stop asking for it. Older AKit ignores the key.
-        public var skillModes: [String: String]?
 
         public init(brainCommit: String?, brainDirty: Bool, files: [String: Entry], templates: [String: String]? = nil,
-                    json: [String: MergedJSON]? = nil, blocks: [String: Block]? = nil, piAgentDir: String? = nil,
-                    skillModes: [String: String]? = nil) {
+                    json: [String: MergedJSON]? = nil, blocks: [String: Block]? = nil, piAgentDir: String? = nil) {
             self.piAgentDir = piAgentDir
-            self.skillModes = skillModes
             self.brainCommit = brainCommit
             self.brainDirty = brainDirty
             self.files = files
