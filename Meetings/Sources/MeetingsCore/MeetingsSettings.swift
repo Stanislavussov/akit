@@ -81,6 +81,9 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
     public var vocabulary: [String] = []
     /// M31: a short sound when the background recorder starts and stops (nothing on screen).
     public var backgroundSounds: Bool = true
+    /// M41: the background recorder's cat in the menu bar (Record, Stop, the folder). Off hides
+    /// it, for a shared screen (M4); ⌥⌘R works either way.
+    public var menuBarCat: Bool = true
     /// M35: while it records, each finished 5-minute piece is transcribed at once (cloud only), so
     /// after Stop only the last piece and the summary are left.
     public var transcribeWhileRecording: Bool = true
@@ -190,6 +193,7 @@ public struct MeetingsSettings: Codable, Equatable, Sendable {
         localGPU = c.tolerant(Bool.self, forKey: .localGPU) ?? d.localGPU
         vocabulary = (c.tolerant([String].self, forKey: .vocabulary)) ?? d.vocabulary
         backgroundSounds = c.tolerant(Bool.self, forKey: .backgroundSounds) ?? d.backgroundSounds
+        menuBarCat = c.tolerant(Bool.self, forKey: .menuBarCat) ?? d.menuBarCat
         transcribeWhileRecording = c.tolerant(Bool.self, forKey: .transcribeWhileRecording) ?? d.transcribeWhileRecording
     }
 }

@@ -428,8 +428,10 @@ struct BackgroundSection: View {
                     .font(.caption)
                 }
                 Toggle("Sound at start and stop", isOn: Binding(get: { model.settings.backgroundSounds }, set: { value in model.update { $0.backgroundSounds = value } }))
+                Toggle("Cat in the menu bar", isOn: Binding(get: { model.settings.menuBarCat }, set: { value in model.update { $0.menuBarCat = value } }))
+                    .help("Record, Stop and the meetings folder from the menu bar. Turn it off before you share your screen; ⌥⌘R works either way.")
                 if let problem { Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption) }
-                Text("Meetings Recorder runs from login without a window, a Dock icon or a menu bar item. ⌥⌘R in any app starts a recording and stops it; Record here goes to it too. The first recording asks once for the microphone and the system audio. A short sound tells you it started or stopped; the meetings show up here as usual.")
+                Text("Meetings Recorder runs from login without a window or a Dock icon. ⌥⌘R in any app starts a recording and stops it, and so does the cat in the menu bar; Record here goes to it too. It records into the folder set here. The first recording asks once for the microphone and the system audio. A short sound tells you it started or stopped; the meetings show up here as usual.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
