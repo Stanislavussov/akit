@@ -8,8 +8,11 @@ import Foundation
 public enum PiSessions {
     typealias Object = JSONLines.Object
 
+    /// Summaries already read: every refresh lists all sessions.
+    private static let summaries = FileMemo<SessionSummary?>()
+
     static func list(folder: URL) -> [SessionSummary] {
-        JSONLines.summaries(of: FileWalk.files(withExtension: "jsonl", inAndBelow: folder)) { summary(of: $0) }
+        JSONLines.summaries(of: FileWalk.files(withExtension: "jsonl", inAndBelow: folder)) { summaries.value(of: $0, summary) }
     }
 
     static func summary(of file: URL) -> SessionSummary? {

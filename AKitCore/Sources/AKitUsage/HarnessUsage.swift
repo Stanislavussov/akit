@@ -105,12 +105,10 @@ enum ClaudeUsage {
 
     /// Runs with a saved cost in every session file that has a cost-state.
     static func recordedRuns(in files: [URL]) -> [Run] {
-        let marker = Data(#""cost-state""#.utf8)
         let box = RunBox(count: files.count)
         DispatchQueue.concurrentPerform(iterations: files.count) { index in
-            // Most files have none: look for the marker before reading the responses.
-            guard let data = try? Data(contentsOf: files[index], options: .mappedIfSafe), data.range(of: marker) != nil
-            else { return }
+            // Most files have none: only those with a cost-state are split into runs.
+            guard !sessionUsage(in: files[index]).costs.isEmpty else { return }
             box.set(index, runs(of: files[index]).filter { $0.cost != nil })
         }
         return box.values.flatMap(\.self)
@@ -137,7 +135,15 @@ enum ClaudeUsage {
         return CostState(total: total, byModel: byModel, start: start, end: end)
     }
 
+    /// Each file's responses and cost-states, read once while the file stays the same: the
+    /// cost rates read every session file each time.
+    private static let fileUsage = FileMemo<(responses: [(key: String?, record: UsageRecord)], costs: [CostState])>()
+
     static func sessionUsage(in file: URL) -> (responses: [(key: String?, record: UsageRecord)], costs: [CostState]) {
+        fileUsage.value(of: file, readSessionUsage)
+    }
+
+    private static func readSessionUsage(in file: URL) -> (responses: [(key: String?, record: UsageRecord)], costs: [CostState]) {
         let usageMarker = Data(#""usage""#.utf8)
         let assistantMarker = Data(#""type":"assistant""#.utf8)
         let costMarker = Data(#""cost-state""#.utf8)
@@ -230,25 +236,30 @@ enum PiUsage {
     /// Pi records the provider and the cost of each response. A fork copies entries into
     /// a new file, so an entry id and time is counted once.
     static func usage(folder: URL, since: Date) -> [UsageRecord] {
-        let files = UsageScanner.files(in: [folder], since: since)
+        UsageScanner.read(UsageScanner.files(in: [folder], since: since)) { file in
+            fileUsage.value(of: file, responses).filter { $0.record.time >= since }
+        }
+    }
+
+    /// Each file's responses, read once while the file stays the same.
+    private static let fileUsage = FileMemo<[(key: String?, record: UsageRecord)]>()
+
+    static func responses(in file: URL) -> [(key: String?, record: UsageRecord)] {
         let usageMarker = Data(#""usage""#.utf8)
-        return UsageScanner.read(files) { file in
-            guard let data = try? Data(contentsOf: file, options: .mappedIfSafe),
-                  let entries = try? JSONLines.objects(in: data, where: { JSONLines.contains($0, usageMarker) })
-            else { return [] }
-            return entries.compactMap { entry in
-                guard entry["type"] as? String == "message", let message = entry["message"] as? JSONLines.Object,
-                      message["role"] as? String == "assistant", let usage = message["usage"] as? JSONLines.Object,
-                      let time = JSONLines.date(message["timestamp"]) ?? JSONLines.date(entry["timestamp"]),
-                      time >= since else { return nil }
-                let tokens = PiLogFormat.tokens(fromPiUsage: usage), cost = PiLogFormat.cost(fromPiUsage: usage)
-                // Failed requests are saved with all counts at zero.
-                guard tokens.total > 0 || (cost ?? 0) > 0 else { return nil }
-                let record = UsageRecord(time: time, harness: .pi, provider: message["provider"] as? String ?? "unknown",
-                                         model: message["model"] as? String ?? "unknown", tokens: tokens, cost: cost)
-                let key = (entry["id"] as? String).map { "\($0)|\(time.timeIntervalSince1970)" }
-                return (key, record)
-            }
+        guard let data = try? Data(contentsOf: file, options: .mappedIfSafe),
+              let entries = try? JSONLines.objects(in: data, where: { JSONLines.contains($0, usageMarker) })
+        else { return [] }
+        return entries.compactMap { entry in
+            guard entry["type"] as? String == "message", let message = entry["message"] as? JSONLines.Object,
+                  message["role"] as? String == "assistant", let usage = message["usage"] as? JSONLines.Object,
+                  let time = JSONLines.date(message["timestamp"]) ?? JSONLines.date(entry["timestamp"]) else { return nil }
+            let tokens = PiLogFormat.tokens(fromPiUsage: usage), cost = PiLogFormat.cost(fromPiUsage: usage)
+            // Failed requests are saved with all counts at zero.
+            guard tokens.total > 0 || (cost ?? 0) > 0 else { return nil }
+            let record = UsageRecord(time: time, harness: .pi, provider: message["provider"] as? String ?? "unknown",
+                                     model: message["model"] as? String ?? "unknown", tokens: tokens, cost: cost)
+            let key = (entry["id"] as? String).map { "\($0)|\(time.timeIntervalSince1970)" }
+            return (key, record)
         }
     }
 }
@@ -259,44 +270,50 @@ enum PiUsage {
 enum CodexUsage {
     static func usage(codexHome: URL, since: Date) -> [UsageRecord] {
         let folders = [codexHome.appending(path: "sessions"), codexHome.appending(path: "archived_sessions")]
-        let files = UsageScanner.files(in: folders, since: since)
-        let markers = [#""token_count""#, #""turn_context""#, #""session_meta""#].map { Data($0.utf8) }
-        return UsageScanner.read(files) { file in
-            guard let data = try? Data(contentsOf: file, options: .mappedIfSafe),
-                  let entries = try? JSONLines.objects(in: data, where: { line in markers.contains { JSONLines.contains(line, $0) } })
-            else { return [] }
-            var provider = "openai"
-            var model = "unknown"
-            var previous: TokenCounts?
-            var result: [(key: String?, record: UsageRecord)] = []
-            for entry in entries {
-                let payload = entry["payload"] as? JSONLines.Object ?? [:]
-                switch entry["type"] as? String {
-                case "session_meta":
-                    provider = payload["model_provider"] as? String ?? provider
-                case "turn_context":
-                    model = payload["model"] as? String ?? model
-                case "event_msg" where payload["type"] as? String == "token_count":
-                    guard let info = payload["info"] as? JSONLines.Object,
-                          let total = (info["total_token_usage"] as? JSONLines.Object).map(tokens) else { continue }
-                    // Codex repeats the last total (e.g. after an abort); only growth is new usage.
-                    // The first event of a file counts its own response only, in case the
-                    // total carries usage from before a resume.
-                    let last = (info["last_token_usage"] as? JSONLines.Object).map(tokens)
-                    let used = previous.map { difference(total, $0) } ?? last ?? total
-                    previous = total
-                    guard used.total > 0, let time = JSONLines.date(entry["timestamp"]), time >= since else { continue }
-                    let record = UsageRecord(time: time, harness: .codex, provider: provider, model: model,
-                                             tokens: used, cost: nil)
-                    // A resumed session starts a new file that repeats earlier events.
-                    let key = "\(time.timeIntervalSince1970)|\(total.total)"
-                    result.append((key, record))
-                default:
-                    break
-                }
-            }
-            return result
+        return UsageScanner.read(UsageScanner.files(in: folders, since: since)) { file in
+            fileUsage.value(of: file, responses).filter { $0.record.time >= since }
         }
+    }
+
+    /// Each file's responses, read once while the file stays the same.
+    private static let fileUsage = FileMemo<[(key: String?, record: UsageRecord)]>()
+
+    static func responses(in file: URL) -> [(key: String?, record: UsageRecord)] {
+        let markers = [#""token_count""#, #""turn_context""#, #""session_meta""#].map { Data($0.utf8) }
+        guard let data = try? Data(contentsOf: file, options: .mappedIfSafe),
+              let entries = try? JSONLines.objects(in: data, where: { line in markers.contains { JSONLines.contains(line, $0) } })
+        else { return [] }
+        var provider = "openai"
+        var model = "unknown"
+        var previous: TokenCounts?
+        var result: [(key: String?, record: UsageRecord)] = []
+        for entry in entries {
+            let payload = entry["payload"] as? JSONLines.Object ?? [:]
+            switch entry["type"] as? String {
+            case "session_meta":
+                provider = payload["model_provider"] as? String ?? provider
+            case "turn_context":
+                model = payload["model"] as? String ?? model
+            case "event_msg" where payload["type"] as? String == "token_count":
+                guard let info = payload["info"] as? JSONLines.Object,
+                      let total = (info["total_token_usage"] as? JSONLines.Object).map(tokens) else { continue }
+                // Codex repeats the last total (e.g. after an abort); only growth is new usage.
+                // The first event of a file counts its own response only, in case the
+                // total carries usage from before a resume.
+                let last = (info["last_token_usage"] as? JSONLines.Object).map(tokens)
+                let used = previous.map { difference(total, $0) } ?? last ?? total
+                previous = total
+                guard used.total > 0, let time = JSONLines.date(entry["timestamp"]) else { continue }
+                let record = UsageRecord(time: time, harness: .codex, provider: provider, model: model,
+                                         tokens: used, cost: nil)
+                // A resumed session starts a new file that repeats earlier events.
+                let key = "\(time.timeIntervalSince1970)|\(total.total)"
+                result.append((key, record))
+            default:
+                break
+            }
+        }
+        return result
     }
 
     /// OpenAI counts cached input inside `input_tokens` and reasoning inside `output_tokens`.

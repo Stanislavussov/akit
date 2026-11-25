@@ -221,6 +221,27 @@ struct UsageTests {
         #expect(records.first?.tokens == TokenCounts(input: 10, output: 20, cacheRead: 30))
     }
 
+    @Test func fileReadOnceStillKeepsOnlyResponsesSinceTheStart() throws {
+        let ms = JSONLines.date("2026-09-22T08:00:00.000Z")!.timeIntervalSince1970 * 1000
+        try write(".pi/agent/sessions/--work-app--/1_x.jsonl", lines: [
+            ["type": "session", "id": "s1", "cwd": "/work/app", "timestamp": "2026-09-22T08:00:00.000Z"],
+            piAnswer(id: "a1", ms: ms, provider: "anthropic", model: "claude-opus-4-6", cost: 0.25),
+            piAnswer(id: "a2", ms: ms + 86_400_000, provider: "anthropic", model: "claude-opus-4-6", cost: 0.5),
+        ])
+        let pi = [installation(.pi)]
+        #expect(UsageScanner.scan(installations: pi, since: since, in: env).count == 2)
+        // The second read comes from memory; a later start still drops the first day.
+        let later = JSONLines.date("2026-09-23T00:00:00.000Z")!
+        #expect(UsageScanner.scan(installations: pi, since: later, in: env).map(\.cost) == [0.5])
+
+        // A changed file is read again.
+        try write(".pi/agent/sessions/--work-app--/1_x.jsonl", lines: [
+            ["type": "session", "id": "s1", "cwd": "/work/app", "timestamp": "2026-09-22T08:00:00.000Z"],
+            piAnswer(id: "a3", ms: ms + 86_400_000, provider: "minimax", model: "MiniMax-M2.7", cost: 0.01),
+        ])
+        #expect(UsageScanner.scan(installations: pi, since: later, in: env).map(\.provider) == ["minimax"])
+    }
+
     // MARK: Codex
 
     func tokenCount(_ time: String, input: Int, cached: Int, output: Int, reasoning: Int,

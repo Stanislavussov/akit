@@ -589,8 +589,8 @@ final class AppModel {
 
     /// Brain project ids found on this Mac → their folders: the home folder and every known project.
     /// A project's main checkout wins over its git worktrees, which share its id.
-    func projectFolders() async -> [String: URL] {
-        let env = HarnessEnvironment.current
+    func projectFolders(of projects: [URL]? = nil) async -> [String: URL] {
+        let env = HarnessEnvironment.current, projects = projects ?? self.projects
         var found: [String: [URL]] = [:]
         await withTaskGroup(of: (String, URL).self) { group in
             for project in projects {
@@ -1300,52 +1300,83 @@ final class AppModel {
         let (sessionProjects, ratings) = await Task.detached {
             (SessionProjects.projectIDs(ofFolders: folders, env: env, projectsRoot: projectsRoot), Ratings.byTranscript(env: env))
         }.value
-        // A work Mac keeps its project records outside the brain; list them too.
-        self.brain = brain?.addingProjects(from: projectStore)
-        brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
-        brainIdentity = brain == nil ? nil : await BrainGit.ownIdentity(brain: brainRoot, env: env)
-        installations = found
-        self.skills = skills
-        skillStates = states
-        piPackages = pi.listing.packages
-        piPackageNotes = pi.listing.notes
-        piHiddenSkills = pi.hidden
-        self.projects = projects
-        if let brain {
-            brainProjectFolders = await projectFolders()
+        // Everything is read before anything is shown, then set at once (with no await in
+        // between), so a screen never draws half a scan. Values the scan found unchanged are not
+        // set again: each set redraws every screen that reads it.
+        let brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
+        let brainIdentity = brain == nil ? nil : await BrainGit.ownIdentity(brain: brainRoot, env: env)
+        let flowSessions = await Task.detached { SessionScanner.flowSessions(projects: projects, steps: sessions.flowSteps) }.value
+        var brainProjectFolders: [String: URL] = [:], brainProjectCheckouts: [String: GitCheckout] = [:]
+        if brain != nil {
+            brainProjectFolders = await projectFolders(of: projects)
             let folders = brainProjectFolders
             brainProjectCheckouts = await Task.detached { folders.compactMapValues { GitCheckout.at($0) } }.value
-            brainLinks = BrainLinks.links(for: skills, brain: brain, folders: brainProjectFolders, store: projectStore)
-        } else {
-            brainProjectFolders = [:]
-            brainProjectCheckouts = [:]
-            brainLinks = [:]
         }
-        followLocalOnlyWorktrees()
-        self.sessions = sessions.sessions
-        flowSessions = await Task.detached { SessionScanner.flowSessions(projects: projects, steps: sessions.flowSteps) }.value
-        self.sessionProjects = sessionProjects
-        self.ratings = ratings
-        mcpServers = mcp.servers
-        mcpProblems = mcp.problems
-        mcpWriteTargets = targets
-        mcpStates = switches.0
-        connectorsOff = switches.1
-        mcpChecks = MCPCheckStore.load(home: HarnessEnvironment.current.homeDirectory)
+        let brainLinks = brain.map { BrainLinks.links(for: skills, brain: $0, folders: brainProjectFolders, store: projectStore) } ?? [:]
+        let mcpChecks = MCPCheckStore.load(home: env.homeDirectory)
+
+        // A work Mac keeps its project records outside the brain; list them too.
+        self.brain = brain?.addingProjects(from: projectStore)
+        assign(\.brainSync, brainSync)
+        assign(\.brainIdentity, brainIdentity)
+        assign(\.installations, found)
+        assign(\.skills, skills)
+        assign(\.skillStates, states)
+        assign(\.piPackages, pi.listing.packages)
+        assign(\.piPackageNotes, pi.listing.notes)
+        assign(\.piHiddenSkills, pi.hidden)
+        assign(\.projects, projects)
+        assign(\.brainProjectFolders, brainProjectFolders)
+        assign(\.brainProjectCheckouts, brainProjectCheckouts)
+        assign(\.brainLinks, brainLinks)
+        assign(\.sessions, sessions.sessions)
+        assign(\.flowSessions, flowSessions)
+        assign(\.sessionProjects, sessionProjects)
+        assign(\.ratings, ratings)
+        assign(\.mcpServers, mcp.servers)
+        assign(\.mcpProblems, mcp.problems)
+        assign(\.mcpWriteTargets, targets)
+        assign(\.mcpStates, switches.0)
+        assign(\.connectorsOff, switches.1)
+        assign(\.mcpChecks, mcpChecks)
         lastScan = .now
+        followLocalOnlyWorktrees()
         Task { await syncMCPWorktrees() }
 
-        var newVersions: [HarnessID: String] = [:]
-        await withTaskGroup(of: (HarnessID, String?).self) { group in
+        assign(\.versions, await versions(of: found, in: env))
+    }
+
+    /// Sets the value only when it differs: setting an equal one still redraws its readers.
+    private func assign<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<AppModel, Value>, _ value: Value) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+    }
+
+    /// Each harness executable's version, by its path and modification date: an executable is
+    /// asked again (`--version`, a process each) only after it changed, so a refresh after an edit
+    /// starts none.
+    @ObservationIgnored private var probedVersions: [String: (modified: Date, version: String?)] = [:]
+
+    private func versions(of found: [HarnessInstallation], in env: HarnessEnvironment) async -> [HarnessID: String] {
+        let known = probedVersions
+        let probed = await withTaskGroup(of: (HarnessID, String, Date, String?).self) { group in
             for item in found {
                 guard let exe = item.executableURL else { continue }
-                group.addTask { (item.id, await VersionProbe.version(of: exe, in: env)) }
+                group.addTask {
+                    let modified = JSONLines.fileInfo(exe.resolvingSymlinksInPath()).modified
+                    if let hit = known[exe.path], hit.modified == modified { return (item.id, exe.path, modified, hit.version) }
+                    return (item.id, exe.path, modified, await VersionProbe.version(of: exe, in: env))
+                }
             }
-            for await (id, version) in group {
-                if let version { newVersions[id] = version }
-            }
+            var all: [(HarnessID, String, Date, String?)] = []
+            for await result in group { all.append(result) }
+            return all
         }
-        versions = newVersions
+        var versions: [HarnessID: String] = [:]
+        for (id, path, modified, version) in probed {
+            probedVersions[path] = (modified, version)
+            if let version { versions[id] = version }
+        }
+        return versions
     }
 }
 

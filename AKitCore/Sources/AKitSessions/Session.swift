@@ -234,7 +234,11 @@ public enum SessionScanner {
     public static func split(installations: [HarnessInstallation], in env: HarnessEnvironment)
         -> (sessions: [SessionSummary], flowSteps: [SessionSummary]) {
         let all = installations.flatMap { sessions(of: $0, in: env) }.sorted { $0.modified > $1.modified }
-        return (all.filter { !isFlowWorktree($0.project, env: env) }, all.filter { isFlowWorktree($0.project, env: env) })
+        var sessions: [SessionSummary] = [], flowSteps: [SessionSummary] = []
+        for session in all {
+            if isFlowWorktree(session.project, env: env) { flowSteps.append(session) } else { sessions.append(session) }
+        }
+        return (sessions, flowSteps)
     }
 
     /// A session started in a flow run's worktree (`~/.akit/local/flows/runs/<run>/worktree`): a

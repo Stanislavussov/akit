@@ -172,6 +172,26 @@ struct SessionTests {
         #expect(session.project?.path == "/work/app")
     }
 
+    @Test func unchangedSessionFileIsNotReadAgain() throws {
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        try write(piFile, lines: piSession())
+        let path = home.appending(path: piFile).path
+        let modified = Date(timeIntervalSince1970: 1_000)
+        try fm.setAttributes([.modificationDate: modified], ofItemAtPath: path)
+        #expect(sessions(.pi).first?.title == "Test run")
+
+        // Same size and date: the summary read before is kept.
+        var renamed = piSession()
+        renamed[renamed.count - 1]["name"] = "Best run"
+        try write(piFile, lines: renamed)
+        try fm.setAttributes([.modificationDate: modified], ofItemAtPath: path)
+        #expect(sessions(.pi).first?.title == "Test run")
+
+        // A new date: read again.
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 2_000)], ofItemAtPath: path)
+        #expect(sessions(.pi).first?.title == "Best run")
+    }
+
     @Test func piCustomSessionDirHoldsTheFilesThemselves() throws {
         // Pi writes into a folder set by PI_CODING_AGENT_SESSION_DIR (or `sessionDir`) without
         // per-cwd folders.

@@ -8,6 +8,9 @@ import Foundation
 enum ClaudeSessions {
     typealias Object = JSONLines.Object
 
+    /// Summaries already read: every refresh lists all sessions.
+    private static let summaries = FileMemo<SessionSummary?>()
+
     static func list(configRoot: URL) -> [SessionSummary] {
         let projects = configRoot.appending(path: "projects")
         let files = FileWalk.children(of: projects)
@@ -15,7 +18,7 @@ enum ClaudeSessions {
             .flatMap { folder in
                 FileWalk.children(of: folder).filter { $0.pathExtension == "jsonl" }
             }
-        return JSONLines.summaries(of: files) { summary(of: $0) }
+        return JSONLines.summaries(of: files) { summaries.value(of: $0, summary) }
     }
 
     static func summary(of file: URL) -> SessionSummary? {

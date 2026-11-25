@@ -108,6 +108,11 @@ Foundation, Brain, Lab, Review, ErrorAnalysis, Flows, MCP and Knowledge: it read
 screens keep and lists what needs the person, with a link to its place. Nothing below needs it;
 `AKitCommandLine → AKitAttention` (`akit attention`) and the app import it, so the arrows still point down.
 
+2026-11-25 (speed): `AKitFoundation/FileMemo.swift` keeps what a reader took from a file while its
+modification date and size stay the same. Session summaries (`AKitSessions`) and token usage
+(`AKitUsage`) go through it, so a refresh or the Usage screen reads only changed session files.
+No new dependency.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
