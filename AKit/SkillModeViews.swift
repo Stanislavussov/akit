@@ -16,6 +16,9 @@ struct SkillModeHereControl: View {
     @State private var working = false
     @State private var installing: SkillModesExtension.Plan?
     @State private var extensionState: SkillModesExtension.State = .current
+    /// The chosen project's id (read off the main thread); `loaded`: whether it was read yet.
+    @State private var projectID: String?
+    @State private var loadedFolder: String?
 
     private var env: HarnessEnvironment { .current }
 
@@ -23,8 +26,6 @@ struct SkillModeHereControl: View {
     private var folder: URL? {
         if case .project(let url) = model.skillsFilter { url } else { nil }
     }
-
-    private var projectID: String? { folder.flatMap { ProjectRecords.projectID(ofFolder: $0, projectsRoot: model.projectsRoot.path) } }
 
     /// The skill as Pi's extension reports it to `akit skills resolve`.
     private var loaded: SkillModes.LoadedSkill {
@@ -42,9 +43,9 @@ struct SkillModeHereControl: View {
                 Text("Mode Here").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
                 VStack(alignment: .leading, spacing: 4) { content }
             }
-            .task(id: "\(skill.id)|\(projectID ?? "")") { reload() }
+            .task(id: "\(skill.id)|\(folder?.path ?? "")") { await reload() }
             .sheet(item: $installing) { plan in
-                SkillModesInstallSheet(plan: plan) { reload() }
+                SkillModesInstallSheet(plan: plan) { Task { await reload() } }
             }
         }
     }
@@ -53,6 +54,8 @@ struct SkillModeHereControl: View {
     private var content: some View {
         if folder == nil {
             Text("Pick a project at the top (Project) to set its mode there.").foregroundStyle(.secondary)
+        } else if loadedFolder != folder?.path {
+            ProgressView().controlSize(.small)
         } else if let projectID {
             let entries = reading.usable ? reading.entries(for: projectID) : [:]
             let key = SkillModes.entryName(for: loaded, in: entries)
@@ -101,9 +104,20 @@ struct SkillModeHereControl: View {
         return key == skill.name ? "from Project" : "from Project (\(key): always your own \(skill.name))"
     }
 
-    private func reload() {
-        reading = SkillModes.read(SkillModes.file(home: env.homeDirectory), home: env.homeDirectory)
-        extensionState = SkillModesExtension(env: env).status().state
+    /// Reads the modes file, the extension's state and (once per folder) the project id, off the main thread.
+    private func reload() async {
+        let home = env.homeDirectory, environment = env, folder = folder, root = model.projectsRoot.path
+        let cached = folder.flatMap { ModeHereProjects.ids[$0.path] }
+        let read = await Task.detached {
+            (reading: SkillModes.read(SkillModes.file(home: home), home: home),
+             state: SkillModesExtension(env: environment).status().state,
+             id: cached ?? folder.map { ProjectRecords.projectID(ofFolder: $0, projectsRoot: root) })
+        }.value
+        reading = read.reading
+        extensionState = read.state
+        if let folder, cached == nil, let id = read.id { ModeHereProjects.ids[folder.path] = id }
+        projectID = read.id ?? nil
+        loadedFolder = folder?.path
     }
 
     private func set(_ mode: SkillMode, key: String) {
@@ -131,7 +145,7 @@ struct SkillModeHereControl: View {
             }.value
             problem = failure
             working = false
-            reload()
+            await reload()
         }
     }
 
@@ -142,6 +156,12 @@ struct SkillModeHereControl: View {
             problem = error.localizedDescription
         }
     }
+}
+
+/// Project ids of the folders chosen at the top of the Skills screen, read once per folder
+/// (`.git` files; the id doesn't change while AKit runs).
+@MainActor enum ModeHereProjects {
+    static var ids: [String: String?] = [:]
 }
 
 enum SkillModeText {
