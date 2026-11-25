@@ -12,7 +12,10 @@ struct InboxPanel: View {
 
     var body: some View {
         @Bindable var model = model
-        if model.proposals.isEmpty {
+        // Open Diff Window can't be captured; snapshots `--tab inbox-diff` show it here.
+        if DebugSnapshot.options?.tab == "inbox-diff", let entry = model.selectedProposal, case .success(let plan)? = model.acceptPlan(entry) {
+            ProposalDiffWindow(diff: ProposalDiff(title: proposalTitle(entry), plan: plan))
+        } else if model.proposals.isEmpty {
             ContentUnavailableView("No proposals", systemImage: "tray",
                                    description: Text("An agent proposes a change with akit kb propose: a section of a note, a new note, or an arrow for a map. It waits here until you accept or reject it."))
         } else {
@@ -165,7 +168,7 @@ private struct ProposalDetail: View {
                         GroupBox(entry.kind == .arrow ? "Arrow" : "What Accept writes") {
                             Group {
                                 switch plan {
-                                case .success(let plan)?: Text(plan.diff).font(.callout.monospaced())
+                                case .success(let plan)?: ProposalDiffBox(title: proposalTitle(entry), plan: plan)
                                 case .failure(let error)?: Text(error.message).foregroundStyle(.red)
                                 case nil:
                                     if let arrow = entry.arrow {
@@ -308,12 +311,9 @@ struct AcceptProposalSheet: View {
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             GroupBox {
                 ScrollView {
-                    Text(plan.diff)
-                        .font(.callout.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ProposalDiffBox(title: plan.note, plan: plan)
                 }
-                .frame(height: 240)
+                .frame(minHeight: 240, idealHeight: 420, maxHeight: .infinity)
             } label: {
                 Text("Changes")
             }
@@ -333,7 +333,7 @@ struct AcceptProposalSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 620)
+        .frame(minWidth: 620, idealWidth: 820, maxWidth: .infinity)
     }
 }
 

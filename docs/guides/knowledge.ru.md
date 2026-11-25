@@ -1081,7 +1081,7 @@ AKit замечает правку заметки снаружи (в Obsidian, �
    - **Reason** и **From** — причина, автор и время;
    - **Checks** — проверки без модели: `secret`, `target`, `links`, `arrow`;
    - **Check model** — пометки модели. Если предложение изменилось после проверки, AKit пишет, что пометки старые;
-   - **What Accept writes** — разница: какие строки заметки изменятся (строки с `+` добавятся, с `-` уйдут). У стрелки здесь часть **Arrow**: стрелка и карта.
+   - **What Accept writes** — разница, как в git: зелёные строки с `+` добавятся, красные с `−` уйдут, остальные не меняются. Слева номера строк до и после, вверху путь заметки и счёт вроде **+5 −0**. Длинные куски без изменений свёрнуты в строку «⋯ 3 unchanged lines». Кнопка со стрелками в углу (**Open Diff Window**) открывает разницу в отдельном окне. У стрелки здесь часть **Arrow**: стрелка и карта.
 4. Кнопки вверху справа:
    - **Accept…** — показывает разницу ещё раз в окне **Accept Proposal**. Кнопка **Accept** пишет заметку и делает один коммит. Старая заметка копируется в `~/.akit/local/backups/knowledge/`. Если проверка не прошла, **Accept…** не нажимается;
    - **Reject…** — после вопроса отправляет файл предложения в Корзину (**Move to Trash**). База не меняется;
@@ -1091,7 +1091,14 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 
 AKit читает `inbox/` заново, когда агент кладёт туда файл: список и число в **Inbox (N)** обновляются сами.
 
-![Экран Knowledge, вкладка Inbox: вверху переключатель Notes, Inbox (3) и Lint (8); слева три предложения агента pi — стрелка payments/billing -paid orders-> logistics/warehouse, заметка payments/billing с флажком 1 и карта payments/maps/order-flow; справа выбранное предложение payments/billing с кнопками Accept…, Reject… и Check Again, частями Reason, Checks, Check model с пометкой duplicate и What Accept writes с разницей: + sla: next day и новая часть Refunds](images/knowledge-inbox.png)
+![Экран Knowledge, вкладка Inbox: вверху переключатель Notes, Inbox (3) и Lint (8); слева три предложения агента pi — стрелка payments/billing -paid orders-> logistics/warehouse, заметка payments/billing с флажком 1 и карта payments/maps/order-flow; справа выбранное предложение payments/billing с кнопками Accept…, Reject… и Check Again, частями Reason, Checks, Check model с пометкой duplicate и What Accept writes с цветной разницей: зелёная строка + sla: next day, зелёная новая часть Refunds, счёт +5 −0 и кнопка Open Diff Window](images/knowledge-inbox.png)
+
+**Прочитать большую разницу.** Нажмите **Open Diff Window** у **What Accept writes**: разница откроется в своём окне. Его можно растянуть на весь экран или унести на второй монитор. Вверху окна:
+
+- **Changes / Whole Note** — только изменения с тремя строками вокруг или вся заметка, где изменения помечены цветом;
+- кнопки **A A** — текст мельче (⌘−) или крупнее (⌘=).
+
+![Окно Open Diff Window для предложения payments/billing: вверху путь areas/payments/billing.md, счёт +5 −0, переключатель Changes и Whole Note и кнопки размера текста; ниже разница с номерами строк: зелёная строка + sla: next day, строки «⋯ 3 unchanged lines» и зелёная новая часть ## Refunds](images/knowledge-inbox-diff.png)
 
 ### Средне: принять стрелку: Add an arrow?
 <!-- section: inbox-arrow -->

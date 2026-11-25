@@ -345,6 +345,8 @@ shot knowledge-pi-template $MAIN --section knowledge --tab pi-template
 shot knowledge-lint      $MAIN --section knowledge --tab lint
 # The Inbox tab: the seed's three proposals; the note proposal for billing selected, with its diff and the seeded mark.
 shot knowledge-inbox     $MAIN --section knowledge --tab inbox --select 2026-10-24-payments-billing
+# Open Diff Window of that proposal: its coloured diff in its own window (shown in the main one).
+shot knowledge-inbox-diff $MAIN --section knowledge --tab inbox-diff --select 2026-10-24-payments-billing
 # A map an agent drew with excalidraw-cli (5.4): the draft on its read-only canvas and the links Accept sets.
 shot knowledge-inbox-map $MAIN --section knowledge --tab inbox --select 2026-10-24-payments-maps-order-flow
 # Draw Map with Pi…: the form with a made-up prompt (nothing runs).
