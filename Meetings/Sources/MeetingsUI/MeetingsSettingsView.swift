@@ -125,7 +125,7 @@ struct MeetingsSettingsView: View {
                 BackgroundSection(model: model, state: $background)
                 Section("Recording") {
                     Toggle("Echo cancellation", isOn: Binding(get: { model.settings.echoCancellation }, set: { value in model.update { $0.echoCancellation = value } }))
-                    Text("Keeps the sound from the speakers out of the microphone, so the other people are not recorded twice. Takes effect at the next Record.")
+                    Text("Keeps the sound from the speakers out of the microphone, so the other people are not recorded twice. macOS takes a few seconds to set it up, so Record starts later; with headphones there is no echo and it can be off. Takes effect at the next Record.")
                         .font(.caption).foregroundStyle(.secondary)
                     Toggle("Transcribe while recording", isOn: Binding(get: { model.settings.transcribeWhileRecording }, set: { value in model.update { $0.transcribeWhileRecording = value } }))
                         .disabled(model.settings.transcription != .cloud)

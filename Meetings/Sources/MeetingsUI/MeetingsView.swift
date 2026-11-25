@@ -126,7 +126,8 @@ struct RecordButton: View {
                 .help("Meetings Recorder records in the background (⌥⌘R from any app)")
                 Button("Stop", systemImage: "stop") { Task { await model.stop() } }
                     .labelStyle(.titleAndIcon)
-                    .help("Stop the background recording; it is then transcribed")
+                    .keyboardShortcut("r", modifiers: [.command, .option])
+                    .help("Stop the background recording; it is then transcribed (⌥⌘R)")
             }
         } else if let started = model.recordingStarted {
             HStack(spacing: 6) {
@@ -140,12 +141,20 @@ struct RecordButton: View {
                 }
                 Button("Stop", systemImage: "stop") { Task { await model.stop() } }
                     .labelStyle(.titleAndIcon)
-                    .help("Stop the recording; it is then transcribed")
+                    // The same keys stop it as started it.
+                    .keyboardShortcut("r", modifiers: [.command, .option])
+                    .help("Stop the recording; it is then transcribed (⌥⌘R)")
             }
+        } else if model.starting {
+            // Echo cancellation takes macOS a few seconds to set up the microphone.
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Starting…").foregroundStyle(.secondary)
+            }
+            .help("The microphone is being set up; with Echo cancellation off it starts at once")
         } else {
             Button("Record", systemImage: "circle") { Task { await model.record() } }
                 .labelStyle(.titleAndIcon)
-                .disabled(model.starting)
                 .keyboardShortcut("r", modifiers: [.command, .option])
                 .help("Record the microphone and the sound of the Mac until Stop (⌥⌘R)")
         }
