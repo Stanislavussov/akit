@@ -100,13 +100,7 @@ protocol ProjectResolver {
 enum BindingPaths {
     /// Standardized, without the `/private` of macOS's `/var`, `/tmp` and `/etc` links, so a path
     /// git prints and one a harness logged compare equal whether or not the folder still exists.
-    static func canonical(_ path: String) -> String {
-        var path = (path as NSString).standardizingPath
-        for linked in ["/private/var", "/private/tmp", "/private/etc"] where path == linked || path.hasPrefix(linked + "/") {
-            path.removeFirst("/private".count)
-        }
-        return path
-    }
+    static func canonical(_ path: String) -> String { ProjectRecords.canonicalPath(path) }
 
     /// `path` equals `folder` or lies inside it.
     static func isInside(_ path: String, _ folder: String) -> Bool {
