@@ -140,14 +140,17 @@ struct ConfigEditorTests {
         home.write("brain/layers/review/review.yaml", ReviewBuiltIns.defaultsYAML)
         let brainHarness = try ReviewConfigEditor.reviewSetting(harness: .claudeCode, profile: nil, home: home.url, brain: root)
         #expect(brainHarness.new.contains("\nharness: claude-code         # who runs the passes"))
-        let models = try ReviewConfigEditor.claudeModels(passes: ReviewModelChoice(model: "haiku", thinking: "medium"),
-                                                         verifier: ReviewModelChoice(model: "opus", thinking: ""), home: home.url, brain: root)
-        #expect(models.new.contains("claude: { models: { passes: \"haiku\", verifier: \"opus\" }, thinking: { passes: \"medium\" } }"))
+        let models = try ReviewConfigEditor.claudeSettings(passes: ReviewModelChoice(model: "haiku", thinking: "medium"),
+                                                           verifier: ReviewModelChoice(model: "opus", thinking: ""), github: true,
+                                                           home: home.url, brain: root)
+        #expect(models.new.contains("claude: { models: { passes: \"haiku\", verifier: \"opus\" }, thinking: { passes: \"medium\" }, github: true }"))
         #expect(!models.new.contains("    passes: sonnet"), "the old block is gone")
         let parsed = try ReviewSettingsPatch.parse(ReviewYAML.map(models.new), where: "review.yaml")
         #expect(parsed.claudePasses == ReviewModelChoice(model: "haiku", thinking: "medium") && parsed.claudeVerifier == ReviewModelChoice(model: "opus"))
+        #expect(parsed.claudeGitHub == true)
         #expect(parsed.passes == (try ReviewSettingsPatch.parse(ReviewYAML.map(ReviewBuiltIns.defaultsYAML), where: "x")).passes, "Pi's models stay")
-        let cleared = try ReviewConfigEditor.claudeModels(passes: ReviewModelChoice(model: ""), verifier: ReviewModelChoice(model: ""), home: home.url, brain: root)
+        let cleared = try ReviewConfigEditor.claudeSettings(passes: ReviewModelChoice(model: ""), verifier: ReviewModelChoice(model: ""), github: false,
+                                                            home: home.url, brain: root)
         #expect(!cleared.new.contains("claude:"))
     }
 }

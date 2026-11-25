@@ -19,6 +19,7 @@ public enum ReviewBuiltIns {
       thinking:         # Claude Code's effort: low, medium, high, xhigh or max
         passes: high
         verifier: high
+      github: false     # true: the passes may read public code on GitHub (WebFetch, github.com only)
     posting:
       marker: "🤖"
       language: cs      # the comments' language; Send lets only Czech (cs) go to GitLab

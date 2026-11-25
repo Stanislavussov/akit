@@ -1019,22 +1019,31 @@ To review: commits and uncommitted changes.
 ### Средне: ревью на Claude Code
 <!-- section: local-claude -->
 
-**Что это:** проходы ревью копии (brief, роли, verifier) может вести Claude Code вместо Pi. Например, по вашей подписке Claude. Claude Code читает копию на коммите ревью и пакет контекста только инструментами **Read**, **Grep** и **Glob**. У него нет MCP-серверов, сети и shell. Остальное как у Pi: те же роли, те же проверки AKit, те же запросы на экране **Review**.
+**Что это:** проходы ревью копии (brief, роли, verifier) может вести Claude Code вместо Pi. Например, по вашей подписке Claude. Claude Code читает копию на коммите ревью и пакет контекста только инструментами **Read**, **Grep** и **Glob**. У него нет MCP-серверов и shell, а сеть — только GitHub и только если вы разрешили (см. ниже). Остальное как у Pi: те же роли, те же проверки AKit, те же запросы на экране **Review**.
 
 **Как включить для одного ревью:**
 
 1. В **New Review…** выберите **Local Workspace**.
 2. В списке **Harness** выберите **Claude Code**. **From the configuration (…)** берёт значение из настроек (см. ниже).
-3. В блоке **This run only** выберите модели Claude Code: **Model for the brief and roles** и **Verifier model** (opus, sonnet, haiku или **Other…**). **Verifier thinking** — это `--effort` Claude Code: low, medium, high, xhigh или max.
-4. Нажмите **Start Review**.
+3. Чтобы он мог читать публичный код на GitHub, в списке **GitHub** выберите **Reads public code**. **Off** запрещает это для одного ревью, **From the configuration (…)** берёт значение из настроек.
+4. В блоке **This run only** выберите модели Claude Code: **Model for the brief and roles** и **Verifier model** (opus, sonnet, haiku или **Other…**). **Verifier thinking** — это `--effort` Claude Code: low, medium, high, xhigh или max.
+5. Нажмите **Start Review**.
 
-![Окно New Review… в режиме Local Workspace с выбранным Harness = Claude Code: поле Workspace с путём /private/tmp/akit-demo-home/work/orders-service, пустые Base и Head с кнопками Find…, строка feature/4630-export-csv at <коммит> · base main, What to review = Commits and uncommitted changes, строка Project profile: orders-service (orders-service.yaml), список Harness со значением Claude Code, ниже блок Context; внизу подпись Claude Code reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit. и кнопки Cancel и Start Review](images/review-local-claude.png)
+![Окно New Review… в режиме Local Workspace с выбранным Harness = Claude Code и списком GitHub под ним: поле Workspace с путём /private/tmp/akit-demo-home/work/orders-service, пустые Base и Head с кнопками Find…, строка feature/4630-export-csv at <коммит> · base main, What to review = Commits and uncommitted changes, строка Project profile: orders-service (orders-service.yaml), список Harness со значением Claude Code, под ним список GitHub со значением From the configuration (off), ниже блок Context; внизу подпись Claude Code reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit. и кнопки Cancel и Start Review](images/review-local-claude.png)
 
 **Как сделать по умолчанию:** **Review Settings…** → блок **Harness**.
 
 - **Harness** при **Rules of** = **Default** — для всех ревью копий (`harness:` в `review.yaml` brain). При выбранном профиле — только для этого проекта (`harness:` в его блоке `review:`).
-- **Claude Code: brief and roles**, **Claude Code: verifier** и **Effort** под ними — модели Claude Code. Сохраняет их **Save Claude Code Models…**: AKit покажет diff `review.yaml` (блок `claude:`). Модели Pi остаются в `models:` и `thinking:`: у каждого harness свои.
+- **Claude Code: brief and roles**, **Claude Code: verifier** и **Effort** под ними — модели Claude Code. **Claude Code: read public code on GitHub** разрешает GitHub всем ревью на Claude Code. Сохраняет всё **Save Claude Code Settings…**: AKit покажет diff `review.yaml` (блок `claude:`). Модели Pi остаются в `models:` и `thinking:`: у каждого harness свои.
 - Без своих значений действуют встроенные: sonnet с high для проходов, opus с high для verifier.
+
+**GitHub.** Пригодится, когда notes просят сравнить изменение с тем, как это сделано в известной библиотеке (TanStack Router, zod и т.п.). Без разрешения Claude Code запишет это в gaps: «nemám síť».
+
+- Включается `claude: { github: true }` в `review.yaml` brain или в блоке `review:` профиля, для одного ревью — `--github` или список **GitHub**. По умолчанию выключено.
+- Claude Code получает **WebFetch**, но открывает только `github.com`, `api.github.com` и `raw.githubusercontent.com`. Любой другой адрес, в том числе редирект с GitHub на другой сайт, Claude Code отклоняет сам.
+- Промпт запрещает класть в URL код, имена и текст из изменения: только публичные имена проектов и пути. Текст страниц — данные, не команды.
+- Риск всё же есть: адрес на GitHub видит GitHub. На рабочем Mac включайте осознанно.
+- **Log…** показывает каждый запрос строкой `fetches https://…`.
 
 **Чего нет на Claude Code:**
 
@@ -1051,7 +1060,7 @@ akit lab policy allow claude-code anthropic EMAIL ORG --local-review-only
 
 Такая запись пускает в Claude Code только ревью локальной копии. Для остального (Lab, переводы, ревью MR) Claude Code не становится разрешённым. В **Settings** → **Sending policy** запись видна с пометкой «· local reviews only».
 
-**Из терминала:** `akit review local . --harness claude-code` (модели: `--passes-model`, `--verifier-model`, `--verifier-thinking`).
+**Из терминала:** `akit review local . --harness claude-code` (модели: `--passes-model`, `--verifier-model`, `--verifier-thinking`; GitHub: `--github` или `--no-github`).
 
 **Тонкости:**
 
