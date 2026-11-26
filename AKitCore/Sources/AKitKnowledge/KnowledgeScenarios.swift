@@ -82,6 +82,10 @@ public enum KnowledgeScenarios {
         public let sources: String
         /// Scenarios only: the tests that prove it.
         public let tests: [TestLink]
+        /// Scenarios only: the `Given` / `When` / `Then` / `And` / `But` lines, trimmed.
+        public let steps: [String]
+        /// Scenario outlines only: the rows of the `Examples:` tables, without their header rows.
+        public let examples: [String]
         /// The note's id.
         public let note: String
         /// The header's line, from 1.
@@ -196,6 +200,7 @@ public enum KnowledgeScenarios {
                 }
                 break
             }
+            let body = title != nil && kind == .scenario ? scenarioBody(lines, after: next) : (steps: [], examples: [])
             func problem(_ message: String, _ fix: String) {
                 parsed.problems.append(Problem(id: id, line: index + 1, message: message, fix: fix))
             }
@@ -235,10 +240,35 @@ public enum KnowledgeScenarios {
             parsed.items.append(Item(id: id, kind: kind, feature: feature, number: Int(match.3) ?? 0, title: title, status: status,
                                      level: kind == .scenario ? level : nil, journey: kind == .scenario && journey,
                                      rule: kind == .scenario ? rule : nil, workItems: workItems, sources: sources.joined(separator: " · "),
-                                     tests: kind == .scenario ? tests : [], note: note, line: index + 1))
+                                     tests: kind == .scenario ? tests : [], steps: body.steps, examples: body.examples,
+                                     note: note, line: index + 1))
             index += 1
         }
         return parsed
+    }
+
+    static let stepKeywords = ["Given ", "When ", "Then ", "And ", "But ", "* "]
+
+    /// A scenario's steps and its examples' rows: the lines after its title up to the next item's
+    /// header or the end of the gherkin block.
+    static func scenarioBody(_ lines: [String], after title: Int) -> (steps: [String], examples: [String]) {
+        var steps: [String] = [], examples: [String] = []
+        var table: Bool?
+        for line in lines.dropFirst(title + 1) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") || line.wholeMatch(of: header) != nil { break }
+            if stepKeywords.contains(where: trimmed.hasPrefix) {
+                steps.append(trimmed)
+            } else if trimmed.hasPrefix("Examples:") || trimmed.hasPrefix("Scenarios:") {
+                table = false
+            } else if trimmed.hasPrefix("|"), let seen = table {
+                // The first row of a table names its columns.
+                if seen { examples.append(trimmed) } else { table = true }
+            } else if !trimmed.isEmpty, !trimmed.hasPrefix("#"), !trimmed.hasPrefix("@") {
+                table = nil
+            }
+        }
+        return (steps, examples)
     }
 
     /// The IDs a text mentions anywhere (a plan, a task note, a test title), each once, in order.

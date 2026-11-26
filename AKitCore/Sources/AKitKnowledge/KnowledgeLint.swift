@@ -24,6 +24,9 @@ import Foundation
 /// | `scenario-feature-code` | warning | a requirement note with IDs of more than one feature code |
 /// | `scenario-unknown-id` | warning | a note citing an ID of a known feature code that no note defines |
 /// | `scenario-test-missing` | warning | a `# test:` link whose file or test name no local copy of its repository has (its worktrees included) |
+/// | `scenario-untested` | warning | an agreed scenario without a `# test:` link (K45) |
+/// | `scenario-examples-untested` | warning | a scenario outline with more `Examples:` rows than linked tests, none of them parametrized (K45) |
+/// | `scenario-step-untested` | hint | a quoted text, dotted name, HTTP status or constant of a scenario's steps that none of its linked tests mentions (K45) |
 /// | `task-field` | warning | a task note (`kind: task`, K44) without `ado:` or `status:`, or with a value the board can't read |
 /// | `task-duplicate-ado` | warning | two task notes with the same `ado:`: a dependency on it can't tell which one |
 ///
@@ -58,13 +61,16 @@ public enum KnowledgeLint {
         case scenarioFeatureCode = "scenario-feature-code"
         case scenarioUnknownID = "scenario-unknown-id"
         case scenarioTestMissing = "scenario-test-missing"
+        case scenarioUntested = "scenario-untested"
+        case scenarioExamplesUntested = "scenario-examples-untested"
+        case scenarioStepUntested = "scenario-step-untested"
         case taskField = "task-field"
         case taskDuplicateADO = "task-duplicate-ado"
 
         public var severity: Severity {
             switch self {
             case .brokenLink, .mapParse, .scenarioDuplicateID: .error
-            case .unrelatedArea, .unknownKind: .hint
+            case .unrelatedArea, .unknownKind, .scenarioStepUntested: .hint
             default: .warning
             }
         }
@@ -138,21 +144,27 @@ public enum KnowledgeLint {
         public var known: Set<String>
         /// Normalized remote → the folder of its local copy.
         public var copies: [String: URL]
+        /// The repos without an `origin` remote (one never pushed): a `# test:` link finds them by folder name.
+        public var localOnly: [URL]
 
-        public init(known: Set<String> = [], copies: [String: URL] = [:]) {
+        public init(known: Set<String> = [], copies: [String: URL] = [:], localOnly: [URL] = []) {
             self.known = known.union(copies.keys)
             self.copies = copies
+            self.localOnly = localOnly
         }
 
         /// The repos in `projectsRoot` (and one folder below) by their `origin` remote, and the
         /// project ids of the brain's and the local project store.
         public static func find(home: URL, projectsRoot: URL, brainRoot: URL?) -> Projects {
             var copies: [String: URL] = [:]
+            var localOnly: [URL] = []
             func look(_ folder: URL, depth: Int) {
                 for child in FileWalk.children(of: folder) where FileWalk.isDirectory(child) && !child.lastPathComponent.hasPrefix(".") {
                     if FileManager.default.fileExists(atPath: child.appending(path: ".git").path) {
-                        if let remote = GitCheckout.originURL(of: child), let id = ProjectRecords.normalizedRemote(remote), copies[id] == nil {
-                            copies[id] = child
+                        if let remote = GitCheckout.originURL(of: child), let id = ProjectRecords.normalizedRemote(remote) {
+                            if copies[id] == nil { copies[id] = child }
+                        } else {
+                            localOnly.append(child)
                         }
                     } else if depth > 0 {
                         look(child, depth: depth - 1)
@@ -171,7 +183,7 @@ public enum KnowledgeLint {
                     if folder.hasPrefix(root + "/") { known.insert(String(folder.dropFirst(root.count + 1)).lowercased()) }
                 }
             }
-            return Projects(known: known, copies: copies)
+            return Projects(known: known, copies: copies, localOnly: localOnly)
         }
     }
 
@@ -387,6 +399,7 @@ public enum KnowledgeLint {
                 for link in item.tests {
                     if let finding = missingTest(link, item: item, path: path, projects: projects) { findings.append(finding) }
                 }
+                if item.kind == .scenario { findings += coverage(item, path: path, projects: projects) }
             }
             let noteCodes = Set(parsed.items.map(\.feature))
             if noteCodes.count > 1 {
@@ -403,6 +416,35 @@ public enum KnowledgeLint {
                                         message: "\(id) is cited, but no note defines it.",
                                         fix: "Correct the ID (akit kb scenarios lists them), or propose the item in the feature's scenarios note."))
             }
+        }
+        return findings
+    }
+
+    /// What a scenario's links leave unproven (K45): an agreed scenario without a link, an
+    /// outline's rows without their tests, and the steps' terms that no linked test mentions.
+    /// The last two read the tests only when every link's test is on this Mac.
+    static func coverage(_ item: KnowledgeScenarios.Item, path: String, projects: Projects) -> [Finding] {
+        if item.tests.isEmpty {
+            guard item.status == "agreed" else { return [] }
+            return [Finding(rule: .scenarioUntested, file: path, element: item.id,
+                            message: "Line \(item.line): \(item.id) is agreed, but no # test: line links a test that proves it.",
+                            fix: "Propose a # test: line with the test that proves its Then, or write that test first.")]
+        }
+        let tests = item.tests.compactMap { link in
+            sources(of: link, projects: projects)?.lazy.compactMap { KnowledgeTestSource.test(titled: link.names, in: $0) }.first
+        }
+        guard tests.count == item.tests.count else { return [] }
+        var findings: [Finding] = []
+        if !item.examples.isEmpty, !tests.contains(where: \.parametrized), tests.count < item.examples.count {
+            findings.append(Finding(rule: .scenarioExamplesUntested, file: path, element: item.id,
+                                    message: "Line \(item.line): \(item.id) has \(item.examples.count) Examples rows, but its # test: lines link \(tests.count) test\(tests.count == 1 ? "" : "s"), none of them parametrized.",
+                                    fix: "Link a test for each row (or one it.each over the rows), or drop the rows no test proves."))
+        }
+        let missing = KnowledgeTestSource.terms(in: item.steps + item.examples).filter { term in !tests.contains { $0.text.contains(term) } }
+        if !missing.isEmpty {
+            findings.append(Finding(rule: .scenarioStepUntested, file: path, element: item.id, link: missing.joined(separator: ", "),
+                                    message: "Line \(item.line): no linked test of \(item.id) mentions \(missing.map { "“\($0)”" }.joined(separator: ", ")) from its steps (helpers and beforeEach aren't read).",
+                                    fix: "Check that a linked test proves those steps; add the assertion or a # test: line for the test that does, or reword the step."))
         }
         return findings
     }
@@ -435,16 +477,25 @@ public enum KnowledgeLint {
         return findings
     }
 
+    /// The texts of the link's file in the local copy of its repository and the copy's worktrees;
+    /// nil when this Mac has no copy.
+    static func sources(of link: KnowledgeScenarios.TestLink, projects: Projects) -> [String]? {
+        guard let copy = copy(of: link, projects: projects) else { return nil }
+        return ([copy] + worktrees(of: copy)).compactMap { root in
+            (try? Data(contentsOf: root.appending(path: link.path))).flatMap { String(data: $0, encoding: .utf8) }
+        }
+    }
+
+    static func copy(of link: KnowledgeScenarios.TestLink, projects: Projects) -> URL? {
+        ProjectRecords.normalizedRemote(link.repo).flatMap { projects.copies[$0] }
+            ?? (projects.copies.values + projects.localOnly).sorted { $0.path < $1.path }.first { $0.lastPathComponent == link.repo }
+    }
+
     /// The link's file or test name is in no local copy of its repository; nil when it is, or
     /// when this Mac has no copy (nothing to compare with).
     static func missingTest(_ link: KnowledgeScenarios.TestLink, item: KnowledgeScenarios.Item, path: String, projects: Projects) -> Finding? {
-        let copy = ProjectRecords.normalizedRemote(link.repo).flatMap { projects.copies[$0] }
-            ?? projects.copies.values.sorted { $0.path < $1.path }.first { $0.lastPathComponent == link.repo }
-        guard let copy else { return nil }
+        guard let copy = copy(of: link, projects: projects), let texts = sources(of: link, projects: projects) else { return nil }
         let roots = [copy] + worktrees(of: copy)
-        let texts = roots.compactMap { root in
-            (try? Data(contentsOf: root.appending(path: link.path))).flatMap { String(data: $0, encoding: .utf8) }
-        }
         let location = "\(link.repo) · \(link.path)"
         if texts.isEmpty {
             return Finding(rule: .scenarioTestMissing, file: path, element: item.id, link: location,

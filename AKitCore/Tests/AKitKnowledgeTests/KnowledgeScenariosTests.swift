@@ -25,6 +25,14 @@ struct KnowledgeScenariosTests {
 
       # SC-ORD-002 · ADO 123457 · level: unit · status: draft
       Scenario Outline: A shipped order cannot be cancelled
+        Given an order that is <state>
+        When the customer cancels it
+        Then the answer is "Not cancelled"
+
+        Examples:
+          | state   |
+          | shipped |
+          | lost    |
     ```
 
     ## Open questions
@@ -54,6 +62,10 @@ struct KnowledgeScenariosTests {
             .init(repo: "shop-web", path: "src/orders/cancel.test.ts", names: ["shows the refund"], line: 14),
         ])
         #expect(parsed.items[2].title == "A shipped order cannot be cancelled" && parsed.items[2].status == "draft" && !parsed.items[2].journey)
+        #expect(journey.steps == ["Given an order that is paid and not shipped"] && journey.examples.isEmpty)
+        #expect(parsed.items[2].steps == ["Given an order that is <state>", "When the customer cancels it", "Then the answer is \"Not cancelled\""])
+        #expect(parsed.items[2].examples == ["| shipped |", "| lost    |"], "the first row of a table names its columns")
+        #expect(rule.steps.isEmpty && parsed.items[3].steps.isEmpty)
         let question = parsed.items[3]
         #expect(question.kind == .question && question.status == "open" && question.rule == nil && question.level == nil)
     }
