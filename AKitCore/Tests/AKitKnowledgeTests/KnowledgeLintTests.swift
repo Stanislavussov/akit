@@ -4,7 +4,7 @@ import AKitFoundation
 @testable import AKitKnowledge
 
 /// Lint (4.1): the fixture `Fixtures/lint-base` (no git, read by #filePath) has one finding of each
-/// rule and two hints; bases written in a temporary fake home check the known projects, the clean
+/// rule and three hints; bases written in a temporary fake home check the known projects, the clean
 /// case and the R-SEP hint.
 final class KnowledgeLintTests {
     deinit { try? FileManager.default.removeItem(at: home) }
@@ -42,17 +42,20 @@ final class KnowledgeLintTests {
             "warning missing-file areas/shop/missing-file.md - akit-lint-fixture/no-such-file.txt",
             "warning missing-description areas/shop/no-description.md - -",
             "warning scenario-feature-code areas/shop/scenarios.md ORD, PAY -",
+            "warning scenario-untested areas/shop/scenarios.md SC-ORD-001 -",
             "warning scenario-header areas/shop/scenarios.md SC-ORD-002 -",
             "warning scenario-test-missing areas/shop/scenarios.md SC-ORD-002 lint-repo · tests/cancel.test.ts",
+            "warning scenario-examples-untested areas/shop/scenarios.md SC-ORD-003 -",
             "warning scenario-unknown-id areas/shop/scenarios.md SC-ORD-099 -",
             "warning unknown-repo areas/shop/unknown-repo.md - git@example.com:lint/no-such-repo.git",
             "hint unknown-kind areas/shop/gadget.md - gadget",
             "hint unrelated-area areas/shop/maps/blocks.excalidraw blk-thing other/thing",
+            "hint scenario-step-untested areas/shop/scenarios.md SC-ORD-003 Refunded",
         ])
         let rules = findings.filter { $0.severity != .hint }.map(\.rule)
-        #expect(rules.count == 14 && Set(rules) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint }))
+        #expect(rules.count == 16 && Set(rules) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint }))
         #expect(findings.allSatisfy { $0.fix != nil && !$0.message.isEmpty })
-        #expect(KnowledgeLint.counts(findings) == .init(error: 3, warning: 11, hint: 2))
+        #expect(KnowledgeLint.counts(findings) == .init(error: 3, warning: 13, hint: 3))
     }
 
     @Test func theAnswerEncodesAsTheCLIPrintsIt() throws {
@@ -101,7 +104,11 @@ final class KnowledgeLintTests {
         try fm.createDirectory(at: root.appending(path: "group/two/.git/worktrees/wt"), withIntermediateDirectories: true)
         try write("{}", "github.com/me/brain-project/lock.json", in: home.appending(path: "brain/projects"))
         try write("{}", "example.com/work/app/answers.json", in: home.appending(path: ".akit/local/projects"))
+        // A repo never pushed: no origin, found by its folder name.
+        try write("[core]\n\tbare = false\n", ".git/config", in: root.appending(path: "local-e2e"))
         let projects = KnowledgeLint.Projects.find(home: home, projectsRoot: root, brainRoot: home.appending(path: "brain"))
+        #expect(projects.localOnly.contains(root.appending(path: "local-e2e")))
+        #expect(!projects.known.contains { $0.contains("local-e2e") })
         #expect(projects.copies["example.com/group/one"] == root.appending(path: "one"))
         #expect(projects.copies["example.com/group/two"] == root.appending(path: "group/two"))
         #expect(projects.known.isSuperset(of: ["example.com/group/one", "example.com/group/two", "github.com/me/brain-project", "example.com/work/app"]))

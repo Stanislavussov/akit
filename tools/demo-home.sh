@@ -1326,12 +1326,15 @@ How the payments team deploys, rolls back and answers a failed charge.
 EOF
 
 # The other repos the notes name (repo:): billing and orders-db of payments, lint-examples of the
-# space's missing-file example (an empty copy), so akit kb lint finds only the findings the space
+# space's missing-file example (a copy with one test file), so akit kb lint finds only the findings the space
 # lint-examples has on purpose. No harness files: no screen lists them as projects.
 for name in billing orders-db lint-examples; do
     mkdir -p "$DEMO/Projects/$name" && git -C "$DEMO/Projects/$name" init -q
     git -C "$DEMO/Projects/$name" remote add origin "git@example.com:shop/$name.git"
 done
+# The test the space's SC-LNT-004 links: one test for its two Examples rows, without its "Charged".
+mkdir -p "$DEMO/Projects/lint-examples/src"
+printf 'describe("checkout", () => {\n\tit("charges the card", () => {});\n});\n' > "$DEMO/Projects/lint-examples/src/checkout.test.ts"
 
 # Work → Meetings (docs/design/meetings.md): two made-up meetings of today, done, with summary,
 # transcript and an own tab; no audio (audioUntil far ahead, so nothing goes to the Trash).

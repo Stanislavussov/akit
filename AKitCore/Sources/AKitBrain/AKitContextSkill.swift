@@ -66,9 +66,9 @@ akit kb scenarios [NOTE] [--work-item ID] [--status S] [--json]
                                                    # the rules, scenarios and open questions of
                                                    # requirement notes (gherkin blocks): {base, note,
                                                    # items: [{id, kind, status, level, rule,
-                                                   # workItems, tests: [{repo, path, names}]}]}; a
-                                                   # scenario's tests are linked from the note,
-                                                   # never by an ID in the repository
+                                                   # workItems, tests: [{repo, path, names}], steps,
+                                                   # examples}]}; a scenario's tests are linked from
+                                                   # the note, never by an ID in the repository
 akit kb inbox [--json] [--base PATH|WORLD]         # the proposals waiting for the user: {base,
                                                    # proposals: [{id, kind, target, reason, created,
                                                    # checks: [{name, status, message}], modelCheck:

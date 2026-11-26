@@ -146,12 +146,13 @@ final class KnowledgeSeedTests {
         // Lint (4.1), with the made-up repos cloned as tools/demo-home.sh clones them.
         ("lint-examples has one finding of each rule", { base in
             let found = try lint(base).filter { $0.severity != .hint }
-            return found.allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } && found.count == 14
+            return found.allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } && found.count == 16
                 && Set(found.map(\.rule)) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint })
         }),
-        ("lint-examples has the hints unknown kind and unrelated area", { base in
+        ("lint-examples has the hints unknown kind, unrelated area and an untested step", { base in
             try lint(base).filter { $0.severity == .hint }.map { "\($0.rule.rawValue) \($0.file) \($0.element ?? "")" } == [
                 "unknown-kind areas/lint-examples/gadget.md ", "unrelated-area areas/lint-examples/maps/examples.excalidraw blk-courier",
+                "scenario-step-untested areas/lint-examples/scenarios.md SC-LNT-004",
             ]
         }),
         ("the rest of the seed has no findings", { base in try lint(base).allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } }),
@@ -189,13 +190,16 @@ final class KnowledgeSeedTests {
     ]
 
     /// The seed's findings with orders-api (holding src/events/order-created.ts), billing,
-    /// orders-db and lint-examples cloned, as in the demo home.
+    /// orders-db and lint-examples (holding src/checkout.test.ts) cloned, as in the demo home.
     static func lint(_ base: KnowledgeBase) throws -> [KnowledgeLint.Finding] {
         let folder = FileManager.default.temporaryDirectory.appending(path: "akit-lint-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
         let file = folder.appending(path: "orders-api/src/events/order-created.ts")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("export {}\n".utf8).write(to: file)
+        let test = folder.appending(path: "lint-examples/src/checkout.test.ts")
+        try FileManager.default.createDirectory(at: test.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("describe(\"checkout\", () => {\n\tit(\"charges the card\", () => {});\n});\n".utf8).write(to: test)
         // orders-api's path: ~/Projects/orders-api, the same clone.
         let projects = folder.appending(path: "home/Projects")
         try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)

@@ -21,6 +21,18 @@ Rule: An order can be cancelled until it is shipped
   # SC-ORD-002 · ADO 123457 · status: agreed
   # test: lint-repo · tests/cancel.test.ts · cancel › keeps a shipped order as it is
   Scenario: A shipped order cannot be cancelled
+
+  # SC-ORD-003 · ADO 123456 · level: unit · status: draft
+  # test: lint-repo · tests/cancel.test.ts · cancel › refunds a paid order
+  Scenario Outline: A paid order is refunded by its payment method
+    Given an order paid by <method>
+    When the customer cancels it
+    Then its payment shows "Refunded"
+
+    Examples:
+      | method |
+      | card   |
+      | bank   |
 ```
 
 ## R-PAY-01 Another feature

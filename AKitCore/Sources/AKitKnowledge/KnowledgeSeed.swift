@@ -19,7 +19,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 13
+    public static let version = 14
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -501,7 +501,9 @@ public enum KnowledgeSeed {
 
             """),
         // The scenario-* rules (K43): a duplicate ID, a header without a level, a second feature
-        // code, a cited ID no note defines, a test link to a file the clone doesn't have.
+        // code, a cited ID no note defines, a test link to a file the clone doesn't have; (K45) an
+        // agreed scenario without a test, and an outline with more rows than tests whose test
+        // doesn't mention its step's quoted text (a hint).
         File(path: "areas/lint-examples/scenarios.md", text: """
             ---
             description: Requirement examples lint flags on purpose, one of each scenario rule.
@@ -525,6 +527,21 @@ public enum KnowledgeSeed {
 
               # SC-LNT-002 · ADO 100001 · status: draft
               Scenario: A scenario without a level
+
+              # SC-LNT-003 · ADO 100001 · level: unit · status: agreed
+              Scenario: An agreed scenario no test proves yet
+
+              # SC-LNT-004 · ADO 100001 · level: unit · status: draft
+              # test: lint-examples · src/checkout.test.ts · checkout › charges the card
+              Scenario Outline: The payment is charged by its method
+                Given a cart paid by <method>
+                When the customer pays
+                Then the payment shows "Charged"
+
+                Examples:
+                  | method |
+                  | card   |
+                  | bank   |
             ```
 
             ## R-OTH-01 Another feature
