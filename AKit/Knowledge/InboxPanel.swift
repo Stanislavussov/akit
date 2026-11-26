@@ -135,7 +135,10 @@ private struct ProposalDetail: View {
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     CheckIcon(status: check.status)
                                     Text(check.name).bold()
-                                    Text(check.message ?? check.status.rawValue).foregroundStyle(.secondary).textSelection(.enabled)
+                                    // A failed or warned check's message in its colour: what is missing shows at once.
+                                    Text(check.message ?? check.status.rawValue)
+                                        .foregroundStyle(check.status == .failed ? Color.red : check.status == .warning ? Color.orange : Color.secondary)
+                                        .textSelection(.enabled)
                                 }
                             }
                         }

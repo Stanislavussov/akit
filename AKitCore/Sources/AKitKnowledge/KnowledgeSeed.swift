@@ -19,7 +19,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 14
+    public static let version = 15
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -404,6 +404,61 @@ public enum KnowledgeSeed {
             """),
         // Maps (2.1), 0.17.6-shaped: an arrow labelled "events" with a flow link and jumps between
         // the two areas' maps both ways (the unbound arrow is on lint-examples' map).
+        // A feature's board (K44): the task notes of features/refund-form, one per work item, in
+        // the order of their titles' numbers; (2) waits for (1), (3) for (2) and a backend item
+        // without a note.
+        File(path: "areas/features/area.yaml", text: """
+            title: Features
+            description: Features in delivery, one group each, with their task boards.
+
+            """),
+        File(path: "areas/features/refund-form/501 refund api.md", text: """
+            ---
+            description: The refund API contract the form calls; agreed with the billing team.
+            kind: task
+            ado: 501
+            status: done
+            rule: [R-RF-01]
+            ---
+            # (1) SHOP-501 — Refund API contract
+
+            ## Plan
+
+            The request and answer of POST /refunds, mocked in the shop until billing ships it.
+
+            """),
+        File(path: "areas/features/refund-form/502 refund form.md", text: """
+            ---
+            description: The refund form in the shop, with the order, its items and the reason.
+            kind: task
+            ado: 502
+            status: doing
+            depends: [501]
+            rule: [R-RF-01, R-RF-02]
+            ---
+            # (2) SHOP-502 — Refund form
+
+            ## Plan
+
+            The form reads the order and sends the chosen items to [[501 refund api]].
+
+            """),
+        File(path: "areas/features/refund-form/503 refund email.md", text: """
+            ---
+            description: The confirmation e-mail after a refund request.
+            kind: task
+            ado: 503
+            status: todo
+            depends: [502, 510]
+            rule: [R-RF-03]
+            ---
+            # (3) SHOP-503 — Confirmation e-mail
+
+            ## Plan
+
+            Sent once billing (510, no note yet) confirms the refund.
+
+            """),
         File(path: "areas/payments/maps/overview.excalidraw", text: overviewMap),
         File(path: "areas/logistics/maps/routes.excalidraw", text: routesMap),
         // Lint (4.1): one finding of each rule, on purpose, in an area of its own; the rest of the
@@ -550,6 +605,33 @@ public enum KnowledgeSeed {
             # R-OTH-01 · status: draft
             Rule: A rule of another feature in the same note
             ```
+
+            """),
+        // task-field and task-duplicate-ado (K44): a task note with a status the board doesn't
+        // know and a dependency that is no ADO ID, and a second task note of the same work item.
+        File(path: "areas/lint-examples/task-fields.md", text: """
+            ---
+            description: A task note whose fields the board can't read, on purpose.
+            kind: task
+            ado: 900001
+            status: started
+            depends: [the api]
+            ---
+            # task-fields
+
+            status: started is no column; depends names no work item.
+
+            """),
+        File(path: "areas/lint-examples/task-twin.md", text: """
+            ---
+            description: A second task note of the same work item, on purpose.
+            kind: task
+            ado: 900001
+            status: todo
+            ---
+            # task-twin
+
+            The same ado: as task-fields.
 
             """),
         // block-without-note, unbound-arrow and unrelated-area (a hint, R-SEP); then map-parse.

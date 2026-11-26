@@ -27,6 +27,8 @@ import Foundation
 /// | `scenario-untested` | warning | an agreed scenario without a `# test:` link (K45) |
 /// | `scenario-examples-untested` | warning | a scenario outline with more `Examples:` rows than linked tests, none of them parametrized (K45) |
 /// | `scenario-step-untested` | hint | a quoted text, dotted name, HTTP status or constant of a scenario's steps that none of its linked tests mentions (K45) |
+/// | `task-field` | warning | a task note (`kind: task`, K44) without `ado:` or `status:`, or with a value the board can't read |
+/// | `task-duplicate-ado` | warning | two task notes with the same `ado:`: a dependency on it can't tell which one |
 ///
 /// Known projects (K12): the `origin` remotes of the git repos in the projects root (and one
 /// folder below), the project ids of the project store (the brain's `projects/` and
@@ -62,6 +64,8 @@ public enum KnowledgeLint {
         case scenarioUntested = "scenario-untested"
         case scenarioExamplesUntested = "scenario-examples-untested"
         case scenarioStepUntested = "scenario-step-untested"
+        case taskField = "task-field"
+        case taskDuplicateADO = "task-duplicate-ado"
 
         public var severity: Severity {
             switch self {
@@ -205,6 +209,7 @@ public enum KnowledgeLint {
             findings += check(note: note, path: "areas/\(id).md", targets: targets, kinds: kinds, projects: projects, home: home)
         }
         findings += scenarios(texts, projects: projects)
+        findings += tasks(texts)
         var graphs: [MapGraph.Map] = []
         var scenes: [String: ExcalidrawFile] = [:]
         for file in files where file.pathExtension == "excalidraw" {
@@ -440,6 +445,34 @@ public enum KnowledgeLint {
             findings.append(Finding(rule: .scenarioStepUntested, file: path, element: item.id, link: missing.joined(separator: ", "),
                                     message: "Line \(item.line): no linked test of \(item.id) mentions \(missing.map { "“\($0)”" }.joined(separator: ", ")) from its steps (helpers and beforeEach aren't read).",
                                     fix: "Check that a linked test proves those steps; add the assertion or a # test: line for the test that does, or reword the step."))
+        }
+        return findings
+    }
+
+    // MARK: - Tasks (K44)
+
+    /// The `task-*` findings: the fields of each task note, and an ADO ID two task notes share.
+    static func tasks(_ notes: [(id: String, text: String)]) -> [Finding] {
+        var findings: [Finding] = []
+        var first: [String: String] = [:]
+        for (id, text) in notes {
+            let note = KnowledgeNote(text: text)
+            guard note.kind == KnowledgeTask.kind else { continue }
+            let path = "areas/\(id).md"
+            let problems = KnowledgeTask.problems(note)
+            if !problems.isEmpty {
+                findings.append(Finding(rule: .taskField, file: path,
+                                        message: "The task note's fields don't fit the board: \(problems.joined(separator: "; ")).",
+                                        fix: "Set them in Properties (or akit kb set NOTE ado=… status=todo); an agent proposes them with akit kb propose --set."))
+            }
+            guard let ado = KnowledgeTask.text(note.frontmatter["ado"]), KnowledgeTask.isID(ado) else { continue }
+            if let other = first[ado] {
+                findings.append(Finding(rule: .taskDuplicateADO, file: path, link: ado,
+                                        message: "ado: \(ado) is also the work item of \(other); a dependency on \(ado) can't tell which card it means.",
+                                        fix: "Keep one task note per work item: merge the two, or correct the ado: of one."))
+            } else {
+                first[ado] = "areas/\(id).md"
+            }
         }
         return findings
     }

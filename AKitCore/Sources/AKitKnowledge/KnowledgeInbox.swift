@@ -157,7 +157,7 @@ public enum KnowledgeInbox {
     /// A check without a model (K14): `failed` blocks `propose` and Accept, `warning` only marks.
     public struct Check: Sendable, Equatable, Encodable {
         public enum Status: String, Sendable, Encodable { case passed, warning, failed }
-        /// target, secret, links, arrow, format.
+        /// target, secret, links, task, arrow, format.
         public let name: String
         public let status: Status
         public let message: String?
@@ -596,6 +596,18 @@ extension KnowledgeBase {
             } else {
                 checks.append(.init(name: "links", status: .passed))
             }
+            if let merged = try? merged(proposal), merged.note.kind == KnowledgeTask.kind {
+                let problems = KnowledgeTask.problems(merged.note)
+                if !problems.isEmpty {
+                    checks.append(.init(name: "task", status: .failed,
+                                        message: "The task note lacks what the board needs: \(problems.joined(separator: "; ")). Propose the fields with --set (kind=task ado=… status=todo depends=[…])."))
+                } else if !merged.note.hasDescription {
+                    checks.append(.init(name: "task", status: .warning,
+                                        message: "description: missing; the one line agents read before they open the note (--set description=…)."))
+                } else {
+                    checks.append(.init(name: "task", status: .passed))
+                }
+            }
         case .arrow:
             guard let arrow = proposal.arrow else {
                 checks.append(.init(name: "arrow", status: .failed, message: "The proposal has no arrow."))
@@ -630,6 +642,15 @@ extension KnowledgeBase {
         if let failed = checks(of: proposal).first(where: { $0.status == .failed }) {
             throw Failure(message: "The proposal fails its \(failed.name) check: \(failed.message ?? "")")
         }
+        let merged = try merged(proposal)
+        return KnowledgeInbox.Plan(proposal: proposal, note: merged.target.id, notePath: notePath(merged.target.id), original: merged.original,
+                                   planned: merged.note.text, newArea: merged.target.newArea)
+    }
+
+    /// The note a note proposal makes (`planAccept` without the checks; the `task` check reads it
+    /// too). A task note's `status:` (K44) is the person's, moved on the board: a proposal that
+    /// rewrites the note keeps the one on disk unless it sets `status` itself.
+    func merged(_ proposal: Proposal) throws(Failure) -> (target: (id: String, exists: Bool, newArea: Bool), original: Data?, note: KnowledgeNote) {
         let target = try proposalTarget(proposal.target ?? "")
         let draft = KnowledgeNote(text: proposal.body)
         var note: KnowledgeNote
@@ -676,6 +697,11 @@ extension KnowledgeBase {
                 if !text.isEmpty, text.last?.isNewline != true { text += "\n" }
                 note = KnowledgeNote(text: text)
             }
+            if let onDisk = original.flatMap({ String(data: $0, encoding: .utf8) }).map(KnowledgeNote.init(text:)),
+               onDisk.kind == KnowledgeTask.kind, let status = onDisk.frontmatter["status"], !(status is NSNull),
+               !proposal.set.contains(where: { $0.key == "status" }), !KnowledgeNote.PropertyValue(status).matches(note.frontmatter["status"]) {
+                note = try note.setting("status", to: KnowledgeNote.PropertyValue(status))
+            }
             for setting in proposal.set { note = try note.setting(setting.key, to: .parse(setting.value)) }
         } catch let error as KnowledgeNote.Failure {
             throw Failure(message: "\(target.id): \(error.message)")
@@ -684,8 +710,7 @@ extension KnowledgeBase {
         } catch {
             throw Failure(message: error.localizedDescription)
         }
-        return KnowledgeInbox.Plan(proposal: proposal, note: target.id, notePath: notePath(target.id), original: original,
-                                   planned: note.text, newArea: target.newArea)
+        return (target, original, note)
     }
 
     /// Writes a planned Accept: commits the pending edits first (U2), backs the note up (P3,

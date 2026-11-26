@@ -158,7 +158,12 @@ struct KnowledgeView: View {
                 }
                 .frame(minWidth: 200, idealWidth: 260, maxWidth: 380)
             }
-            if model.map != nil {
+            if model.board != nil {
+                BoardPanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                if model.noteBesideBoard, model.note != nil {
+                    NotePanel().frame(minWidth: 360, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else if model.map != nil {
                 MapPanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
                 if model.noteBesideMap, model.note != nil {
                     NotePanel().frame(minWidth: 360, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
@@ -282,7 +287,7 @@ struct KnowledgeView: View {
     /// selectable: a click folds or unfolds it.
     /// The row lit in the note list: the open map, else the open note. A row in a folded space
     /// or group isn't there to light; its note stays open beside the list all the same.
-    private var selectedRow: String? { model.map.map { "map:" + $0 } ?? model.note }
+    private var selectedRow: String? { model.board.map { "board:" + $0 } ?? model.map.map { "map:" + $0 } ?? model.note }
 
     /// One row of the note list (K29, K37): a space, a group in it, a map, a note, the hint
     /// of an empty space or group, or the line after a run of numbered notes (K42).
@@ -290,6 +295,8 @@ struct KnowledgeView: View {
         case space(KnowledgeBase.Area)
         case group(area: String, name: String, count: Int)
         case map(String)
+        /// The board of a space's top or of a group (K44): the folder.
+        case board(String)
         case note(KnowledgeBase.NoteEntry)
         case hint(key: String, text: String, depth: Int)
         case divider(key: String, depth: Int)
@@ -300,6 +307,7 @@ struct KnowledgeView: View {
             case .space(let area): "space:" + area.name
             case .group(let area, let name, _): "group:" + area + "/" + name
             case .map(let id): "map:" + id
+            case .board(let folder): "board:" + folder
             case .note(let note): note.id
             case .hint(let key, _, _): "hint:" + key
             case .divider(let key, _): "divider:" + key
@@ -311,6 +319,7 @@ struct KnowledgeView: View {
             switch self {
             case .space: 0
             case .group, .map: 1
+            case .board(let folder): folder.contains("/") ? 2 : 1
             case .note(let note): note.group == nil ? 1 : 2
             case .hint(_, _, let depth), .divider(_, let depth): depth
             }
@@ -318,7 +327,7 @@ struct KnowledgeView: View {
 
         var selectable: Bool {
             switch self {
-            case .map, .note: true
+            case .map, .board, .note: true
             default: false
             }
         }
@@ -332,11 +341,13 @@ struct KnowledgeView: View {
             let maps = model.maps(in: area.name)
             let notes = model.notes(in: area.name)
             let groups = model.groups(in: area.name)
-            var rows: [ListRow] = [.space(area)] + maps.map(ListRow.map)
+            let boards = model.boardFolders(in: area.name)
+            var rows: [ListRow] = [.space(area)] + maps.map(ListRow.map) + (boards.contains(area.name) ? [.board(area.name)] : [])
             for group in groups {
                 let inGroup = notes.filter { $0.group == group }
                 rows.append(.group(area: area.name, name: group, count: inGroup.count))
                 guard !model.collapsedGroups.contains(area.name + "/" + group) else { continue }
+                if boards.contains(area.name + "/" + group) { rows.append(.board(area.name + "/" + group)) }
                 rows += Self.noteRows(inGroup, key: area.name + "/" + group, depth: 2)
                 if inGroup.isEmpty {
                     rows.append(.hint(key: area.name + "/" + group, text: "Empty: New Note… here, or drop a note on the group", depth: 2))
@@ -401,6 +412,7 @@ struct KnowledgeView: View {
             case .space(let area): spaceRow(area)
             case .group(let area, let name, let count): groupRow(name, in: area, count: count)
             case .map(let id): mapRow(id)
+            case .board(let folder): boardRow(folder)
             case .note(let note): noteRow(note)
             case .hint(_, let text, _): Text(text).font(.callout).foregroundStyle(.secondary)
             case .divider: Divider()
@@ -418,7 +430,7 @@ struct KnowledgeView: View {
             switch row {
             case .space(let area): model.toggle(area: area.name)
             case .group(let area, let name, _): model.toggle(group: name, in: area)
-            case .map, .note: select(row)
+            case .map, .board, .note: select(row)
             case .hint, .divider: break
             }
         }
@@ -440,9 +452,11 @@ struct KnowledgeView: View {
     private func select(_ row: ListRow) {
         switch row {
         case .map(let id): model.open(map: id)
+        case .board(let folder): Task { await model.open(board: folder) }
         case .note(let note):
             Task {
                 await model.closeMap()
+                model.closeBoard()
                 model.open(note.id)
             }
         default: break
@@ -540,6 +554,13 @@ struct KnowledgeView: View {
                 Button("Rename…") { model.renameRequest = id }
                 Button("Delete…", role: .destructive) { model.mapDeleteRequest = id }
             }
+    }
+
+    /// The board of a space's top or a group (K44): click to see its task notes by status.
+    private func boardRow(_ folder: String) -> some View {
+        Label("Board", systemImage: "rectangle.split.3x1")
+            .lineLimit(1)
+            .help("The task notes (kind: task) of areas/\(folder) by status: drag a card to another column to set its status:, click it to open its note (akit kb board)")
     }
 
     /// The + of a space or group row: New Note… with that space and group filled in.

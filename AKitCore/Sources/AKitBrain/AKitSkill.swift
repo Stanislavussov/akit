@@ -650,7 +650,8 @@ akit kb edit NOTE (--file F | --stdin) [--set KEY=VALUE]… [--yes] [--json]
                                                    # changed, written, backup, diff}
 akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json]
                                                    # note properties (kind=flow, owner=team-a,
-                                                   # files=[a.ts, b.ts]); one frontmatter line each
+                                                   # files=[a.ts, b.ts]); one frontmatter line each;
+                                                   # status=done moves a task note's card on its board
 akit kb kinds add NAME [--fields a,b] | fields NAME a,b | remove NAME | rename OLD NEW [--json]
                                                    # rename rewrites kind: in every note, all or nothing
 akit kb area AREA [--title T] [--description D] [--project P]… [--remove-project P]… [--json]

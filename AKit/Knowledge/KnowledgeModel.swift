@@ -76,6 +76,13 @@ final class KnowledgeModel {
     var mapDeleteRequest: String?
     /// A note opened from the map (a click on its block) shows beside the map.
     private(set) var noteBesideMap = false
+    /// The board in view (K44): the area or folder whose task notes are its cards; it takes the
+    /// map's place. Snapshots: `--select board:<folder>[|<note>]`.
+    private(set) var board: String?
+    /// The board's columns, read again with the base, so a move anywhere shows at once.
+    private(set) var boardColumns: KnowledgeTask.Board?
+    /// A card clicked on the board: its note shows beside the board.
+    private(set) var noteBesideBoard = false
     /// Open note tabs (ids), in the order they were opened.
     private(set) var tabs: [String] = []
     private(set) var note: String?
@@ -263,6 +270,11 @@ final class KnowledgeModel {
             if DebugSnapshot.options?.tab == "map-delete" { mapDeleteRequest = select }
         } else if let select, select.hasPrefix("block:") {
             openBlock(String(select.dropFirst("block:".count)))
+        } else if let select, select.hasPrefix("board:") {
+            // `board:<folder>`, or `board:<folder>|<note>` with that card's note beside it.
+            let parts = select.dropFirst("board:".count).split(separator: "|", maxSplits: 1).map(String.init)
+            await open(board: parts[0])
+            if parts.count == 2 { openCard(parts[1]) }
         }
         // Snapshots: `--tab rename` asks Rename… of the selected note or map, `--query` is the new name.
         if DebugSnapshot.options?.tab == "rename", let item = map ?? note { renameRequest = item }
@@ -303,6 +315,7 @@ final class KnowledgeModel {
         guard let base else {
             (areas, notes, allNotes, tabs, note, text) = ([], [], [], [], nil, "")
             (maps, map, targets) = ([], nil, KnowledgeLinks(notes: [], maps: []))
+            (board, boardColumns, noteBesideBoard) = (nil, nil, false)
             kindsFile = .defaults
             (watcher, indexStatus, searchAnswer, inboxCount) = (nil, nil, nil, 0)
             lintFindings = []
@@ -344,6 +357,10 @@ final class KnowledgeModel {
         if let note, !tabs.contains(note) { self.note = nil }
         if note == nil { note = tabs.last }
         readNote()
+        if let board {
+            boardColumns = try? base.board(folder: board)
+            if boardColumns == nil { (self.board, noteBesideBoard) = (nil, false) }
+        }
     }
 
     func choose(base: KnowledgeBase) {
@@ -355,6 +372,7 @@ final class KnowledgeModel {
             await NotebookModel.current?.forcePostDirty()
             self.base = base
             (area, tabs, note, map) = (nil, [], nil, nil)
+            (board, boardColumns, noteBesideBoard) = (nil, nil, false)
             mapTabs = []
             reload()
             NotebookModel.current?.refresh()
@@ -475,6 +493,7 @@ final class KnowledgeModel {
         if !mapTabs.contains(id) { mapTabs.append(id) }
         map = id
         noteBesideMap = false
+        (board, boardColumns, noteBesideBoard) = (nil, nil, false)
         refreshHistory(of: id)
     }
 
@@ -999,6 +1018,55 @@ final class KnowledgeModel {
         }
     }
 
+    // MARK: - Boards (K44)
+
+    /// The folders of a space that have task notes: `area` for its top, `area/group` for a group.
+    /// The note list shows a Board row in each.
+    func boardFolders(in area: String) -> Set<String> {
+        Set(allNotes.filter { $0.area == area && $0.kind == KnowledgeTask.kind }.map { note in note.group.map { area + "/" + $0 } ?? area })
+    }
+
+    /// Shows the board of a folder in the map's place; an open map's last change is saved first.
+    func open(board folder: String) async {
+        guard let base else { return }
+        let columns: KnowledgeTask.Board
+        do { columns = try base.board(folder: folder) } catch {
+            problem = error.message
+            return
+        }
+        if map != nil {
+            await forcePostDirty()
+            (map, noteBesideMap) = (nil, false)
+        }
+        let area = String(folder.split(separator: "/").first ?? "")
+        if area != self.area { choose(area: area) }
+        expandedAreas.insert(area)
+        (board, boardColumns, noteBesideBoard) = (folder, columns, false)
+    }
+
+    func closeBoard() { (board, boardColumns, noteBesideBoard) = (nil, nil, false) }
+
+    /// A card clicked: its note opens beside the board.
+    func openCard(_ id: String) {
+        open(id)
+        noteBesideBoard = board != nil
+    }
+
+    /// A card dropped in a column: the note's `status:` line is set, saved at once, and its commit
+    /// waits in the queue like any Properties edit.
+    func move(card id: String, to status: KnowledgeTask.Status) {
+        guard let base else { return }
+        do {
+            let result = try base.move(task: id, to: status)
+            guard result.changed else { return }
+            enqueue(result.path, in: base)
+            reload()
+            notice = "\(allNotes.first { $0.id == id }?.title ?? id): status \(status.rawValue)."
+        } catch {
+            problem = error.message
+        }
+    }
+
     // MARK: - Properties, kinds, area settings (K24)
 
     /// Properties: sets one frontmatter key of the note in view (an empty value removes it), one
@@ -1059,7 +1127,9 @@ final class KnowledgeModel {
     /// unset), then the other keys, sorted. `kind` and `tags` are not in the list.
     var noteProperties: [(key: String, value: String, isField: Bool)] {
         let values = KnowledgeNote(text: text).properties
-        let fields = noteEntry?.kind.flatMap { kindsFile.kind($0) }?.fields ?? []
+        var fields = noteEntry?.kind.flatMap { kindsFile.kind($0) }?.fields ?? []
+        // A task note always shows the board's fields (K44), also in a base whose kb.yaml lacks the kind.
+        if noteEntry?.kind == KnowledgeTask.kind { fields += KnowledgeTask.fields.filter { !fields.contains($0) } }
         // Tags have their own row of badges.
         let others = values.keys.filter { $0 != "kind" && $0 != "tags" && !fields.contains($0) }.sorted()
         return fields.map { ($0, values[$0]?.display ?? "", true) } + others.map { ($0, values[$0]?.display ?? "", false) }
@@ -1564,6 +1634,10 @@ final class KnowledgeModel {
         lines.append("maps: " + maps.map { $0 == map ? "\($0)*" : $0 }.joined(separator: ", "))
         if !mapTabs.isEmpty { lines.append("map tabs: " + mapTabs.joined(separator: ", ")) }
         if let map { lines.append("map: \(map), \(mapEditing ? "Edit" : "view only")" + (mapIsEmpty ? ", empty" : "") + (noteBesideMap && note != nil ? ", note beside it" : "")) }
+        if let board, let boardColumns {
+            lines.append("board: \(board), " + boardColumns.columns.map { "\($0.status.rawValue) \($0.cards.count)" }.joined(separator: ", ")
+                         + (boardColumns.unsorted.isEmpty ? "" : ", check fields \(boardColumns.unsorted.count)") + (noteBesideBoard && note != nil ? ", note beside it" : ""))
+        }
         if let mapConflict { lines.append("conflict: Changed on disk, \(mapConflict.id): Reload / Keep Mine") }
         lines.append("tabs: " + tabs.joined(separator: ", "))
         if ask.isOpen { lines += ask.manifest }
