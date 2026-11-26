@@ -312,7 +312,9 @@ public struct KnowledgeNote: Sendable, Equatable {
         var found: [(heading: String, line: Range<String.Index>)] = []
         var ends: [String.Index] = []
         var fence: String?
-        for line in lines where line.startIndex >= bodyStart {
+        // Once: `bodyStart` splits the whole text into lines (in the `where`, once per line).
+        let start = bodyStart
+        for line in lines where line.startIndex >= start {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if let open = fence {
                 if trimmed.hasPrefix(open) { fence = nil }

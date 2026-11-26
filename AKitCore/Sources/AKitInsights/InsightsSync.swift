@@ -23,7 +23,7 @@ public enum InsightsSync {
     /// Imports the new session lines, then writes and commits this Mac's summaries. Never throws:
     /// a problem is returned, so the caller can still pull and push.
     public static func publish(env: HarnessEnvironment, brain: Brain, projectsRoot: URL,
-                               hostName: String = ProcessInfo.processInfo.hostName,
+                               hostName: String = HostName.current,
                                hardware: String? = MachineProfile.currentHardwareHash()) async -> Published {
         do {
             let database = try IndexSchema.open(InsightsPaths(env: env).database)
@@ -38,7 +38,7 @@ public enum InsightsSync {
     /// `publish`, then `BrainSync.sync`. Throws only when the pull or push fails; a commit the
     /// publish made then waits in the brain for the next sync.
     public static func run(env: HarnessEnvironment, brain: Brain, projectsRoot: URL,
-                           hostName: String = ProcessInfo.processInfo.hostName,
+                           hostName: String = HostName.current,
                            hardware: String? = MachineProfile.currentHardwareHash()) async throws(BrainSync.Failure) -> Outcome {
         let published = await publish(env: env, brain: brain, projectsRoot: projectsRoot, hostName: hostName, hardware: hardware)
         return Outcome(published: published, sync: try await BrainSync.sync(brain.root, env: env))

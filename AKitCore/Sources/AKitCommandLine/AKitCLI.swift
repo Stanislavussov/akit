@@ -435,7 +435,7 @@ public enum AKitCLI {
 
     /// Runs one command. `out`/`err` receive text; returns the exit code.
     public static func run(_ arguments: [String], env: HarnessEnvironment, cwd: URL, projectsRoot: URL? = nil,
-                           hostName: String = ProcessInfo.processInfo.hostName,
+                           hostName: String = HostName.current,
                            installedTargets: [String] = [], out: (String) -> Void, err: (String) -> Void,
                            trash: (URL) throws -> URL? = Trash.move,
                            ask: ((String) -> String?)? = nil, preferences: Onboarding.Preferences? = nil,

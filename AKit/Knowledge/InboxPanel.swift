@@ -268,6 +268,7 @@ private struct SaveMapBanner: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            if working { ProgressView().controlSize(.small) }
             Button("Cancel") { model.cancelMapAccept() }
                 .help("Leave the proposal in the Inbox; nothing is saved")
             Button("Save Map") {
@@ -321,8 +322,13 @@ struct AcceptProposalSheet: View {
                 Text("Changes")
             }
             HStack {
+                if working {
+                    ProgressView().controlSize(.small)
+                    Text("Writing and committing…").font(.callout).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .disabled(working)
                 Button("Accept") {
                     working = true
                     Task {
@@ -337,6 +343,7 @@ struct AcceptProposalSheet: View {
         }
         .padding(20)
         .frame(minWidth: 620, idealWidth: 820, maxWidth: .infinity)
+        .interactiveDismissDisabled(working)
     }
 }
 
@@ -362,6 +369,7 @@ struct AddArrowBanner: View {
                 }
             }
             Spacer()
+            if working { ProgressView().controlSize(.small) }
             Button("Cancel") { model.arrowRequest = nil }
                 .help("Leave the proposal in the Inbox; nothing is drawn")
             Button("Add") {

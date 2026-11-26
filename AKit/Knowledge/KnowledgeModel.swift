@@ -135,6 +135,11 @@ final class KnowledgeModel {
     var brainRoot: URL?
     /// The known projects, found once per load (Check Again finds them again).
     private var lintProjects: KnowledgeLint.Projects?
+    /// The lint running off the main thread (`lint()`); snapshots wait for it.
+    @ObservationIgnored private(set) var lintTask: Task<Void, Never>?
+    @ObservationIgnored private var lintGeneration = 0
+    /// Whether a lint runs now: the Lint tab shows a spinner.
+    private(set) var linting = false
     /// Create Note… of a broken link: New Note… filled in with its area and name.
     struct NewNoteRequest: Identifiable {
         let area: String
@@ -801,17 +806,33 @@ final class KnowledgeModel {
 
     // MARK: - Lint
 
-    /// Checks the base again (`akit kb lint`); `rescan` finds the known projects again too.
+    /// Checks the base again (`akit kb lint`); `rescan` finds the known projects again too. It
+    /// runs off the main thread (a second or more on a big base, and every reload asks for it):
+    /// a call while one runs waits for it, and of the calls waiting only the last one runs.
     func lint(rescan: Bool = false) {
+        lintGeneration += 1
         guard let base else {
-            lintFindings = []
+            (lintFindings, linting) = ([], false)
             return
         }
-        let projects = (rescan ? nil : lintProjects)
-            ?? KnowledgeLint.Projects.find(home: home, projectsRoot: projectsRoot ?? home.appending(path: "Projects"),
-                                           brainRoot: brainRoot ?? Brain.defaultRoot(home: home))
-        lintProjects = projects
-        lintFindings = KnowledgeLint.run(base, projects: projects, home: home)
+        if rescan { lintProjects = nil }
+        linting = true
+        let generation = lintGeneration
+        let previous = lintTask
+        let (home, projectsRoot, brainRoot) = (home, projectsRoot ?? home.appending(path: "Projects"), brainRoot ?? Brain.defaultRoot(home: home))
+        lintTask = Task {
+            await previous?.value
+            defer { if generation == lintGeneration { linting = false } }
+            guard generation == lintGeneration, self.base == base else { return }
+            let known = lintProjects
+            let (projects, findings) = await Task.detached {
+                let projects = known ?? KnowledgeLint.Projects.find(home: home, projectsRoot: projectsRoot, brainRoot: brainRoot)
+                return (projects, KnowledgeLint.run(base, projects: projects, home: home))
+            }.value
+            guard self.base == base else { return }
+            lintProjects = projects
+            lintFindings = findings
+        }
     }
 
     /// The findings about one note (its links, `repo:`, `files:`, `kind:`).

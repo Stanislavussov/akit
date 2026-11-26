@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitFoundation
 import Foundation
 
 /// Switching this Mac between work and personal. It lives with Insights because it reads the
@@ -11,7 +12,7 @@ extension MachineProfile {
     /// The id, pseudonym and hardware hash carry over from the old profile (the caller builds a
     /// new one from kind and name); `kindSince` moves when the kind changes. `ownKeys` nil: read from the index.
     public static func change(to newProfile: MachineProfile, brain brainRoot: URL, home: URL,
-                              hostName: String = ProcessInfo.processInfo.hostName,
+                              hostName: String = HostName.current,
                               hardware: String? = currentHardwareHash(), ownKeys: OwnKeys? = nil,
                               now: Date = Date()) throws -> [String] {
         let old = load(home: home)

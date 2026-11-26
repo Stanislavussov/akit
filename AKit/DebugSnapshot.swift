@@ -385,6 +385,8 @@ enum DebugSnapshot {
             print("inbox: last commit: \(log?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "-")")
             print("inbox: git status: " + (status?.output.split(separator: "\n").joined(separator: "; ") ?? "-"))
         }
+        // The lint runs off the main thread; its counts are in the manifest and on the Lint tab.
+        if options.section == .knowledge { await KnowledgeModel.current?.lintTask?.value }
         if options.section == .knowledge, let manifest = KnowledgeModel.current?.manifest {
             print(manifest)
         }
