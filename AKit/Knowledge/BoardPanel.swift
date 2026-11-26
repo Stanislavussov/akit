@@ -102,6 +102,7 @@ private struct BoardColumn: View {
 /// A card: the note's title, its ADO ID and rules, what it waits for, and what its fields lack.
 private struct BoardCard: View {
     @Environment(KnowledgeModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
     let card: KnowledgeTask.Card
 
     var body: some View {
@@ -126,8 +127,27 @@ private struct BoardCard: View {
             .opacity(model.note == card.note && model.noteBesideBoard ? 0.35 : 1), in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(card.blocked ? Color.orange.opacity(0.6) : Color.secondary.opacity(0.25)))
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) { openInWindow() }
         .onTapGesture { model.openCard(card.note) }
         .draggable(card.note)
-        .help("areas/\(card.note).md: click to open the note; drag to another column to set its status:")
+        .contextMenu {
+            Button("Open Beside Board") { model.openCard(card.note) }
+            Button("Open in New Window") { openInWindow() }
+            Menu("Move to") {
+                ForEach(KnowledgeTask.Status.allCases, id: \.self) { status in
+                    Button(status.title) { model.move(card: card.note, to: status) }.disabled(card.status == status)
+                }
+            }
+            Divider()
+            Button("Show in Finder") {
+                if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(card.note)]) }
+            }
+        }
+        .help("areas/\(card.note).md: click to open the note beside the board, double-click to open it in a new window; drag to another column to set its status:")
+    }
+
+    private func openInWindow() {
+        guard let base = model.base else { return }
+        openWindow(id: NoteWindow.id, value: NoteWindowRef(base: base.root.path, note: card.note))
     }
 }

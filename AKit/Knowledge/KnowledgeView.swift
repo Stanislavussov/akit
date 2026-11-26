@@ -11,6 +11,7 @@ import SwiftUI
 struct KnowledgeView: View {
     @Environment(KnowledgeModel.self) private var model
     @Environment(AppModel.self) private var app
+    @Environment(\.openWindow) private var openWindow
     /// Snapshots: `--tab new-area|new-note|add-folder|new-map|create-base|kinds|area-settings|focus|context|pi-template|draw-map`.
     @State private var sheet: Sheet? = DebugSnapshot.options?.tab.flatMap(Sheet.init(rawValue:))
     @State private var areaToDelete: String?
@@ -168,6 +169,10 @@ struct KnowledgeView: View {
                 if model.noteBesideMap, model.note != nil {
                     NotePanel().frame(minWidth: 360, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
                 }
+            } else if DebugSnapshot.options?.tab == "note-window", let base = model.base, let note = model.note {
+                // Snapshots: a note window's view, since a second window can't be captured.
+                NoteWindowContent(model: model, ref: NoteWindowRef(base: base.root.path, note: note))
+                    .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 NotePanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -619,6 +624,9 @@ struct KnowledgeView: View {
                     model.open(note.id)
                     model.showAsk()
                 }
+            }
+            Button("Open in New Window") {
+                if let base = model.base { openWindow(id: NoteWindow.id, value: NoteWindowRef(base: base.root.path, note: note.id)) }
             }
             Button("Show in Finder") {
                 if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(note.id)]) }
