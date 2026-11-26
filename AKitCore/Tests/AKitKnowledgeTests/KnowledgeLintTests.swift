@@ -45,14 +45,16 @@ final class KnowledgeLintTests {
             "warning scenario-header areas/shop/scenarios.md SC-ORD-002 -",
             "warning scenario-test-missing areas/shop/scenarios.md SC-ORD-002 lint-repo · tests/cancel.test.ts",
             "warning scenario-unknown-id areas/shop/scenarios.md SC-ORD-099 -",
+            "warning task-field areas/shop/task-fields.md - -",
+            "warning task-duplicate-ado areas/shop/task-twin.md - 900001",
             "warning unknown-repo areas/shop/unknown-repo.md - git@example.com:lint/no-such-repo.git",
             "hint unknown-kind areas/shop/gadget.md - gadget",
             "hint unrelated-area areas/shop/maps/blocks.excalidraw blk-thing other/thing",
         ])
         let rules = findings.filter { $0.severity != .hint }.map(\.rule)
-        #expect(rules.count == 14 && Set(rules) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint }))
+        #expect(rules.count == 16 && Set(rules) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint }))
         #expect(findings.allSatisfy { $0.fix != nil && !$0.message.isEmpty })
-        #expect(KnowledgeLint.counts(findings) == .init(error: 3, warning: 11, hint: 2))
+        #expect(KnowledgeLint.counts(findings) == .init(error: 3, warning: 13, hint: 2))
     }
 
     @Test func theAnswerEncodesAsTheCLIPrintsIt() throws {

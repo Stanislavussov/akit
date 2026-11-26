@@ -83,6 +83,18 @@ extension AKitCLI {
                                         kind, feature, number, title, status, level, journey, rule,
                                         workItems, sources, tests: [{repo, path, names, line}],
                                         note, line}]}
+      akit kb board FOLDER [--json] [--base PATH|WORLD]
+                                        The board of an area or a folder in it (spikes/odstoupeni
+                                        od smlouvy): its task notes (kind: task) in the columns
+                                        todo, doing, review, done, each in the order of its
+                                        title's number, with its ADO ID, rules, the work items it
+                                        depends on (their note and status, when the base has one)
+                                        and whether one of those isn't done. A card whose ado: or
+                                        status: is missing or wrong is under "check fields".
+                                        Moving a card sets the note's status:. --json: {base,
+                                        folder, columns: [{status, title, cards: [{note, title,
+                                        number, ado, status, depends: [{ado, note, number,
+                                        status}], rule, problems}]}], unsorted: [card]}
       akit kb history NOTE|MAP [REV] [--limit N] [--json] [--base PATH|WORLD]
                                         Every version of a note or a map from the base's git,
                                         renames followed, newest first: hash, date, the commit's
@@ -405,6 +417,30 @@ extension AKitCLI {
                     line += "  " + (item.title ?? "(no title)")
                     return ([line] + item.tests.map { "    test: \($0.repo) · \($0.path) · \($0.name)" }).joined(separator: "\n")
                 }.joined(separator: "\n"))
+            }
+            return 0
+        case "board":
+            guard let name = args.positional() else { throw Failure(message: "Use: akit kb board FOLDER [--json] [--base PATH|WORLD]") }
+            try args.finish()
+            guard let base = try await chosen() else { return noBase(json: json, out: out) }
+            let board: KnowledgeTask.Board
+            do { board = try base.board(folder: name) } catch { throw Failure(message: error.message) }
+            if json {
+                out(encode(board))
+            } else if board.cards.isEmpty {
+                out("No task notes (kind: task) in \(board.folder).")
+            } else {
+                func line(_ card: KnowledgeTask.Card) -> String {
+                    var text = "  " + (card.ado.map { $0 + "  " } ?? "") + card.title
+                    if !card.rule.isEmpty { text += "  " + card.rule.joined(separator: ", ") }
+                    let waits = card.depends.filter { $0.note != nil && $0.open }.map { [$0.number.map { "(\($0))" }, $0.ado].compactMap(\.self).joined(separator: " ") }
+                    if !waits.isEmpty { text += "\n    waits for " + waits.joined(separator: ", ") }
+                    return ([text] + card.problems.map { "    check: \($0)" }).joined(separator: "\n")
+                }
+                var parts = [board.folder]
+                for column in board.columns { parts.append("\(column.title) (\(column.cards.count))" + column.cards.map { "\n" + line($0) }.joined()) }
+                if !board.unsorted.isEmpty { parts.append("Check fields (\(board.unsorted.count))" + board.unsorted.map { "\n" + line($0) }.joined()) }
+                out(parts.joined(separator: "\n"))
             }
             return 0
         case "search", "show", "index":

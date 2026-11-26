@@ -34,7 +34,7 @@ final class KnowledgeSeedTests {
     /// One row per feature the sample base shows. Each later step appends its rows (K26): maps,
     /// arrows, search text, lint findings, inbox proposals, check marks.
     static let features: [(feature: String, check: @Sendable (KnowledgeBase) throws -> Bool)] = [
-        ("two unrelated areas, and lint-examples", { base in base.areas().map(\.name) == ["lint-examples", "logistics", "payments"] }),
+        ("two unrelated areas, features and lint-examples", { base in base.areas().map(\.name) == ["features", "lint-examples", "logistics", "payments"] }),
         ("area.yaml with a title in each area", { base in try base.areas().allSatisfy { try base.settings(area: $0.name).title != nil } }),
         ("payments has no projects, so kb area --project adds the first", { base in try base.settings(area: "payments").projects.isEmpty }),
         ("logistics names a remote and a glob", { base in
@@ -146,8 +146,15 @@ final class KnowledgeSeedTests {
         // Lint (4.1), with the made-up repos cloned as tools/demo-home.sh clones them.
         ("lint-examples has one finding of each rule", { base in
             let found = try lint(base).filter { $0.severity != .hint }
-            return found.allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } && found.count == 14
+            return found.allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } && found.count == 16
                 && Set(found.map(\.rule)) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint })
+        }),
+        ("the board of features/refund-form: (1) done, (2) doing after it, (3) todo waiting for (2) (K44)", { base in
+            let board = try base.board(folder: "features/refund-form")
+            let email = board.cards.first { $0.ado == "503" }
+            return board.columns.map { $0.cards.compactMap(\.ado) } == [["503"], ["502"], [], ["501"]] && board.unsorted.isEmpty
+                && email?.blocked == true && email?.depends.map(\.ado) == ["502", "510"]
+                && board.cards.first { $0.ado == "502" }?.blocked == false
         }),
         ("lint-examples has the hints unknown kind and unrelated area", { base in
             try lint(base).filter { $0.severity == .hint }.map { "\($0.rule.rawValue) \($0.file) \($0.element ?? "")" } == [
@@ -307,6 +314,6 @@ final class KnowledgeSeedTests {
             #expect(Int(try await git("rev-list", "--count", "HEAD", in: base.root)) == Int(before)! + 1, "\(name)")
             #expect(try await git("status", "--porcelain", in: base.root).split(separator: "\n").allSatisfy { $0.hasPrefix("?? inbox/") }, "\(name)")
         }
-        #expect(base.areas().map(\.name) == ["lint-examples", "payments"])
+        #expect(base.areas().map(\.name) == ["features", "lint-examples", "payments"])
     }
 }
