@@ -137,8 +137,8 @@ struct KnowledgeCLITests {
 
         let index = try json(await akit("kb", "index", "--rebuild", "--json", "--base", base).out)
         #expect(Set(index.keys) == ["notes", "maps", "chunks", "rebuilt", "stale", "tokens"])
-        #expect(index["notes"] as? Int == 19 && index["maps"] as? Int == 4 && index["rebuilt"] as? Bool == true)
-        #expect(await akit("kb", "index", "--base", base).out.hasPrefix("The index is up to date: 19 notes, 4 maps,"))
+        #expect(index["notes"] as? Int == 24 && index["maps"] as? Int == 4 && index["rebuilt"] as? Bool == true)
+        #expect(await akit("kb", "index", "--base", base).out.hasPrefix("The index is up to date: 24 notes, 4 maps,"))
     }
 
     @Test func lintFindsOnlyTheSeededExamplesWhenTheReposAreCloned() async throws {
@@ -156,13 +156,13 @@ struct KnowledgeCLITests {
         #expect(lint.code == 0, "\(lint.err)")
         let answer = try json(lint.out)
         #expect(Set(answer.keys) == ["base", "findings", "counts"])
-        #expect((answer["counts"] as? [String: Int]) == ["error": 3, "warning": 10, "hint": 2])
+        #expect((answer["counts"] as? [String: Int]) == ["error": 3, "warning": 12, "hint": 2])
         let findings = try #require(answer["findings"] as? [[String: Any]])
-        #expect(findings.count == 15 && findings.allSatisfy { ($0["file"] as? String)?.hasPrefix("areas/lint-examples/") == true })
+        #expect(findings.count == 17 && findings.allSatisfy { ($0["file"] as? String)?.hasPrefix("areas/lint-examples/") == true })
         #expect(Set(findings.flatMap(\.keys)) == ["rule", "severity", "file", "element", "link", "message", "fix"])
         let text = await akit("kb", "lint", "--base", base).out
         #expect(text.hasPrefix("error  broken-link  areas/lint-examples/links.md\n    The link [[no-such-note]] points to no note or map in the base."))
-        #expect(text.hasSuffix("\n3 errors, 10 warnings, 2 hints."))
+        #expect(text.hasSuffix("\n3 errors, 12 warnings, 2 hints."))
         #expect(await akit("kb", "lint", "extra", "--base", base).code == 2)
     }
 
@@ -403,7 +403,7 @@ struct KnowledgeCLITests {
         #expect(Set(kinds.keys) == ["base", "file", "defaults", "kinds"])
         #expect(kinds["defaults"] as? Bool == false && kinds["file"] as? String == "kb.yaml")
         let list = try #require(kinds["kinds"] as? [[String: Any]])
-        #expect(list.map { $0["name"] as? String } == ["service", "flow", "team", "database", "queue", "external", "folder"])
+        #expect(list.map { $0["name"] as? String } == ["service", "flow", "team", "database", "queue", "external", "folder", "task"])
         #expect(Set(list[0].keys) == ["name", "fields", "color", "shape"])
         #expect(list[0]["fields"] as? [String] == ["repo", "path", "files", "owner"] && list[0]["color"] is NSNull)
         #expect(await akit("kb", "kinds").out.hasPrefix("service  repo, path, files, owner\nflow  owner"))
@@ -437,7 +437,7 @@ struct KnowledgeCLITests {
         #expect(await akit("kb", "kinds", "add", "widget").code == 2)
         #expect(await akit("kb", "kinds", "explode").code == 2)
         let names = try json(await akit("kb", "kinds", "--json").out)["kinds"] as? [[String: Any]]
-        #expect(names?.map { $0["name"] as? String } == ["flow", "team", "database", "queue", "external", "folder", "widget"])
+        #expect(names?.map { $0["name"] as? String } == ["flow", "team", "database", "queue", "external", "folder", "task", "widget"])
         #expect(try await git("status", "--porcelain").isEmpty)
 
         // kb area: read, then change and commit.
@@ -510,7 +510,31 @@ struct KnowledgeCLITests {
         #expect((answer["files"] as? [String])?.contains(".akit-seed.json") == true)
         #expect(try json(await akit("kb", "seed", "--json").out)["status"] as? String == "unchanged")
         let areas = try json(await akit("kb", "areas", "--base", "sample", "--json").out)
-        #expect((areas["areas"] as? [[String: Any]])?.count == 3)
+        #expect((areas["areas"] as? [[String: Any]])?.count == 4)
+
+        // kb board (K44): the columns of the seed's feature, as text and JSON.
+        let board = await akit("kb", "board", "features/refund-form", "--base", "sample")
+        #expect(board.code == 0, "\(board.err)")
+        #expect(board.out == """
+            features/refund-form
+            To Do (1)
+              503  (3) SHOP-503 — Confirmation e-mail  R-RF-03
+                waits for (2) 502
+            Doing (1)
+              502  (2) SHOP-502 — Refund form  R-RF-01, R-RF-02
+            Review (0)
+            Done (1)
+              501  (1) SHOP-501 — Refund API contract  R-RF-01
+            """)
+        let boardJSON = try json(await akit("kb", "board", "areas/features/refund-form/", "--base", "sample", "--json").out)
+        let columns = try #require(boardJSON["columns"] as? [[String: Any]])
+        #expect(columns.map { $0["status"] as? String } == ["todo", "doing", "review", "done"])
+        let email = try #require((columns[0]["cards"] as? [[String: Any]])?.first)
+        #expect(email["note"] as? String == "features/refund-form/503 refund email" && email["number"] as? Int == 3)
+        #expect((email["depends"] as? [[String: Any]])?.map { $0["status"] as? String } == ["doing", nil])
+        #expect(boardJSON["unsorted"] as? [Any] != nil && boardJSON["folder"] as? String == "features/refund-form")
+        let missing = await akit("kb", "board", "features/nothing", "--base", "sample")
+        #expect(missing.code != 0 && missing.err.contains("No folder"))
 
         // kb rm: without --yes nothing moves; with it, one commit and the file is in the Trash.
         let note = sample.appending(path: "areas/payments/orders-db.md")

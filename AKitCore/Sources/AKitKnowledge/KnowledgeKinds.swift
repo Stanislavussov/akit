@@ -54,6 +54,7 @@ public struct KnowledgeKinds: Sendable, Equatable {
         Kind(name: "queue", fields: ["owner"]),
         Kind(name: "external", fields: ["url", "owner"]),
         Kind(name: "folder", fields: ["path", "owner"]),
+        Kind(name: KnowledgeTask.kind, fields: KnowledgeTask.fields),
     ])
 
     public var kinds: [Kind]

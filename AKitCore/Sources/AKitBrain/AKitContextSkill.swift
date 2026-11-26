@@ -69,6 +69,10 @@ akit kb scenarios [NOTE] [--work-item ID] [--status S] [--json]
                                                    # workItems, tests: [{repo, path, names}]}]}; a
                                                    # scenario's tests are linked from the note,
                                                    # never by an ID in the repository
+akit kb board FOLDER [--json] [--base PATH|WORLD]  # a feature's task notes by status: {base, folder,
+                                                   # columns: [{status, cards: [{note, title,
+                                                   # number, ado, status, depends: [{ado, note,
+                                                   # status}], rule, problems}]}], unsorted}
 akit kb inbox [--json] [--base PATH|WORLD]         # the proposals waiting for the user: {base,
                                                    # proposals: [{id, kind, target, reason, created,
                                                    # checks: [{name, status, message}], modelCheck:
@@ -132,6 +136,26 @@ propose a change. Errors: a broken link, a map that doesn't parse. Warnings: an 
 a map block with no note, an unbound arrow (no relation), a `repo:` that is no known project,
 a `files:` or `~/` path that doesn't exist. Hints: a kind not in `kb.yaml`, a block for a note
 of an unrelated area. Tell the user or propose a fix; never edit the base to fix them.
+
+### Task notes: a feature's delivery
+
+A feature's work lives in one folder, `areas/<area>/<feature>/`: its map note, its scenarios note
+and one **task note** per work item. The notation, checked on the way in:
+
+- File `<ADO> <topic>.md` (`321325 submit.md`); title `# (<#>) <PREFIX>-<ADO> — <work item title>`.
+  `#` is the order of delivery (each task after what it depends on, ties by ADO ID); only the
+  tasks the feature delivers get one. Renumber only by proposing every changed title at once.
+- Frontmatter: `kind: task`, `ado: 321325` (digits), `status: todo|doing|review|done`,
+  `depends: [321318, 321322]` (the work items it waits for; whether a link, the text or an
+  inference says so goes in the note's text), `rule: [R-CW-04]`, `description:` one line.
+- `status` is the user's: they drag the card on the board (Knowledge → the group's Board). Set it
+  when you create the note (`--set status=todo`, or what the code shows); change it later only
+  when the user asks (`--set status=…`). A proposal that rewrites the note keeps the status on disk.
+
+The Inbox's `task` check refuses (red) a task note without `ado` or `status` or with a value
+the board can't read, and warns (orange) without `description`; `kb lint` reports `task-field`
+and `task-duplicate-ado`. Fix them before you report a proposal. `kb board FOLDER` shows the
+order, the status and what each task waits for.
 
 To find text, `kb search` first, then `kb show NOTE --section H` for the one section you
 need; both stay under `--max-tokens` (default 4000). Search reads `areas/` only, never the
