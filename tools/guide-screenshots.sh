@@ -291,6 +291,9 @@ shot knowledge-note      $MAIN --section knowledge --select payments/orders-api 
 # The board of features/refund-form (K44): the seed's three task notes by status, the e-mail
 # waiting for the form.
 shot knowledge-board     $MAIN --section knowledge --select "board:features/refund-form"
+# Open in New Window of the form's card: the note with its status picker (the window's view,
+# shown in the main one: a second window can't be captured).
+shot knowledge-note-window $MAIN --section knowledge --select "features/refund-form/502 refund form" --tab note-window
 # A task note whose fields the board can't read (lint-examples/task-fields): Properties in red.
 shot knowledge-task-fields $MAIN --section knowledge --select lint-examples/task-fields --tab properties
 # History of orders-api: the made-up edits of tools/demo-home.sh, the version before the last selected.

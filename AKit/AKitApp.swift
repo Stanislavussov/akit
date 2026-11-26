@@ -161,6 +161,14 @@ struct AKitApp: App {
         }
         .defaultSize(width: 1100, height: 860)
         .restorationBehavior(.disabled)
+
+        // Open in New Window of a board card or a note (K44): the note beside the board or the
+        // code. Not restored at launch: the note may be gone by then.
+        WindowGroup("Note", id: NoteWindow.id, for: NoteWindowRef.self) { $ref in
+            if let ref { NoteWindow(ref: ref) }
+        }
+        .defaultSize(width: 760, height: 860)
+        .restorationBehavior(.disabled)
     }
 }
 

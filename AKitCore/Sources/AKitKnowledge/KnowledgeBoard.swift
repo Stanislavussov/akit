@@ -63,7 +63,7 @@ public enum KnowledgeTask {
     public static var statusList: String { Status.allCases.map(\.rawValue).joined(separator: ", ") }
 
     /// A frontmatter value as one trimmed string; nil when unset or empty.
-    static func text(_ value: Any?) -> String? {
+    public static func text(_ value: Any?) -> String? {
         guard let value, !(value is NSNull), !(value is [Any]) else { return nil }
         let text = "\(value)".trimmingCharacters(in: .whitespaces)
         return text.isEmpty ? nil : text

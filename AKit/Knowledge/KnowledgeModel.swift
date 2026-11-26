@@ -83,6 +83,9 @@ final class KnowledgeModel {
     private(set) var boardColumns: KnowledgeTask.Board?
     /// A card clicked on the board: its note shows beside the board.
     private(set) var noteBesideBoard = false
+    /// Raised whenever AKit reads the base again or saves a note: a note window (K44) reads its
+    /// note from disk again.
+    private(set) var diskRevision = 0
     /// Open note tabs (ids), in the order they were opened.
     private(set) var tabs: [String] = []
     private(set) var note: String?
@@ -361,6 +364,7 @@ final class KnowledgeModel {
             boardColumns = try? base.board(folder: board)
             if boardColumns == nil { (self.board, noteBesideBoard) = (nil, false) }
         }
+        diskRevision += 1
     }
 
     func choose(base: KnowledgeBase) {
@@ -889,6 +893,7 @@ final class KnowledgeModel {
             text = newText
             noteHashes[note] = KnowledgeWrite.hash(of: base.noteFile(note))
             enqueue(path, in: base)
+            diskRevision += 1
             if histories[note]?.pending == false { refreshHistory(of: note) }
             if let index = allNotes.firstIndex(where: { $0.id == note }), let title = KnowledgeNote(text: newText).title,
                title != allNotes[index].title {
@@ -1045,6 +1050,35 @@ final class KnowledgeModel {
     }
 
     func closeBoard() { (board, boardColumns, noteBesideBoard) = (nil, nil, false) }
+
+    /// A note window's link (`[[note]]`, `akit:note/…`) from the note `id`: the note it resolves
+    /// to, for another note window; a map or a link that fits nothing opens in the main window.
+    func noteWindowLink(_ link: String, from id: String) -> String? {
+        switch targets.resolve(link, from: "areas/\(id).md") {
+        case .note(let target): return target
+        case .map(let map):
+            screenTab = .notes
+            open(map: map)
+        case .missing: notice = "No note or map for \(link)."
+        case .ambiguous(let ids): notice = "\(link) matches \(ids.count) notes: \(ids.prefix(3).joined(separator: ", "))."
+        }
+        return nil
+    }
+
+    /// Show in AKit from a note window: the note in the main window, beside the board when its
+    /// card is on the board in view.
+    func showFromWindow(_ id: String) {
+        screenTab = .notes
+        if boardColumns?.cards.contains(where: { $0.note == id }) == true {
+            openCard(id)
+        } else {
+            Task {
+                await closeMap()
+                closeBoard()
+                open(id)
+            }
+        }
+    }
 
     /// A card clicked: its note opens beside the board.
     func openCard(_ id: String) {
