@@ -319,10 +319,18 @@ struct PropertiesForm: View {
                 .help("The kind of the note, from the base's kinds (Kinds…); written as kind: in its frontmatter")
             }
             ForEach(model.noteProperties, id: \.key) { property in
+                let problem = taskProblems.first { $0.hasPrefix(property.key + ":") }
                 GridRow {
-                    Text(property.key).foregroundStyle(.secondary)
-                        .help(property.isField ? "A field of the kind \(entry.kind ?? "")" : "Not a field of the kind; kept as it is")
+                    Text(property.key).foregroundStyle(problem == nil ? Color.secondary : Color.red)
+                        .help(problem ?? (property.isField ? "A field of the kind \(entry.kind ?? "")" : "Not a field of the kind; kept as it is"))
                     PropertyField(key: property.key, value: property.value)
+                }
+            }
+            // A task note (K44): what the board needs and the note lacks, in red.
+            ForEach(taskProblems, id: \.self) { problem in
+                GridRow {
+                    Color.clear.frame(width: 1, height: 1)
+                    Label(problem, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
                 }
             }
             GridRow {
@@ -338,6 +346,11 @@ struct PropertiesForm: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3))
         .id(entry.id)
+    }
+
+    /// The fields a task note lacks for the board; empty for other notes.
+    private var taskProblems: [String] {
+        entry.kind == KnowledgeTask.kind ? KnowledgeTask.problems(KnowledgeNote(text: model.text)) : []
     }
 
     /// The base's kinds, and the note's own kind when `kb.yaml` doesn't list it.

@@ -129,8 +129,12 @@ final class KnowledgeBoardTests {
         let (proposal, checks) = try base.propose(note("shop/refunds/604 retry", body: "# (4) SHOP-604 — Retry\n",
                                                        set: [.init(key: "kind", value: "task"), .init(key: "ado", value: "604"),
                                                              .init(key: "status", value: "todo")]), now: now)
-        #expect(checks.first { $0.name == "task" }?.status == .passed)
+        // Without a description it may be accepted, but the check warns.
+        #expect(checks.first { $0.name == "task" }?.status == .warning)
+        #expect(checks.first { $0.name == "task" }?.message?.hasPrefix("description: missing") == true)
         #expect(try base.planAccept(proposal).planned.contains("status: todo"))
+        let described = try base.propose(note("shop/refunds/604 retry", body: "---\nkind: task\ndescription: Retries a failed refund.\nado: 604\nstatus: todo\n---\n# (4) SHOP-604 — Retry\n"), now: now)
+        #expect(described.checks.first { $0.name == "task" }?.status == .passed)
         // A section of a note that isn't a task note gets no task check.
         let (flow, flowChecks) = try base.propose(note("shop/refunds/flow", body: "## Steps\nOne.\n"), now: now)
         #expect(flow.target == "shop/refunds/flow" && !flowChecks.contains { $0.name == "task" })

@@ -598,9 +598,15 @@ extension KnowledgeBase {
             }
             if let merged = try? merged(proposal), merged.note.kind == KnowledgeTask.kind {
                 let problems = KnowledgeTask.problems(merged.note)
-                checks.append(problems.isEmpty ? .init(name: "task", status: .passed)
-                    : .init(name: "task", status: .failed,
-                            message: "The task note lacks what the board needs: \(problems.joined(separator: "; ")). Propose the fields with --set (kind=task ado=… status=todo depends=[…])."))
+                if !problems.isEmpty {
+                    checks.append(.init(name: "task", status: .failed,
+                                        message: "The task note lacks what the board needs: \(problems.joined(separator: "; ")). Propose the fields with --set (kind=task ado=… status=todo depends=[…])."))
+                } else if !merged.note.hasDescription {
+                    checks.append(.init(name: "task", status: .warning,
+                                        message: "description: missing; the one line agents read before they open the note (--set description=…)."))
+                } else {
+                    checks.append(.init(name: "task", status: .passed))
+                }
             }
         case .arrow:
             guard let arrow = proposal.arrow else {

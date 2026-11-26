@@ -288,6 +288,11 @@ shot review-local-find   $MAIN --section review --query "$DEMO/work/orders-servi
 shot knowledge           $MAIN --section knowledge --select payments/orders-api
 shot knowledge-groups    $MAIN --section knowledge --select payments/flows/order-to-billing
 shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
+# The board of features/refund-form (K44): the seed's three task notes by status, the e-mail
+# waiting for the form.
+shot knowledge-board     $MAIN --section knowledge --select "board:features/refund-form"
+# A task note whose fields the board can't read (lint-examples/task-fields): Properties in red.
+shot knowledge-task-fields $MAIN --section knowledge --select lint-examples/task-fields --tab properties
 # History of orders-api: the made-up edits of tools/demo-home.sh, the version before the last selected.
 shot knowledge-history   $MAIN --section knowledge --select payments/orders-api --tab history
 # Ask Pi about the note: the panel under it with a made-up chat (no Pi runs), the second question about a section.
