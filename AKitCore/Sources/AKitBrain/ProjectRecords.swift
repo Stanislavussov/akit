@@ -111,7 +111,7 @@ public enum ProjectRecords {
     // MARK: - Home
 
     /// The id of this machine's home folder: `home/<machine name or host name>`, one lock per Mac.
-    public static func homeID(hostName: String = ProcessInfo.processInfo.hostName, machineName: String? = nil) -> String {
+    public static func homeID(hostName: String = HostName.current, machineName: String? = nil) -> String {
         var host = (machineName.flatMap { $0.isEmpty ? nil : $0 } ?? hostName).lowercased()
         if host.hasSuffix(".local") { host.removeLast(".local".count) }
         let name = cleanPath(host.replacingOccurrences(of: "/", with: "-"))

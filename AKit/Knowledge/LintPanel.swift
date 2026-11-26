@@ -13,7 +13,9 @@ struct LintPanel: View {
                 Text("\(counts.error) error\(counts.error == 1 ? "" : "s"), \(counts.warning) warning\(counts.warning == 1 ? "" : "s"), \(counts.hint) hint\(counts.hint == 1 ? "" : "s")")
                     .font(.headline)
                 Spacer()
+                if model.linting { ProgressView().controlSize(.small) }
                 Button("Check Again", systemImage: "arrow.clockwise") { model.lint(rescan: true) }
+                    .disabled(model.linting)
                     .help("Read the notes and maps again, and look for the projects in your projects folder again")
             }
             .controlSize(.small)

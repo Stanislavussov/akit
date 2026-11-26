@@ -37,7 +37,7 @@ extension Recommender {
     public static func load(env: HarnessEnvironment, brain: Brain?, project: String?, days: Int = InsightsStats.defaultDays,
                             range: DayRange? = nil,
                             projectsRoot: URL, projectFolder: URL? = nil,
-                            hostName: String = ProcessInfo.processInfo.hostName,
+                            hostName: String = HostName.current,
                             hardware: String? = MachineProfile.currentHardwareHash(), run: CommandRunner? = nil) async throws -> Loaded {
         let (database, inputs) = try await prepare(env: env, brain: brain, project: project, projectsRoot: projectsRoot,
                                                    hostName: hostName, hardware: hardware, run: run)
